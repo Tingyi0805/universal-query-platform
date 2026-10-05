@@ -25,6 +25,10 @@ export async function login(username: string, password: string): Promise<LoginRe
     permissions: record.permissions,
   };
 
+  const options: jwt.SignOptions = {
+    expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
+  };
+
   const token = jwt.sign(
     {
       sub: String(user.id),
@@ -33,7 +37,7 @@ export async function login(username: string, password: string): Promise<LoginRe
       permissions: user.permissions,
     },
     env.JWT_SECRET,
-    { expiresIn: env.JWT_EXPIRES_IN },
+    options,
   );
 
   return { status: "OK", user, token };
