@@ -21,6 +21,7 @@ const envSchema = z.object({
 
   JWT_SECRET: optionalString,
   JWT_EXPIRES_IN: z.string().default("8h"),
+  BOOTSTRAP_ADMIN_TOKEN: optionalString,
 });
 
 export const env = envSchema.parse(process.env);
