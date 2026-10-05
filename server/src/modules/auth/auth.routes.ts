@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import { authenticateJwt } from "./auth.middleware.js";
 import { login } from "./auth.service.js";
 
 const loginSchema = z.object({
@@ -33,4 +34,8 @@ authRouter.post("/login", async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+authRouter.get("/me", authenticateJwt, (req, res) => {
+  res.json({ user: req.authUser });
 });
