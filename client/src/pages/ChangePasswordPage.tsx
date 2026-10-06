@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import "./AdminUsersPage.css";
 
 export function ChangePasswordPage() {
   const { accessToken, logout } = useAuth();
