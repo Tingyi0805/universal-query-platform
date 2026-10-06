@@ -127,6 +127,14 @@ export async function updateDataSource(
       ? String(existing.recordset[0].EncryptedOdbcConnectionString)
       : null;
 
+  if (
+    input.type === "ODBC" &&
+    input.odbcConnectionMode === "CONNECTION_STRING" &&
+    !encryptedOdbcConnectionString
+  ) {
+    throw new Error("ODBC_CONNECTION_STRING_REQUIRED");
+  }
+
   await pool.request()
     .input("id", sql.BigInt, id)
     .input("code", sql.NVarChar(100), input.code)
