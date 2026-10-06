@@ -115,7 +115,7 @@ export async function listAuditLogs(input: {
       AND (@username IS NULL OR u.Username LIKE '%' + @username + '%');
   `);
 
-  const recordsets = result.recordsets as sql.IRecordSet<any>[];
+  const recordsets = result.recordsets as any[];
   return {
     items: (recordsets[0] ?? []).map((row) => ({
       id: Number(row.Id),
