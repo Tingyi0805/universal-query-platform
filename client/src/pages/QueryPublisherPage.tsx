@@ -103,7 +103,7 @@ export function QueryPublisherPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  function selectQuery(query: QueryDefinition) {
+  function applyQueryToForm(query: QueryDefinition) {
     setForm({
       id: query.id,
       code: query.code,
@@ -117,6 +117,10 @@ export function QueryPublisherPage() {
       isActive: query.isActive,
       isPublished: query.isPublished,
     });
+  }
+
+  function selectQuery(query: QueryDefinition) {
+    applyQueryToForm(query);
     setError("");
     setNotice("");
   }
@@ -150,11 +154,17 @@ export function QueryPublisherPage() {
       }
 
       if (form.id) {
-        await apiRequest(`/query-definitions/${form.id}`, {
+        const result = await apiRequest<{
+          status: string;
+          queryDefinition: QueryDefinition;
+        }>(`/query-definitions/${form.id}`, {
           method: "PUT",
           body: JSON.stringify(payload()),
         }, accessToken);
-        setNotice("Query Definition 已更新。");
+        if (result.queryDefinition) applyQueryToForm(result.queryDefinition);
+        setNotice(result.queryDefinition?.isPublished
+          ? "Query Definition 已更新，發佈狀態維持不變。"
+          : "Query Definition 已更新；若內容有變更，需重新發佈。");
       } else {
         const result = await apiRequest<{ id: number }>("/query-definitions", {
           method: "POST",
@@ -175,14 +185,18 @@ export function QueryPublisherPage() {
     setError("");
     setNotice("");
     try {
-      await apiRequest(`/query-definitions/${form.id}/${published ? "publish" : "unpublish"}`, {
+      const result = await apiRequest<{
+        status: string;
+        queryDefinition: QueryDefinition;
+      }>(`/query-definitions/${form.id}/${published ? "publish" : "unpublish"}`, {
         method: "POST",
       }, accessToken);
-      setForm((current) => ({ ...current, isPublished: published }));
-      setNotice(published ? "Query 已發布。" : "Query 已取消發布。");
+
+      if (result.queryDefinition) applyQueryToForm(result.queryDefinition);
+      setNotice(result.queryDefinition?.isPublished ? "Query 已發佈。" : "Query 已取消發佈。");
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "發布狀態更新失敗。");
+      setError(e instanceof Error ? e.message : "發佈狀態更新失敗。");
     }
   }
 
@@ -202,7 +216,7 @@ export function QueryPublisherPage() {
 
       if (!impact.canDelete) {
         setError(
-          `Query「${form.name}」已有 ${impact.auditCount} 筆 Audit 歷史，為保留稽核紀錄不能直接刪除。請改用「取消發布」並取消「啟用」。`,
+          `Query「${form.name}」已有 ${impact.auditCount} 筆 Audit 歷史，為保留稽核紀錄不能直接刪除。請改用「取消發佈」並取消「啟用」。`,
         );
         return;
       }
@@ -224,7 +238,7 @@ export function QueryPublisherPage() {
         <div>
           <p className="eyebrow">Publish</p>
           <h1>Query Publisher</h1>
-          <p className="subtitle">把 Dataset 包裝成使用者可看到的查詢 Icon，並控制發布與權限。</p>
+          <p className="subtitle">把 Dataset 包裝成使用者可看到的查詢 Icon，並控制發佈與權限。</p>
         </div>
         <Link className="secondary-button link-button" to="/">返回首頁</Link>
       </div>
@@ -244,7 +258,7 @@ export function QueryPublisherPage() {
               type="button" key={query.id} onClick={() => selectQuery(query)}>
               <strong>{query.name}</strong>
               <small>{query.code}</small>
-              <span>{query.category || "未分類"} · {query.isPublished ? "已發布" : "草稿"}</span>
+              <span>{query.category || "未分類"} · {query.isPublished ? "已發佈" : "草稿"}</span>
             </button>
           ))}
         </aside>
@@ -338,7 +352,7 @@ export function QueryPublisherPage() {
               <button className="primary-button" type="submit">儲存</button>
               {form.id && canPublish && (
                 <button className="secondary-button" type="button" onClick={() => void setPublished(!form.isPublished)}>
-                  {form.isPublished ? "取消發布" : "發布"}
+                  {form.isPublished ? "取消發佈" : "發佈"}
                 </button>
               )}
               {form.id && (
