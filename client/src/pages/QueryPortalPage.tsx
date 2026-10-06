@@ -14,6 +14,7 @@ type QueryItem = {
   name: string;
   description: string | null;
   category: string | null;
+  categorySortOrder: number;
   icon: string;
   sortOrder: number;
   canView: boolean;
@@ -58,7 +59,11 @@ export function QueryPortalPage() {
       const category = query.category?.trim() || "其他";
       counts.set(category, (counts.get(category) ?? 0) + 1);
     }
-    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b, "zh-Hant"));
+    return [...counts.entries()].sort(([a], [b]) => {
+      const aOrder = Math.min(...queries.filter((query) => (query.category?.trim() || "其他") === a).map((query) => query.categorySortOrder));
+      const bOrder = Math.min(...queries.filter((query) => (query.category?.trim() || "其他") === b).map((query) => query.categorySortOrder));
+      return aOrder - bOrder || a.localeCompare(b, "zh-Hant");
+    });
   }, [queries]);
 
   const filteredQueries = useMemo(() => {
@@ -84,7 +89,10 @@ export function QueryPortalPage() {
       const category = query.category?.trim() || "其他";
       map.set(category, [...(map.get(category) ?? []), query]);
     }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b, "zh-Hant"));
+    return [...map.entries()].sort(([a, aItems], [b, bItems]) =>
+      (aItems[0]?.categorySortOrder ?? 0) - (bItems[0]?.categorySortOrder ?? 0)
+      || a.localeCompare(b, "zh-Hant")
+    );
   }, [filteredQueries]);
 
   function toggleCategory(category: string) {
