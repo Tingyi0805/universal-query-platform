@@ -131,6 +131,36 @@ export function AdminUsersPage() {
     }
   }
 
+  async function deleteUser(user: UserRow) {
+    setError("");
+    setNotice("");
+
+    try {
+      const impact = await apiRequest<{
+        canDelete: boolean;
+        auditLogCount: number;
+        publishedQueryCount: number;
+        userQueryAccessCount: number;
+        userRoleCount: number;
+      }>(`/admin/users/${user.id}/delete-impact`, {}, accessToken);
+
+      if (!impact.canDelete) {
+        setError(
+          `使用者「${user.username}」已有歷史資料（稽核 ${impact.auditLogCount} 筆、發布查詢 ${impact.publishedQueryCount} 筆），為保留追溯紀錄不可永久刪除，請改為停用。`,
+        );
+        return;
+      }
+
+      if (!window.confirm(`確定永久刪除使用者「${user.username}」？此操作無法復原。`)) return;
+
+      await apiRequest(`/admin/users/${user.id}`, { method: "DELETE" }, accessToken);
+      setNotice(`${user.username} 已刪除。`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "刪除使用者失敗。");
+    }
+  }
+
   async function createRole(event: FormEvent) {
     event.preventDefault();
     setError("");
@@ -244,6 +274,7 @@ export function AdminUsersPage() {
                         {user.authProvider === "LOCAL" && (
                           <button className="secondary-button" type="button" onClick={() => void resetPassword(user)}>重設密碼</button>
                         )}
+                        <button className="danger-button" type="button" onClick={() => void deleteUser(user)}>刪除</button>
                       </td>
                     </tr>
                   ))}
