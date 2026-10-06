@@ -11,7 +11,7 @@ import {
   listDesignerDataSources,
   updateDataset,
 } from "./dataset.repository.js";
-import { previewDataset } from "./dataset.service.js";
+import { executeSavedDataset, getParameterOptions, previewDataset } from "./dataset.service.js";
 import {
   listDatasetParameters,
   replaceDatasetParameters,
@@ -123,6 +123,56 @@ datasetRouter.post("/preview/run", async (req, res, next) => {
     }
     if (error instanceof Error && ["DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
       res.status(400).json({ error: { code: error.message, message: "指定的資料來源不存在或已停用。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+datasetRouter.post("/:id/execute", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const body = z.object({
+      values: z.record(z.unknown()).default({}),
+      maxRows: z.coerce.number().int().min(1).max(10000).optional(),
+    }).safeParse(req.body);
+
+    if (!id.success || !body.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset 執行參數格式不正確。" } });
+      return;
+    }
+
+    res.json({ result: await executeSavedDataset(id.data, body.data.values, body.data.maxRows) });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PARAMETER_REQUIRED:")) {
+      const name = error.message.split(":")[1];
+      res.status(400).json({ error: { code: "PARAMETER_REQUIRED", message: `參數 ${name} 為必填。` } });
+      return;
+    }
+    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
+      res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
+      return;
+    }
+    if (error instanceof Error && ["DATASET_NOT_FOUND","DATASET_DISABLED","DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
+      res.status(400).json({ error: { code: error.message, message: "Dataset 或資料來源不存在或已停用。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+datasetRouter.get("/:id/parameters/:name/options", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const name = z.string().regex(/^[A-Z][A-Z0-9_]*$/).safeParse(req.params.name);
+    if (!id.success || !name.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "參數識別資料不正確。" } });
+      return;
+    }
+    res.json({ options: await getParameterOptions(id.data, name.data) });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
+      res.status(400).json({ error: { code: error.message, message: "無法取得參數選項。" } });
       return;
     }
     next(error);
