@@ -254,3 +254,19 @@ Query Portal
 - 正式環境應使用 HTTPS。
 - 正式環境應限制 Backend 與資料庫的網路來源。
 - Audit Log 應納入備份與保留政策。
+
+
+## Generic ODBC compatibility
+
+The platform prefers native database adapters for SQL Server, Oracle, MySQL, and PostgreSQL.
+ODBC is available as a compatibility fallback for legacy or specialized databases.
+
+ODBC supports:
+- DSN mode
+- encrypted full connection string mode
+- positional parameter binding
+- connection/query timeout
+- max-row protection
+- connection diagnostics
+
+On Windows, install the appropriate ODBC driver for the target database and keep the Node.js/ODBC driver architecture consistent (normally 64-bit).
