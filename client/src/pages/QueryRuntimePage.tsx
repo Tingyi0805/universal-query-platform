@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiRequest } from "../api/client";
+import { apiDownload, apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./QueryRuntimePage.css";
 
@@ -99,6 +99,30 @@ export function QueryRuntimePage() {
   }, [accessToken, queryId]);
 
   useEffect(() => { if (Number.isFinite(queryId)) void load(); }, [load, queryId]);
+
+  async function exportExcel() {
+    if (!query?.canExport) return;
+
+    setError("");
+    try {
+      const download = await apiDownload(
+        `/queries/${queryId}/export/excel`,
+        { values },
+        accessToken,
+      );
+
+      const url = URL.createObjectURL(download.blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = download.filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Excel 匯出失敗。");
+    }
+  }
 
   async function execute(event: FormEvent) {
     event.preventDefault();
@@ -226,7 +250,7 @@ export function QueryRuntimePage() {
               <h2>查詢結果</h2>
               <p>{result.rowCount} 筆 · {result.elapsedMs} ms {result.truncated ? "· 已達筆數上限" : ""}</p>
             </div>
-            {query?.canExport && <button className="secondary-button" type="button" disabled>Excel（下一階段）</button>}
+            {query?.canExport && <button className="secondary-button" type="button" onClick={() => void exportExcel()}>匯出 Excel</button>}
           </div>
 
           <div className="runtime-table-wrap">
