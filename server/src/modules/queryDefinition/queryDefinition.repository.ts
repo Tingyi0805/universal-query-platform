@@ -91,7 +91,9 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
         Name=@name, Description=@description, Category=@category,
         Icon=@icon, DatasetId=@datasetId, SortOrder=@sortOrder,
         AllowExcelExport=@allowExcelExport, IsActive=@isActive,
-        IsPublished=CASE WHEN DatasetId<>@datasetId THEN 0 ELSE IsPublished END,
+        IsPublished=0,
+        PublishedAtUtc=NULL,
+        PublishedByUserId=NULL,
         UpdatedAtUtc=SYSUTCDATETIME()
       WHERE Id=@id;
       SELECT @@ROWCOUNT AS Affected;
