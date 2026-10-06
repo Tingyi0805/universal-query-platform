@@ -2,7 +2,7 @@ import oracledb from "oracledb";
 import type { DataSourceAdapter, ExecuteQueryInput } from "./datasourceAdapter.js";
 import type { ConnectionTestResult, DataSourceConfig } from "../datasource.types.js";
 import type { QueryResult } from "../../../query/query.types.js";
-import { ensureOracleClientInitialized } from "./oracleClient.js";
+import { ensureOracleClientInitialized, getOracleRuntimeDiagnostics } from "./oracleClient.js";
 
 function buildConnectString(config: DataSourceConfig): string {
   const target = config.oracleServiceName?.trim();
@@ -30,10 +30,16 @@ export class OracleAdapter implements DataSourceAdapter {
 
     try {
       await connection.execute("SELECT 1 AS CONNECTION_TEST FROM DUAL");
+      const runtime = getOracleRuntimeDiagnostics();
       return {
         ok: true,
         message: "Oracle 連線成功。",
         serverVersion: connection.oracleServerVersionString,
+        driverName: runtime.driverName,
+        driverVersion: runtime.driverVersion,
+        driverMode: connection.thin ? "THIN" : "THICK",
+        clientVersion: runtime.clientVersion,
+        compatibilityStatus: "VERIFIED",
       };
     } finally {
       await connection.close().catch(() => undefined);
