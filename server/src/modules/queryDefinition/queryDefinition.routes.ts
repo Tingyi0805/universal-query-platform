@@ -135,6 +135,15 @@ queryDefinitionRouter.delete("/:id", requirePermission("DESIGN_QUERY"), async (r
       res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
       return;
     }
+    if ((error as { number?: number })?.number === 547) {
+      res.status(409).json({
+        error: {
+          code: "QUERY_HAS_HISTORY",
+          message: "此 Query 已有歷史或關聯資料，請改用停用或取消發布，不可刪除。",
+        },
+      });
+      return;
+    }
     next(error);
   }
 });
