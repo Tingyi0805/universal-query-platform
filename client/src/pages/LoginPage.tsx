@@ -1,10 +1,17 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link, Navigate } from "react-router-dom";
+import { Link, Navigate, useLocation } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
 export function LoginPage() {
   const { user, login } = useAuth();
+  const location = useLocation();
+  const navigationNotice =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "notice" in location.state
+      ? String((location.state as { notice?: unknown }).notice ?? "")
+      : "";
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -64,6 +71,8 @@ export function LoginPage() {
         )}
         <h1>登入平台</h1>
         <p className="login-hint">請使用已授權的平台帳號登入。</p>
+
+        {navigationNotice && <div className="notice">{navigationNotice}</div>}
 
         {bootstrapRequired && (
           <div className="notice">
