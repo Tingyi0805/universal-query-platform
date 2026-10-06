@@ -193,6 +193,7 @@ export function DatasetDesignerPage() {
           values,
           maxRows: Math.min(Number(form.maxRows), 1000),
           queryTimeoutSec: form.queryTimeoutSec === "" ? null : Number(form.queryTimeoutSec),
+          ...(form.id ? { datasetId: form.id } : {}),
         }),
       }, accessToken);
 
