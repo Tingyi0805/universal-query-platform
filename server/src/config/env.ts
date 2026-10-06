@@ -35,6 +35,8 @@ const envSchema = z.object({
   JWT_EXPIRES_IN: z.string().default("8h"),
   BOOTSTRAP_ADMIN_TOKEN: optionalString,
   DATASOURCE_ENCRYPTION_KEY: optionalString,
+  ORACLE_DRIVER_MODE: z.enum(["THIN", "THICK"]).default("THIN"),
+  ORACLE_CLIENT_LIB_DIR: optionalString,
 });
 
 export const env = envSchema.parse(process.env);
