@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { DatasetParametersEditor } from "../components/DatasetParametersEditor";
 import "./DatasetDesignerPage.css";
 
 type DataSourceOption = {
@@ -349,6 +350,13 @@ export function DatasetDesignerPage() {
               )}
             </div>
           </form>
+
+          {form.id && (
+            <DatasetParametersEditor
+              datasetId={form.id}
+              datasets={datasets.map((dataset) => ({ id: dataset.id, code: dataset.code, name: dataset.name }))}
+            />
+          )}
 
           {preview && (
             <section className="preview-panel">
