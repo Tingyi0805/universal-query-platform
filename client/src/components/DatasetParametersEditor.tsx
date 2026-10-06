@@ -135,7 +135,7 @@ export function DatasetParametersEditor({
       {notice && <div className="notice">{notice}</div>}
 
       {parameters.length === 0 ? (
-        <div className="empty-state">此 Dataset 沒有 {{PARAM}} 參數。</div>
+        <div className="empty-state">此 Dataset 沒有 <code>{"{{PARAM}}"}</code> 參數。</div>
       ) : (
         <div className="parameter-card-list">
           {parameters.map((parameter, index) => (
