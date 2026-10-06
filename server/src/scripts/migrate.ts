@@ -54,8 +54,18 @@ async function main() {
     await transaction.begin();
 
     try {
-      for (const batch of splitBatches(script)) {
-        await new sql.Request(transaction).batch(batch);
+      const batches = splitBatches(script);
+
+      for (let index = 0; index < batches.length; index += 1) {
+        try {
+          await new sql.Request(transaction).batch(batches[index]);
+        } catch (error) {
+          logger.error(
+            { err: error, migration: file, batch: index + 1, batchCount: batches.length },
+            "Migration batch failed",
+          );
+          throw error;
+        }
       }
 
       await new sql.Request(transaction)
@@ -65,8 +75,17 @@ async function main() {
       await transaction.commit();
       logger.info({ migration: file }, "Migration applied");
     } catch (error) {
-      await transaction.rollback();
       logger.error({ err: error, migration: file }, "Migration failed");
+
+      try {
+        await transaction.rollback();
+      } catch (rollbackError) {
+        logger.warn(
+          { err: rollbackError, migration: file },
+          "Migration rollback was not required or could not be completed",
+        );
+      }
+
       throw error;
     }
   }
