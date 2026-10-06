@@ -25,7 +25,8 @@
     "zod": "^3.23.8",
     "exceljs": "^4.4.0",
     "mysql2": "^3.15.3",
-    "pg": "^8.16.3"
+    "pg": "^8.16.3",
+    "odbc": "^2.6.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
