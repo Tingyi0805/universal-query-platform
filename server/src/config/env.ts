@@ -25,6 +25,7 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
 
   PLATFORM_DB_SERVER: optionalString,
+  PLATFORM_DB_PORT: z.coerce.number().int().min(1).max(65535).default(1433),
   PLATFORM_DB_DATABASE: optionalString,
   PLATFORM_DB_USER: optionalString,
   PLATFORM_DB_PASSWORD: optionalString,
