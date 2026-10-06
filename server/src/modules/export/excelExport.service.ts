@@ -24,6 +24,34 @@ function aggregateValue(
   return null;
 }
 
+function compareGroupValue(a: unknown, b: unknown): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return -1;
+  if (b == null) return 1;
+
+  const aNumber = Number(a);
+  const bNumber = Number(b);
+  if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) return aNumber - bNumber;
+
+  return String(a).localeCompare(String(b), "zh-Hant", { numeric: true });
+}
+
+function sortedRowsForGroups(
+  rows: Record<string, unknown>[],
+  groupColumns: ReportColumnRecord[],
+): Record<string, unknown>[] {
+  return rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      for (const column of groupColumns) {
+        const compared = compareGroupValue(a.row[column.columnName], b.row[column.columnName]);
+        if (compared !== 0) return compared;
+      }
+      return a.index - b.index;
+    })
+    .map((item) => item.row);
+}
+
 export async function createQueryExcel(
   title: string,
   result: QueryResult,
@@ -63,10 +91,83 @@ export async function createQueryExcel(
     width: column.width ? Math.max(8, Math.min(80, Math.round(column.width / 8))) : 14,
   }));
 
-  for (const row of result.rows) {
+  const groupColumns = columns
+    .filter((column) => column.groupOrder !== null)
+    .sort((a, b) =>
+      (a.groupOrder ?? Number.MAX_SAFE_INTEGER) - (b.groupOrder ?? Number.MAX_SAFE_INTEGER)
+      || a.displayOrder - b.displayOrder
+    );
+
+  const addDataRow = (row: Record<string, unknown>, outlineLevel = 0) => {
     const output: Record<string, unknown> = {};
     for (const column of columns) output[column.columnName] = row[column.columnName];
-    worksheet.addRow(output);
+    const excelRow = worksheet.addRow(output);
+    excelRow.outlineLevel = Math.min(outlineLevel, 7);
+    return excelRow;
+  };
+
+  const addSubtotalRow = (
+    label: string,
+    rows: Record<string, unknown>[],
+    outlineLevel: number,
+  ) => {
+    const summary = worksheet.addRow({});
+    summary.font = { bold: true };
+    summary.outlineLevel = Math.min(outlineLevel, 7);
+
+    columns.forEach((column, index) => {
+      const cell = summary.getCell(index + 1);
+      if (index === 0 && column.aggregateType === "NONE") cell.value = label;
+
+      if (column.aggregateType !== "NONE") {
+        cell.value = aggregateValue(
+          column.aggregateType,
+          rows.map((row) => row[column.columnName]),
+        ) as any;
+        if (column.displayFormat) cell.numFmt = column.displayFormat;
+      }
+    });
+  };
+
+  if (groupColumns.length === 0) {
+    for (const row of result.rows) addDataRow(row);
+  } else {
+    const sortedRows = sortedRowsForGroups(result.rows, groupColumns);
+
+    const appendGroupLevel = (
+      level: number,
+      levelRows: Record<string, unknown>[],
+    ) => {
+      if (level >= groupColumns.length) {
+        for (const row of levelRows) addDataRow(row, groupColumns.length);
+        return;
+      }
+
+      const column = groupColumns[level];
+      const groups = new Map<string, { label: string; rows: Record<string, unknown>[] }>();
+
+      for (const row of levelRows) {
+        const raw = row[column.columnName];
+        const label = raw == null || raw === "" ? "（空白）" : String(raw);
+        const key = raw == null ? "__NULL__" : String(raw);
+        const existing = groups.get(key);
+        if (existing) existing.rows.push(row);
+        else groups.set(key, { label, rows: [row] });
+      }
+
+      for (const group of groups.values()) {
+        const heading = worksheet.addRow({});
+        heading.font = { bold: true };
+        heading.outlineLevel = Math.min(level, 7);
+        heading.getCell(1).value = `${column.displayLabel}：${group.label}（${group.rows.length} 筆）`;
+        if (columns.length > 1) worksheet.mergeCells(heading.number, 1, heading.number, columns.length);
+
+        appendGroupLevel(level + 1, group.rows);
+        addSubtotalRow(`${group.label} 小計`, group.rows, level);
+      }
+    };
+
+    appendGroupLevel(0, sortedRows);
   }
 
   if (columns.length > 0 && result.rows.length > 0) {
@@ -77,6 +178,10 @@ export async function createQueryExcel(
   }
 
   worksheet.getRow(1).font = { bold: true };
+  worksheet.properties.outlineProperties = {
+    summaryBelow: true,
+    summaryRight: true,
+  };
 
   columns.forEach((column, index) => {
     const excelColumn = worksheet.getColumn(index + 1);
