@@ -37,6 +37,7 @@ const previewSchema = z.object({
   values: z.record(z.unknown()).default({}),
   maxRows: z.coerce.number().int().min(1).max(1000).default(100),
   queryTimeoutSec: z.coerce.number().int().min(1).max(300).nullable().optional().default(null),
+  datasetId: z.coerce.number().int().positive().optional(),
 });
 
 const parameterSchema = z.object({
@@ -107,9 +108,13 @@ datasetRouter.post("/preview/run", async (req, res, next) => {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "預覽參數格式不正確。" } });
       return;
     }
+    const result = await previewDataset(parsed.data);
+    if (parsed.data.datasetId) {
+      await syncDatasetColumns(parsed.data.datasetId, result.columns);
+    }
     res.json({
       parameterNames: extractParameterNames(parsed.data.sqlText),
-      result: await previewDataset(parsed.data),
+      result,
     });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("MISSING_QUERY_PARAMETER:")) {
@@ -142,7 +147,9 @@ datasetRouter.post("/:id/execute", async (req, res, next) => {
       return;
     }
 
-    res.json({ result: await executeSavedDataset(id.data, body.data.values, body.data.maxRows) });
+    const result = await executeSavedDataset(id.data, body.data.values, body.data.maxRows);
+    await syncDatasetColumns(id.data, result.columns);
+    res.json({ result });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PARAMETER_REQUIRED:")) {
       const name = error.message.split(":")[1];
