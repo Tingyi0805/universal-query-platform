@@ -4,8 +4,9 @@ import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./DataSourcesPage.css";
 
-type DataSourceType = "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
+type DataSourceType = "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL" | "ODBC";
 type OracleConnectionMode = "SERVICE_NAME" | "SID";
+type OdbcConnectionMode = "DSN" | "CONNECTION_STRING";
 
 type DataSourceRow = {
   id: number;
@@ -17,6 +18,8 @@ type DataSourceRow = {
   databaseName: string | null;
   oracleServiceName: string | null;
   oracleConnectionMode: OracleConnectionMode | null;
+  odbcConnectionMode: OdbcConnectionMode | null;
+  odbcDsn: string | null;
   username: string;
   connectionTimeoutSec: number;
   queryTimeoutSec: number;
@@ -24,11 +27,14 @@ type DataSourceRow = {
   trustServerCertificate: boolean;
   isActive: boolean;
   hasPassword: boolean;
+  hasOdbcConnectionString: boolean;
 };
 
-type FormState = Omit<DataSourceRow, "id" | "hasPassword"> & {
+type FormState = Omit<DataSourceRow, "id" | "hasPassword" | "hasOdbcConnectionString"> & {
   id?: number;
   password: string;
+  odbcConnectionString: string;
+  hasOdbcConnectionString?: boolean;
 };
 
 type ConnectionTestResult = {
@@ -51,6 +57,7 @@ function dataSourceTypeLabel(type: DataSourceType): string {
     case "ORACLE": return "Oracle";
     case "MYSQL": return "MySQL";
     case "POSTGRESQL": return "PostgreSQL";
+    case "ODBC": return "ODBC";
   }
 }
 
@@ -63,6 +70,9 @@ const emptyForm: FormState = {
   databaseName: "",
   oracleServiceName: "",
   oracleConnectionMode: "SERVICE_NAME",
+  odbcConnectionMode: "DSN",
+  odbcDsn: "",
+  odbcConnectionString: "",
   username: "",
   password: "",
   connectionTimeoutSec: 10,
@@ -101,6 +111,8 @@ export function DataSourcesPage() {
     setForm({
       ...row,
       password: "",
+      odbcConnectionString: "",
+      hasOdbcConnectionString: row.hasOdbcConnectionString,
     });
     setNotice("");
     setError("");
@@ -111,8 +123,9 @@ export function DataSourcesPage() {
     setForm({
       ...emptyForm,
       type,
-      port: type === "ORACLE" ? 1521 : type === "MYSQL" ? 3306 : type === "POSTGRESQL" ? 5432 : 1433,
+      port: type === "ODBC" ? 1 : type === "ORACLE" ? 1521 : type === "MYSQL" ? 3306 : type === "POSTGRESQL" ? 5432 : 1433,
       oracleConnectionMode: type === "ORACLE" ? "SERVICE_NAME" : null,
+      odbcConnectionMode: type === "ODBC" ? "DSN" : null,
     });
     setError("");
     setNotice("");
@@ -123,12 +136,15 @@ export function DataSourcesPage() {
     setForm((current) => ({
       ...current,
       type,
-      port: type === "ORACLE" ? 1521 : type === "MYSQL" ? 3306 : type === "POSTGRESQL" ? 5432 : 1433,
-      databaseName: type === "ORACLE" ? null : current.databaseName,
+      port: type === "ODBC" ? 1 : type === "ORACLE" ? 1521 : type === "MYSQL" ? 3306 : type === "POSTGRESQL" ? 5432 : 1433,
+      databaseName: type === "ORACLE" || type === "ODBC" ? null : current.databaseName,
       oracleServiceName: type === "ORACLE" ? current.oracleServiceName : null,
       oracleConnectionMode: type === "ORACLE" ? (current.oracleConnectionMode ?? "SERVICE_NAME") : null,
-      encryptConnection: type === "ORACLE" ? false : current.encryptConnection,
-      trustServerCertificate: type === "ORACLE" ? true : current.trustServerCertificate,
+      odbcConnectionMode: type === "ODBC" ? (current.odbcConnectionMode ?? "DSN") : null,
+      odbcDsn: type === "ODBC" ? current.odbcDsn : null,
+      odbcConnectionString: type === "ODBC" ? current.odbcConnectionString : "",
+      encryptConnection: type === "ORACLE" || type === "ODBC" ? false : current.encryptConnection,
+      trustServerCertificate: type === "ORACLE" || type === "ODBC" ? true : current.trustServerCertificate,
     }));
   }
 
@@ -136,17 +152,22 @@ export function DataSourcesPage() {
     code: form.code.trim().toUpperCase(),
     name: form.name.trim(),
     type: form.type,
-    host: form.host.trim(),
-    port: Number(form.port),
-    databaseName: form.type === "ORACLE" ? null : (form.databaseName?.trim() || null),
+    host: form.type === "ODBC" ? "ODBC" : form.host.trim(),
+    port: form.type === "ODBC" ? 1 : Number(form.port),
+    databaseName: form.type === "ORACLE" || form.type === "ODBC" ? null : (form.databaseName?.trim() || null),
     oracleServiceName: form.type === "ORACLE" ? (form.oracleServiceName?.trim() || null) : null,
     oracleConnectionMode: form.type === "ORACLE" ? form.oracleConnectionMode : null,
+    odbcConnectionMode: form.type === "ODBC" ? form.odbcConnectionMode : null,
+    odbcDsn: form.type === "ODBC" && form.odbcConnectionMode === "DSN" ? (form.odbcDsn?.trim() || null) : null,
+    ...(form.type === "ODBC" && form.odbcConnectionMode === "CONNECTION_STRING" && form.odbcConnectionString.trim()
+      ? { odbcConnectionString: form.odbcConnectionString.trim() }
+      : {}),
     username: form.username.trim(),
     ...(form.password ? { password: form.password } : {}),
     connectionTimeoutSec: Number(form.connectionTimeoutSec),
     queryTimeoutSec: Number(form.queryTimeoutSec),
-    encryptConnection: form.type === "ORACLE" ? false : form.encryptConnection,
-    trustServerCertificate: form.type === "ORACLE" ? true : form.trustServerCertificate,
+    encryptConnection: form.type === "ORACLE" || form.type === "ODBC" ? false : form.encryptConnection,
+    trustServerCertificate: form.type === "ORACLE" || form.type === "ODBC" ? true : form.trustServerCertificate,
     isActive: form.isActive,
   });
 
@@ -163,8 +184,12 @@ export function DataSourcesPage() {
         }, accessToken);
         setNotice("資料來源已更新。");
       } else {
-        if (!form.password) {
+        if (form.type !== "ODBC" && !form.password) {
           setError("新增資料來源時密碼必填。");
+          return;
+        }
+        if (form.type === "ODBC" && form.odbcConnectionMode === "CONNECTION_STRING" && !form.odbcConnectionString.trim()) {
+          setError("新增 ODBC Connection String 模式時連線字串必填。");
           return;
         }
         await apiRequest("/datasources", {
@@ -247,7 +272,7 @@ export function DataSourcesPage() {
         <div>
           <p className="eyebrow">DataSource Manager</p>
           <h1>資料來源管理</h1>
-          <p className="subtitle">集中管理查詢設計可使用的 SQL Server、Oracle、MySQL 與 PostgreSQL 連線。</p>
+          <p className="subtitle">集中管理查詢設計可使用的 SQL Server、Oracle、MySQL、PostgreSQL 與 ODBC 連線。</p>
         </div>
         <Link className="secondary-button link-button" to="/">返回首頁</Link>
       </div>
@@ -308,19 +333,57 @@ export function DataSourcesPage() {
                   <option value="ORACLE">Oracle</option>
                   <option value="MYSQL">MySQL</option>
                   <option value="POSTGRESQL">PostgreSQL</option>
+                  <option value="ODBC">ODBC（通用相容模式）</option>
                 </select>
               </label>
-              <label>Port
-                <input type="number" min={1} max={65535} value={form.port}
-                  onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} />
-              </label>
+              {form.type !== "ODBC" ? (
+                <label>Port
+                  <input type="number" min={1} max={65535} value={form.port}
+                    onChange={(e) => setForm({ ...form, port: Number(e.target.value) })} />
+                </label>
+              ) : (
+                <label>ODBC 模式
+                  <select value={form.odbcConnectionMode ?? "DSN"}
+                    onChange={(e) => setForm({
+                      ...form,
+                      odbcConnectionMode: e.target.value as OdbcConnectionMode,
+                    })}>
+                    <option value="DSN">DSN</option>
+                    <option value="CONNECTION_STRING">Connection String</option>
+                  </select>
+                </label>
+              )}
             </div>
 
-            <label>Host / IP
-              <input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
-            </label>
+            {form.type !== "ODBC" && (
+              <label>Host / IP
+                <input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
+              </label>
+            )}
 
-            {form.type === "ORACLE" ? (
+            {form.type === "ODBC" ? (
+              form.odbcConnectionMode === "DSN" ? (
+                <label>ODBC DSN
+                  <input
+                    value={form.odbcDsn ?? ""}
+                    placeholder="例如 HIS_DB"
+                    onChange={(e) => setForm({ ...form, odbcDsn: e.target.value })}
+                  />
+                </label>
+              ) : (
+                <label>ODBC Connection String
+                  <textarea
+                    rows={4}
+                    value={form.odbcConnectionString}
+                    placeholder={form.id && form.hasOdbcConnectionString
+                      ? "已設定；留白則保留原連線字串"
+                      : "Driver={...};Server=...;Database=...;"}
+                    onChange={(e) => setForm({ ...form, odbcConnectionString: e.target.value })}
+                  />
+                  <small>連線字串會加密儲存，讀取編輯頁時不回傳原始內容。</small>
+                </label>
+              )
+            ) : form.type === "ORACLE" ? (
               <div className="form-grid two">
                 <label>連線模式
                   <select value={form.oracleConnectionMode ?? "SERVICE_NAME"}
@@ -352,16 +415,18 @@ export function DataSourcesPage() {
               </>
             )}
 
-            <div className="form-grid two">
-              <label>Username
-                <input autoComplete="off" value={form.username}
-                  onChange={(e) => setForm({ ...form, username: e.target.value })} />
-              </label>
-              <label>Password {form.id && <small>（留白則保留原密碼）</small>}
-                <input type="password" autoComplete="new-password" value={form.password}
-                  onChange={(e) => setForm({ ...form, password: e.target.value })} />
-              </label>
-            </div>
+            {!(form.type === "ODBC" && form.odbcConnectionMode === "CONNECTION_STRING") && (
+              <div className="form-grid two">
+                <label>Username {form.type === "ODBC" && <small>（可選，視 DSN 驗證方式）</small>}
+                  <input autoComplete="off" value={form.username}
+                    onChange={(e) => setForm({ ...form, username: e.target.value })} />
+                </label>
+                <label>Password {form.id && <small>（留白則保留原密碼）</small>}
+                  <input type="password" autoComplete="new-password" value={form.password}
+                    onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                </label>
+              </div>
+            )}
 
             <div className="form-grid two">
               <label>Connection Timeout（秒）
