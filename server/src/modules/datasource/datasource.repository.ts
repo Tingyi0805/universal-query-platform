@@ -20,6 +20,8 @@ function mapRow(row: any): DataSourceListItem {
     databaseName: row.DatabaseName ? String(row.DatabaseName) : null,
     oracleServiceName: row.OracleServiceName ? String(row.OracleServiceName) : null,
     oracleConnectionMode: row.OracleConnectionMode ?? null,
+    odbcConnectionMode: row.OdbcConnectionMode ?? null,
+    odbcDsn: row.OdbcDsn ? String(row.OdbcDsn) : null,
     username: String(row.Username),
     connectionTimeoutSec: Number(row.ConnectionTimeoutSec),
     queryTimeoutSec: Number(row.QueryTimeoutSec),
@@ -27,6 +29,7 @@ function mapRow(row: any): DataSourceListItem {
     trustServerCertificate: Boolean(row.TrustServerCertificate),
     isActive: Boolean(row.IsActive),
     hasPassword: Boolean(row.EncryptedPassword),
+    hasOdbcConnectionString: Boolean(row.EncryptedOdbcConnectionString),
   };
 }
 
@@ -34,7 +37,8 @@ export async function listDataSources(): Promise<DataSourceListItem[]> {
   const pool = await requirePool();
   const result = await pool.request().query(`
     SELECT Id, Code, Name, Type, Host, Port, DatabaseName, OracleServiceName,
-           OracleConnectionMode, Username, EncryptedPassword,
+           OracleConnectionMode, OdbcConnectionMode, OdbcDsn,
+           EncryptedOdbcConnectionString, Username, EncryptedPassword,
            ConnectionTimeoutSec, QueryTimeoutSec, EncryptConnection,
            TrustServerCertificate, IsActive
     FROM uqp.DataSource
@@ -56,6 +60,9 @@ export async function getDataSourceConfig(id: number): Promise<DataSourceConfig 
   return {
     ...mapRow(row),
     password: decryptSecret(String(row.EncryptedPassword)),
+    odbcConnectionString: row.EncryptedOdbcConnectionString
+      ? decryptSecret(String(row.EncryptedOdbcConnectionString))
+      : null,
   };
 }
 
@@ -70,6 +77,10 @@ export async function createDataSource(config: DataSourceConfig): Promise<number
     .input("databaseName", sql.NVarChar(255), config.databaseName)
     .input("oracleServiceName", sql.NVarChar(255), config.oracleServiceName)
     .input("oracleConnectionMode", sql.NVarChar(20), config.oracleConnectionMode)
+    .input("odbcConnectionMode", sql.NVarChar(30), config.odbcConnectionMode)
+    .input("odbcDsn", sql.NVarChar(255), config.odbcDsn)
+    .input("encryptedOdbcConnectionString", sql.NVarChar(4000),
+      config.odbcConnectionString ? encryptSecret(config.odbcConnectionString) : null)
     .input("username", sql.NVarChar(200), config.username)
     .input("encryptedPassword", sql.NVarChar(2000), encryptSecret(config.password))
     .input("connectionTimeoutSec", sql.Int, config.connectionTimeoutSec)
@@ -80,14 +91,16 @@ export async function createDataSource(config: DataSourceConfig): Promise<number
     .query(`
       INSERT INTO uqp.DataSource (
         Code, Name, Type, Host, Port, DatabaseName, OracleServiceName,
-        OracleConnectionMode, Username, EncryptedPassword,
+        OracleConnectionMode, OdbcConnectionMode, OdbcDsn,
+        EncryptedOdbcConnectionString, Username, EncryptedPassword,
         ConnectionTimeoutSec, QueryTimeoutSec, EncryptConnection,
         TrustServerCertificate, IsActive
       )
       OUTPUT INSERTED.Id
       VALUES (
         @code,@name,@type,@host,@port,@databaseName,@oracleServiceName,
-        @oracleConnectionMode,@username,@encryptedPassword,
+        @oracleConnectionMode,@odbcConnectionMode,@odbcDsn,
+        @encryptedOdbcConnectionString,@username,@encryptedPassword,
         @connectionTimeoutSec,@queryTimeoutSec,@encryptConnection,
         @trustServerCertificate,@isActive
       )
@@ -101,12 +114,18 @@ export async function updateDataSource(
 ): Promise<void> {
   const pool = await requirePool();
   const existing = await pool.request().input("id", sql.BigInt, id)
-    .query("SELECT EncryptedPassword FROM uqp.DataSource WHERE Id=@id");
+    .query("SELECT EncryptedPassword, EncryptedOdbcConnectionString FROM uqp.DataSource WHERE Id=@id");
   if (!existing.recordset[0]) throw new Error("DATASOURCE_NOT_FOUND");
 
   const encryptedPassword = input.password
     ? encryptSecret(input.password)
     : String(existing.recordset[0].EncryptedPassword);
+
+  const encryptedOdbcConnectionString = input.odbcConnectionString
+    ? encryptSecret(input.odbcConnectionString)
+    : existing.recordset[0].EncryptedOdbcConnectionString
+      ? String(existing.recordset[0].EncryptedOdbcConnectionString)
+      : null;
 
   await pool.request()
     .input("id", sql.BigInt, id)
@@ -118,6 +137,9 @@ export async function updateDataSource(
     .input("databaseName", sql.NVarChar(255), input.databaseName)
     .input("oracleServiceName", sql.NVarChar(255), input.oracleServiceName)
     .input("oracleConnectionMode", sql.NVarChar(20), input.oracleConnectionMode)
+    .input("odbcConnectionMode", sql.NVarChar(30), input.odbcConnectionMode)
+    .input("odbcDsn", sql.NVarChar(255), input.odbcDsn)
+    .input("encryptedOdbcConnectionString", sql.NVarChar(4000), encryptedOdbcConnectionString)
     .input("username", sql.NVarChar(200), input.username)
     .input("encryptedPassword", sql.NVarChar(2000), encryptedPassword)
     .input("connectionTimeoutSec", sql.Int, input.connectionTimeoutSec)
@@ -129,8 +151,10 @@ export async function updateDataSource(
       UPDATE uqp.DataSource SET
         Code=@code, Name=@name, Type=@type, Host=@host, Port=@port,
         DatabaseName=@databaseName, OracleServiceName=@oracleServiceName,
-        OracleConnectionMode=@oracleConnectionMode, Username=@username,
-        EncryptedPassword=@encryptedPassword,
+        OracleConnectionMode=@oracleConnectionMode,
+        OdbcConnectionMode=@odbcConnectionMode, OdbcDsn=@odbcDsn,
+        EncryptedOdbcConnectionString=@encryptedOdbcConnectionString,
+        Username=@username, EncryptedPassword=@encryptedPassword,
         ConnectionTimeoutSec=@connectionTimeoutSec, QueryTimeoutSec=@queryTimeoutSec,
         EncryptConnection=@encryptConnection,
         TrustServerCertificate=@trustServerCertificate,
