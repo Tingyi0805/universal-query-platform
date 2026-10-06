@@ -1,0 +1,70 @@
+.query-access-panel {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid #e3e9f1;
+}
+
+.query-access-panel .section-title p {
+  margin: 5px 0 0;
+  color: #728097;
+  font-size: 13px;
+}
+
+.access-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.access-columns h3 {
+  margin: 0 0 10px;
+}
+
+.access-list {
+  display: grid;
+  gap: 8px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 2px;
+}
+
+.access-row {
+  padding: 11px;
+  border: 1px solid #dde5f0;
+  border-radius: 10px;
+  background: #fbfcfe;
+}
+
+.access-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.access-name span,
+.access-name small {
+  display: block;
+}
+
+.access-name small {
+  margin-top: 2px;
+  color: #77849a;
+}
+
+.access-flags {
+  display: flex;
+  gap: 12px;
+  margin-top: 9px;
+  padding-left: 24px;
+}
+
+.access-flags label {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  font-size: 12px;
+}
+
+@media (max-width: 820px) {
+  .access-columns { grid-template-columns: 1fr; }
+}
