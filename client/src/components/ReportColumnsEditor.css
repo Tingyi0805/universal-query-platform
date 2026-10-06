@@ -87,3 +87,16 @@
 .report-column-table td:nth-child(10) select {
   min-width: 88px;
 }
+
+
+.report-column-table .alignment-select {
+  width: 84px !important;
+  min-width: 84px;
+  color: #172033;
+}
+
+.report-column-table .aggregate-select {
+  width: 96px !important;
+  min-width: 96px;
+  color: #172033;
+}
