@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express from "express";
 import helmet from "helmet";
@@ -33,7 +34,7 @@ app.use(
       const requestId =
         typeof incoming === "string" && incoming.trim()
           ? incoming.trim()
-          : crypto.randomUUID();
+          : randomUUID();
 
       res.setHeader("x-request-id", requestId);
       return requestId;
