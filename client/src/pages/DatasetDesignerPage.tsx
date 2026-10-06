@@ -151,10 +151,11 @@ export function DatasetDesignerPage() {
         }, accessToken);
         setNotice("Dataset 已更新。");
       } else {
-        await apiRequest("/datasets", {
+        const created = await apiRequest<{ id: number; parameterNames: string[] }>("/datasets", {
           method: "POST",
           body: JSON.stringify(payload()),
         }, accessToken);
+        setForm((current) => ({ ...current, id: created.id }));
         setNotice("Dataset 已建立。");
       }
 
