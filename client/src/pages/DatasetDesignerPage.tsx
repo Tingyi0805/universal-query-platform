@@ -168,6 +168,13 @@ export function DatasetDesignerPage() {
   }
 
   async function runPreview() {
+    const quotedParameter = form.sqlText.match(/'\s*\{\{([A-Z][A-Z0-9_]*)\}\}\s*'/);
+    if (quotedParameter?.[1]) {
+      setError(`參數 {{${quotedParameter[1]}}} 外面不可加單引號，請直接使用 {{${quotedParameter[1]}}}。`);
+      setNotice("");
+      return;
+    }
+
     setBusy(true);
     setError("");
     setNotice("");
@@ -332,6 +339,7 @@ export function DatasetDesignerPage() {
 
             <label className="sql-label">
               SQL（僅允許 SELECT / WITH）
+              <small className="field-hint">Bind Parameter 請直接寫 <code>{"{{PARAM}}"}</code>，不要寫成 <code>{"'{{PARAM}}'"}</code>。</small>
               <textarea spellCheck={false} value={form.sqlText}
                 onChange={(e) => setForm({ ...form, sqlText: e.target.value })} />
             </label>
