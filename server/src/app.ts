@@ -44,6 +44,7 @@ app.use(
 );
 
 app.use("/api/health", healthRouter);
+app.use("/api/system/status", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/audit", auditRouter);
