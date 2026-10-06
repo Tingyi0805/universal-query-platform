@@ -89,7 +89,7 @@ export function ReportColumnsEditor({ queryId }: { queryId: number }) {
       <div className="section-title">
         <div>
           <h2>Report Designer</h2>
-          <p>控制查詢結果與 Excel 的欄位呈現。</p>
+          <p>控制查詢結果與 Excel 的欄位呈現。群組填 1、2、3… 代表群組層級；留白表示不群組。</p>
         </div>
         <div className="report-actions">
           <button className="secondary-button" type="button" onClick={() => void load()}>重新讀取欄位</button>
@@ -147,7 +147,9 @@ export function ReportColumnsEditor({ queryId }: { queryId: number }) {
                       <option value="RIGHT">右</option>
                     </select>
                   </td>
-                  <td><input className="small-input" type="number" min={0} max={100} value={column.groupOrder ?? ""}
+                  <td><input className="small-input" type="number" min={1} max={100} placeholder="1"
+                    title="1 = 第一層群組，2 = 第二層群組；留白 = 不群組"
+                    value={column.groupOrder ?? ""}
                     onChange={(e) => update(index, { groupOrder: e.target.value === "" ? null : Number(e.target.value) })} /></td>
                   <td>
                     <select className="aggregate-select" value={column.aggregateType}
