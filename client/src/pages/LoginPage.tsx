@@ -59,10 +59,11 @@ export function LoginPage() {
           <p className="login-organization">{branding.organizationName}</p>
         )}
         <p className="eyebrow">{branding.platformName}</p>
-        <h1>{branding.platformTitle || "登入平台"}</h1>
-        <p className="login-hint">
-          {branding.platformSubtitle.trim() || "請使用已授權的平台帳號登入。"}
-        </p>
+        {branding.platformTitle.trim() && (
+          <p className="login-platform-title">{branding.platformTitle}</p>
+        )}
+        <h1>登入平台</h1>
+        <p className="login-hint">請使用已授權的平台帳號登入。</p>
 
         {bootstrapRequired && (
           <div className="notice">
