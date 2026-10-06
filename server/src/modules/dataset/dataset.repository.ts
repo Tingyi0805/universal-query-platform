@@ -79,25 +79,47 @@ export async function createDataset(input: DatasetInput): Promise<number> {
 
 export async function updateDataset(id: number, input: DatasetInput): Promise<void> {
   const pool = await requirePool();
-  const result = await pool.request()
-    .input("id", sql.BigInt, id)
-    .input("name", sql.NVarChar(200), input.name)
-    .input("description", sql.NVarChar(1000), input.description)
-    .input("dataSourceId", sql.BigInt, input.dataSourceId)
-    .input("sqlText", sql.NVarChar(sql.MAX), input.sqlText)
-    .input("maxRows", sql.Int, input.maxRows)
-    .input("queryTimeoutSec", sql.Int, input.queryTimeoutSec)
-    .input("isActive", sql.Bit, input.isActive)
-    .query(`
-      UPDATE uqp.Dataset SET
-        Name=@name, Description=@description, DataSourceId=@dataSourceId,
-        SqlText=@sqlText, MaxRows=@maxRows, QueryTimeoutSec=@queryTimeoutSec,
-        IsActive=@isActive, UpdatedAtUtc=SYSUTCDATETIME()
-      WHERE Id=@id;
-      SELECT @@ROWCOUNT AS Affected;
-    `);
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
-    throw new Error("DATASET_NOT_FOUND");
+  const tx = new sql.Transaction(pool);
+  await tx.begin();
+
+  try {
+    const result = await new sql.Request(tx)
+      .input("id", sql.BigInt, id)
+      .input("name", sql.NVarChar(200), input.name)
+      .input("description", sql.NVarChar(1000), input.description)
+      .input("dataSourceId", sql.BigInt, input.dataSourceId)
+      .input("sqlText", sql.NVarChar(sql.MAX), input.sqlText)
+      .input("maxRows", sql.Int, input.maxRows)
+      .input("queryTimeoutSec", sql.Int, input.queryTimeoutSec)
+      .input("isActive", sql.Bit, input.isActive)
+      .query(`
+        UPDATE uqp.Dataset SET
+          Name=@name, Description=@description, DataSourceId=@dataSourceId,
+          SqlText=@sqlText, MaxRows=@maxRows, QueryTimeoutSec=@queryTimeoutSec,
+          IsActive=@isActive, UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE Id=@id;
+        SELECT @@ROWCOUNT AS Affected;
+      `);
+
+    if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+      throw new Error("DATASET_NOT_FOUND");
+    }
+
+    await new sql.Request(tx)
+      .input("datasetId", sql.BigInt, id)
+      .query(`
+        UPDATE uqp.QueryDefinition
+        SET IsPublished=0,
+            PublishedAtUtc=NULL,
+            PublishedByUserId=NULL,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE DatasetId=@datasetId AND IsPublished=1
+      `);
+
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
   }
 }
 
