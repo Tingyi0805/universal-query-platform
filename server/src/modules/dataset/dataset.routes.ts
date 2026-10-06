@@ -37,7 +37,7 @@ const previewSchema = z.object({
   dataSourceId: z.coerce.number().int().positive(),
   sqlText: z.string().trim().min(1).max(200000),
   values: z.record(z.unknown()).default({}),
-  maxRows: z.coerce.number().int().min(1).max(1000).default(100),
+  maxRows: z.coerce.number().int().min(1).max(10000).default(100),
   queryTimeoutSec: z.coerce.number().int().min(1).max(300).nullable().optional().default(null),
   datasetId: z.coerce.number().int().positive().optional(),
 });
