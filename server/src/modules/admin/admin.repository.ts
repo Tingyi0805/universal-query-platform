@@ -249,3 +249,100 @@ export async function updateRole(roleId: number, input: { name: string; descript
     await tx.commit();
   } catch (error) { await tx.rollback(); throw error; }
 }
+
+
+export async function getUserDeleteImpact(userId: number) {
+  const pool = await requirePool();
+  const result = await pool.request().input("userId", sql.BigInt, userId).query(`
+    SELECT
+      CASE WHEN EXISTS (SELECT 1 FROM uqp.AppUser WHERE Id=@userId) THEN 1 ELSE 0 END AS ExistsFlag,
+      (SELECT COUNT(1) FROM uqp.AuditLog WHERE UserId=@userId) AS AuditLogCount,
+      (SELECT COUNT(1) FROM uqp.QueryDefinition WHERE PublishedByUserId=@userId) AS PublishedQueryCount,
+      (SELECT COUNT(1) FROM uqp.UserQueryAccess WHERE UserId=@userId) AS UserQueryAccessCount,
+      (SELECT COUNT(1) FROM uqp.UserRole WHERE UserId=@userId) AS UserRoleCount
+  `);
+
+  const row = result.recordset[0];
+  if (!row || !Boolean(row.ExistsFlag)) throw new Error("USER_NOT_FOUND");
+
+  const auditLogCount = Number(row.AuditLogCount ?? 0);
+  const publishedQueryCount = Number(row.PublishedQueryCount ?? 0);
+  const userQueryAccessCount = Number(row.UserQueryAccessCount ?? 0);
+  const userRoleCount = Number(row.UserRoleCount ?? 0);
+
+  return {
+    canDelete: auditLogCount === 0 && publishedQueryCount === 0,
+    auditLogCount,
+    publishedQueryCount,
+    userQueryAccessCount,
+    userRoleCount,
+  };
+}
+
+export async function deleteUser(userId: number): Promise<void> {
+  const pool = await requirePool();
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+  try {
+    const current = await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .query(`
+        SELECT u.Id,
+          CASE WHEN EXISTS (
+            SELECT 1
+            FROM uqp.UserRole ur
+            INNER JOIN uqp.Role r ON r.Id=ur.RoleId
+            WHERE ur.UserId=u.Id AND r.Code='SYSTEM_ADMIN'
+          ) THEN 1 ELSE 0 END AS IsSystemAdmin
+        FROM uqp.AppUser u WITH (UPDLOCK, HOLDLOCK)
+        WHERE u.Id=@userId
+      `);
+
+    if (!current.recordset[0]) throw new Error("USER_NOT_FOUND");
+
+    if (Boolean(current.recordset[0].IsSystemAdmin)) {
+      const admins = await new sql.Request(tx).query(`
+        SELECT COUNT(DISTINCT u.Id) AS Cnt
+        FROM uqp.AppUser u
+        INNER JOIN uqp.UserRole ur ON ur.UserId=u.Id
+        INNER JOIN uqp.Role r ON r.Id=ur.RoleId
+        WHERE u.IsActive=1 AND r.Code='SYSTEM_ADMIN'
+      `);
+      if (Number(admins.recordset[0]?.Cnt ?? 0) <= 1) {
+        throw new Error("LAST_SYSTEM_ADMIN");
+      }
+    }
+
+    const history = await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .query(`
+        SELECT
+          (SELECT COUNT(1) FROM uqp.AuditLog WHERE UserId=@userId) AS AuditLogCount,
+          (SELECT COUNT(1) FROM uqp.QueryDefinition WHERE PublishedByUserId=@userId) AS PublishedQueryCount
+      `);
+
+    const auditLogCount = Number(history.recordset[0]?.AuditLogCount ?? 0);
+    const publishedQueryCount = Number(history.recordset[0]?.PublishedQueryCount ?? 0);
+    if (auditLogCount > 0 || publishedQueryCount > 0) {
+      throw new Error("USER_HAS_HISTORY");
+    }
+
+    await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .query("DELETE FROM uqp.UserQueryAccess WHERE UserId=@userId");
+
+    await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .query("DELETE FROM uqp.UserRole WHERE UserId=@userId");
+
+    await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .query("DELETE FROM uqp.AppUser WHERE Id=@userId");
+
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
