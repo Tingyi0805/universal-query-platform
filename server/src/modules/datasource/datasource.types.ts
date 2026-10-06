@@ -1,4 +1,4 @@
-export type DataSourceType = "SQLSERVER" | "ORACLE";
+export type DataSourceType = "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
 export type OracleConnectionMode = "SERVICE_NAME" | "SID";
 
 export type DataSourceConfig = {
