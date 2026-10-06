@@ -95,3 +95,27 @@ test("expands repeated PostgreSQL parameters by occurrence", () => {
   assert.equal(result.sql, "SELECT * FROM T WHERE A=$1 OR B=$2");
   assert.deepEqual(result.bindValues, [5, 5]);
 });
+
+
+test("compiles ODBC positional bind parameters", () => {
+  const result = compileQuery(
+    "SELECT * FROM T WHERE A={{A}} AND B IN ({{B}})",
+    "ODBC",
+    { A: 1, B: ["x", "y"] },
+  );
+
+  assert.equal(result.sql, "SELECT * FROM T WHERE A=? AND B IN (?, ?)");
+  assert.deepEqual(result.binds, {});
+  assert.deepEqual(result.bindValues, [1, "x", "y"]);
+});
+
+test("repeats ODBC values for repeated parameter tokens", () => {
+  const result = compileQuery(
+    "SELECT * FROM T WHERE A={{A}} OR B={{A}}",
+    "ODBC",
+    { A: 5 },
+  );
+
+  assert.equal(result.sql, "SELECT * FROM T WHERE A=? OR B=?");
+  assert.deepEqual(result.bindValues, [5, 5]);
+});
