@@ -68,3 +68,101 @@
 @media (max-width: 820px) {
   .access-columns { grid-template-columns: 1fr; }
 }
+
+
+.access-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.access-heading h3 {
+  margin: 0;
+}
+
+.access-heading span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef3f8;
+  color: #66748a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.user-access-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.user-access-search input {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #cbd6e5;
+  border-radius: 8px;
+}
+
+.user-search-results {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  margin-bottom: 14px;
+  padding: 8px;
+  border: 1px solid #dde5f0;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.user-search-result,
+.selected-user-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.user-search-result span,
+.user-search-result small,
+.selected-user-title span,
+.selected-user-title small {
+  display: block;
+}
+
+.user-search-result small,
+.selected-user-title small {
+  margin-top: 2px;
+  color: #77849a;
+}
+
+.selected-user-access h4 {
+  margin: 14px 0 8px;
+}
+
+.selected-user-row .access-flags {
+  padding-left: 0;
+}
+
+.remove-access-button {
+  border: 0;
+  background: transparent;
+  color: #a33b3b;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.remove-access-button:hover {
+  text-decoration: underline;
+}
+
+.empty-access {
+  padding: 12px;
+  border: 1px dashed #ccd6e3;
+  border-radius: 10px;
+  color: #738098;
+  background: #fbfcfe;
+  font-size: 13px;
+}
