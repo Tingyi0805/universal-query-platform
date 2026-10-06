@@ -9,7 +9,7 @@ type DataSourceOption = {
   id: number;
   code: string;
   name: string;
-  type: "SQLSERVER" | "ORACLE";
+  type: "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
 };
 
 type DatasetRow = {
@@ -19,7 +19,7 @@ type DatasetRow = {
   description: string | null;
   dataSourceId: number;
   dataSourceName?: string;
-  dataSourceType?: "SQLSERVER" | "ORACLE";
+  dataSourceType?: "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
   sqlText: string;
   maxRows: number;
   queryTimeoutSec: number | null;
