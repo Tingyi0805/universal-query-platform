@@ -9,6 +9,8 @@ import { adminRouter } from "./modules/admin/admin.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { dataSourceRouter } from "./modules/datasource/datasource.routes.js";
 import { datasetRouter } from "./modules/dataset/dataset.routes.js";
+import { queryDefinitionRouter } from "./modules/queryDefinition/queryDefinition.routes.js";
+import { queryRuntimeRouter } from "./modules/queryDefinition/queryRuntime.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
 
 export const app = express();
@@ -43,6 +45,8 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/datasources", dataSourceRouter);
 app.use("/api/datasets", datasetRouter);
+app.use("/api/query-definitions", queryDefinitionRouter);
+app.use("/api/queries", queryRuntimeRouter);
 
 app.use((_req, res) => {
   res.status(404).json({
