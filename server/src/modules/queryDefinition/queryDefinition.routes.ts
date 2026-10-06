@@ -24,7 +24,7 @@ const definitionSchema = z.object({
   code: z.string().trim().min(2).max(100).regex(/^[A-Z0-9_]+$/),
   name: z.string().trim().min(1).max(200),
   description: z.string().trim().max(1000).nullable().optional().default(null),
-  category: z.string().trim().max(100).nullable().optional().default(null),
+  categoryId: z.coerce.number().int().positive().nullable().optional().default(null),
   icon: z.string().trim().min(1).max(100).default("Table2"),
   datasetId: z.coerce.number().int().positive(),
   sortOrder: z.coerce.number().int().min(-10000).max(10000).default(0),
