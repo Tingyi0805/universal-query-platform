@@ -14,7 +14,9 @@ function mapRow(row: any): QueryDefinitionRecord {
     code: String(row.Code),
     name: String(row.Name),
     description: row.Description == null ? null : String(row.Description),
-    category: row.Category == null ? null : String(row.Category),
+    categoryId: row.CategoryId == null ? null : Number(row.CategoryId),
+    category: row.CategoryName == null ? null : String(row.CategoryName),
+    categorySortOrder: Number(row.CategorySortOrder ?? 0),
     icon: String(row.Icon),
     datasetId: Number(row.DatasetId),
     datasetName: row.DatasetName == null ? undefined : String(row.DatasetName),
@@ -29,10 +31,13 @@ function mapRow(row: any): QueryDefinitionRecord {
 export async function listQueryDefinitions(): Promise<QueryDefinitionRecord[]> {
   const pool = await requirePool();
   const result = await pool.request().query(`
-    SELECT q.*, d.Name AS DatasetName
+    SELECT q.*, d.Name AS DatasetName,
+           c.Name AS CategoryName,
+           ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder
     FROM uqp.QueryDefinition q
     INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
-    ORDER BY q.SortOrder, q.Name
+    LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
+    ORDER BY ISNULL(c.SortOrder, 2147483647), c.Name, q.SortOrder, q.Name
   `);
   return result.recordset.map(mapRow);
 }
@@ -40,9 +45,12 @@ export async function listQueryDefinitions(): Promise<QueryDefinitionRecord[]> {
 export async function getQueryDefinition(id: number): Promise<QueryDefinitionRecord | null> {
   const pool = await requirePool();
   const result = await pool.request().input("id", sql.BigInt, id).query(`
-    SELECT q.*, d.Name AS DatasetName
+    SELECT q.*, d.Name AS DatasetName,
+           c.Name AS CategoryName,
+           ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder
     FROM uqp.QueryDefinition q
     INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
+    LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
     WHERE q.Id=@id
   `);
   return result.recordset[0] ? mapRow(result.recordset[0]) : null;
@@ -54,7 +62,7 @@ export async function createQueryDefinition(input: QueryDefinitionInput): Promis
     .input("code", sql.NVarChar(100), input.code)
     .input("name", sql.NVarChar(200), input.name)
     .input("description", sql.NVarChar(1000), input.description)
-    .input("category", sql.NVarChar(100), input.category)
+    .input("categoryId", sql.BigInt, input.categoryId)
     .input("icon", sql.NVarChar(100), input.icon)
     .input("datasetId", sql.BigInt, input.datasetId)
     .input("sortOrder", sql.Int, input.sortOrder)
@@ -62,12 +70,12 @@ export async function createQueryDefinition(input: QueryDefinitionInput): Promis
     .input("isActive", sql.Bit, input.isActive)
     .query(`
       INSERT INTO uqp.QueryDefinition (
-        Code, Name, Description, Category, Icon, DatasetId,
+        Code, Name, Description, CategoryId, Icon, DatasetId,
         SortOrder, AllowExcelExport, IsActive
       )
       OUTPUT INSERTED.Id
       VALUES (
-        @code,@name,@description,@category,@icon,@datasetId,
+        @code,@name,@description,@categoryId,@icon,@datasetId,
         @sortOrder,@allowExcelExport,@isActive
       )
     `);
@@ -84,7 +92,7 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
       .input("id", sql.BigInt, id)
       .query(`
         SELECT TOP (1)
-          Name, Description, Category, Icon, DatasetId,
+          Name, Description, CategoryId, Icon, DatasetId,
           SortOrder, AllowExcelExport, IsActive, IsPublished
         FROM uqp.QueryDefinition WITH (UPDLOCK, HOLDLOCK)
         WHERE Id=@id
@@ -96,7 +104,7 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
     const changed =
       String(current.Name) !== input.name ||
       (current.Description == null ? null : String(current.Description)) !== input.description ||
-      (current.Category == null ? null : String(current.Category)) !== input.category ||
+      (current.CategoryId == null ? null : Number(current.CategoryId)) !== input.categoryId ||
       String(current.Icon) !== input.icon ||
       Number(current.DatasetId) !== input.datasetId ||
       Number(current.SortOrder) !== input.sortOrder ||
@@ -107,7 +115,7 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
       .input("id", sql.BigInt, id)
       .input("name", sql.NVarChar(200), input.name)
       .input("description", sql.NVarChar(1000), input.description)
-      .input("category", sql.NVarChar(100), input.category)
+      .input("categoryId", sql.BigInt, input.categoryId)
       .input("icon", sql.NVarChar(100), input.icon)
       .input("datasetId", sql.BigInt, input.datasetId)
       .input("sortOrder", sql.Int, input.sortOrder)
@@ -118,7 +126,7 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
         UPDATE uqp.QueryDefinition SET
           Name=@name,
           Description=@description,
-          Category=@category,
+          CategoryId=@categoryId,
           Icon=@icon,
           DatasetId=@datasetId,
           SortOrder=@sortOrder,
@@ -198,8 +206,10 @@ export async function listAccessibleQueries(userId: number) {
       FROM uqp.UserQueryAccess
       WHERE UserId=@userId
     )
-    SELECT q.Id, q.Code, q.Name, q.Description, q.Category, q.Icon,
-           q.DatasetId, q.SortOrder, q.AllowExcelExport, q.IsPublished,
+    SELECT q.Id, q.Code, q.Name, q.Description, q.CategoryId,
+           c.Name AS CategoryName,
+           ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder,
+           q.Icon, q.DatasetId, q.SortOrder, q.AllowExcelExport, q.IsPublished,
            q.IsActive, q.PublishedAtUtc, d.Name AS DatasetName,
            CASE WHEN ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1 THEN 1 ELSE 0 END AS EffectiveCanView,
            CASE WHEN ISNULL(ra.CanExecute,0)=1 OR ISNULL(ua.CanExecute,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExecute,
@@ -207,11 +217,12 @@ export async function listAccessibleQueries(userId: number) {
     FROM uqp.QueryDefinition q
     INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId AND d.IsActive=1
     INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId AND s.IsActive=1
+    LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId AND c.IsActive=1
     LEFT JOIN RoleAccess ra ON ra.QueryDefinitionId=q.Id
     LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
     WHERE q.IsPublished=1 AND q.IsActive=1
       AND (ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1)
-    ORDER BY q.Category, q.SortOrder, q.Name
+    ORDER BY ISNULL(c.SortOrder, 2147483647), c.Name, q.SortOrder, q.Name
   `);
 
   return result.recordset.map((row) => ({
