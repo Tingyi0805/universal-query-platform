@@ -76,7 +76,8 @@
 }
 
 .datasource-form input,
-.datasource-form select {
+.datasource-form select,
+.datasource-form textarea {
   width: 100%;
   padding: 10px 11px;
   border: 1px solid #cbd6e5;
