@@ -6,6 +6,7 @@ import { useAuth } from "./auth/AuthContext";
 import { apiRequest } from "./api/client";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
+import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -57,6 +58,7 @@ function HomePage() {
 
         <div className="user-panel">
           <span>{user?.displayName}</span>
+          <Link className="secondary-button link-button" to="/account/password">變更密碼</Link>
           <button className="secondary-button" type="button" onClick={logout}>
             <LogOut size={16} />
             登出
@@ -102,6 +104,7 @@ export default function App() {
       <Route path="/setup" element={<SetupPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<HomePage />} />
+        <Route path="/account/password" element={<ChangePasswordPage />} />
         <Route
           path="/queries"
           element={<PermissionRoute permission="VIEW_QUERY"><QueryPortalPage /></PermissionRoute>}
