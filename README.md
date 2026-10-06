@@ -116,6 +116,7 @@ npm install
 
 ```env
 PLATFORM_DB_SERVER=your-sql-server
+PLATFORM_DB_PORT=1433
 PLATFORM_DB_DATABASE=UniversalQueryPlatform
 PLATFORM_DB_USER=your-user
 PLATFORM_DB_PASSWORD=your-password
