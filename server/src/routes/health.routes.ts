@@ -12,6 +12,7 @@ healthRouter.get("/", (_req, res) => {
     components: {
       platformDatabase: isPlatformDbConfigured() ? "CONFIGURED" : "NOT_CONFIGURED",
       authentication: isPlatformDbConfigured() && env.JWT_SECRET ? "CONFIGURED" : "NOT_CONFIGURED",
+      dataSourceEncryption: env.DATASOURCE_ENCRYPTION_KEY ? "CONFIGURED" : "NOT_CONFIGURED",
     },
   });
 });
