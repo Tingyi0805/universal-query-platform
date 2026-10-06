@@ -6,6 +6,7 @@ import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import { adminRouter } from "./modules/admin/admin.routes.js";
+import { auditRouter } from "./modules/audit/audit.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
 import { dataSourceRouter } from "./modules/datasource/datasource.routes.js";
 import { datasetRouter } from "./modules/dataset/dataset.routes.js";
@@ -43,6 +44,7 @@ app.use(
 app.use("/api/health", healthRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
+app.use("/api/audit", auditRouter);
 app.use("/api/datasources", dataSourceRouter);
 app.use("/api/datasets", datasetRouter);
 app.use("/api/query-definitions", queryDefinitionRouter);
