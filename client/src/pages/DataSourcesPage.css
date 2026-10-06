@@ -168,3 +168,84 @@
 @media (max-width: 640px) {
   .page-toolbar { flex-direction: column; }
 }
+
+
+.connection-diagnostics {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #d8e1ec;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.connection-diagnostics.success {
+  border-color: #bcdcc8;
+  background: #f4fbf7;
+}
+
+.connection-diagnostics.failure {
+  border-color: #edc4c9;
+  background: #fff7f7;
+}
+
+.diagnostics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.diagnostics-header span {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: white;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.connection-diagnostics dl {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 7px 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.connection-diagnostics dt {
+  color: #65738a;
+  font-weight: 700;
+}
+
+.connection-diagnostics dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.connection-diagnostics > p,
+.diagnostics-recommendation p {
+  margin: 0;
+  line-height: 1.65;
+}
+
+.diagnostics-recommendation {
+  padding: 11px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .72);
+}
+
+.diagnostics-recommendation strong {
+  display: block;
+  margin-bottom: 5px;
+}
+
+@media (max-width: 640px) {
+  .connection-diagnostics dl {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .connection-diagnostics dd {
+    margin-bottom: 7px;
+  }
+}
