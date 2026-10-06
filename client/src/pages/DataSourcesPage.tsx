@@ -4,7 +4,7 @@ import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./DataSourcesPage.css";
 
-type DataSourceType = "SQLSERVER" | "ORACLE";
+type DataSourceType = "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
 type OracleConnectionMode = "SERVICE_NAME" | "SID";
 
 type DataSourceRow = {
@@ -86,7 +86,7 @@ export function DataSourcesPage() {
     setForm({
       ...emptyForm,
       type,
-      port: type === "ORACLE" ? 1521 : 1433,
+      port: type === "ORACLE" ? 1521 : type === "MYSQL" ? 3306 : type === "POSTGRESQL" ? 5432 : 1433,
       oracleConnectionMode: type === "ORACLE" ? "SERVICE_NAME" : null,
     });
     setError("");
@@ -97,12 +97,12 @@ export function DataSourcesPage() {
     setForm((current) => ({
       ...current,
       type,
-      port: type === "ORACLE" ? 1521 : 1433,
-      databaseName: type === "SQLSERVER" ? current.databaseName : null,
+      port: type === "ORACLE" ? 1521 : type === "MYSQL" ? 3306 : type === "POSTGRESQL" ? 5432 : 1433,
+      databaseName: type === "ORACLE" ? null : current.databaseName,
       oracleServiceName: type === "ORACLE" ? current.oracleServiceName : null,
       oracleConnectionMode: type === "ORACLE" ? (current.oracleConnectionMode ?? "SERVICE_NAME") : null,
-      encryptConnection: type === "SQLSERVER" ? current.encryptConnection : false,
-      trustServerCertificate: type === "SQLSERVER" ? current.trustServerCertificate : true,
+      encryptConnection: type === "ORACLE" ? false : current.encryptConnection,
+      trustServerCertificate: type === "ORACLE" ? true : current.trustServerCertificate,
     }));
   }
 
@@ -112,15 +112,15 @@ export function DataSourcesPage() {
     type: form.type,
     host: form.host.trim(),
     port: Number(form.port),
-    databaseName: form.type === "SQLSERVER" ? (form.databaseName?.trim() || null) : null,
+    databaseName: form.type === "ORACLE" ? null : (form.databaseName?.trim() || null),
     oracleServiceName: form.type === "ORACLE" ? (form.oracleServiceName?.trim() || null) : null,
     oracleConnectionMode: form.type === "ORACLE" ? form.oracleConnectionMode : null,
     username: form.username.trim(),
     ...(form.password ? { password: form.password } : {}),
     connectionTimeoutSec: Number(form.connectionTimeoutSec),
     queryTimeoutSec: Number(form.queryTimeoutSec),
-    encryptConnection: form.type === "SQLSERVER" ? form.encryptConnection : false,
-    trustServerCertificate: form.type === "SQLSERVER" ? form.trustServerCertificate : true,
+    encryptConnection: form.type === "ORACLE" ? false : form.encryptConnection,
+    trustServerCertificate: form.type === "ORACLE" ? true : form.trustServerCertificate,
     isActive: form.isActive,
   });
 
@@ -215,7 +215,7 @@ export function DataSourcesPage() {
         <div>
           <p className="eyebrow">DataSource Manager</p>
           <h1>資料來源管理</h1>
-          <p className="subtitle">集中管理 Query Designer 可使用的 SQL Server 與 Oracle 連線。</p>
+          <p className="subtitle">集中管理查詢設計可使用的 SQL Server、Oracle、MySQL 與 PostgreSQL 連線。</p>
         </div>
         <Link className="secondary-button link-button" to="/">返回首頁</Link>
       </div>
@@ -241,7 +241,11 @@ export function DataSourcesPage() {
                 <small>{row.code}</small>
               </div>
               <div className="datasource-meta">
-                <span>{row.type === "SQLSERVER" ? "SQL Server" : "Oracle"}</span>
+                <span>{
+                  row.type === "SQLSERVER" ? "SQL Server" :
+                  row.type === "ORACLE" ? "Oracle" :
+                  row.type === "MYSQL" ? "MySQL" : "PostgreSQL"
+                }</span>
                 <span className={row.isActive ? "state-ok" : "state-off"}>
                   {row.isActive ? "啟用" : "停用"}
                 </span>
@@ -274,6 +278,8 @@ export function DataSourcesPage() {
                 <select value={form.type} onChange={(e) => changeType(e.target.value as DataSourceType)}>
                   <option value="SQLSERVER">SQL Server</option>
                   <option value="ORACLE">Oracle</option>
+                  <option value="MYSQL">MySQL</option>
+                  <option value="POSTGRESQL">PostgreSQL</option>
                 </select>
               </label>
               <label>Port
@@ -286,19 +292,7 @@ export function DataSourcesPage() {
               <input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
             </label>
 
-            {form.type === "SQLSERVER" ? (
-              <>
-                <label>Database
-                  <input value={form.databaseName ?? ""} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
-                </label>
-                <div className="check-row">
-                  <label><input type="checkbox" checked={form.encryptConnection}
-                    onChange={(e) => setForm({ ...form, encryptConnection: e.target.checked })} /> Encrypt connection</label>
-                  <label><input type="checkbox" checked={form.trustServerCertificate}
-                    onChange={(e) => setForm({ ...form, trustServerCertificate: e.target.checked })} /> Trust server certificate</label>
-                </div>
-              </>
-            ) : (
+            {form.type === "ORACLE" ? (
               <div className="form-grid two">
                 <label>連線模式
                   <select value={form.oracleConnectionMode ?? "SERVICE_NAME"}
@@ -312,6 +306,22 @@ export function DataSourcesPage() {
                     onChange={(e) => setForm({ ...form, oracleServiceName: e.target.value })} />
                 </label>
               </div>
+            ) : (
+              <>
+                <label>Database
+                  <input value={form.databaseName ?? ""} onChange={(e) => setForm({ ...form, databaseName: e.target.value })} />
+                </label>
+                <div className="check-row">
+                  <label><input type="checkbox" checked={form.encryptConnection}
+                    onChange={(e) => setForm({ ...form, encryptConnection: e.target.checked })} />
+                    {form.type === "SQLSERVER" ? "Encrypt connection" : "使用 SSL / TLS"}
+                  </label>
+                  <label><input type="checkbox" checked={form.trustServerCertificate}
+                    onChange={(e) => setForm({ ...form, trustServerCertificate: e.target.checked })} />
+                    {form.type === "SQLSERVER" ? "Trust server certificate" : "允許未受信任憑證"}
+                  </label>
+                </div>
+              </>
             )}
 
             <div className="form-grid two">
