@@ -64,7 +64,7 @@ export class MySqlAdapter implements DataSourceAdapter {
 
         const columns = (fields as FieldPacket[]).map((field) => ({
           name: String(field.name),
-          dataType: field.typeName ? String(field.typeName) : undefined,
+          dataType: field.type == null ? undefined : `MYSQL_TYPE:${field.type}`,
         }));
 
         return {
