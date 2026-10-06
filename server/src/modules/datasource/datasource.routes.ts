@@ -125,6 +125,15 @@ dataSourceRouter.put("/:id", async (req, res, next) => {
       res.status(404).json({ error: { code: error.message, message: "找不到資料來源。" } });
       return;
     }
+    if (error instanceof Error && error.message === "ODBC_CONNECTION_STRING_REQUIRED") {
+      res.status(400).json({
+        error: {
+          code: error.message,
+          message: "ODBC Connection String 模式尚未設定連線字串。",
+        },
+      });
+      return;
+    }
     next(error);
   }
 });
