@@ -168,3 +168,85 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1.15; }
   .hero { flex-direction: column; }
   .module-grid { grid-template-columns: 1fr; }
 }
+
+
+.module-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  transition: transform .15s ease, border-color .15s ease;
+}
+
+.module-link:hover {
+  transform: translateY(-2px);
+  border-color: #c9d5e7;
+}
+
+.page-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.link-button {
+  text-decoration: none;
+}
+
+.primary-button,
+.danger-button {
+  border-radius: 10px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.primary-button {
+  border: 0;
+  background: #172033;
+  color: white;
+}
+
+.primary-button:disabled,
+.danger-button:disabled,
+.secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.danger-button {
+  border: 1px solid #efc8ce;
+  background: #fff3f4;
+  color: #9b2938;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.inline-check {
+  display: inline-flex !important;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 7px;
+  width: fit-content;
+}
+
+.inline-check input {
+  width: auto !important;
+}
+
+@media (max-width: 640px) {
+  .page-toolbar { flex-direction: column; }
+}
