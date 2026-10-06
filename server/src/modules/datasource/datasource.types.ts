@@ -24,8 +24,21 @@ export type DataSourceListItem = Omit<DataSourceConfig, "password"> & {
   hasPassword: boolean;
 };
 
+export type ConnectionCompatibilityStatus =
+  | "VERIFIED"
+  | "NEEDS_CONFIGURATION"
+  | "UNSUPPORTED"
+  | "UNKNOWN";
+
 export type ConnectionTestResult = {
   ok: boolean;
   message: string;
   serverVersion?: string;
+  driverName?: string;
+  driverVersion?: string;
+  driverMode?: string;
+  clientVersion?: string;
+  compatibilityStatus?: ConnectionCompatibilityStatus;
+  errorCode?: string;
+  recommendation?: string;
 };
