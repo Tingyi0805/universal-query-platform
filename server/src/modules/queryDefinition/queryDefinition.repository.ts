@@ -189,3 +189,17 @@ export async function getEffectiveQueryAccess(userId: number, queryId: number) {
   const queries = await listAccessibleQueries(userId);
   return queries.find((query) => query.id === queryId) ?? null;
 }
+
+
+export async function getQueryDefinitionDeleteImpact(id: number) {
+  const pool = await requirePool();
+  const result = await pool.request().input("id", sql.BigInt, id).query(`
+    SELECT
+      CASE WHEN EXISTS (SELECT 1 FROM uqp.QueryDefinition WHERE Id=@id) THEN 1 ELSE 0 END AS ExistsFlag,
+      (SELECT COUNT(1) FROM uqp.AuditLog WHERE QueryDefinitionId=@id) AS AuditCount
+  `);
+  const row = result.recordset[0];
+  if (!row || !Boolean(row.ExistsFlag)) throw new Error("QUERY_DEFINITION_NOT_FOUND");
+  const auditCount = Number(row.AuditCount ?? 0);
+  return { canDelete: auditCount === 0, auditCount };
+}
