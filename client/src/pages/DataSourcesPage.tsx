@@ -31,6 +31,19 @@ type FormState = Omit<DataSourceRow, "id" | "hasPassword"> & {
   password: string;
 };
 
+type ConnectionTestResult = {
+  ok: boolean;
+  message: string;
+  serverVersion?: string;
+  driverName?: string;
+  driverVersion?: string;
+  driverMode?: string;
+  clientVersion?: string;
+  compatibilityStatus?: "VERIFIED" | "NEEDS_CONFIGURATION" | "UNSUPPORTED" | "UNKNOWN";
+  errorCode?: string;
+  recommendation?: string;
+};
+
 function dataSourceTypeLabel(type: DataSourceType): string {
   switch (type) {
     case "SQLSERVER": return "SQL Server";
@@ -66,6 +79,7 @@ export function DataSourcesPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [connectionTest, setConnectionTest] = useState<ConnectionTestResult | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -89,6 +103,7 @@ export function DataSourcesPage() {
     });
     setNotice("");
     setError("");
+    setConnectionTest(null);
   }
 
   function resetForm(type: DataSourceType = "SQLSERVER") {
@@ -100,6 +115,7 @@ export function DataSourcesPage() {
     });
     setError("");
     setNotice("");
+    setConnectionTest(null);
   }
 
   function changeType(type: DataSourceType) {
@@ -168,8 +184,9 @@ export function DataSourcesPage() {
   async function testConnection() {
     setError("");
     setNotice("");
+    setConnectionTest(null);
     try {
-      let result: { ok: boolean; message: string; serverVersion?: string };
+      let result: ConnectionTestResult;
 
       if (form.id && !form.password) {
         result = await apiRequest(`/datasources/${form.id}/test`, { method: "POST" }, accessToken);
@@ -184,7 +201,12 @@ export function DataSourcesPage() {
         }, accessToken);
       }
 
-      setNotice(result.serverVersion ? `${result.message} ${result.serverVersion}` : result.message);
+      setConnectionTest(result);
+      if (result.ok) {
+        setNotice(result.message);
+      } else {
+        setError(result.message);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "測試連線失敗。");
     }
@@ -356,6 +378,33 @@ export function DataSourcesPage() {
                 onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
               啟用此資料來源
             </label>
+
+            {connectionTest && (
+              <section className={`connection-diagnostics ${connectionTest.ok ? "success" : "failure"}`}>
+                <div className="diagnostics-header">
+                  <strong>{connectionTest.ok ? "連線診斷：成功" : "連線診斷：失敗"}</strong>
+                  {connectionTest.compatibilityStatus && (
+                    <span>{connectionTest.compatibilityStatus === "VERIFIED" ? "已驗證可用" :
+                      connectionTest.compatibilityStatus === "NEEDS_CONFIGURATION" ? "需要調整設定" :
+                      connectionTest.compatibilityStatus === "UNSUPPORTED" ? "不支援" : "待確認"}</span>
+                  )}
+                </div>
+                <dl>
+                  {connectionTest.serverVersion && <><dt>Database Server</dt><dd>{connectionTest.serverVersion}</dd></>}
+                  {connectionTest.driverName && <><dt>Driver</dt><dd>{connectionTest.driverName}{connectionTest.driverVersion ? ` ${connectionTest.driverVersion}` : ""}</dd></>}
+                  {connectionTest.driverMode && <><dt>Driver Mode</dt><dd>{connectionTest.driverMode}</dd></>}
+                  {connectionTest.clientVersion && <><dt>Oracle Client</dt><dd>{connectionTest.clientVersion}</dd></>}
+                  {connectionTest.errorCode && <><dt>錯誤碼</dt><dd>{connectionTest.errorCode}</dd></>}
+                </dl>
+                <p>{connectionTest.message}</p>
+                {connectionTest.recommendation && (
+                  <div className="diagnostics-recommendation">
+                    <strong>建議處理方式</strong>
+                    <p>{connectionTest.recommendation}</p>
+                  </div>
+                )}
+              </section>
+            )}
 
             <div className="form-actions">
               <button className="primary-button" type="submit" disabled={saving}>{saving ? "儲存中…" : "儲存"}</button>
