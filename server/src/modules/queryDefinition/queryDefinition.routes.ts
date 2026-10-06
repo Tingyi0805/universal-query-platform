@@ -5,6 +5,7 @@ import {
   createQueryDefinition,
   deleteQueryDefinition,
   getQueryDefinition,
+  getQueryDefinitionDeleteImpact,
   listQueryDefinitions,
   publishQueryDefinition,
   unpublishQueryDefinition,
@@ -113,6 +114,23 @@ queryDefinitionRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req,
     }
     await updateQueryDefinition(id.data, parsed.data);
     res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "QUERY_DEFINITION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+queryDefinitionRouter.get("/:id/delete-impact", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
+      return;
+    }
+    res.json(await getQueryDefinitionDeleteImpact(id.data));
   } catch (error) {
     if (error instanceof Error && error.message === "QUERY_DEFINITION_NOT_FOUND") {
       res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
