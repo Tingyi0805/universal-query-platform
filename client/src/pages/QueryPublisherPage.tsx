@@ -1,5 +1,9 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import {
+  BarChart3, CalendarDays, ClipboardList, Database, FileSpreadsheet,
+  Hospital, MessageSquare, Search, Table2, Users,
+} from "lucide-react";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { QueryAccessEditor } from "../components/QueryAccessEditor";
@@ -51,7 +55,18 @@ const emptyForm: FormState = {
   isPublished: false,
 };
 
-const iconOptions = ["Table2","Search","Users","Hospital","CalendarDays","ClipboardList","BarChart3","FileSpreadsheet","Database","MessageSquare"];
+const iconOptions: { key: string; label: string; icon: ComponentType<{ size?: number }> }[] = [
+  { key: "Table2", label: "資料表", icon: Table2 },
+  { key: "Search", label: "搜尋", icon: Search },
+  { key: "Users", label: "使用者", icon: Users },
+  { key: "Hospital", label: "醫療", icon: Hospital },
+  { key: "CalendarDays", label: "日期", icon: CalendarDays },
+  { key: "ClipboardList", label: "清單", icon: ClipboardList },
+  { key: "BarChart3", label: "統計", icon: BarChart3 },
+  { key: "FileSpreadsheet", label: "報表", icon: FileSpreadsheet },
+  { key: "Database", label: "資料庫", icon: Database },
+  { key: "MessageSquare", label: "訊息", icon: MessageSquare },
+];
 
 export function QueryPublisherPage() {
   const { accessToken, hasPermission } = useAuth();
@@ -63,6 +78,11 @@ export function QueryPublisherPage() {
   const [loading, setLoading] = useState(true);
   const canPublish = hasPermission("PUBLISH_QUERY");
   const canManageAccess = hasPermission("MANAGE_USERS");
+  const categories = useMemo(
+    () => [...new Set(queries.map((query) => query.category?.trim()).filter((value): value is string => Boolean(value)))].sort(),
+    [queries],
+  );
+  const selectedIcon = iconOptions.find((item) => item.key === form.icon) ?? iconOptions[0];
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,6 +186,8 @@ export function QueryPublisherPage() {
     }
   }
 
+  const SelectedIcon = selectedIcon.icon;
+
   async function remove() {
     if (!form.id || !window.confirm(`確定刪除 Query「${form.name}」？`)) return;
     setError("");
@@ -233,14 +255,43 @@ export function QueryPublisherPage() {
 
             <div className="form-grid two">
               <label>分類
-                <input value={form.category} placeholder="例如：HIS、PACS、行政"
-                  onChange={(e) => setForm({ ...form, category: e.target.value })} />
+                <input
+                  list="query-category-options"
+                  value={form.category}
+                  placeholder="可選既有分類或直接輸入新分類"
+                  onChange={(e) => setForm({ ...form, category: e.target.value })}
+                />
+                <datalist id="query-category-options">
+                  {categories.map((category) => <option key={category} value={category} />)}
+                </datalist>
+                <small className="field-hint">可從既有分類選擇，也可直接輸入新分類。</small>
               </label>
-              <label>Icon
-                <select value={form.icon} onChange={(e) => setForm({ ...form, icon: e.target.value })}>
-                  {iconOptions.map((icon) => <option key={icon} value={icon}>{icon}</option>)}
-                </select>
-              </label>
+              <div className="icon-picker-field">
+                <span className="field-label">Icon</span>
+                <div className="icon-picker" role="radiogroup" aria-label="查詢圖示">
+                  {iconOptions.map(({ key, label, icon: Icon }) => (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`icon-option ${form.icon === key ? "selected" : ""}`}
+                      aria-pressed={form.icon === key}
+                      onClick={() => setForm({ ...form, icon: key })}
+                    >
+                      <Icon size={22} />
+                      <span>{label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="query-home-preview">
+              <span className="field-label">首頁預覽</span>
+              <div className="query-home-preview-card">
+                <div className="query-home-preview-icon"><SelectedIcon size={26} /></div>
+                <strong>{form.name.trim() || "查詢名稱"}</strong>
+                <p>{form.description.trim() || form.code.trim() || "查詢說明"}</p>
+              </div>
             </div>
 
             <div className="form-grid two">
