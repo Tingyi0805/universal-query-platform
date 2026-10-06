@@ -197,8 +197,12 @@ export async function updateRole(roleId: number, input: { name: string; descript
   try {
     const role = await new sql.Request(tx).input("roleId", sql.BigInt, roleId).query("SELECT Code, IsSystem FROM uqp.Role WHERE Id=@roleId");
     if (!role.recordset[0]) throw new Error("ROLE_NOT_FOUND");
-    if (Boolean(role.recordset[0].IsSystem) && String(role.recordset[0].Code)==="SYSTEM_ADMIN" && !input.isActive) {
-      throw new Error("SYSTEM_ROLE_PROTECTED");
+    if (Boolean(role.recordset[0].IsSystem) && String(role.recordset[0].Code) === "SYSTEM_ADMIN") {
+      if (!input.isActive) throw new Error("SYSTEM_ROLE_PROTECTED");
+
+      const allPermissions = await new sql.Request(tx)
+        .query("SELECT Code FROM uqp.Permission ORDER BY Code");
+      input.permissionCodes = allPermissions.recordset.map((row) => String(row.Code));
     }
 
     await new sql.Request(tx).input("roleId", sql.BigInt, roleId)
