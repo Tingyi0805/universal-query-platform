@@ -126,7 +126,7 @@ export function DatasetParametersEditor({
       <div className="section-title">
         <div>
           <h2>Parameter Designer</h2>
-          <p>SQL Token 會自動同步，不需手動新增或刪除。</p>
+          <p>SQL Token 會自動同步，不需手動新增或刪除。DATE 建議使用 YYYY-MM-DD；Bind Parameter 外面不要加單引號。</p>
         </div>
         <button className="secondary-button" type="button" onClick={() => void load()}>重新同步</button>
       </div>
@@ -179,8 +179,21 @@ export function DatasetParametersEditor({
                 </label>
 
                 <label>預設值
-                  <input value={parameter.defaultValue ?? ""}
-                    onChange={(e) => update(index, { defaultValue: e.target.value })} />
+                  <input
+                    type={
+                      parameter.dataType === "NUMBER" ? "number" :
+                      parameter.dataType === "DATE" ? "date" :
+                      parameter.dataType === "DATETIME" ? "datetime-local" :
+                      "text"
+                    }
+                    placeholder={
+                      parameter.dataType === "BOOLEAN" ? "true / false" :
+                      parameter.dataType === "DATE" ? "YYYY-MM-DD" :
+                      ""
+                    }
+                    value={parameter.defaultValue ?? ""}
+                    onChange={(e) => update(index, { defaultValue: e.target.value })}
+                  />
                 </label>
 
                 <label>Placeholder
