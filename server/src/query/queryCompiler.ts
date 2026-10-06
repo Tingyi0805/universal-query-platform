@@ -16,6 +16,9 @@ export function compileQuery(
   bindValues: unknown[];
   parameterNames: string[];
 } {
+  const quotedToken = sqlText.match(/'\s*\{\{([A-Z][A-Z0-9_]*)\}\}\s*'/);
+  if (quotedToken?.[1]) throw new Error(`QUOTED_QUERY_PARAMETER:${quotedToken[1]}`);
+
   const parameterNames = extractParameterNames(sqlText);
 
   for (const name of parameterNames) {
