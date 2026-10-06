@@ -13,6 +13,7 @@ export async function getPlatformDbPool(): Promise<sql.ConnectionPool | null> {
 
   pool = await new sql.ConnectionPool({
     server: env.PLATFORM_DB_SERVER!,
+    port: env.PLATFORM_DB_PORT,
     database: env.PLATFORM_DB_DATABASE!,
     user: env.PLATFORM_DB_USER!,
     password: env.PLATFORM_DB_PASSWORD!,
