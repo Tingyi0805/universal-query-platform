@@ -1,8 +1,9 @@
-import { BarChart3, ClipboardList, Database, FileCheck2, FileSpreadsheet, LogOut, PanelsTopLeft, ShieldCheck } from "lucide-react";
-import type { ReactNode } from "react";
+import { BarChart3, ClipboardList, Database, FileCheck2, FileSpreadsheet, LogOut, PanelsTopLeft, Settings, ShieldCheck } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { useAuth } from "./auth/AuthContext";
+import { apiRequest } from "./api/client";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
@@ -12,6 +13,7 @@ import { QueryPortalPage } from "./pages/QueryPortalPage";
 import { QueryPublisherPage } from "./pages/QueryPublisherPage";
 import { QueryRuntimePage } from "./pages/QueryRuntimePage";
 import { SetupPage } from "./pages/SetupPage";
+import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 
 const modules = [
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
@@ -21,19 +23,36 @@ const modules = [
   { title: "Excel 報表", description: "已授權查詢可匯出 Excel。", icon: FileSpreadsheet, permission: "EXPORT_QUERY", path: "/queries" },
   { title: "權限管理", description: "使用角色與使用者權限控制功能。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/users" },
   { title: "Audit Log", description: "查看查詢與匯出的稽核紀錄。", icon: ClipboardList, permission: "VIEW_AUDIT", path: "/admin/audit" },
+  { title: "系統設定", description: "設定機構名稱與平台顯示文字。", icon: Settings, permission: "MANAGE_SETTINGS", path: "/admin/settings" },
 ];
 
 function HomePage() {
-  const { user, logout, hasPermission } = useAuth();
+  const { user, logout, hasPermission, accessToken } = useAuth();
   const visibleModules = modules.filter((item) => !item.permission || hasPermission(item.permission));
+  const [branding, setBranding] = useState({
+    organizationName: "",
+    platformName: "Universal Query Platform",
+    platformTitle: "通用資料查詢與報表平台",
+    platformSubtitle: "低程式碼建立查詢、報表與使用者可操作的功能入口。",
+  });
+
+  useEffect(() => {
+    apiRequest<typeof branding>("/system-settings/branding", {}, accessToken)
+      .then(setBranding)
+      .catch(() => undefined);
+  }, [accessToken]);
+
+  const eyebrow = [branding.organizationName.trim(), branding.platformName.trim()]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <main className="page-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">Universal Query Platform</p>
-          <h1>通用資料查詢與報表平台</h1>
-          <p className="subtitle">低程式碼建立查詢、報表與使用者可操作的功能入口。</p>
+          <p className="eyebrow">{eyebrow || "Universal Query Platform"}</p>
+          <h1>{branding.platformTitle}</h1>
+          <p className="subtitle">{branding.platformSubtitle}</p>
         </div>
 
         <div className="user-panel">
@@ -110,6 +129,10 @@ export default function App() {
         <Route
           path="/admin/audit"
           element={<PermissionRoute permission="VIEW_AUDIT"><AuditLogPage /></PermissionRoute>}
+        />
+        <Route
+          path="/admin/settings"
+          element={<PermissionRoute permission="MANAGE_SETTINGS"><SystemSettingsPage /></PermissionRoute>}
         />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
