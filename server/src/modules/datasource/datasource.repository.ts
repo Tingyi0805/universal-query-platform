@@ -147,3 +147,17 @@ export async function deleteDataSource(id: number): Promise<void> {
     throw new Error("DATASOURCE_NOT_FOUND");
   }
 }
+
+
+export async function getDataSourceDeleteImpact(id: number) {
+  const pool = await requirePool();
+  const result = await pool.request().input("id", sql.BigInt, id).query(`
+    SELECT
+      CASE WHEN EXISTS (SELECT 1 FROM uqp.DataSource WHERE Id=@id) THEN 1 ELSE 0 END AS ExistsFlag,
+      (SELECT COUNT(1) FROM uqp.Dataset WHERE DataSourceId=@id) AS DatasetCount
+  `);
+  const row = result.recordset[0];
+  if (!row || !Boolean(row.ExistsFlag)) throw new Error("DATASOURCE_NOT_FOUND");
+  const datasetCount = Number(row.DatasetCount ?? 0);
+  return { canDelete: datasetCount === 0, datasetCount };
+}
