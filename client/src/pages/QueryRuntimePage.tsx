@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiDownload, apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -28,6 +28,19 @@ type Parameter = {
   optionMode: "NONE" | "FIXED" | "DATASET";
 };
 
+type ReportColumn = {
+  columnName: string;
+  dataType: string | null;
+  displayLabel: string;
+  displayOrder: number;
+  isVisible: boolean;
+  width: number | null;
+  displayFormat: string | null;
+  alignment: "LEFT" | "CENTER" | "RIGHT";
+  groupOrder: number | null;
+  aggregateType: "NONE" | "SUM" | "AVG" | "MIN" | "MAX" | "COUNT";
+};
+
 type Option = { value: unknown; label: string };
 
 type QueryResult = {
@@ -38,6 +51,58 @@ type QueryResult = {
   elapsedMs: number;
 };
 
+function formatValue(value: unknown, format: string | null): string {
+  if (value == null) return "";
+  if (!format) return String(value);
+
+  if (/y{2,4}.*m{1,2}.*d{1,2}/i.test(format)) {
+    const date = value instanceof Date ? value : new Date(String(value));
+    if (!Number.isNaN(date.getTime())) return date.toLocaleDateString("zh-TW");
+  }
+
+  const number = Number(value);
+  if (Number.isFinite(number) && format.includes("%")) {
+    const decimals = (format.split(".")[1]?.replace(/[^0#]/g, "").length ?? 0);
+    return number.toLocaleString(undefined, {
+      style: "percent",
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  }
+
+  if (Number.isFinite(number) && format.includes("#,##0")) {
+    const decimals = format.includes(".") ? format.split(".")[1].replace(/[^0#]/g, "").length : 0;
+    return number.toLocaleString(undefined, {
+      minimumFractionDigits: decimals,
+      maximumFractionDigits: decimals,
+    });
+  }
+
+  return String(value);
+}
+
+function aggregateValue(column: ReportColumn, rows: Record<string, unknown>[]): string {
+  if (column.aggregateType === "NONE") return "";
+
+  const values = rows
+    .map((row) => row[column.columnName])
+    .filter((value) => value !== null && value !== undefined && value !== "");
+
+  if (column.aggregateType === "COUNT") return String(values.length);
+
+  const numbers = values.map(Number).filter(Number.isFinite);
+  if (numbers.length === 0) return "";
+
+  const value =
+    column.aggregateType === "SUM" ? numbers.reduce((sum, item) => sum + item, 0) :
+    column.aggregateType === "AVG" ? numbers.reduce((sum, item) => sum + item, 0) / numbers.length :
+    column.aggregateType === "MIN" ? Math.min(...numbers) :
+    column.aggregateType === "MAX" ? Math.max(...numbers) :
+    null;
+
+  return value == null ? "" : formatValue(value, column.displayFormat);
+}
+
 export function QueryRuntimePage() {
   const { id } = useParams();
   const { accessToken } = useAuth();
@@ -45,6 +110,7 @@ export function QueryRuntimePage() {
 
   const [query, setQuery] = useState<Query | null>(null);
   const [parameters, setParameters] = useState<Parameter[]>([]);
+  const [reportColumns, setReportColumns] = useState<ReportColumn[]>([]);
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [options, setOptions] = useState<Record<string, Option[]>>({});
   const [result, setResult] = useState<QueryResult | null>(null);
@@ -56,24 +122,21 @@ export function QueryRuntimePage() {
     setLoading(true);
     setError("");
     try {
-      const detail = await apiRequest<{ query: Query; parameters: Parameter[] }>(
-        `/queries/${queryId}`,
-        {},
-        accessToken,
-      );
+      const detail = await apiRequest<{
+        query: Query;
+        parameters: Parameter[];
+        reportColumns: ReportColumn[];
+      }>(`/queries/${queryId}`, {}, accessToken);
 
       setQuery(detail.query);
       setParameters(detail.parameters);
+      setReportColumns(detail.reportColumns);
 
       const initialValues: Record<string, unknown> = {};
       for (const parameter of detail.parameters) {
-        if (parameter.controlType === "MULTISELECT") {
-          initialValues[parameter.name] = [];
-        } else if (parameter.controlType === "CHECKBOX") {
-          initialValues[parameter.name] = parameter.defaultValue === "true";
-        } else {
-          initialValues[parameter.name] = parameter.defaultValue ?? "";
-        }
+        if (parameter.controlType === "MULTISELECT") initialValues[parameter.name] = [];
+        else if (parameter.controlType === "CHECKBOX") initialValues[parameter.name] = parameter.defaultValue === "true";
+        else initialValues[parameter.name] = parameter.defaultValue ?? "";
       }
       setValues(initialValues);
 
@@ -99,6 +162,32 @@ export function QueryRuntimePage() {
   }, [accessToken, queryId]);
 
   useEffect(() => { if (Number.isFinite(queryId)) void load(); }, [load, queryId]);
+
+  const visibleColumns = useMemo(() => {
+    if (!result) return [];
+
+    const resultNames = new Set(result.columns.map((column) => column.name));
+    const configured = reportColumns
+      .filter((column) => column.isVisible && resultNames.has(column.columnName))
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+
+    if (configured.length > 0) return configured;
+
+    return result.columns.map((column, index) => ({
+      columnName: column.name,
+      dataType: column.dataType ?? null,
+      displayLabel: column.name,
+      displayOrder: index,
+      isVisible: true,
+      width: null,
+      displayFormat: null,
+      alignment: "LEFT" as const,
+      groupOrder: null,
+      aggregateType: "NONE" as const,
+    }));
+  }, [reportColumns, result]);
+
+  const hasAggregates = visibleColumns.some((column) => column.aggregateType !== "NONE");
 
   async function exportExcel() {
     if (!query?.canExport) return;
@@ -257,18 +346,43 @@ export function QueryRuntimePage() {
             <table>
               <thead>
                 <tr>
-                  {result.columns.map((column) => <th key={column.name}>{column.name}</th>)}
+                  {visibleColumns.map((column) => (
+                    <th key={column.columnName}
+                      style={{
+                        minWidth: column.width ? `${column.width}px` : undefined,
+                        textAlign: column.alignment.toLowerCase() as "left" | "center" | "right",
+                      }}>
+                      {column.displayLabel}
+                    </th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {result.rows.map((row, index) => (
                   <tr key={index}>
-                    {result.columns.map((column) => (
-                      <td key={column.name}>{row[column.name] == null ? "" : String(row[column.name])}</td>
+                    {visibleColumns.map((column) => (
+                      <td key={column.columnName}
+                        style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}>
+                        {formatValue(row[column.columnName], column.displayFormat)}
+                      </td>
                     ))}
                   </tr>
                 ))}
               </tbody>
+              {hasAggregates && (
+                <tfoot>
+                  <tr>
+                    {visibleColumns.map((column, index) => (
+                      <td key={column.columnName}
+                        style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}>
+                        {index === 0 && column.aggregateType === "NONE"
+                          ? "彙總"
+                          : aggregateValue(column, result.rows)}
+                      </td>
+                    ))}
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </section>
