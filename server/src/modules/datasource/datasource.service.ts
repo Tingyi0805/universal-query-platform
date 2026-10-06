@@ -19,11 +19,12 @@ function diagnoseOracleFailure(message: string): ConnectionTestResult {
       driverName: runtime.driverName,
       driverVersion: runtime.driverVersion,
       driverMode: runtime.driverMode,
+      configuredDriverMode: runtime.configuredMode,
       clientVersion: runtime.clientVersion,
       compatibilityStatus: "NEEDS_CONFIGURATION",
       errorCode,
       recommendation:
-        "請將 ORACLE_DRIVER_MODE 設為 THICK，確認 ORACLE_CLIENT_LIB_DIR 指向可用的 Oracle Instant Client（你目前已驗證 instantclient_23_26 可用），再重新啟動後端服務後測試。",
+        "請將 ORACLE_DRIVER_MODE 設為 THICK，確認 ORACLE_CLIENT_LIB_DIR 指向可用的 Oracle Instant Client 目錄，再重新啟動後端服務後測試。",
     };
   }
 
@@ -34,6 +35,7 @@ function diagnoseOracleFailure(message: string): ConnectionTestResult {
       driverName: runtime.driverName,
       driverVersion: runtime.driverVersion,
       driverMode: runtime.driverMode,
+      configuredDriverMode: runtime.configuredMode,
       clientVersion: runtime.clientVersion,
       compatibilityStatus: "NEEDS_CONFIGURATION",
       errorCode,
@@ -49,6 +51,7 @@ function diagnoseOracleFailure(message: string): ConnectionTestResult {
       driverName: runtime.driverName,
       driverVersion: runtime.driverVersion,
       driverMode: runtime.driverMode,
+      configuredDriverMode: runtime.configuredMode,
       clientVersion: runtime.clientVersion,
       compatibilityStatus: "NEEDS_CONFIGURATION",
       errorCode,
@@ -63,6 +66,7 @@ function diagnoseOracleFailure(message: string): ConnectionTestResult {
       driverName: runtime.driverName,
       driverVersion: runtime.driverVersion,
       driverMode: runtime.driverMode,
+      configuredDriverMode: runtime.configuredMode,
       clientVersion: runtime.clientVersion,
       compatibilityStatus: "NEEDS_CONFIGURATION",
       errorCode,
