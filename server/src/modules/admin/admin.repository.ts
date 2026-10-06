@@ -51,39 +51,69 @@ export async function createInitialAdmin(input: { username: string; displayName:
 export async function listUsers() {
   const pool = await getPlatformDbPool();
   if (!pool) return undefined;
-  const result = await pool.request().query(`
-    SELECT u.Id, u.Username, u.DisplayName, u.AuthProvider, u.IsActive,
-      STRING_AGG(r.Code, ',') WITHIN GROUP (ORDER BY r.Code) AS RoleCodes
-    FROM uqp.AppUser u
-    LEFT JOIN uqp.UserRole ur ON ur.UserId = u.Id
-    LEFT JOIN uqp.Role r ON r.Id = ur.RoleId
-    GROUP BY u.Id, u.Username, u.DisplayName, u.AuthProvider, u.IsActive
-    ORDER BY u.Username
-  `);
-  return result.recordset.map((row) => ({
-    id: Number(row.Id), username: String(row.Username), displayName: String(row.DisplayName),
-    authProvider: String(row.AuthProvider), isActive: Boolean(row.IsActive),
-    roles: row.RoleCodes ? String(row.RoleCodes).split(",") : [],
+
+  const [usersResult, rolesResult] = await Promise.all([
+    pool.request().query(`
+      SELECT Id, Username, DisplayName, AuthProvider, IsActive
+      FROM uqp.AppUser
+      ORDER BY Username
+    `),
+    pool.request().query(`
+      SELECT ur.UserId, r.Code
+      FROM uqp.UserRole ur
+      INNER JOIN uqp.Role r ON r.Id=ur.RoleId
+      ORDER BY ur.UserId, r.Code
+    `),
+  ]);
+
+  const rolesByUser = new Map<number, string[]>();
+  for (const row of rolesResult.recordset) {
+    const userId = Number(row.UserId);
+    rolesByUser.set(userId, [...(rolesByUser.get(userId) ?? []), String(row.Code)]);
+  }
+
+  return usersResult.recordset.map((row) => ({
+    id: Number(row.Id),
+    username: String(row.Username),
+    displayName: String(row.DisplayName),
+    authProvider: String(row.AuthProvider),
+    isActive: Boolean(row.IsActive),
+    roles: rolesByUser.get(Number(row.Id)) ?? [],
   }));
 }
 
 export async function listRoles() {
   const pool = await getPlatformDbPool();
   if (!pool) return undefined;
-  const result = await pool.request().query(`
-    SELECT r.Id, r.Code, r.Name, r.Description, r.IsSystem, r.IsActive,
-      STRING_AGG(p.Code, ',') WITHIN GROUP (ORDER BY p.Code) AS PermissionCodes
-    FROM uqp.Role r
-    LEFT JOIN uqp.RolePermission rp ON rp.RoleId = r.Id
-    LEFT JOIN uqp.Permission p ON p.Id = rp.PermissionId
-    GROUP BY r.Id, r.Code, r.Name, r.Description, r.IsSystem, r.IsActive
-    ORDER BY r.IsSystem DESC, r.Code
-  `);
-  return result.recordset.map((row) => ({
-    id: Number(row.Id), code: String(row.Code), name: String(row.Name),
+
+  const [rolesResult, permissionsResult] = await Promise.all([
+    pool.request().query(`
+      SELECT Id, Code, Name, Description, IsSystem, IsActive
+      FROM uqp.Role
+      ORDER BY IsSystem DESC, Code
+    `),
+    pool.request().query(`
+      SELECT rp.RoleId, p.Code
+      FROM uqp.RolePermission rp
+      INNER JOIN uqp.Permission p ON p.Id=rp.PermissionId
+      ORDER BY rp.RoleId, p.Code
+    `),
+  ]);
+
+  const permissionsByRole = new Map<number, string[]>();
+  for (const row of permissionsResult.recordset) {
+    const roleId = Number(row.RoleId);
+    permissionsByRole.set(roleId, [...(permissionsByRole.get(roleId) ?? []), String(row.Code)]);
+  }
+
+  return rolesResult.recordset.map((row) => ({
+    id: Number(row.Id),
+    code: String(row.Code),
+    name: String(row.Name),
     description: row.Description ? String(row.Description) : null,
-    isSystem: Boolean(row.IsSystem), isActive: Boolean(row.IsActive),
-    permissions: row.PermissionCodes ? String(row.PermissionCodes).split(",") : [],
+    isSystem: Boolean(row.IsSystem),
+    isActive: Boolean(row.IsActive),
+    permissions: permissionsByRole.get(Number(row.Id)) ?? [],
   }));
 }
 
