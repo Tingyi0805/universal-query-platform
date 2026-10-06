@@ -11,6 +11,13 @@ const brandingSchema = z.object({
 });
 
 export const systemSettingsRouter = Router();
+
+systemSettingsRouter.get("/public-branding", async (_req, res, next) => {
+  try {
+    res.json(await getBrandingSettings());
+  } catch (error) { next(error); }
+});
+
 systemSettingsRouter.use(authenticateJwt);
 
 systemSettingsRouter.get("/branding", async (_req, res, next) => {
