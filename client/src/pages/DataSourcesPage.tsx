@@ -182,10 +182,24 @@ export function DataSourcesPage() {
   }
 
   async function remove(row: DataSourceRow) {
-    if (!window.confirm(`確定刪除資料來源「${row.name}」？`)) return;
     setError("");
     setNotice("");
     try {
+      const impact = await apiRequest<{ canDelete: boolean; datasetCount: number }>(
+        `/datasources/${row.id}/delete-impact`,
+        {},
+        accessToken,
+      );
+
+      if (!impact.canDelete) {
+        setError(
+          `資料來源「${row.name}」目前被 ${impact.datasetCount} 個 Dataset 使用，不能直接刪除。請先解除關聯，或取消「啟用」後儲存。`,
+        );
+        return;
+      }
+
+      if (!window.confirm(`確定永久刪除資料來源「${row.name}」？此操作無法復原。`)) return;
+
       await apiRequest(`/datasources/${row.id}`, { method: "DELETE" }, accessToken);
       if (form.id === row.id) resetForm();
       setNotice("資料來源已刪除。");
