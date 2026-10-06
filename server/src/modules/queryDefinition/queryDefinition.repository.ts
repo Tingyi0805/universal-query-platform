@@ -76,29 +76,66 @@ export async function createQueryDefinition(input: QueryDefinitionInput): Promis
 
 export async function updateQueryDefinition(id: number, input: QueryDefinitionInput): Promise<void> {
   const pool = await requirePool();
-  const result = await pool.request()
-    .input("id", sql.BigInt, id)
-    .input("name", sql.NVarChar(200), input.name)
-    .input("description", sql.NVarChar(1000), input.description)
-    .input("category", sql.NVarChar(100), input.category)
-    .input("icon", sql.NVarChar(100), input.icon)
-    .input("datasetId", sql.BigInt, input.datasetId)
-    .input("sortOrder", sql.Int, input.sortOrder)
-    .input("allowExcelExport", sql.Bit, input.allowExcelExport)
-    .input("isActive", sql.Bit, input.isActive)
-    .query(`
-      UPDATE uqp.QueryDefinition SET
-        Name=@name, Description=@description, Category=@category,
-        Icon=@icon, DatasetId=@datasetId, SortOrder=@sortOrder,
-        AllowExcelExport=@allowExcelExport, IsActive=@isActive,
-        IsPublished=0,
-        PublishedAtUtc=NULL,
-        PublishedByUserId=NULL,
-        UpdatedAtUtc=SYSUTCDATETIME()
-      WHERE Id=@id;
-      SELECT @@ROWCOUNT AS Affected;
-    `);
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("QUERY_DEFINITION_NOT_FOUND");
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+  try {
+    const currentResult = await new sql.Request(tx)
+      .input("id", sql.BigInt, id)
+      .query(`
+        SELECT TOP (1)
+          Name, Description, Category, Icon, DatasetId,
+          SortOrder, AllowExcelExport, IsActive, IsPublished
+        FROM uqp.QueryDefinition WITH (UPDLOCK, HOLDLOCK)
+        WHERE Id=@id
+      `);
+
+    const current = currentResult.recordset[0];
+    if (!current) throw new Error("QUERY_DEFINITION_NOT_FOUND");
+
+    const changed =
+      String(current.Name) !== input.name ||
+      (current.Description == null ? null : String(current.Description)) !== input.description ||
+      (current.Category == null ? null : String(current.Category)) !== input.category ||
+      String(current.Icon) !== input.icon ||
+      Number(current.DatasetId) !== input.datasetId ||
+      Number(current.SortOrder) !== input.sortOrder ||
+      Boolean(current.AllowExcelExport) !== input.allowExcelExport ||
+      Boolean(current.IsActive) !== input.isActive;
+
+    await new sql.Request(tx)
+      .input("id", sql.BigInt, id)
+      .input("name", sql.NVarChar(200), input.name)
+      .input("description", sql.NVarChar(1000), input.description)
+      .input("category", sql.NVarChar(100), input.category)
+      .input("icon", sql.NVarChar(100), input.icon)
+      .input("datasetId", sql.BigInt, input.datasetId)
+      .input("sortOrder", sql.Int, input.sortOrder)
+      .input("allowExcelExport", sql.Bit, input.allowExcelExport)
+      .input("isActive", sql.Bit, input.isActive)
+      .input("changed", sql.Bit, changed)
+      .query(`
+        UPDATE uqp.QueryDefinition SET
+          Name=@name,
+          Description=@description,
+          Category=@category,
+          Icon=@icon,
+          DatasetId=@datasetId,
+          SortOrder=@sortOrder,
+          AllowExcelExport=@allowExcelExport,
+          IsActive=@isActive,
+          IsPublished=CASE WHEN @changed=1 THEN 0 ELSE IsPublished END,
+          PublishedAtUtc=CASE WHEN @changed=1 THEN NULL ELSE PublishedAtUtc END,
+          PublishedByUserId=CASE WHEN @changed=1 THEN NULL ELSE PublishedByUserId END,
+          UpdatedAtUtc=CASE WHEN @changed=1 THEN SYSUTCDATETIME() ELSE UpdatedAtUtc END
+        WHERE Id=@id
+      `);
+
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
 }
 
 export async function publishQueryDefinition(id: number, userId: number): Promise<void> {
