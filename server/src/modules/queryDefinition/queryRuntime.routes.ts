@@ -16,6 +16,7 @@ import {
   buildExcelFilename,
   createQueryExcel,
 } from "../export/excelExport.service.js";
+import { listReportColumns } from "./reportColumn.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
 const executeBodySchema = z.object({
@@ -59,8 +60,10 @@ queryRuntimeRouter.get("/:id", requirePermission("VIEW_QUERY"), async (req, res,
     }
 
     const parameters = await listDatasetParameters(query.datasetId);
+    const reportColumns = await listReportColumns(query.id);
     res.json({
       query,
+      reportColumns,
       parameters: parameters.map((parameter) => ({
         name: parameter.name,
         label: parameter.label,
@@ -178,7 +181,8 @@ queryRuntimeRouter.post("/:id/export/excel", requirePermission("EXPORT_QUERY"), 
     });
 
     const result = await executeSavedDataset(query.datasetId, body.data.values);
-    const buffer = await createQueryExcel(query.name, result);
+    const reportColumns = await listReportColumns(query.id);
+    const buffer = await createQueryExcel(query.name, result, reportColumns);
     const filename = buildExcelFilename(query.code);
 
     await completeAuditSuccess(auditId, {
