@@ -288,7 +288,7 @@ export async function deleteUser(userId: number): Promise<void> {
     const current = await new sql.Request(tx)
       .input("userId", sql.BigInt, userId)
       .query(`
-        SELECT u.Id,
+        SELECT u.Id, u.IsActive,
           CASE WHEN EXISTS (
             SELECT 1
             FROM uqp.UserRole ur
@@ -301,7 +301,7 @@ export async function deleteUser(userId: number): Promise<void> {
 
     if (!current.recordset[0]) throw new Error("USER_NOT_FOUND");
 
-    if (Boolean(current.recordset[0].IsSystemAdmin)) {
+    if (Boolean(current.recordset[0].IsSystemAdmin) && Boolean(current.recordset[0].IsActive)) {
       const admins = await new sql.Request(tx).query(`
         SELECT COUNT(DISTINCT u.Id) AS Cnt
         FROM uqp.AppUser u
