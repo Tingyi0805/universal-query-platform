@@ -71,6 +71,17 @@ function sameNameSet(a: string[], b: string[]): boolean {
 
 function validateParameterOptions(parameters: z.infer<typeof parameterSchema>[]): string | null {
   for (const parameter of parameters) {
+    const requiredTypeByControl: Partial<Record<typeof parameter.controlType, typeof parameter.dataType>> = {
+      NUMBER: "NUMBER",
+      DATE: "DATE",
+      DATETIME: "DATETIME",
+      CHECKBOX: "BOOLEAN",
+    };
+    const requiredType = requiredTypeByControl[parameter.controlType];
+    if (requiredType && parameter.dataType !== requiredType) {
+      return `${parameter.name} 的控制項 ${parameter.controlType} 必須搭配 ${requiredType} 資料型別。`;
+    }
+
     const defaultValue = parameter.defaultValue?.trim() ?? "";
 
     if (defaultValue) {
