@@ -1,6 +1,7 @@
 const forbiddenKeywords = [
   "INSERT", "UPDATE", "DELETE", "MERGE", "DROP", "ALTER", "TRUNCATE",
   "EXEC", "EXECUTE", "CREATE", "GRANT", "REVOKE", "DENY",
+  "OPENROWSET", "OPENDATASOURCE",
 ];
 
 function sanitizeForInspection(sqlText: string): string {
@@ -22,6 +23,14 @@ export function assertSelectOnlySql(sqlText: string): void {
 
   if (!/^(SELECT|WITH)\b/i.test(withoutTrailingSemicolon)) {
     throw new Error("SQL_SELECT_ONLY");
+  }
+
+  if (/\bSELECT\b[\s\S]*\bINTO\b/i.test(withoutTrailingSemicolon)) {
+    throw new Error("SQL_SELECT_INTO_NOT_ALLOWED");
+  }
+
+  if (/\bFOR\s+UPDATE\b/i.test(withoutTrailingSemicolon)) {
+    throw new Error("SQL_FOR_UPDATE_NOT_ALLOWED");
   }
 
   for (const keyword of forbiddenKeywords) {
