@@ -17,12 +17,37 @@ export function compileQuery(
   parameterNames: string[];
 } {
   const parameterNames = extractParameterNames(sqlText);
-  const binds: Record<string, unknown> = {};
-  const bindValues: unknown[] = [];
-  const replacements = new Map<string, string>();
 
   for (const name of parameterNames) {
     if (!(name in values)) throw new Error(`MISSING_QUERY_PARAMETER:${name}`);
+  }
+
+  if (type === "MYSQL" || type === "POSTGRESQL") {
+    const bindValues: unknown[] = [];
+
+    const sql = sqlText.replace(tokenRegex, (_whole, name: string) => {
+      const value = values[name];
+
+      if (Array.isArray(value)) {
+        if (value.length === 0) return "NULL";
+
+        return value.map((item) => {
+          bindValues.push(item);
+          return type === "MYSQL" ? "?" : `$${bindValues.length}`;
+        }).join(", ");
+      }
+
+      bindValues.push(value);
+      return type === "MYSQL" ? "?" : `$${bindValues.length}`;
+    });
+
+    return { sql, binds: {}, bindValues, parameterNames };
+  }
+
+  const binds: Record<string, unknown> = {};
+  const replacements = new Map<string, string>();
+
+  for (const name of parameterNames) {
     const value = values[name];
 
     if (Array.isArray(value)) {
@@ -31,42 +56,13 @@ export function compileQuery(
         continue;
       }
 
-      if (type === "MYSQL") {
-        const placeholders = value.map((item) => {
-          bindValues.push(item);
-          return "?";
-        });
-        replacements.set(name, placeholders.join(", "));
-        continue;
-      }
-
-      if (type === "POSTGRESQL") {
-        const placeholders = value.map((item) => {
-          bindValues.push(item);
-          return `$${bindValues.length}`;
-        });
-        replacements.set(name, placeholders.join(", "));
-        continue;
-      }
-
       const placeholders = value.map((item, index) => {
         const bindName = `${name}_${index}`;
         binds[bindName] = item;
         return type === "SQLSERVER" ? `@${bindName}` : `:${bindName}`;
       });
+
       replacements.set(name, placeholders.join(", "));
-      continue;
-    }
-
-    if (type === "MYSQL") {
-      bindValues.push(value);
-      replacements.set(name, "?");
-      continue;
-    }
-
-    if (type === "POSTGRESQL") {
-      bindValues.push(value);
-      replacements.set(name, `$${bindValues.length}`);
       continue;
     }
 
@@ -80,5 +76,5 @@ export function compileQuery(
     return replacement;
   });
 
-  return { sql, binds, bindValues, parameterNames };
+  return { sql, binds, bindValues: [], parameterNames };
 }
