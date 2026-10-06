@@ -1,5 +1,6 @@
-export type DataSourceType = "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
+export type DataSourceType = "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL" | "ODBC";
 export type OracleConnectionMode = "SERVICE_NAME" | "SID";
+export type OdbcConnectionMode = "DSN" | "CONNECTION_STRING";
 
 export type DataSourceConfig = {
   id?: number;
@@ -11,6 +12,9 @@ export type DataSourceConfig = {
   databaseName: string | null;
   oracleServiceName: string | null;
   oracleConnectionMode: OracleConnectionMode | null;
+  odbcConnectionMode: OdbcConnectionMode | null;
+  odbcDsn: string | null;
+  odbcConnectionString: string | null;
   username: string;
   password: string;
   connectionTimeoutSec: number;
@@ -20,8 +24,9 @@ export type DataSourceConfig = {
   isActive: boolean;
 };
 
-export type DataSourceListItem = Omit<DataSourceConfig, "password"> & {
+export type DataSourceListItem = Omit<DataSourceConfig, "password" | "odbcConnectionString"> & {
   hasPassword: boolean;
+  hasOdbcConnectionString: boolean;
 };
 
 export type ConnectionCompatibilityStatus =
