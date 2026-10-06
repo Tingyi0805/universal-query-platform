@@ -217,7 +217,7 @@ export async function listAccessibleQueries(userId: number) {
     FROM uqp.QueryDefinition q
     INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId AND d.IsActive=1
     INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId AND s.IsActive=1
-    LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId AND c.IsActive=1
+    LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
     LEFT JOIN RoleAccess ra ON ra.QueryDefinitionId=q.Id
     LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
     WHERE q.IsPublished=1 AND q.IsActive=1
