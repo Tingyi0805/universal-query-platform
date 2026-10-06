@@ -103,6 +103,17 @@ export async function replaceReportColumns(
         `);
     }
 
+    await new sql.Request(tx)
+      .input("queryId", sql.BigInt, queryId)
+      .query(`
+        UPDATE uqp.QueryDefinition
+        SET IsPublished=0,
+            PublishedAtUtc=NULL,
+            PublishedByUserId=NULL,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE Id=@queryId AND IsPublished=1
+      `);
+
     await tx.commit();
   } catch (error) {
     await tx.rollback();
