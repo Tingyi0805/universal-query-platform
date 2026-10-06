@@ -2,6 +2,8 @@ import type { DataSourceAdapter } from "./datasourceAdapter.js";
 import type { DataSourceType } from "../datasource.types.js";
 import { OracleAdapter } from "./oracleAdapter.js";
 import { SqlServerAdapter } from "./sqlServerAdapter.js";
+import { MySqlAdapter } from "./mysqlAdapter.js";
+import { PostgreSqlAdapter } from "./postgresqlAdapter.js";
 
 export function createDataSourceAdapter(type: DataSourceType): DataSourceAdapter {
   switch (type) {
@@ -9,5 +11,9 @@ export function createDataSourceAdapter(type: DataSourceType): DataSourceAdapter
       return new SqlServerAdapter();
     case "ORACLE":
       return new OracleAdapter();
+    case "MYSQL":
+      return new MySqlAdapter();
+    case "POSTGRESQL":
+      return new PostgreSqlAdapter();
   }
 }
