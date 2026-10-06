@@ -38,6 +38,7 @@ export class OracleAdapter implements DataSourceAdapter {
         driverName: runtime.driverName,
         driverVersion: runtime.driverVersion,
         driverMode: connection.thin ? "THIN" : "THICK",
+        configuredDriverMode: runtime.configuredMode,
         clientVersion: runtime.clientVersion,
         compatibilityStatus: "VERIFIED",
       };
