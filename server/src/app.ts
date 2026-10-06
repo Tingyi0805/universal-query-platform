@@ -13,6 +13,7 @@ import { dataSourceRouter } from "./modules/datasource/datasource.routes.js";
 import { datasetRouter } from "./modules/dataset/dataset.routes.js";
 import { queryDefinitionRouter } from "./modules/queryDefinition/queryDefinition.routes.js";
 import { queryRuntimeRouter } from "./modules/queryDefinition/queryRuntime.routes.js";
+import { systemSettingsRouter } from "./modules/systemSettings/systemSettings.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
 
 export const app = express();
@@ -50,6 +51,7 @@ app.use("/api/datasources", dataSourceRouter);
 app.use("/api/datasets", datasetRouter);
 app.use("/api/query-definitions", queryDefinitionRouter);
 app.use("/api/queries", queryRuntimeRouter);
+app.use("/api/system-settings", systemSettingsRouter);
 
 app.use((_req, res) => {
   res.status(404).json({
