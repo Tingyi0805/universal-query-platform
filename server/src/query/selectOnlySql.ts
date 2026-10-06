@@ -20,8 +20,7 @@ export function assertSelectOnlySql(sqlText: string): void {
     throw new Error("SQL_MULTIPLE_STATEMENTS_NOT_ALLOWED");
   }
 
-  const upper = withoutTrailingSemicolon.toUpperCase();
-  if (!(upper.startsWith("SELECT ") || upper.startsWith("SELECT\n") || upper.startsWith("WITH ") || upper.startsWith("WITH\n"))) {
+  if (!/^(SELECT|WITH)\b/i.test(withoutTrailingSemicolon)) {
     throw new Error("SQL_SELECT_ONLY");
   }
 
