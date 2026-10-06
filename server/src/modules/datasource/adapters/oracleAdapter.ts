@@ -22,8 +22,8 @@ export class OracleAdapter implements DataSourceAdapter {
     });
 
     try {
-      const result = await connection.execute<{ VERSION: string }>(
-        "SELECT VERSION FROM PRODUCT_COMPONENT_VERSION WHERE PRODUCT LIKE 'Oracle Database%' FETCH FIRST 1 ROWS ONLY",
+      const result = await connection.execute(
+        "SELECT * FROM (SELECT VERSION FROM PRODUCT_COMPONENT_VERSION WHERE PRODUCT LIKE 'Oracle Database%') WHERE ROWNUM = 1",
         [],
         { outFormat: oracledb.OUT_FORMAT_OBJECT },
       );
