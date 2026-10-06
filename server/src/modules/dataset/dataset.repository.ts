@@ -147,3 +147,23 @@ export async function listDesignerDataSources() {
     type: String(row.Type),
   }));
 }
+
+
+export async function getDatasetDeleteImpact(id: number) {
+  const pool = await requirePool();
+  const result = await pool.request().input("id", sql.BigInt, id).query(`
+    SELECT
+      CASE WHEN EXISTS (SELECT 1 FROM uqp.Dataset WHERE Id=@id) THEN 1 ELSE 0 END AS ExistsFlag,
+      (SELECT COUNT(1) FROM uqp.QueryDefinition WHERE DatasetId=@id) AS QueryCount,
+      (SELECT COUNT(1) FROM uqp.DatasetParameter WHERE LookupDatasetId=@id) AS LookupReferenceCount
+  `);
+  const row = result.recordset[0];
+  if (!row || !Boolean(row.ExistsFlag)) throw new Error("DATASET_NOT_FOUND");
+  const queryCount = Number(row.QueryCount ?? 0);
+  const lookupReferenceCount = Number(row.LookupReferenceCount ?? 0);
+  return {
+    canDelete: queryCount === 0 && lookupReferenceCount === 0,
+    queryCount,
+    lookupReferenceCount,
+  };
+}
