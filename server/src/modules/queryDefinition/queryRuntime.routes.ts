@@ -7,8 +7,33 @@ import {
   getEffectiveQueryAccess,
   listAccessibleQueries,
 } from "./queryDefinition.repository.js";
+import {
+  completeAuditFailure,
+  completeAuditSuccess,
+  startAudit,
+} from "../audit/audit.repository.js";
+import {
+  buildExcelFilename,
+  createQueryExcel,
+} from "../export/excelExport.service.js";
 
 const idSchema = z.coerce.number().int().positive();
+const executeBodySchema = z.object({
+  values: z.record(z.unknown()).default({}),
+});
+
+function sendRuntimeError(res: any, error: unknown): boolean {
+  if (error instanceof Error && error.message.startsWith("PARAMETER_REQUIRED:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({ error: { code: "PARAMETER_REQUIRED", message: `參數 ${name} 為必填。` } });
+    return true;
+  }
+  if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
+    res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
+    return true;
+  }
+  return false;
+}
 
 export const queryRuntimeRouter = Router();
 queryRuntimeRouter.use(authenticateJwt);
@@ -72,11 +97,12 @@ queryRuntimeRouter.get("/:id/parameters/:name/options", requirePermission("VIEW_
 });
 
 queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), async (req, res, next) => {
+  let auditId: number | null = null;
+  let started = Date.now();
+
   try {
     const id = idSchema.safeParse(req.params.id);
-    const body = z.object({
-      values: z.record(z.unknown()).default({}),
-    }).safeParse(req.body);
+    const body = executeBodySchema.safeParse(req.body);
 
     if (!id.success || !body.success) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "查詢參數格式不正確。" } });
@@ -89,17 +115,89 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
       return;
     }
 
-    res.json({ result: await executeSavedDataset(query.datasetId, body.data.values) });
+    started = Date.now();
+    auditId = await startAudit({
+      eventType: "QUERY_EXECUTE",
+      userId: req.authUser!.id,
+      queryDefinitionId: query.id,
+      datasetId: query.datasetId,
+      parameters: body.data.values,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
+    const result = await executeSavedDataset(query.datasetId, body.data.values);
+
+    await completeAuditSuccess(auditId, {
+      rowCount: result.rowCount,
+      durationMs: Date.now() - started,
+    }).catch(() => undefined);
+
+    res.json({ result });
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("PARAMETER_REQUIRED:")) {
-      const name = error.message.split(":")[1];
-      res.status(400).json({ error: { code: "PARAMETER_REQUIRED", message: `參數 ${name} 為必填。` } });
+    if (auditId) {
+      await completeAuditFailure(auditId, {
+        errorCode: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+        durationMs: Date.now() - started,
+      }).catch(() => undefined);
+    }
+
+    if (sendRuntimeError(res, error)) return;
+    next(error);
+  }
+});
+
+queryRuntimeRouter.post("/:id/export/excel", requirePermission("EXPORT_QUERY"), async (req, res, next) => {
+  let auditId: number | null = null;
+  let started = Date.now();
+
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const body = executeBodySchema.safeParse(req.body);
+
+    if (!id.success || !body.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "匯出參數格式不正確。" } });
       return;
     }
-    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
-      res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
+
+    const query = await getEffectiveQueryAccess(req.authUser!.id, id.data);
+    if (!query?.canExport) {
+      res.status(403).json({ error: { code: "QUERY_EXPORT_FORBIDDEN", message: "沒有匯出此查詢的權限。" } });
       return;
     }
+
+    started = Date.now();
+    auditId = await startAudit({
+      eventType: "QUERY_EXPORT_EXCEL",
+      userId: req.authUser!.id,
+      queryDefinitionId: query.id,
+      datasetId: query.datasetId,
+      parameters: body.data.values,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
+    const result = await executeSavedDataset(query.datasetId, body.data.values);
+    const buffer = await createQueryExcel(query.name, result);
+    const filename = buildExcelFilename(query.code);
+
+    await completeAuditSuccess(auditId, {
+      rowCount: result.rowCount,
+      durationMs: Date.now() - started,
+    }).catch(() => undefined);
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (error) {
+    if (auditId) {
+      await completeAuditFailure(auditId, {
+        errorCode: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+        durationMs: Date.now() - started,
+      }).catch(() => undefined);
+    }
+
+    if (sendRuntimeError(res, error)) return;
     next(error);
   }
 });
