@@ -31,7 +31,7 @@ type PermissionRow = {
 };
 
 export function AdminUsersPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
   const [permissions, setPermissions] = useState<PermissionRow[]>([]);
@@ -112,6 +112,25 @@ export function AdminUsersPage() {
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : "更新使用者失敗。");
+    }
+  }
+
+  async function toggleUserActive(user: UserRow) {
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest(`/admin/users/${user.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          displayName: user.displayName,
+          isActive: !user.isActive,
+          roleCodes: user.roles,
+        }),
+      }, accessToken);
+      setNotice(`${user.username} 已${user.isActive ? "停用" : "啟用"}。`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更新使用者狀態失敗。");
     }
   }
 
@@ -271,10 +290,21 @@ export function AdminUsersPage() {
                       </td>
                       <td className="actions">
                         <button className="secondary-button" type="button" onClick={() => void saveUser(user)}>儲存</button>
+                        <button className="secondary-button" type="button" onClick={() => void toggleUserActive(user)}>
+                          {user.isActive ? "停用" : "啟用"}
+                        </button>
                         {user.authProvider === "LOCAL" && (
                           <button className="secondary-button" type="button" onClick={() => void resetPassword(user)}>重設密碼</button>
                         )}
-                        <button className="danger-button" type="button" onClick={() => void deleteUser(user)}>刪除</button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          disabled={currentUser?.id === user.id}
+                          title={currentUser?.id === user.id ? "不可刪除目前登入中的自己" : undefined}
+                          onClick={() => void deleteUser(user)}
+                        >
+                          刪除
+                        </button>
                       </td>
                     </tr>
                   ))}
