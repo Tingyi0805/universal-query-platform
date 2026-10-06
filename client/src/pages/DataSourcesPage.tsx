@@ -38,6 +38,7 @@ type ConnectionTestResult = {
   driverName?: string;
   driverVersion?: string;
   driverMode?: string;
+  configuredDriverMode?: string;
   clientVersion?: string;
   compatibilityStatus?: "VERIFIED" | "NEEDS_CONFIGURATION" | "UNSUPPORTED" | "UNKNOWN";
   errorCode?: string;
@@ -392,7 +393,8 @@ export function DataSourcesPage() {
                 <dl>
                   {connectionTest.serverVersion && <><dt>Database Server</dt><dd>{connectionTest.serverVersion}</dd></>}
                   {connectionTest.driverName && <><dt>Driver</dt><dd>{connectionTest.driverName}{connectionTest.driverVersion ? ` ${connectionTest.driverVersion}` : ""}</dd></>}
-                  {connectionTest.driverMode && <><dt>Driver Mode</dt><dd>{connectionTest.driverMode}</dd></>}
+                  {connectionTest.configuredDriverMode && <><dt>設定模式</dt><dd>{connectionTest.configuredDriverMode}</dd></>}
+                  {connectionTest.driverMode && <><dt>實際模式</dt><dd>{connectionTest.driverMode}</dd></>}
                   {connectionTest.clientVersion && <><dt>Oracle Client</dt><dd>{connectionTest.clientVersion}</dd></>}
                   {connectionTest.errorCode && <><dt>錯誤碼</dt><dd>{connectionTest.errorCode}</dd></>}
                 </dl>
