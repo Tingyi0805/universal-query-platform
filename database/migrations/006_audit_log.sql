@@ -6,7 +6,7 @@ CREATE TABLE uqp.AuditLog (
     DatasetId           BIGINT NULL,
     Status              NVARCHAR(20) NOT NULL,
     ParametersJson      NVARCHAR(MAX) NULL,
-    RowCount            INT NULL,
+    ResultRowCount            INT NULL,
     DurationMs          INT NULL,
     IpAddress           NVARCHAR(100) NULL,
     UserAgent           NVARCHAR(500) NULL,
