@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { QueryAccessEditor } from "../components/QueryAccessEditor";
+import { ReportColumnsEditor } from "../components/ReportColumnsEditor";
 import "./QueryPublisherPage.css";
 
 type Dataset = { id: number; code: string; name: string; isActive: boolean };
@@ -278,6 +279,7 @@ export function QueryPublisherPage() {
             </div>
           </form>
 
+          {form.id && <ReportColumnsEditor queryId={form.id} />}
           {form.id && canManageAccess && <QueryAccessEditor queryId={form.id} />}
         </section>
       </div>
