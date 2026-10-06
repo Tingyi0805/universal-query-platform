@@ -98,3 +98,36 @@
 @media (max-width: 600px) {
   .runtime-parameter-grid { grid-template-columns: 1fr; }
 }
+
+
+.runtime-group-row td {
+  background: #f5f8fc;
+  border-top: 1px solid #d8e2ef;
+  border-bottom: 1px solid #e3eaf3;
+  font-weight: 700;
+}
+
+.runtime-group-row td span {
+  margin-left: 10px;
+  color: #74839a;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.runtime-subtotal-row td {
+  background: #fafbfd;
+  border-top: 1px solid #e2e8f0;
+  font-weight: 700;
+}
+
+.runtime-subtotal-row.level-0 td {
+  border-top-color: #cfd9e7;
+}
+
+.runtime-table-wrap tfoot td {
+  position: sticky;
+  bottom: 0;
+  background: #eef3f9;
+  border-top: 2px solid #cbd6e5;
+  font-weight: 800;
+}
