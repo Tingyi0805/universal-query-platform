@@ -15,13 +15,16 @@ const idSchema = z.coerce.number().int().positive();
 const baseSchema = z.object({
   code: z.string().trim().min(2).max(100).regex(/^[A-Z0-9_]+$/),
   name: z.string().trim().min(1).max(200),
-  type: z.enum(["SQLSERVER", "ORACLE", "MYSQL", "POSTGRESQL"]),
+  type: z.enum(["SQLSERVER", "ORACLE", "MYSQL", "POSTGRESQL", "ODBC"]),
   host: z.string().trim().min(1).max(255),
   port: z.coerce.number().int().min(1).max(65535),
   databaseName: z.string().trim().max(255).nullable().optional().default(null),
   oracleServiceName: z.string().trim().max(255).nullable().optional().default(null),
   oracleConnectionMode: z.enum(["SERVICE_NAME", "SID"]).nullable().optional().default(null),
-  username: z.string().trim().min(1).max(200),
+  odbcConnectionMode: z.enum(["DSN", "CONNECTION_STRING"]).nullable().optional().default(null),
+  odbcDsn: z.string().trim().max(255).nullable().optional().default(null),
+  odbcConnectionString: z.string().trim().max(4000).nullable().optional().default(null),
+  username: z.string().trim().max(200),
   connectionTimeoutSec: z.coerce.number().int().min(1).max(300).default(10),
   queryTimeoutSec: z.coerce.number().int().min(1).max(3600).default(30),
   encryptConnection: z.boolean().default(false),
@@ -30,13 +33,30 @@ const baseSchema = z.object({
 });
 
 const createSchema = baseSchema.extend({
-  password: z.string().min(1).max(500),
+  password: z.string().max(500).default(""),
 }).superRefine((value, ctx) => {
   if (["SQLSERVER","MYSQL","POSTGRESQL"].includes(value.type) && !value.databaseName) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["databaseName"], message: "Database 必填。" });
   }
   if (value.type === "ORACLE" && (!value.oracleServiceName || !value.oracleConnectionMode)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["oracleServiceName"], message: "Oracle Service Name/SID 必填。" });
+  }
+  if (value.type !== "ODBC" && !value.username) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["username"], message: "Username 必填。" });
+  }
+  if (value.type !== "ODBC" && !value.password) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["password"], message: "Password 必填。" });
+  }
+  if (value.type === "ODBC") {
+    if (!value.odbcConnectionMode) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["odbcConnectionMode"], message: "ODBC 連線模式必填。" });
+    }
+    if (value.odbcConnectionMode === "DSN" && !value.odbcDsn) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["odbcDsn"], message: "ODBC DSN 必填。" });
+    }
+    if (value.odbcConnectionMode === "CONNECTION_STRING" && !value.odbcConnectionString) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["odbcConnectionString"], message: "ODBC Connection String 必填。" });
+    }
   }
 });
 
@@ -48,6 +68,17 @@ const updateSchema = baseSchema.extend({
   }
   if (value.type === "ORACLE" && (!value.oracleServiceName || !value.oracleConnectionMode)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["oracleServiceName"], message: "Oracle Service Name/SID 必填。" });
+  }
+  if (value.type !== "ODBC" && !value.username) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["username"], message: "Username 必填。" });
+  }
+  if (value.type === "ODBC") {
+    if (!value.odbcConnectionMode) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["odbcConnectionMode"], message: "ODBC 連線模式必填。" });
+    }
+    if (value.odbcConnectionMode === "DSN" && !value.odbcDsn) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["odbcDsn"], message: "ODBC DSN 必填。" });
+    }
   }
 });
 
