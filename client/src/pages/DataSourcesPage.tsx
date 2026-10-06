@@ -31,6 +31,15 @@ type FormState = Omit<DataSourceRow, "id" | "hasPassword"> & {
   password: string;
 };
 
+function dataSourceTypeLabel(type: DataSourceType): string {
+  switch (type) {
+    case "SQLSERVER": return "SQL Server";
+    case "ORACLE": return "Oracle";
+    case "MYSQL": return "MySQL";
+    case "POSTGRESQL": return "PostgreSQL";
+  }
+}
+
 const emptyForm: FormState = {
   code: "",
   name: "",
@@ -241,11 +250,7 @@ export function DataSourcesPage() {
                 <small>{row.code}</small>
               </div>
               <div className="datasource-meta">
-                <span>{
-                  row.type === "SQLSERVER" ? "SQL Server" :
-                  row.type === "ORACLE" ? "Oracle" :
-                  row.type === "MYSQL" ? "MySQL" : "PostgreSQL"
-                }</span>
+                <span>{dataSourceTypeLabel(row.type)}</span>
                 <span className={row.isActive ? "state-ok" : "state-off"}>
                   {row.isActive ? "啟用" : "停用"}
                 </span>
