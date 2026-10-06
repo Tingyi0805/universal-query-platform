@@ -4,6 +4,7 @@ import { OracleAdapter } from "./oracleAdapter.js";
 import { SqlServerAdapter } from "./sqlServerAdapter.js";
 import { MySqlAdapter } from "./mysqlAdapter.js";
 import { PostgreSqlAdapter } from "./postgresqlAdapter.js";
+import { OdbcAdapter } from "./odbcAdapter.js";
 
 export function createDataSourceAdapter(type: DataSourceType): DataSourceAdapter {
   switch (type) {
@@ -15,5 +16,7 @@ export function createDataSourceAdapter(type: DataSourceType): DataSourceAdapter
       return new MySqlAdapter();
     case "POSTGRESQL":
       return new PostgreSqlAdapter();
+    case "ODBC":
+      return new OdbcAdapter();
   }
 }
