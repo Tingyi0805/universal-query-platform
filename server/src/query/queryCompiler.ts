@@ -33,12 +33,12 @@ export function compileQuery(
 
         return value.map((item) => {
           bindValues.push(item);
-          return type === "POSTGRESQL" ? `${bindValues.length}` : "?";
+          return type === "POSTGRESQL" ? "$" + bindValues.length : "?";
         }).join(", ");
       }
 
       bindValues.push(value);
-      return type === "POSTGRESQL" ? `${bindValues.length}` : "?";
+      return type === "POSTGRESQL" ? "$" + bindValues.length : "?";
     });
 
     return { sql, binds: {}, bindValues, parameterNames };
