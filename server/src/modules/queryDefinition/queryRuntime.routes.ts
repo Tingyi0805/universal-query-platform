@@ -24,15 +24,62 @@ const executeBodySchema = z.object({
 });
 
 function sendRuntimeError(res: any, error: unknown): boolean {
-  if (error instanceof Error && error.message.startsWith("PARAMETER_REQUIRED:")) {
+  if (!(error instanceof Error)) return false;
+
+  if (error.message.startsWith("QUOTED_QUERY_PARAMETER:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({
+      error: {
+        code: "QUOTED_QUERY_PARAMETER",
+        message: `查詢設定錯誤：參數 {{${name}}} 外面不可加單引號，請通知報表設計者修正。`,
+      },
+    });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_REQUIRED:")) {
     const name = error.message.split(":")[1];
     res.status(400).json({ error: { code: "PARAMETER_REQUIRED", message: `參數 ${name} 為必填。` } });
     return true;
   }
-  if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
+  if (error.message.startsWith("PARAMETER_DATE_INVALID:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({ error: { code: "PARAMETER_DATE_INVALID", message: `參數 ${name} 必須是有效日期。` } });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_NUMBER_INVALID:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({ error: { code: "PARAMETER_NUMBER_INVALID", message: `參數 ${name} 必須是有效數字。` } });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_")) {
     res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
     return true;
   }
+
+  const dbError = error as Error & { code?: string; errorNum?: number };
+  if (dbError.code === "ORA-01036" || dbError.errorNum === 1036) {
+    res.status(400).json({
+      error: {
+        code: "ORACLE_BIND_INVALID",
+        message: "查詢的 Oracle Bind Parameter 設定不正確，請通知報表設計者檢查 SQL 與參數設定。",
+      },
+    });
+    return true;
+  }
+
+  if (dbError.code === "ORA-01861" || dbError.errorNum === 1861) {
+    res.status(400).json({
+      error: {
+        code: "ORACLE_DATE_FORMAT_INVALID",
+        message: "查詢日期格式與 Oracle 欄位型別不相符，請檢查日期參數設定。",
+      },
+    });
+    return true;
+  }
+
   return false;
 }
 
