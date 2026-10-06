@@ -15,7 +15,7 @@ const idSchema = z.coerce.number().int().positive();
 const baseSchema = z.object({
   code: z.string().trim().min(2).max(100).regex(/^[A-Z0-9_]+$/),
   name: z.string().trim().min(1).max(200),
-  type: z.enum(["SQLSERVER", "ORACLE"]),
+  type: z.enum(["SQLSERVER", "ORACLE", "MYSQL", "POSTGRESQL"]),
   host: z.string().trim().min(1).max(255),
   port: z.coerce.number().int().min(1).max(65535),
   databaseName: z.string().trim().max(255).nullable().optional().default(null),
@@ -32,8 +32,8 @@ const baseSchema = z.object({
 const createSchema = baseSchema.extend({
   password: z.string().min(1).max(500),
 }).superRefine((value, ctx) => {
-  if (value.type === "SQLSERVER" && !value.databaseName) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["databaseName"], message: "SQL Server Database 必填。" });
+  if (["SQLSERVER","MYSQL","POSTGRESQL"].includes(value.type) && !value.databaseName) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["databaseName"], message: "Database 必填。" });
   }
   if (value.type === "ORACLE" && (!value.oracleServiceName || !value.oracleConnectionMode)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["oracleServiceName"], message: "Oracle Service Name/SID 必填。" });
@@ -43,8 +43,8 @@ const createSchema = baseSchema.extend({
 const updateSchema = baseSchema.extend({
   password: z.string().min(1).max(500).optional(),
 }).superRefine((value, ctx) => {
-  if (value.type === "SQLSERVER" && !value.databaseName) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["databaseName"], message: "SQL Server Database 必填。" });
+  if (["SQLSERVER","MYSQL","POSTGRESQL"].includes(value.type) && !value.databaseName) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["databaseName"], message: "Database 必填。" });
   }
   if (value.type === "ORACLE" && (!value.oracleServiceName || !value.oracleConnectionMode)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["oracleServiceName"], message: "Oracle Service Name/SID 必填。" });
