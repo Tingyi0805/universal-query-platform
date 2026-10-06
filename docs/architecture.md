@@ -13,7 +13,7 @@ DataSource -> Dataset -> Query Parameters -> Result Columns -> Report Layout -> 
 ## 核心領域模型
 
 ### DataSource
-定義 SQL Server、Oracle 等資料來源及連線方式。
+定義 SQL Server、Oracle、MySQL、PostgreSQL 等資料來源及連線方式。
 
 ### Dataset
 定義一組可查詢資料，包含：
