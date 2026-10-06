@@ -12,6 +12,7 @@ import {
   updateDataset,
 } from "./dataset.repository.js";
 import { executeSavedDataset, getParameterOptions, previewDataset } from "./dataset.service.js";
+import { syncDatasetColumns } from "./column.repository.js";
 import {
   listDatasetParameters,
   replaceDatasetParameters,
