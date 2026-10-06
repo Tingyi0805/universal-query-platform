@@ -13,6 +13,7 @@ import {
 import {
   getQueryAccessConfiguration,
   replaceQueryAccess,
+  searchQueryAccessUsers,
 } from "./queryAccess.repository.js";
 import { listReportColumns, replaceReportColumns } from "./reportColumn.repository.js";
 
@@ -222,6 +223,23 @@ queryDefinitionRouter.get("/:id/access", requirePermission("MANAGE_USERS"), asyn
       return;
     }
     res.json(await getQueryAccessConfiguration(id.data));
+  } catch (error) { next(error); }
+});
+
+queryDefinitionRouter.get("/:id/access/users", requirePermission("MANAGE_USERS"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const parsed = z.object({
+      q: z.string().trim().min(1).max(100),
+      limit: z.coerce.number().int().min(1).max(50).default(20),
+    }).safeParse(req.query);
+
+    if (!id.success || !parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "使用者搜尋條件格式不正確。" } });
+      return;
+    }
+
+    res.json({ users: await searchQueryAccessUsers(parsed.data.q, parsed.data.limit) });
   } catch (error) { next(error); }
 });
 
