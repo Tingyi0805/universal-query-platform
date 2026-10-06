@@ -96,7 +96,7 @@ export async function listAuditLogs(input: {
     .input("username", sql.NVarChar(100), input.username ?? null);
 
   const result = await request.query(`
-    SELECT a.Id, a.EventType, a.Status, a.ParametersJson, a.ResultRowCount AS RowCount,
+    SELECT a.Id, a.EventType, a.Status, a.ParametersJson, a.ResultRowCount AS [RowCount],
            a.DurationMs, a.IpAddress, a.ErrorCode, a.CreatedAtUtc,
            a.CompletedAtUtc, u.Username, u.DisplayName,
            q.Code AS QueryCode, q.Name AS QueryName
