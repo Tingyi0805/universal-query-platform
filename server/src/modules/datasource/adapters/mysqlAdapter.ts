@@ -48,7 +48,7 @@ export class MySqlAdapter implements DataSourceAdapter {
     try {
       const connection = await pool.getConnection();
       try {
-        await connection.query("SET SESSION MAX_EXECUTION_TIME = ?", [input.timeoutSec * 1000]);
+        await connection.query(`SET SESSION MAX_EXECUTION_TIME = ${Math.max(1, Math.trunc(input.timeoutSec * 1000))}`);
 
         const fetchRows = input.maxRows + 1;
         const boundedSql = `SELECT * FROM (${stripTerminalSemicolon(input.sql)}) AS __uqp_result LIMIT ${fetchRows}`;
