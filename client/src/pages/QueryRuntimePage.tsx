@@ -103,6 +103,91 @@ function aggregateValue(column: ReportColumn, rows: Record<string, unknown>[]): 
   return value == null ? "" : formatValue(value, column.displayFormat);
 }
 
+type GroupedDisplayRow =
+  | { kind: "group"; key: string; level: number; label: string; count: number }
+  | { kind: "data"; key: string; row: Record<string, unknown> }
+  | { kind: "subtotal"; key: string; level: number; label: string; rows: Record<string, unknown>[] };
+
+function compareGroupValue(a: unknown, b: unknown): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return -1;
+  if (b == null) return 1;
+
+  const aNumber = Number(a);
+  const bNumber = Number(b);
+  if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) return aNumber - bNumber;
+
+  return String(a).localeCompare(String(b), "zh-Hant", { numeric: true });
+}
+
+function buildGroupedRows(
+  rows: Record<string, unknown>[],
+  groupColumns: ReportColumn[],
+): GroupedDisplayRow[] {
+  if (groupColumns.length === 0) {
+    return rows.map((row, index) => ({ kind: "data" as const, key: `data-${index}`, row }));
+  }
+
+  const sorted = rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      for (const column of groupColumns) {
+        const compared = compareGroupValue(a.row[column.columnName], b.row[column.columnName]);
+        if (compared !== 0) return compared;
+      }
+      return a.index - b.index;
+    })
+    .map((item) => item.row);
+
+  const output: GroupedDisplayRow[] = [];
+
+  function appendLevel(level: number, levelRows: Record<string, unknown>[], path: string) {
+    if (level >= groupColumns.length) {
+      levelRows.forEach((row, index) => {
+        output.push({ kind: "data", key: `${path}-data-${index}`, row });
+      });
+      return;
+    }
+
+    const column = groupColumns[level];
+    const groups = new Map<string, { label: string; rows: Record<string, unknown>[] }>();
+
+    for (const row of levelRows) {
+      const raw = row[column.columnName];
+      const label = formatValue(raw, column.displayFormat) || "（空白）";
+      const key = raw == null ? "__NULL__" : String(raw);
+      const existing = groups.get(key);
+      if (existing) existing.rows.push(row);
+      else groups.set(key, { label, rows: [row] });
+    }
+
+    let groupIndex = 0;
+    for (const group of groups.values()) {
+      const groupPath = `${path}-g${level}-${groupIndex++}`;
+      output.push({
+        kind: "group",
+        key: `${groupPath}-header`,
+        level,
+        label: `${column.displayLabel}：${group.label}`,
+        count: group.rows.length,
+      });
+
+      appendLevel(level + 1, group.rows, groupPath);
+
+      output.push({
+        kind: "subtotal",
+        key: `${groupPath}-subtotal`,
+        level,
+        label: `${group.label} 小計`,
+        rows: group.rows,
+      });
+    }
+  }
+
+  appendLevel(0, sorted, "root");
+  return output;
+}
+
 export function QueryRuntimePage() {
   const { id } = useParams();
   const { accessToken } = useAuth();
@@ -188,6 +273,21 @@ export function QueryRuntimePage() {
   }, [reportColumns, result]);
 
   const hasAggregates = visibleColumns.some((column) => column.aggregateType !== "NONE");
+
+  const groupColumns = useMemo(
+    () => visibleColumns
+      .filter((column) => column.groupOrder !== null)
+      .sort((a, b) =>
+        (a.groupOrder ?? Number.MAX_SAFE_INTEGER) - (b.groupOrder ?? Number.MAX_SAFE_INTEGER)
+        || a.displayOrder - b.displayOrder
+      ),
+    [visibleColumns],
+  );
+
+  const groupedRows = useMemo(
+    () => result ? buildGroupedRows(result.rows, groupColumns) : [],
+    [result, groupColumns],
+  );
 
   async function exportExcel() {
     if (!query?.canExport) return;
@@ -358,16 +458,49 @@ export function QueryRuntimePage() {
                 </tr>
               </thead>
               <tbody>
-                {result.rows.map((row, index) => (
-                  <tr key={index}>
-                    {visibleColumns.map((column) => (
-                      <td key={column.columnName}
-                        style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}>
-                        {formatValue(row[column.columnName], column.displayFormat)}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
+                {groupedRows.map((item) => {
+                  if (item.kind === "group") {
+                    return (
+                      <tr className={`runtime-group-row level-${item.level}`} key={item.key}>
+                        <td colSpan={visibleColumns.length} style={{ paddingLeft: `${12 + item.level * 22}px` }}>
+                          <strong>{item.label}</strong>
+                          <span>{item.count} 筆</span>
+                        </td>
+                      </tr>
+                    );
+                  }
+
+                  if (item.kind === "subtotal") {
+                    return (
+                      <tr className={`runtime-subtotal-row level-${item.level}`} key={item.key}>
+                        {visibleColumns.map((column, index) => (
+                          <td
+                            key={column.columnName}
+                            style={{
+                              textAlign: column.alignment.toLowerCase() as "left" | "center" | "right",
+                              paddingLeft: index === 0 ? `${12 + item.level * 22}px` : undefined,
+                            }}
+                          >
+                            {index === 0 && column.aggregateType === "NONE"
+                              ? item.label
+                              : aggregateValue(column, item.rows)}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  }
+
+                  return (
+                    <tr key={item.key}>
+                      {visibleColumns.map((column) => (
+                        <td key={column.columnName}
+                          style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}>
+                          {formatValue(item.row[column.columnName], column.displayFormat)}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
               {hasAggregates && (
                 <tfoot>
