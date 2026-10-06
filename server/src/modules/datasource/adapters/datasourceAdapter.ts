@@ -4,6 +4,7 @@ import type { QueryResult } from "../../../query/query.types.js";
 export type ExecuteQueryInput = {
   sql: string;
   binds: Record<string, unknown>;
+  bindValues?: unknown[];
   maxRows: number;
   timeoutSec: number;
 };
