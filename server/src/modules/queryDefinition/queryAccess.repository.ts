@@ -10,16 +10,12 @@ async function requirePool() {
 export async function getQueryAccessConfiguration(queryId: number) {
   const pool = await requirePool();
 
-  const [roles, users, roleAccess, userAccess] = await Promise.all([
+  const [roles, roleAccess, userAccess] = await Promise.all([
     pool.request().query(`
       SELECT Id, Code, Name, IsActive
       FROM uqp.Role
+      WHERE IsActive=1
       ORDER BY IsSystem DESC, Code
-    `),
-    pool.request().query(`
-      SELECT Id, Username, DisplayName, IsActive
-      FROM uqp.AppUser
-      ORDER BY Username
     `),
     pool.request().input("queryId", sql.BigInt, queryId).query(`
       SELECT RoleId, CanView, CanExecute, CanExport
@@ -27,9 +23,12 @@ export async function getQueryAccessConfiguration(queryId: number) {
       WHERE QueryDefinitionId=@queryId
     `),
     pool.request().input("queryId", sql.BigInt, queryId).query(`
-      SELECT UserId, CanView, CanExecute, CanExport
-      FROM uqp.UserQueryAccess
-      WHERE QueryDefinitionId=@queryId
+      SELECT a.UserId, a.CanView, a.CanExecute, a.CanExport,
+             u.Username, u.DisplayName, u.IsActive
+      FROM uqp.UserQueryAccess a
+      INNER JOIN uqp.AppUser u ON u.Id=a.UserId
+      WHERE a.QueryDefinitionId=@queryId
+      ORDER BY u.Username
     `),
   ]);
 
@@ -40,12 +39,6 @@ export async function getQueryAccessConfiguration(queryId: number) {
       name: String(row.Name),
       isActive: Boolean(row.IsActive),
     })),
-    users: users.recordset.map((row) => ({
-      id: Number(row.Id),
-      username: String(row.Username),
-      displayName: String(row.DisplayName),
-      isActive: Boolean(row.IsActive),
-    })),
     roleAccess: roleAccess.recordset.map((row) => ({
       roleId: Number(row.RoleId),
       canView: Boolean(row.CanView),
@@ -54,6 +47,9 @@ export async function getQueryAccessConfiguration(queryId: number) {
     })),
     userAccess: userAccess.recordset.map((row) => ({
       userId: Number(row.UserId),
+      username: String(row.Username),
+      displayName: String(row.DisplayName),
+      isActive: Boolean(row.IsActive),
       canView: Boolean(row.CanView),
       canExecute: Boolean(row.CanExecute),
       canExport: Boolean(row.CanExport),
@@ -119,4 +115,34 @@ export async function replaceQueryAccess(
     await tx.rollback();
     throw error;
   }
+}
+
+
+export async function searchQueryAccessUsers(searchText: string, limit = 20) {
+  const pool = await requirePool();
+  const search = searchText.trim();
+  if (search.length < 1) return [];
+
+  const safeLimit = Math.min(Math.max(limit, 1), 50);
+  const result = await pool.request()
+    .input("search", sql.NVarChar(100), `%${search}%`)
+    .input("limit", sql.Int, safeLimit)
+    .query(`
+      SELECT TOP (@limit) Id, Username, DisplayName, IsActive
+      FROM uqp.AppUser
+      WHERE IsActive=1
+        AND (Username LIKE @search OR DisplayName LIKE @search)
+      ORDER BY
+        CASE WHEN Username=@search THEN 0
+             WHEN Username LIKE @search + '%' THEN 1
+             ELSE 2 END,
+        Username
+    `);
+
+  return result.recordset.map((row) => ({
+    id: Number(row.Id),
+    username: String(row.Username),
+    displayName: String(row.DisplayName),
+    isActive: Boolean(row.IsActive),
+  }));
 }
