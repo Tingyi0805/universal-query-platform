@@ -4,6 +4,7 @@ import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import {
   createDataSource,
   deleteDataSource,
+  getDataSourceDeleteImpact,
   listDataSources,
   updateDataSource,
 } from "./datasource.repository.js";
@@ -88,6 +89,23 @@ dataSourceRouter.put("/:id", async (req, res, next) => {
     }
     await updateDataSource(id.data, parsed.data);
     res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DATASOURCE_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到資料來源。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+dataSourceRouter.get("/:id/delete-impact", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "資料來源 ID 不正確。" } });
+      return;
+    }
+    res.json(await getDataSourceDeleteImpact(id.data));
   } catch (error) {
     if (error instanceof Error && error.message === "DATASOURCE_NOT_FOUND") {
       res.status(404).json({ error: { code: error.message, message: "找不到資料來源。" } });
