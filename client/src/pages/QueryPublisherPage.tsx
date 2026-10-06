@@ -213,6 +213,67 @@ export function QueryPublisherPage() {
     }
   }
 
+  async function createCategory() {
+    setError("");
+    try {
+      await apiRequest("/query-categories", {
+        method: "POST",
+        body: JSON.stringify({
+          code: newCategory.code.trim().toUpperCase(),
+          name: newCategory.name.trim(),
+          sortOrder: Number(newCategory.sortOrder),
+          isActive: newCategory.isActive,
+        }),
+      }, accessToken);
+      setNewCategory({ code: "", name: "", sortOrder: 0, isActive: true });
+      setNotice("分類已新增。");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "新增分類失敗。");
+    }
+  }
+
+  async function updateCategory() {
+    if (!categoryDraft) return;
+    setError("");
+    try {
+      await apiRequest(`/query-categories/${categoryDraft.id}`, {
+        method: "PUT",
+        body: JSON.stringify({
+          code: categoryDraft.code.trim().toUpperCase(),
+          name: categoryDraft.name.trim(),
+          sortOrder: Number(categoryDraft.sortOrder),
+          isActive: categoryDraft.isActive,
+        }),
+      }, accessToken);
+      setCategoryDraft(null);
+      setNotice("分類已更新。");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更新分類失敗。");
+    }
+  }
+
+  async function removeCategory(category: QueryCategory) {
+    setError("");
+    if (category.queryCount > 0) {
+      setError(`分類「${category.name}」仍有 ${category.queryCount} 個 Query 使用，請先將 Query 移到其他分類。`);
+      return;
+    }
+    if (!window.confirm(`確定刪除分類「${category.name}」？`)) return;
+
+    try {
+      await apiRequest(`/query-categories/${category.id}`, { method: "DELETE" }, accessToken);
+      if (form.categoryId === category.id) {
+        setForm((current) => ({ ...current, categoryId: "" }));
+      }
+      setNotice("分類已刪除。");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "刪除分類失敗。");
+    }
+  }
+
   const SelectedIcon = selectedIcon.icon;
 
   async function remove() {
@@ -259,6 +320,108 @@ export function QueryPublisherPage() {
       {error && <section className="form-error">{error}</section>}
       {notice && <section className="notice">{notice}</section>}
 
+      {showCategoryManager && (
+        <section className="category-manager">
+          <div className="section-title">
+            <div>
+              <h2>分類管理</h2>
+              <p className="field-hint">可新增、修改、排序、停用與刪除分類；仍有 Query 使用的分類不可刪除。</p>
+            </div>
+            <button className="secondary-button" type="button" onClick={() => setShowCategoryManager(false)}>關閉</button>
+          </div>
+
+          <div className="category-create-grid">
+            <label>代碼
+              <input
+                value={newCategory.code}
+                placeholder="例如 PATIENT"
+                onChange={(e) => setNewCategory({ ...newCategory, code: e.target.value.toUpperCase() })}
+              />
+            </label>
+            <label>名稱
+              <input
+                value={newCategory.name}
+                placeholder="例如 病患資料"
+                onChange={(e) => setNewCategory({ ...newCategory, name: e.target.value })}
+              />
+            </label>
+            <label>排序
+              <input
+                type="number"
+                value={newCategory.sortOrder}
+                onChange={(e) => setNewCategory({ ...newCategory, sortOrder: Number(e.target.value) })}
+              />
+            </label>
+            <button
+              className="primary-button"
+              type="button"
+              disabled={!newCategory.code.trim() || !newCategory.name.trim()}
+              onClick={() => void createCategory()}
+            >
+              ＋新增分類
+            </button>
+          </div>
+
+          <div className="category-table">
+            {categories.map((category) => {
+              const editing = categoryDraft?.id === category.id;
+              const current = editing ? categoryDraft : category;
+              return (
+                <div className="category-row" key={category.id}>
+                  <input
+                    value={current?.code ?? ""}
+                    disabled={!editing}
+                    onChange={(e) => categoryDraft && setCategoryDraft({ ...categoryDraft, code: e.target.value.toUpperCase() })}
+                  />
+                  <input
+                    value={current?.name ?? ""}
+                    disabled={!editing}
+                    onChange={(e) => categoryDraft && setCategoryDraft({ ...categoryDraft, name: e.target.value })}
+                  />
+                  <input
+                    type="number"
+                    value={current?.sortOrder ?? 0}
+                    disabled={!editing}
+                    onChange={(e) => categoryDraft && setCategoryDraft({ ...categoryDraft, sortOrder: Number(e.target.value) })}
+                  />
+                  <label className="category-active-check">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(current?.isActive)}
+                      disabled={!editing}
+                      onChange={(e) => categoryDraft && setCategoryDraft({ ...categoryDraft, isActive: e.target.checked })}
+                    />
+                    啟用
+                  </label>
+                  <span className="category-use-count">{category.queryCount} 個 Query</span>
+                  <div className="category-actions">
+                    {editing ? (
+                      <>
+                        <button className="primary-button" type="button" onClick={() => void updateCategory()}>儲存</button>
+                        <button className="secondary-button" type="button" onClick={() => setCategoryDraft(null)}>取消</button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="secondary-button" type="button" onClick={() => setCategoryDraft({ ...category })}>修改</button>
+                        <button
+                          className="danger-button"
+                          type="button"
+                          disabled={category.queryCount > 0}
+                          onClick={() => void removeCategory(category)}
+                        >
+                          刪除
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {categories.length === 0 && <div className="notice">尚未建立分類。</div>}
+          </div>
+        </section>
+      )}
+
       <div className="publisher-layout">
         <aside className="query-list">
           <div className="section-title">
@@ -298,18 +461,31 @@ export function QueryPublisherPage() {
             </label>
 
             <div className="form-grid two">
-              <label>分類
-                <input
-                  list="query-category-options"
-                  value={form.category}
-                  placeholder="可選既有分類或直接輸入新分類"
-                  onChange={(e) => setForm({ ...form, category: e.target.value })}
-                />
-                <datalist id="query-category-options">
-                  {categories.map((category) => <option key={category} value={category} />)}
-                </datalist>
-                <small className="field-hint">可從既有分類選擇，也可直接輸入新分類。</small>
-              </label>
+              <div className="category-select-field">
+                <span className="field-label">分類</span>
+                <div className="category-select-row">
+                  <select
+                    value={form.categoryId}
+                    onChange={(e) => setForm({ ...form, categoryId: e.target.value ? Number(e.target.value) : "" })}
+                  >
+                    <option value="">未分類</option>
+                    {categories
+                      .filter((category) => category.isActive || category.id === form.categoryId)
+                      .map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}{category.isActive ? "" : "（已停用）"}
+                        </option>
+                      ))}
+                  </select>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => setShowCategoryManager((current) => !current)}
+                  >
+                    分類管理
+                  </button>
+                </div>
+              </div>
               <div className="icon-picker-field">
                 <span className="field-label">Icon</span>
                 <div className="icon-picker" role="radiogroup" aria-label="查詢圖示">
