@@ -37,6 +37,7 @@ export type ConnectionTestResult = {
   driverName?: string;
   driverVersion?: string;
   driverMode?: string;
+  configuredDriverMode?: string;
   clientVersion?: string;
   compatibilityStatus?: ConnectionCompatibilityStatus;
   errorCode?: string;
