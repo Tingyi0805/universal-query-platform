@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ComponentType, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type ComponentType, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
   BarChart3, CalendarDays, ClipboardList, Database, FileSpreadsheet,
@@ -12,12 +12,23 @@ import "./QueryPublisherPage.css";
 
 type Dataset = { id: number; code: string; name: string; isActive: boolean };
 
+type QueryCategory = {
+  id: number;
+  code: string;
+  name: string;
+  sortOrder: number;
+  isActive: boolean;
+  queryCount: number;
+};
+
 type QueryDefinition = {
   id: number;
   code: string;
   name: string;
   description: string | null;
+  categoryId: number | null;
   category: string | null;
+  categorySortOrder: number;
   icon: string;
   datasetId: number;
   datasetName?: string;
@@ -33,7 +44,7 @@ type FormState = {
   code: string;
   name: string;
   description: string;
-  category: string;
+  categoryId: number | "";
   icon: string;
   datasetId: number | "";
   sortOrder: number;
@@ -46,7 +57,7 @@ const emptyForm: FormState = {
   code: "",
   name: "",
   description: "",
-  category: "",
+  categoryId: "",
   icon: "Table2",
   datasetId: "",
   sortOrder: 0,
@@ -72,28 +83,30 @@ export function QueryPublisherPage() {
   const { accessToken, hasPermission } = useAuth();
   const [queries, setQueries] = useState<QueryDefinition[]>([]);
   const [datasets, setDatasets] = useState<Dataset[]>([]);
+  const [categories, setCategories] = useState<QueryCategory[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [categoryDraft, setCategoryDraft] = useState<QueryCategory | null>(null);
+  const [newCategory, setNewCategory] = useState({ code: "", name: "", sortOrder: 0, isActive: true });
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const canPublish = hasPermission("PUBLISH_QUERY");
   const canManageAccess = hasPermission("MANAGE_USERS");
-  const categories = useMemo(
-    () => [...new Set(queries.map((query) => query.category?.trim()).filter((value): value is string => Boolean(value)))].sort(),
-    [queries],
-  );
   const selectedIcon = iconOptions.find((item) => item.key === form.icon) ?? iconOptions[0];
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [queryResult, datasetResult] = await Promise.all([
+      const [queryResult, datasetResult, categoryResult] = await Promise.all([
         apiRequest<{ queryDefinitions: QueryDefinition[] }>("/query-definitions", {}, accessToken),
         apiRequest<{ datasets: Dataset[] }>("/datasets", {}, accessToken),
+        apiRequest<{ categories: QueryCategory[] }>("/query-categories", {}, accessToken),
       ]);
       setQueries(queryResult.queryDefinitions);
       setDatasets(datasetResult.datasets);
+      setCategories(categoryResult.categories);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入 Query Definition 失敗。");
     } finally {
@@ -109,7 +122,7 @@ export function QueryPublisherPage() {
       code: query.code,
       name: query.name,
       description: query.description ?? "",
-      category: query.category ?? "",
+      categoryId: query.categoryId ?? "",
       icon: query.icon,
       datasetId: query.datasetId,
       sortOrder: query.sortOrder,
@@ -135,7 +148,7 @@ export function QueryPublisherPage() {
     code: form.code.trim().toUpperCase(),
     name: form.name.trim(),
     description: form.description.trim() || null,
-    category: form.category.trim() || null,
+    categoryId: form.categoryId === "" ? null : Number(form.categoryId),
     icon: form.icon,
     datasetId: Number(form.datasetId),
     sortOrder: Number(form.sortOrder),
