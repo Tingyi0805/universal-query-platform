@@ -18,7 +18,7 @@ import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 const modules = [
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
   { title: "查詢設計", description: "建立 Dataset、SQL 與安全查詢參數。", icon: PanelsTopLeft, permission: "DESIGN_QUERY", path: "/designer/datasets" },
-  { title: "查詢發布", description: "建立查詢圖示、權限並發布給使用者。", icon: FileCheck2, permission: "DESIGN_QUERY", path: "/designer/queries" },
+  { title: "查詢發佈", description: "建立查詢圖示、權限並發佈給使用者。", icon: FileCheck2, permission: "DESIGN_QUERY", path: "/designer/queries" },
   { title: "資料來源", description: "管理 SQL Server、Oracle 等資料庫連線。", icon: Database, permission: "MANAGE_DATASOURCE", path: "/admin/datasources" },
   { title: "Excel 報表", description: "已授權查詢可匯出 Excel。", icon: FileSpreadsheet, permission: "EXPORT_QUERY", path: "/queries" },
   { title: "權限管理", description: "使用角色與使用者權限控制功能。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/users" },
@@ -84,7 +84,7 @@ function HomePage() {
 
       <section className="notice">
         <strong>目前狀態：</strong>
-        資料來源、查詢設計、參數設計、查詢發布與權限式查詢入口已串接。
+        資料來源、查詢設計、參數設計、查詢發佈與權限式查詢入口已串接。
       </section>
     </main>
   );
