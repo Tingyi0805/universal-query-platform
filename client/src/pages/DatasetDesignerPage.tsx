@@ -19,7 +19,7 @@ type DatasetRow = {
   description: string | null;
   dataSourceId: number;
   dataSourceName?: string;
-  dataSourceType?: "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
+  dataSourceType?: "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL" | "ODBC";
   sqlText: string;
   maxRows: number;
   queryTimeoutSec: number | null;
