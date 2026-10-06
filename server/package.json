@@ -23,7 +23,9 @@
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
     "zod": "^3.23.8",
-    "exceljs": "^4.4.0"
+    "exceljs": "^4.4.0",
+    "mysql2": "^3.15.3",
+    "pg": "^8.16.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
@@ -33,6 +35,7 @@
     "@types/node": "^22.10.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "@types/mssql": "^9.1.7"
+    "@types/mssql": "^9.1.7",
+    "@types/pg": "^8.15.5"
   }
 }
