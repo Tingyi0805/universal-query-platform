@@ -71,6 +71,27 @@ function sameNameSet(a: string[], b: string[]): boolean {
 
 function validateParameterOptions(parameters: z.infer<typeof parameterSchema>[]): string | null {
   for (const parameter of parameters) {
+    const defaultValue = parameter.defaultValue?.trim() ?? "";
+
+    if (defaultValue) {
+      if (parameter.dataType === "NUMBER" && !Number.isFinite(Number(defaultValue))) {
+        return `${parameter.name} 的預設值必須是有效數字。`;
+      }
+
+      if (parameter.dataType === "DATE") {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(defaultValue) || Number.isNaN(new Date(`${defaultValue}T00:00:00Z`).getTime())) {
+          return `${parameter.name} 的日期預設值必須使用 YYYY-MM-DD。`;
+        }
+      }
+
+      if (parameter.dataType === "DATETIME" && Number.isNaN(new Date(defaultValue).getTime())) {
+        return `${parameter.name} 的日期時間預設值格式不正確。`;
+      }
+
+      if (parameter.dataType === "BOOLEAN" && !["true","false","1","0","yes","no","y","n"].includes(defaultValue.toLowerCase())) {
+        return `${parameter.name} 的布林預設值必須為 true/false 或 1/0。`;
+      }
+    }
     if (parameter.optionMode === "FIXED") {
       if (!parameter.fixedOptionsJson) return `${parameter.name} 缺少固定選項。`;
       try {
@@ -88,6 +109,73 @@ function validateParameterOptions(parameters: z.infer<typeof parameterSchema>[])
     }
   }
   return null;
+}
+
+function sendDatasetExecutionError(res: any, error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+
+  if (error.message.startsWith("QUOTED_QUERY_PARAMETER:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({
+      error: {
+        code: "QUOTED_QUERY_PARAMETER",
+        message: `參數 {{${name}}} 外面不可加單引號，請直接使用 {{${name}}}。`,
+      },
+    });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_REQUIRED:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({ error: { code: "PARAMETER_REQUIRED", message: `參數 ${name} 為必填。` } });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_DATE_INVALID:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({ error: { code: "PARAMETER_DATE_INVALID", message: `參數 ${name} 必須是 YYYY-MM-DD 日期格式。` } });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_DATETIME_INVALID:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({ error: { code: "PARAMETER_DATETIME_INVALID", message: `參數 ${name} 的日期時間格式不正確。` } });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_NUMBER_INVALID:")) {
+    const name = error.message.split(":")[1];
+    res.status(400).json({ error: { code: "PARAMETER_NUMBER_INVALID", message: `參數 ${name} 必須是有效數字。` } });
+    return true;
+  }
+
+  if (error.message.startsWith("PARAMETER_BOOLEAN_INVALID")) {
+    res.status(400).json({ error: { code: "PARAMETER_BOOLEAN_INVALID", message: "布林參數格式不正確。" } });
+    return true;
+  }
+
+  const dbError = error as Error & { code?: string; errorNum?: number };
+  if (dbError.code === "ORA-01036" || dbError.errorNum === 1036) {
+    res.status(400).json({
+      error: {
+        code: "ORACLE_BIND_INVALID",
+        message: "Oracle Bind Parameter 不正確。請確認 {{PARAM}} 外面沒有單引號，且 SQL 參數名稱與 Parameter Designer 一致。",
+      },
+    });
+    return true;
+  }
+
+  if (dbError.code === "ORA-01861" || dbError.errorNum === 1861) {
+    res.status(400).json({
+      error: {
+        code: "ORACLE_DATE_FORMAT_INVALID",
+        message: "Oracle 日期格式不符合。若欄位為 DATE，建議直接使用 DATE 型別 Bind Parameter，不要自行加單引號。",
+      },
+    });
+    return true;
+  }
+
+  return false;
 }
 
 export const datasetRouter = Router();
@@ -119,6 +207,7 @@ datasetRouter.post("/preview/run", async (req, res, next) => {
       result,
     });
   } catch (error) {
+    if (sendDatasetExecutionError(res, error)) return;
     if (error instanceof Error && error.message.startsWith("MISSING_QUERY_PARAMETER:")) {
       const name = error.message.split(":")[1];
       res.status(400).json({ error: { code: "MISSING_QUERY_PARAMETER", message: `缺少查詢參數：${name}` } });
@@ -153,11 +242,7 @@ datasetRouter.post("/:id/execute", async (req, res, next) => {
     await syncDatasetColumns(id.data, result.columns);
     res.json({ result });
   } catch (error) {
-    if (error instanceof Error && error.message.startsWith("PARAMETER_REQUIRED:")) {
-      const name = error.message.split(":")[1];
-      res.status(400).json({ error: { code: "PARAMETER_REQUIRED", message: `參數 ${name} 為必填。` } });
-      return;
-    }
+    if (sendDatasetExecutionError(res, error)) return;
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
       res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
       return;
