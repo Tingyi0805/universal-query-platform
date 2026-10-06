@@ -9,7 +9,7 @@ type DataSourceOption = {
   id: number;
   code: string;
   name: string;
-  type: "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL";
+  type: "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL" | "ODBC";
 };
 
 type DatasetRow = {
