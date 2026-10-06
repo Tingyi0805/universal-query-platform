@@ -176,6 +176,17 @@ export async function replaceDatasetParameters(
         `);
     }
 
+    await new sql.Request(tx)
+      .input("datasetId", sql.BigInt, datasetId)
+      .query(`
+        UPDATE uqp.QueryDefinition
+        SET IsPublished=0,
+            PublishedAtUtc=NULL,
+            PublishedByUserId=NULL,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE DatasetId=@datasetId AND IsPublished=1
+      `);
+
     await tx.commit();
   } catch (error) {
     await tx.rollback();
