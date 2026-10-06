@@ -57,7 +57,7 @@ export async function completeAuditSuccess(
     .input("durationMs", sql.Int, input.durationMs ?? null)
     .query(`
       UPDATE uqp.AuditLog
-      SET Status='SUCCESS', RowCount=@rowCount, DurationMs=@durationMs,
+      SET Status='SUCCESS', ResultRowCount=@rowCount, DurationMs=@durationMs,
           CompletedAtUtc=SYSUTCDATETIME()
       WHERE Id=@id
     `);
@@ -96,7 +96,7 @@ export async function listAuditLogs(input: {
     .input("username", sql.NVarChar(100), input.username ?? null);
 
   const result = await request.query(`
-    SELECT a.Id, a.EventType, a.Status, a.ParametersJson, a.RowCount,
+    SELECT a.Id, a.EventType, a.Status, a.ParametersJson, a.ResultRowCount AS RowCount,
            a.DurationMs, a.IpAddress, a.ErrorCode, a.CreatedAtUtc,
            a.CompletedAtUtc, u.Username, u.DisplayName,
            q.Code AS QueryCode, q.Name AS QueryName
