@@ -3,7 +3,9 @@ export type QueryDefinitionRecord = {
   code: string;
   name: string;
   description: string | null;
+  categoryId: number | null;
   category: string | null;
+  categorySortOrder: number;
   icon: string;
   datasetId: number;
   datasetName?: string;
@@ -18,7 +20,7 @@ export type QueryDefinitionInput = {
   code: string;
   name: string;
   description: string | null;
-  category: string | null;
+  categoryId: number | null;
   icon: string;
   datasetId: number;
   sortOrder: number;
