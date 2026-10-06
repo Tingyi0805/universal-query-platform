@@ -11,6 +11,12 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [bootstrapRequired, setBootstrapRequired] = useState(false);
   const [bootstrapEnabled, setBootstrapEnabled] = useState(false);
+  const [branding, setBranding] = useState({
+    organizationName: "",
+    platformName: "Universal Query Platform",
+    platformTitle: "通用資料查詢與報表平台",
+    platformSubtitle: "",
+  });
 
   useEffect(() => {
     apiRequest<{ bootstrapRequired: boolean; bootstrapEnabled: boolean }>("/admin/bootstrap/status")
@@ -20,6 +26,12 @@ export function LoginPage() {
       })
       .catch(() => {
         // Login itself will surface configuration errors when submitted.
+      });
+
+    apiRequest<typeof branding>("/system-settings/public-branding")
+      .then(setBranding)
+      .catch(() => {
+        // Keep built-in labels when settings are not available yet.
       });
   }, []);
 
@@ -43,9 +55,14 @@ export function LoginPage() {
   return (
     <main className="login-shell">
       <form className="login-card" onSubmit={submit}>
-        <p className="eyebrow">Universal Query Platform</p>
-        <h1>登入平台</h1>
-        <p className="login-hint">請使用已授權的平台帳號登入。</p>
+        {branding.organizationName.trim() && (
+          <p className="login-organization">{branding.organizationName}</p>
+        )}
+        <p className="eyebrow">{branding.platformName}</p>
+        <h1>{branding.platformTitle || "登入平台"}</h1>
+        <p className="login-hint">
+          {branding.platformSubtitle.trim() || "請使用已授權的平台帳號登入。"}
+        </p>
 
         {bootstrapRequired && (
           <div className="notice">
