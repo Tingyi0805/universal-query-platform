@@ -8,6 +8,8 @@ import {
   createInitialAdmin,
   createRole,
   createUser,
+  deleteUser,
+  getUserDeleteImpact,
   listPermissions,
   listRoles,
   listUsers,
@@ -145,6 +147,59 @@ adminRouter.put("/users/:id", async (req, res, next) => {
     }
     if (error instanceof Error && error.message === "USER_NOT_FOUND") {
       res.status(404).json({ error: { code: error.message, message: "找不到使用者。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+adminRouter.get("/users/:id/delete-impact", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "使用者 ID 不正確。" } });
+      return;
+    }
+    res.json(await getUserDeleteImpact(id.data));
+  } catch (error) {
+    if (error instanceof Error && error.message === "USER_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到使用者。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+adminRouter.delete("/users/:id", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "使用者 ID 不正確。" } });
+      return;
+    }
+
+    if (id.data === req.authUser.id) {
+      res.status(409).json({ error: { code: "CANNOT_DELETE_SELF", message: "不可刪除目前登入中的自己；如不再使用，請由另一位管理員停用此帳號。" } });
+      return;
+    }
+
+    await deleteUser(id.data);
+    res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "LAST_SYSTEM_ADMIN") {
+      res.status(409).json({ error: { code: error.message, message: "不可刪除最後一位系統管理員。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "USER_HAS_HISTORY") {
+      res.status(409).json({ error: { code: error.message, message: "此使用者已有稽核或發布歷史，為保留追溯紀錄不可永久刪除，請改為停用。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "USER_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到使用者。" } });
+      return;
+    }
+    if ((error as { number?: number })?.number === 547) {
+      res.status(409).json({ error: { code: "USER_IN_USE", message: "此使用者仍被其他資料引用，請改為停用。" } });
       return;
     }
     next(error);
