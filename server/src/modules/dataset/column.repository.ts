@@ -52,6 +52,6 @@ export async function listDatasetColumns(datasetId: number) {
   return result.recordset.map((row) => ({
     name: String(row.ColumnName),
     dataType: row.DataType == null ? null : String(row.DataType),
-    ordinal: Number(row.[Ordinal]),
+    ordinal: Number(row.Ordinal),
   }));
 }
