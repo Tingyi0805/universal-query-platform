@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
-    "db:migrate": "tsx src/scripts/migrate.ts"
+    "db:migrate": "tsx src/scripts/migrate.ts",
+    "test": "node --import tsx --test src/query/selectOnlySql.test.ts src/query/queryCompiler.test.ts src/modules/dataset/parameter.service.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
