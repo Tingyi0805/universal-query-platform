@@ -1,0 +1,91 @@
+.parameter-designer {
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid #e3e9f1;
+}
+
+.parameter-designer .section-title p {
+  margin: 5px 0 0;
+  color: #728097;
+  font-size: 13px;
+}
+
+.parameter-card-list {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.parameter-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid #dde5f0;
+  border-radius: 14px;
+  background: #fbfcfe;
+}
+
+.parameter-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.parameter-card-head code {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.parameter-card-head label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.parameter-form-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.parameter-card label,
+.option-config label {
+  display: grid;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.parameter-card input,
+.parameter-card select,
+.parameter-card textarea {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid #cbd6e5;
+  border-radius: 8px;
+  background: white;
+  font: inherit;
+}
+
+.parameter-card-head input {
+  width: auto;
+}
+
+.option-config {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f2f6fb;
+}
+
+.option-config textarea {
+  min-height: 100px;
+  resize: vertical;
+  font-family: Consolas, "Courier New", monospace;
+}
+
+@media (max-width: 860px) {
+  .parameter-form-grid { grid-template-columns: 1fr; }
+}
