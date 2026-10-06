@@ -14,6 +14,7 @@ import {
   getQueryAccessConfiguration,
   replaceQueryAccess,
 } from "./queryAccess.repository.js";
+import { listReportColumns, replaceReportColumns } from "./reportColumn.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
 
@@ -27,6 +28,20 @@ const definitionSchema = z.object({
   sortOrder: z.coerce.number().int().min(-10000).max(10000).default(0),
   allowExcelExport: z.boolean().default(true),
   isActive: z.boolean().default(true),
+});
+
+const reportColumnsSchema = z.object({
+  columns: z.array(z.object({
+    columnName: z.string().min(1).max(256),
+    displayLabel: z.string().min(1).max(256),
+    displayOrder: z.coerce.number().int().min(0).max(10000),
+    isVisible: z.boolean(),
+    width: z.coerce.number().int().min(40).max(1000).nullable(),
+    displayFormat: z.string().max(100).nullable(),
+    alignment: z.enum(["LEFT","CENTER","RIGHT"]),
+    groupOrder: z.coerce.number().int().min(0).max(100).nullable(),
+    aggregateType: z.enum(["NONE","SUM","AVG","MIN","MAX","COUNT"]),
+  })).max(500),
 });
 
 const accessSchema = z.object({
@@ -152,6 +167,42 @@ queryDefinitionRouter.post("/:id/unpublish", requirePermission("PUBLISH_QUERY"),
     await unpublishQueryDefinition(id.data);
     res.json({ status: "OK" });
   } catch (error) { next(error); }
+});
+
+queryDefinitionRouter.get("/:id/report-columns", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
+      return;
+    }
+    res.json({ columns: await listReportColumns(id.data) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "QUERY_DEFINITION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+queryDefinitionRouter.put("/:id/report-columns", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const parsed = reportColumnsSchema.safeParse(req.body);
+    if (!id.success || !parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Report 欄位設定格式不正確。" } });
+      return;
+    }
+    await replaceReportColumns(id.data, parsed.data.columns);
+    res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "REPORT_COLUMN_NOT_IN_DATASET") {
+      res.status(409).json({ error: { code: error.message, message: "Report 欄位與目前 Dataset 欄位不一致，請重新同步。" } });
+      return;
+    }
+    next(error);
+  }
 });
 
 queryDefinitionRouter.get("/:id/access", requirePermission("MANAGE_USERS"), async (req, res, next) => {
