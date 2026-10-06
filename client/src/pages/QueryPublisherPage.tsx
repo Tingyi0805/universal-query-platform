@@ -189,9 +189,26 @@ export function QueryPublisherPage() {
   const SelectedIcon = selectedIcon.icon;
 
   async function remove() {
-    if (!form.id || !window.confirm(`確定刪除 Query「${form.name}」？`)) return;
+    if (!form.id) return;
     setError("");
+    setNotice("");
+
     try {
+      const impact = await apiRequest<{ canDelete: boolean; auditCount: number }>(
+        `/query-definitions/${form.id}/delete-impact`,
+        {},
+        accessToken,
+      );
+
+      if (!impact.canDelete) {
+        setError(
+          `Query「${form.name}」已有 ${impact.auditCount} 筆 Audit 歷史，為保留稽核紀錄不能直接刪除。請改用「取消發布」並取消「啟用」。`,
+        );
+        return;
+      }
+
+      if (!window.confirm(`確定永久刪除 Query「${form.name}」？此操作無法復原。`)) return;
+
       await apiRequest(`/query-definitions/${form.id}`, { method: "DELETE" }, accessToken);
       reset();
       setNotice("Query Definition 已刪除。");
