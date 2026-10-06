@@ -111,6 +111,15 @@ dataSourceRouter.delete("/:id", async (req, res, next) => {
       res.status(404).json({ error: { code: error.message, message: "找不到資料來源。" } });
       return;
     }
+    if ((error as { number?: number })?.number === 547) {
+      res.status(409).json({
+        error: {
+          code: "DATASOURCE_IN_USE",
+          message: "此資料來源已被 Dataset 使用，請先移除相關 Dataset。",
+        },
+      });
+      return;
+    }
     next(error);
   }
 });
