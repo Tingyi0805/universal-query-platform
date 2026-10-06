@@ -1,9 +1,10 @@
-import { BarChart3, Database, FileCheck2, FileSpreadsheet, LogOut, PanelsTopLeft, ShieldCheck } from "lucide-react";
+import { BarChart3, ClipboardList, Database, FileCheck2, FileSpreadsheet, LogOut, PanelsTopLeft, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { useAuth } from "./auth/AuthContext";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
+import { AuditLogPage } from "./pages/AuditLogPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -18,6 +19,7 @@ const modules = [
   { title: "資料來源", description: "管理 SQL Server、Oracle 等資料庫連線。", icon: Database, permission: "MANAGE_DATASOURCE", path: "/admin/datasources" },
   { title: "Excel 報表", description: "已授權查詢可匯出 Excel。", icon: FileSpreadsheet, permission: "EXPORT_QUERY", path: "/queries" },
   { title: "權限管理", description: "使用角色與使用者權限控制功能。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/users" },
+  { title: "Audit Log", description: "查看查詢與匯出的稽核紀錄。", icon: ClipboardList, permission: "VIEW_AUDIT", path: "/admin/audit" },
 ];
 
 function HomePage() {
@@ -102,6 +104,10 @@ export default function App() {
         <Route
           path="/admin/datasources"
           element={<PermissionRoute permission="MANAGE_DATASOURCE"><DataSourcesPage /></PermissionRoute>}
+        />
+        <Route
+          path="/admin/audit"
+          element={<PermissionRoute permission="VIEW_AUDIT"><AuditLogPage /></PermissionRoute>}
         />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
