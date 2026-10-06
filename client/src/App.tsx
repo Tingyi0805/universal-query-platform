@@ -11,6 +11,7 @@ import { LoginPage } from "./pages/LoginPage";
 import { QueryPortalPage } from "./pages/QueryPortalPage";
 import { QueryPublisherPage } from "./pages/QueryPublisherPage";
 import { QueryRuntimePage } from "./pages/QueryRuntimePage";
+import { SetupPage } from "./pages/SetupPage";
 
 const modules = [
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
@@ -79,6 +80,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/setup" element={<SetupPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<HomePage />} />
         <Route
