@@ -26,6 +26,7 @@ export async function previewDataset(input: {
   return adapter.executeQuery(dataSource, {
     sql: compiled.sql,
     binds: compiled.binds,
+    bindValues: compiled.bindValues,
     maxRows: input.maxRows,
     timeoutSec: input.queryTimeoutSec ?? dataSource.queryTimeoutSec,
   });
