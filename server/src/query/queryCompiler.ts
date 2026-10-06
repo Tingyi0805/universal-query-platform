@@ -22,7 +22,7 @@ export function compileQuery(
     if (!(name in values)) throw new Error(`MISSING_QUERY_PARAMETER:${name}`);
   }
 
-  if (type === "MYSQL" || type === "POSTGRESQL") {
+  if (type === "MYSQL" || type === "POSTGRESQL" || type === "ODBC") {
     const bindValues: unknown[] = [];
 
     const sql = sqlText.replace(tokenRegex, (_whole, name: string) => {
@@ -33,12 +33,12 @@ export function compileQuery(
 
         return value.map((item) => {
           bindValues.push(item);
-          return type === "MYSQL" ? "?" : `$${bindValues.length}`;
+          return type === "POSTGRESQL" ? `${bindValues.length}` : "?";
         }).join(", ");
       }
 
       bindValues.push(value);
-      return type === "MYSQL" ? "?" : `$${bindValues.length}`;
+      return type === "POSTGRESQL" ? `${bindValues.length}` : "?";
     });
 
     return { sql, binds: {}, bindValues, parameterNames };
