@@ -1,11 +1,16 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt } from "./auth.middleware.js";
-import { login } from "./auth.service.js";
+import { changeOwnPassword, login } from "./auth.service.js";
 
 const loginSchema = z.object({
   username: z.string().trim().min(1).max(100),
   password: z.string().min(1).max(200),
+});
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1).max(200),
+  newPassword: z.string().min(10).max(200),
 });
 
 export const authRouter = Router();
@@ -38,4 +43,37 @@ authRouter.post("/login", async (req, res, next) => {
 
 authRouter.get("/me", authenticateJwt, (req, res) => {
   res.json({ user: req.authUser });
+});
+
+
+authRouter.post("/change-password", authenticateJwt, async (req, res, next) => {
+  try {
+    const parsed = changePasswordSchema.safeParse(req.body);
+    if (!parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "密碼格式不正確，新密碼至少 10 字元。" } });
+      return;
+    }
+
+    await changeOwnPassword(
+      req.authUser.id,
+      parsed.data.currentPassword,
+      parsed.data.newPassword,
+    );
+
+    res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "CURRENT_PASSWORD_INVALID") {
+      res.status(400).json({ error: { code: error.message, message: "目前密碼不正確。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "NEW_PASSWORD_MUST_DIFFER") {
+      res.status(400).json({ error: { code: error.message, message: "新密碼不可與目前密碼相同。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "USER_NOT_FOUND_OR_NOT_LOCAL") {
+      res.status(400).json({ error: { code: error.message, message: "此帳號不是可變更密碼的本機帳號。" } });
+      return;
+    }
+    next(error);
+  }
 });
