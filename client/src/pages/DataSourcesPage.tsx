@@ -217,8 +217,12 @@ export function DataSourcesPage() {
       if (form.id && !form.password) {
         result = await apiRequest(`/datasources/${form.id}/test`, { method: "POST" }, accessToken);
       } else {
-        if (!form.password) {
+        if (form.type !== "ODBC" && !form.password) {
           setError("測試尚未儲存的連線時必須輸入密碼。");
+          return;
+        }
+        if (form.type === "ODBC" && form.odbcConnectionMode === "CONNECTION_STRING" && !form.odbcConnectionString.trim()) {
+          setError("測試 ODBC Connection String 模式時連線字串必填。");
           return;
         }
         result = await apiRequest("/datasources/test", {
