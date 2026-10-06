@@ -141,7 +141,7 @@ export function ReportColumnsEditor({ queryId }: { queryId: number }) {
                   <td><input className="format-input" placeholder="例如 yyyy/MM/dd"
                     value={column.displayFormat ?? ""} onChange={(e) => update(index, { displayFormat: e.target.value })} /></td>
                   <td>
-                    <select value={column.alignment} onChange={(e) => update(index, { alignment: e.target.value as ReportColumn["alignment"] })}>
+                    <select className="alignment-select" value={column.alignment} onChange={(e) => update(index, { alignment: e.target.value as ReportColumn["alignment"] })}>
                       <option value="LEFT">左</option>
                       <option value="CENTER">中</option>
                       <option value="RIGHT">右</option>
@@ -150,7 +150,7 @@ export function ReportColumnsEditor({ queryId }: { queryId: number }) {
                   <td><input className="small-input" type="number" min={0} max={100} value={column.groupOrder ?? ""}
                     onChange={(e) => update(index, { groupOrder: e.target.value === "" ? null : Number(e.target.value) })} /></td>
                   <td>
-                    <select value={column.aggregateType}
+                    <select className="aggregate-select" value={column.aggregateType}
                       onChange={(e) => update(index, { aggregateType: e.target.value as ReportColumn["aggregateType"] })}>
                       {["NONE","SUM","AVG","MIN","MAX","COUNT"].map((value) => <option key={value} value={value}>{value}</option>)}
                     </select>
