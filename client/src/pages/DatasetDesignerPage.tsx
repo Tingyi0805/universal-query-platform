@@ -209,12 +209,31 @@ export function DatasetDesignerPage() {
 
   async function remove() {
     if (!form.id) return;
-    if (!window.confirm(`確定刪除 Dataset「${form.name}」？`)) return;
 
     setBusy(true);
     setError("");
     setNotice("");
     try {
+      const impact = await apiRequest<{
+        canDelete: boolean;
+        queryCount: number;
+        lookupReferenceCount: number;
+      }>(`/datasets/${form.id}/delete-impact`, {}, accessToken);
+
+      if (!impact.canDelete) {
+        const details = [
+          impact.queryCount > 0 ? `${impact.queryCount} 個 Query` : "",
+          impact.lookupReferenceCount > 0 ? `${impact.lookupReferenceCount} 個參數選項來源` : "",
+        ].filter(Boolean).join("、");
+
+        setError(
+          `Dataset「${form.name}」目前仍被 ${details} 使用，不能直接刪除。請先解除關聯，或取消「啟用」後儲存。`,
+        );
+        return;
+      }
+
+      if (!window.confirm(`確定永久刪除 Dataset「${form.name}」？此操作無法復原。`)) return;
+
       await apiRequest(`/datasets/${form.id}`, { method: "DELETE" }, accessToken);
       resetForm();
       setNotice("Dataset 已刪除。");
