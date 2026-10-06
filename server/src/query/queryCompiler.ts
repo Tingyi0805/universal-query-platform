@@ -14,14 +14,38 @@ export function compileQuery(
   const parameterNames = extractParameterNames(sqlText);
   const binds: Record<string, unknown> = {};
 
+  const replacements = new Map<string, string>();
+
   for (const name of parameterNames) {
     if (!(name in values)) throw new Error(`MISSING_QUERY_PARAMETER:${name}`);
-    binds[name] = values[name];
+
+    const value = values[name];
+
+    if (Array.isArray(value)) {
+      if (value.length === 0) {
+        replacements.set(name, "NULL");
+        continue;
+      }
+
+      const placeholders = value.map((item, index) => {
+        const bindName = `${name}_${index}`;
+        binds[bindName] = item;
+        return type === "SQLSERVER" ? `@${bindName}` : `:${bindName}`;
+      });
+
+      replacements.set(name, placeholders.join(", "));
+      continue;
+    }
+
+    binds[name] = value;
+    replacements.set(name, type === "SQLSERVER" ? `@${name}` : `:${name}`);
   }
 
-  const sql = sqlText.replace(tokenRegex, (_whole, name: string) =>
-    type === "SQLSERVER" ? `@${name}` : `:${name}`
-  );
+  const sql = sqlText.replace(tokenRegex, (_whole, name: string) => {
+    const replacement = replacements.get(name);
+    if (!replacement) throw new Error(`MISSING_QUERY_PARAMETER:${name}`);
+    return replacement;
+  });
 
   return { sql, binds, parameterNames };
 }
