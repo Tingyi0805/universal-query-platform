@@ -113,7 +113,10 @@ queryDefinitionRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req,
       return;
     }
     await updateQueryDefinition(id.data, parsed.data);
-    res.json({ status: "OK" });
+    res.json({
+      status: "OK",
+      queryDefinition: await getQueryDefinition(id.data),
+    });
   } catch (error) {
     if (error instanceof Error && error.message === "QUERY_DEFINITION_NOT_FOUND") {
       res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
@@ -175,7 +178,10 @@ queryDefinitionRouter.post("/:id/publish", requirePermission("PUBLISH_QUERY"), a
       return;
     }
     await publishQueryDefinition(id.data, req.authUser.id);
-    res.json({ status: "OK" });
+    res.json({
+      status: "OK",
+      queryDefinition: await getQueryDefinition(id.data),
+    });
   } catch (error) {
     if (error instanceof Error && error.message === "QUERY_NOT_PUBLISHABLE") {
       res.status(409).json({ error: { code: error.message, message: "Query、Dataset 或 DataSource 尚未啟用，無法發布。" } });
@@ -193,7 +199,10 @@ queryDefinitionRouter.post("/:id/unpublish", requirePermission("PUBLISH_QUERY"),
       return;
     }
     await unpublishQueryDefinition(id.data);
-    res.json({ status: "OK" });
+    res.json({
+      status: "OK",
+      queryDefinition: await getQueryDefinition(id.data),
+    });
   } catch (error) { next(error); }
 });
 
