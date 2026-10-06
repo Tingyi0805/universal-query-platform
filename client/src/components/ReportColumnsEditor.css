@@ -78,3 +78,12 @@
   opacity: .4;
   cursor: not-allowed;
 }
+
+
+.report-column-table td:nth-child(8) select {
+  min-width: 72px;
+}
+
+.report-column-table td:nth-child(10) select {
+  min-width: 88px;
+}
