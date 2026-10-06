@@ -9,6 +9,7 @@ import { coerceRuntimeParameters } from "./parameter.service.js";
 
 export async function previewDataset(input: {
   dataSourceId: number;
+  datasetId?: number;
   sqlText: string;
   values: Record<string, unknown>;
   maxRows: number;
@@ -20,7 +21,21 @@ export async function previewDataset(input: {
   if (!dataSource) throw new Error("DATASOURCE_NOT_FOUND");
   if (!dataSource.isActive) throw new Error("DATASOURCE_DISABLED");
 
-  const compiled = compileQuery(input.sqlText, dataSource.type, input.values);
+  let values = input.values;
+
+  if (input.datasetId) {
+    const definitions = await listDatasetParameters(input.datasetId);
+    const tokenNames = extractParameterNames(input.sqlText);
+    const definitionNames = definitions.map((parameter) => parameter.name);
+    if (
+      tokenNames.length === definitionNames.length &&
+      tokenNames.every((name) => definitionNames.includes(name))
+    ) {
+      values = coerceRuntimeParameters(definitions, input.values);
+    }
+  }
+
+  const compiled = compileQuery(input.sqlText, dataSource.type, values);
   const adapter = createDataSourceAdapter(dataSource.type);
 
   return adapter.executeQuery(dataSource, {
@@ -58,6 +73,7 @@ export async function executeSavedDataset(
 
   return previewDataset({
     dataSourceId: dataset.dataSourceId,
+    datasetId,
     sqlText: dataset.sqlText,
     values,
     maxRows: Math.min(maxRowsOverride ?? dataset.maxRows, dataset.maxRows),
