@@ -1,0 +1,138 @@
+.datasource-layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 20px;
+}
+
+.datasource-list,
+.datasource-editor {
+  border: 1px solid #dde5f0;
+  border-radius: 18px;
+  background: white;
+  padding: 18px;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.section-title h2 { margin: 0; font-size: 20px; }
+
+.datasource-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  cursor: pointer;
+}
+
+.datasource-item:hover,
+.datasource-item.selected {
+  border-color: #cad7e8;
+  background: #f7f9fc;
+}
+
+.datasource-item strong,
+.datasource-item small {
+  display: block;
+}
+
+.datasource-item small {
+  margin-top: 4px;
+  color: #748198;
+}
+
+.datasource-meta {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+  color: #65738a;
+  font-size: 12px;
+}
+
+.state-ok { color: #2f6c4f; }
+.state-off { color: #8b5360; }
+
+.datasource-form {
+  display: grid;
+  gap: 16px;
+}
+
+.datasource-form label {
+  display: grid;
+  gap: 7px;
+  font-weight: 700;
+}
+
+.datasource-form label small {
+  font-weight: 400;
+  color: #758096;
+}
+
+.datasource-form input,
+.datasource-form select {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid #cbd6e5;
+  border-radius: 9px;
+  background: white;
+}
+
+.datasource-form input:disabled {
+  background: #f2f4f7;
+}
+
+.form-grid.two {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.check-row,
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.check-row label,
+.inline-check {
+  display: inline-flex;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  width: fit-content;
+  font-weight: 500;
+}
+
+.check-row input,
+.inline-check input {
+  width: auto;
+}
+
+.form-actions {
+  padding-top: 4px;
+}
+
+.danger-button {
+  border: 1px solid #efc8ce;
+  border-radius: 10px;
+  background: #fff3f4;
+  color: #9b2938;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+@media (max-width: 900px) {
+  .datasource-layout { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .form-grid.two { grid-template-columns: 1fr; }
+}
