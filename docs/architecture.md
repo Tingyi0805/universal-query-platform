@@ -120,3 +120,19 @@ User -> Role -> Permission
 - Scheduled Report
 - CSV / PDF
 - Cross-Database Dataset（後續評估，不列為第一版必要功能）
+
+
+## Generic ODBC compatibility
+
+The platform prefers native database adapters for SQL Server, Oracle, MySQL, and PostgreSQL.
+ODBC is available as a compatibility fallback for legacy or specialized databases.
+
+ODBC supports:
+- DSN mode
+- encrypted full connection string mode
+- positional parameter binding
+- connection/query timeout
+- max-row protection
+- connection diagnostics
+
+On Windows, install the appropriate ODBC driver for the target database and keep the Node.js/ODBC driver architecture consistent (normally 64-bit).
