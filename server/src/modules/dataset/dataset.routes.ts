@@ -7,6 +7,7 @@ import {
   createDataset,
   deleteDataset,
   getDataset,
+  getDatasetDeleteImpact,
   listDatasets,
   listDesignerDataSources,
   updateDataset,
@@ -304,6 +305,23 @@ datasetRouter.put("/:id", async (req, res, next) => {
     }
     if (error instanceof Error && error.message.startsWith("SQL_")) {
       res.status(400).json({ error: { code: error.message, message: "只允許單一 SELECT / WITH 查詢。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+datasetRouter.get("/:id/delete-impact", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset ID 不正確。" } });
+      return;
+    }
+    res.json(await getDatasetDeleteImpact(id.data));
+  } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到 Dataset。" } });
       return;
     }
     next(error);
