@@ -17,6 +17,7 @@ export type QueryDefinitionRecord = {
   publishedAtUtc: string | null;
   archivedAtUtc: string | null;
   archivedByUserId: number | null;
+  auditCount: number;
 };
 
 export type QueryDefinitionInput = {
