@@ -59,7 +59,8 @@
 .designer-editor input,
 .designer-editor select,
 .designer-editor textarea,
-.parameter-grid input {
+.parameter-grid input,
+.parameter-grid select {
   width: 100%;
   padding: 10px 11px;
   border: 1px solid #cbd6e5;
@@ -152,4 +153,28 @@
 @media (max-width: 760px) {
   .form-grid.three,
   .parameter-grid { grid-template-columns: 1fr; }
+}
+
+
+.parameter-grid select[multiple] {
+  min-height: 84px;
+  padding: 6px;
+  background: white;
+  color: #172033;
+}
+
+.parameter-grid select[multiple] option {
+  padding: 7px 9px;
+  border-radius: 6px;
+}
+
+.parameter-grid select[multiple] option:checked {
+  font-weight: 700;
+}
+
+.parameter-grid .field-hint {
+  margin-top: -2px;
+  color: #7a8799;
+  font-size: 12px;
+  font-weight: 400;
 }
