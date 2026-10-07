@@ -27,6 +27,18 @@ type DatasetRow = {
   parameterNames: string[];
 };
 
+type PreviewParameter = {
+  name: string;
+  label: string;
+  dataType: "STRING" | "NUMBER" | "DATE" | "DATETIME" | "BOOLEAN";
+  controlType: "TEXT" | "NUMBER" | "DATE" | "DATETIME" | "SELECT" | "MULTISELECT" | "CHECKBOX";
+  isRequired: boolean;
+  defaultValue: string | null;
+  optionMode: "NONE" | "FIXED" | "DATASET";
+};
+
+type PreviewOption = { value: unknown; label: string };
+
 type QueryResult = {
   columns: { name: string; dataType?: string }[];
   rows: Record<string, unknown>[];
@@ -67,7 +79,9 @@ export function DatasetDesignerPage() {
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceOption[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
-  const [parameterValues, setParameterValues] = useState<Record<string, string>>({});
+  const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
+  const [previewParameters, setPreviewParameters] = useState<PreviewParameter[]>([]);
+  const [previewOptions, setPreviewOptions] = useState<Record<string, PreviewOption[]>>({});
   const [preview, setPreview] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -94,10 +108,49 @@ export function DatasetDesignerPage() {
   }, [accessToken]);
 
   useEffect(() => { void load(); }, [load]);
+  const loadPreviewParameterDefinitions = useCallback(async (datasetId?: number) => {
+    if (!datasetId) {
+      setPreviewParameters([]);
+      setPreviewOptions({});
+      return;
+    }
+
+    try {
+      const result = await apiRequest<{ parameters: PreviewParameter[] }>(
+        `/datasets/${datasetId}/parameters`,
+        {},
+        accessToken,
+      );
+      setPreviewParameters(result.parameters);
+
+      const optionParameters = result.parameters.filter((parameter) =>
+        ["SELECT","MULTISELECT"].includes(parameter.controlType) && parameter.optionMode !== "NONE"
+      );
+
+      const optionEntries = await Promise.all(optionParameters.map(async (parameter) => {
+        const response = await apiRequest<{ options: PreviewOption[] }>(
+          `/datasets/${datasetId}/parameters/${parameter.name}/options`,
+          {},
+          accessToken,
+        );
+        return [parameter.name, response.options] as const;
+      }));
+
+      setPreviewOptions(Object.fromEntries(optionEntries));
+    } catch {
+      setPreviewParameters([]);
+      setPreviewOptions({});
+    }
+  }, [accessToken]);
+
+  useEffect(() => { void loadPreviewParameterDefinitions(form.id); }, [form.id, loadPreviewParameterDefinitions]);
+
 
   function resetForm() {
     setForm(emptyForm);
     setParameterValues({});
+    setPreviewParameters([]);
+    setPreviewOptions({});
     setPreview(null);
     setError("");
     setNotice("");
@@ -119,6 +172,7 @@ export function DatasetDesignerPage() {
     setPreview(null);
     setError("");
     setNotice("");
+    void loadPreviewParameterDefinitions(dataset.id);
   }
 
   const payload = () => ({
@@ -160,11 +214,85 @@ export function DatasetDesignerPage() {
       }
 
       await load();
+      await loadPreviewParameterDefinitions(form.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "儲存 Dataset 失敗。");
     } finally {
       setBusy(false);
     }
+  }
+
+  function renderPreviewParameter(name: string) {
+    const definition = previewParameters.find((parameter) => parameter.name === name);
+    const value = parameterValues[name];
+
+    if (!definition) {
+      return (
+        <input
+          value={String(value ?? "")}
+          placeholder="預覽測試值"
+          onChange={(e) => setParameterValues({ ...parameterValues, [name]: e.target.value })}
+        />
+      );
+    }
+
+    if (definition.controlType === "MULTISELECT") {
+      const selected = Array.isArray(value) ? value.map(String) : [];
+      return (
+        <select
+          multiple
+          value={selected}
+          size={Math.min(Math.max((previewOptions[name] ?? []).length, 3), 8)}
+          onChange={(e) => setParameterValues({
+            ...parameterValues,
+            [name]: Array.from(e.target.selectedOptions, (option) => option.value),
+          })}
+        >
+          {(previewOptions[name] ?? []).map((option, index) => (
+            <option key={index} value={String(option.value)}>{option.label}</option>
+          ))}
+        </select>
+      );
+    }
+
+    if (definition.controlType === "SELECT") {
+      return (
+        <select
+          value={String(value ?? "")}
+          onChange={(e) => setParameterValues({ ...parameterValues, [name]: e.target.value })}
+        >
+          <option value="">請選擇</option>
+          {(previewOptions[name] ?? []).map((option, index) => (
+            <option key={index} value={String(option.value)}>{option.label}</option>
+          ))}
+        </select>
+      );
+    }
+
+    if (definition.controlType === "CHECKBOX") {
+      return (
+        <input
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(e) => setParameterValues({ ...parameterValues, [name]: e.target.checked })}
+        />
+      );
+    }
+
+    const inputType =
+      definition.controlType === "NUMBER" ? "number" :
+      definition.controlType === "DATE" ? "date" :
+      definition.controlType === "DATETIME" ? "datetime-local" :
+      "text";
+
+    return (
+      <input
+        type={inputType}
+        value={String(value ?? definition.defaultValue ?? "")}
+        placeholder="預覽測試值"
+        onChange={(e) => setParameterValues({ ...parameterValues, [name]: e.target.value })}
+      />
+    );
   }
 
   async function runPreview() {
@@ -187,7 +315,14 @@ export function DatasetDesignerPage() {
       }
 
       const values = Object.fromEntries(
-        parameterNames.map((name) => [name, parameterValues[name] ?? ""]),
+        parameterNames.map((name) => {
+          const definition = previewParameters.find((parameter) => parameter.name === name);
+          const fallback =
+            definition?.controlType === "MULTISELECT" ? [] :
+            definition?.controlType === "CHECKBOX" ? false :
+            definition?.defaultValue ?? "";
+          return [name, parameterValues[name] ?? fallback];
+        }),
       );
 
       const response = await apiRequest<{
@@ -353,14 +488,18 @@ export function DatasetDesignerPage() {
                 <span className="muted">此 SQL 沒有參數。</span>
               ) : (
                 <div className="parameter-grid">
-                  {parameterNames.map((name) => (
-                    <label key={name}>
-                      {name}
-                      <input value={parameterValues[name] ?? ""}
-                        placeholder="預覽測試值"
-                        onChange={(e) => setParameterValues({ ...parameterValues, [name]: e.target.value })} />
-                    </label>
-                  ))}
+                  {parameterNames.map((name) => {
+                    const definition = previewParameters.find((parameter) => parameter.name === name);
+                    return (
+                      <label key={name}>
+                        {definition?.label || name}
+                        {renderPreviewParameter(name)}
+                        {definition?.controlType === "MULTISELECT" && (
+                          <small className="field-hint">可按 Ctrl（Mac：Command）選取多個值。</small>
+                        )}
+                      </label>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -384,6 +523,7 @@ export function DatasetDesignerPage() {
             <DatasetParametersEditor
               datasetId={form.id}
               datasets={datasets.map((dataset) => ({ id: dataset.id, code: dataset.code, name: dataset.name }))}
+              onChanged={() => loadPreviewParameterDefinitions(form.id)}
             />
           )}
 
