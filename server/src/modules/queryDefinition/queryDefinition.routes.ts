@@ -296,6 +296,16 @@ queryDefinitionRouter.put("/:id/report-columns", requirePermission("DESIGN_QUERY
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Report 欄位設定格式不正確。" } });
       return;
     }
+    const query = await getQueryDefinition(id.data);
+    if (!query) {
+      res.status(404).json({ error: { code: "QUERY_DEFINITION_NOT_FOUND", message: "找不到 Query Definition。" } });
+      return;
+    }
+    if (query.isArchived) {
+      res.status(409).json({ error: { code: "QUERY_ARCHIVED", message: "此 Query 已封存，請先還原後再修改 Report 設定。" } });
+      return;
+    }
+
     await replaceReportColumns(id.data, parsed.data.columns);
     res.json({ status: "OK" });
   } catch (error) {
@@ -343,6 +353,16 @@ queryDefinitionRouter.put("/:id/access", requirePermission("MANAGE_USERS"), asyn
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query 權限設定格式不正確。" } });
       return;
     }
+    const query = await getQueryDefinition(id.data);
+    if (!query) {
+      res.status(404).json({ error: { code: "QUERY_DEFINITION_NOT_FOUND", message: "找不到 Query Definition。" } });
+      return;
+    }
+    if (query.isArchived) {
+      res.status(409).json({ error: { code: "QUERY_ARCHIVED", message: "此 Query 已封存，請先還原後再修改權限。" } });
+      return;
+    }
+
     await replaceQueryAccess(id.data, parsed.data);
     res.json({ status: "OK" });
   } catch (error) { next(error); }
