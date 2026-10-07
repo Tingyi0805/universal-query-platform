@@ -28,6 +28,7 @@ function mapRow(row: any): QueryDefinitionRecord {
     publishedAtUtc: row.PublishedAtUtc ? new Date(row.PublishedAtUtc).toISOString() : null,
     archivedAtUtc: row.ArchivedAtUtc ? new Date(row.ArchivedAtUtc).toISOString() : null,
     archivedByUserId: row.ArchivedByUserId == null ? null : Number(row.ArchivedByUserId),
+    auditCount: Number(row.AuditCount ?? 0),
   };
 }
 
@@ -35,6 +36,7 @@ export async function listQueryDefinitions(): Promise<QueryDefinitionRecord[]> {
   const pool = await requirePool();
   const result = await pool.request().query(`
     SELECT q.*, d.Name AS DatasetName,
+           (SELECT COUNT(1) FROM uqp.AuditLog a WHERE a.QueryDefinitionId=q.Id) AS AuditCount,
            c.Name AS CategoryName,
            ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder
     FROM uqp.QueryDefinition q
@@ -49,6 +51,7 @@ export async function getQueryDefinition(id: number): Promise<QueryDefinitionRec
   const pool = await requirePool();
   const result = await pool.request().input("id", sql.BigInt, id).query(`
     SELECT q.*, d.Name AS DatasetName,
+           (SELECT COUNT(1) FROM uqp.AuditLog a WHERE a.QueryDefinitionId=q.Id) AS AuditCount,
            c.Name AS CategoryName,
            ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder
     FROM uqp.QueryDefinition q
