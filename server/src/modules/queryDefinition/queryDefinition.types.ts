@@ -13,7 +13,10 @@ export type QueryDefinitionRecord = {
   allowExcelExport: boolean;
   isPublished: boolean;
   isActive: boolean;
+  isArchived: boolean;
   publishedAtUtc: string | null;
+  archivedAtUtc: string | null;
+  archivedByUserId: number | null;
 };
 
 export type QueryDefinitionInput = {
