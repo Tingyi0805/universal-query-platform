@@ -2,12 +2,14 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import {
+  archiveQueryDefinition,
   createQueryDefinition,
   deleteQueryDefinition,
   getQueryDefinition,
   getQueryDefinitionDeleteImpact,
   listQueryDefinitions,
   publishQueryDefinition,
+  restoreQueryDefinition,
   unpublishQueryDefinition,
   updateQueryDefinition,
 } from "./queryDefinition.repository.js";
@@ -122,6 +124,10 @@ queryDefinitionRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req,
       res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
       return;
     }
+    if (error instanceof Error && error.message === "QUERY_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "此 Query 已封存，請先還原後再修改。" } });
+      return;
+    }
     next(error);
   }
 });
@@ -157,13 +163,72 @@ queryDefinitionRouter.delete("/:id", requirePermission("DESIGN_QUERY"), async (r
       res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
       return;
     }
+    if (error instanceof Error && error.message === "QUERY_HAS_HISTORY") {
+      res.status(409).json({
+        error: {
+          code: error.message,
+          message: "此 Query 已有 Audit 歷史，請改用封存，不可永久刪除。",
+        },
+      });
+      return;
+    }
     if ((error as { number?: number })?.number === 547) {
       res.status(409).json({
         error: {
-          code: "QUERY_HAS_HISTORY",
-          message: "此 Query 已有歷史或關聯資料，請改用停用或取消發布，不可刪除。",
+          code: "QUERY_HAS_RELATION",
+          message: "此 Query 仍有關聯資料，請改用封存。",
         },
       });
+      return;
+    }
+    next(error);
+  }
+});
+
+queryDefinitionRouter.post("/:id/archive", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
+      return;
+    }
+    await archiveQueryDefinition(id.data, req.authUser.id);
+    res.json({
+      status: "OK",
+      queryDefinition: await getQueryDefinition(id.data),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "QUERY_DEFINITION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "QUERY_ALREADY_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "此 Query 已封存。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+queryDefinitionRouter.post("/:id/restore", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
+      return;
+    }
+    await restoreQueryDefinition(id.data);
+    res.json({
+      status: "OK",
+      queryDefinition: await getQueryDefinition(id.data),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "QUERY_DEFINITION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到 Query Definition。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "QUERY_NOT_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "此 Query 目前不是封存狀態。" } });
       return;
     }
     next(error);
