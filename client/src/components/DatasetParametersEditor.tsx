@@ -54,7 +54,6 @@ export function DatasetParametersEditor({
         accessToken,
       );
       setParameters(result.parameters);
-      await onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入參數設定失敗。");
     } finally {
@@ -115,6 +114,7 @@ export function DatasetParametersEditor({
       }, accessToken);
       setNotice("參數設定已儲存。");
       await load();
+      await onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "儲存參數設定失敗。");
     } finally {
@@ -131,7 +131,10 @@ export function DatasetParametersEditor({
           <h2>Parameter Designer</h2>
           <p>SQL Token 會自動同步，不需手動新增或刪除。DATE 建議使用 YYYY-MM-DD；Bind Parameter 外面不要加單引號。</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void load()}>重新同步</button>
+        <button className="secondary-button" type="button" onClick={() => void (async () => {
+          await load();
+          await onChanged?.();
+        })()}>重新同步</button>
       </div>
 
       {error && <div className="form-error">{error}</div>}
