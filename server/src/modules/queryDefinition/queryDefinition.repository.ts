@@ -24,7 +24,10 @@ function mapRow(row: any): QueryDefinitionRecord {
     allowExcelExport: Boolean(row.AllowExcelExport),
     isPublished: Boolean(row.IsPublished),
     isActive: Boolean(row.IsActive),
+    isArchived: Boolean(row.IsArchived),
     publishedAtUtc: row.PublishedAtUtc ? new Date(row.PublishedAtUtc).toISOString() : null,
+    archivedAtUtc: row.ArchivedAtUtc ? new Date(row.ArchivedAtUtc).toISOString() : null,
+    archivedByUserId: row.ArchivedByUserId == null ? null : Number(row.ArchivedByUserId),
   };
 }
 
@@ -95,11 +98,17 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
           Name, Description, CategoryId, Icon, DatasetId,
           SortOrder, AllowExcelExport, IsActive, IsPublished
         FROM uqp.QueryDefinition WITH (UPDLOCK, HOLDLOCK)
-        WHERE Id=@id
+        WHERE Id=@id AND IsArchived=0
       `);
 
     const current = currentResult.recordset[0];
-    if (!current) throw new Error("QUERY_DEFINITION_NOT_FOUND");
+    if (!current) {
+      const exists = await new sql.Request(tx)
+        .input("id", sql.BigInt, id)
+        .query("SELECT IsArchived FROM uqp.QueryDefinition WHERE Id=@id");
+      if (exists.recordset[0]?.IsArchived) throw new Error("QUERY_ARCHIVED");
+      throw new Error("QUERY_DEFINITION_NOT_FOUND");
+    }
 
     const changed =
       String(current.Name) !== input.name ||
@@ -160,7 +169,8 @@ export async function publishQueryDefinition(id: number, userId: number): Promis
       FROM uqp.QueryDefinition q
       INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
       INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
-      WHERE q.Id=@id AND q.IsActive=1 AND d.IsActive=1 AND s.IsActive=1;
+      WHERE q.Id=@id AND q.IsActive=1 AND q.IsArchived=0
+        AND d.IsActive=1 AND s.IsActive=1;
       SELECT @@ROWCOUNT AS Affected;
     `);
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("QUERY_NOT_PUBLISHABLE");
@@ -179,9 +189,61 @@ export async function unpublishQueryDefinition(id: number): Promise<void> {
 
 export async function deleteQueryDefinition(id: number): Promise<void> {
   const pool = await requirePool();
+  const impact = await getQueryDefinitionDeleteImpact(id);
+  if (!impact.canDelete) throw new Error("QUERY_HAS_HISTORY");
+
   const result = await pool.request().input("id", sql.BigInt, id)
     .query("DELETE FROM uqp.QueryDefinition WHERE Id=@id; SELECT @@ROWCOUNT AS Affected;");
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("QUERY_DEFINITION_NOT_FOUND");
+}
+
+export async function archiveQueryDefinition(id: number, userId: number): Promise<void> {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("id", sql.BigInt, id)
+    .input("userId", sql.BigInt, userId)
+    .query(`
+      UPDATE uqp.QueryDefinition
+      SET IsArchived=1,
+          IsPublished=0,
+          IsActive=0,
+          PublishedAtUtc=NULL,
+          PublishedByUserId=NULL,
+          ArchivedAtUtc=SYSUTCDATETIME(),
+          ArchivedByUserId=@userId,
+          UpdatedAtUtc=SYSUTCDATETIME()
+      WHERE Id=@id AND IsArchived=0;
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+    const exists = await getQueryDefinition(id);
+    if (!exists) throw new Error("QUERY_DEFINITION_NOT_FOUND");
+    throw new Error("QUERY_ALREADY_ARCHIVED");
+  }
+}
+
+export async function restoreQueryDefinition(id: number): Promise<void> {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("id", sql.BigInt, id)
+    .query(`
+      UPDATE uqp.QueryDefinition
+      SET IsArchived=0,
+          IsPublished=0,
+          IsActive=0,
+          PublishedAtUtc=NULL,
+          PublishedByUserId=NULL,
+          ArchivedAtUtc=NULL,
+          ArchivedByUserId=NULL,
+          UpdatedAtUtc=SYSUTCDATETIME()
+      WHERE Id=@id AND IsArchived=1;
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+    const exists = await getQueryDefinition(id);
+    if (!exists) throw new Error("QUERY_DEFINITION_NOT_FOUND");
+    throw new Error("QUERY_NOT_ARCHIVED");
+  }
 }
 
 export async function listAccessibleQueries(userId: number) {
@@ -220,7 +282,7 @@ export async function listAccessibleQueries(userId: number) {
     LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
     LEFT JOIN RoleAccess ra ON ra.QueryDefinitionId=q.Id
     LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
-    WHERE q.IsPublished=1 AND q.IsActive=1
+    WHERE q.IsPublished=1 AND q.IsActive=1 AND q.IsArchived=0
       AND (ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1)
     ORDER BY ISNULL(c.SortOrder, 2147483647), c.Name, q.SortOrder, q.Name
   `);
