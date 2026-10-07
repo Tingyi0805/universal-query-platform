@@ -268,3 +268,69 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+.query-status-filter {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.query-status-filter button {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 6px;
+  border: 1px solid #d7e0eb;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #58667b;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.query-status-filter button.active {
+  border-color: #aebdd0;
+  background: #eaf1fa;
+  color: #26364f;
+  font-weight: 700;
+}
+
+.query-status-filter button span {
+  min-width: 19px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: white;
+  font-size: 11px;
+}
+
+.publish-badge.archived {
+  background: #f4edf8;
+  color: #694a79;
+}
+
+.archive-notice {
+  padding: 12px 14px;
+  border: 1px solid #d9cee1;
+  border-radius: 10px;
+  background: #faf7fc;
+  color: #654b72;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.archived-form input,
+.archived-form select,
+.archived-form .icon-option,
+.archived-form .category-select-row .secondary-button {
+  pointer-events: none;
+  opacity: .68;
+}
+
+@media (max-width: 560px) {
+  .query-status-filter {
+    grid-template-columns: 1fr;
+  }
+}
