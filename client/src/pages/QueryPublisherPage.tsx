@@ -177,6 +177,10 @@ export function QueryPublisherPage() {
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (form.isArchived) {
+      setError("此 Query 已封存，請先還原後再修改。");
+      return;
+    }
     setError("");
     setNotice("");
     try {
@@ -519,7 +523,7 @@ export function QueryPublisherPage() {
         </aside>
 
         <section className="publisher-editor">
-          <form onSubmit={save}>
+          <form className={form.isArchived ? "archived-form" : ""} onSubmit={save}>
             <div className="section-title">
               <h2>{form.id ? "編輯 Query" : "新增 Query"}</h2>
               <span className={form.isArchived ? "publish-badge archived" : form.isPublished ? "publish-badge live" : "publish-badge"}>
