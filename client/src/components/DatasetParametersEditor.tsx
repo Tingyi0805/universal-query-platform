@@ -31,9 +31,11 @@ type ParameterRow = {
 export function DatasetParametersEditor({
   datasetId,
   datasets,
+  onChanged,
 }: {
   datasetId: number;
   datasets: DatasetOption[];
+  onChanged?: () => void | Promise<void>;
 }) {
   const { accessToken } = useAuth();
   const [parameters, setParameters] = useState<ParameterRow[]>([]);
@@ -52,12 +54,13 @@ export function DatasetParametersEditor({
         accessToken,
       );
       setParameters(result.parameters);
+      await onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入參數設定失敗。");
     } finally {
       setLoading(false);
     }
-  }, [accessToken, datasetId]);
+  }, [accessToken, datasetId, onChanged]);
 
   useEffect(() => { void load(); }, [load]);
 
