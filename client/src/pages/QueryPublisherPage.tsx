@@ -36,7 +36,11 @@ type QueryDefinition = {
   allowExcelExport: boolean;
   isPublished: boolean;
   isActive: boolean;
+  isArchived: boolean;
   publishedAtUtc: string | null;
+  archivedAtUtc: string | null;
+  archivedByUserId: number | null;
+  auditCount: number;
 };
 
 type FormState = {
@@ -51,6 +55,8 @@ type FormState = {
   allowExcelExport: boolean;
   isActive: boolean;
   isPublished: boolean;
+  isArchived: boolean;
+  archivedAtUtc: string | null;
 };
 
 const emptyForm: FormState = {
@@ -64,6 +70,8 @@ const emptyForm: FormState = {
   allowExcelExport: true,
   isActive: true,
   isPublished: false,
+  isArchived: false,
+  archivedAtUtc: null,
 };
 
 const iconOptions: { key: string; label: string; icon: ComponentType<{ size?: number }> }[] = [
@@ -91,9 +99,18 @@ export function QueryPublisherPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [queryFilter, setQueryFilter] = useState<"PUBLISHED" | "DRAFT" | "ARCHIVED">("PUBLISHED");
   const canPublish = hasPermission("PUBLISH_QUERY");
   const canManageAccess = hasPermission("MANAGE_USERS");
   const selectedIcon = iconOptions.find((item) => item.key === form.icon) ?? iconOptions[0];
+  const selectedQuery = form.id ? queries.find((query) => query.id === form.id) ?? null : null;
+  const filteredQueries = queries.filter((query) =>
+    queryFilter === "ARCHIVED"
+      ? query.isArchived
+      : queryFilter === "PUBLISHED"
+        ? !query.isArchived && query.isPublished
+        : !query.isArchived && !query.isPublished
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -129,6 +146,8 @@ export function QueryPublisherPage() {
       allowExcelExport: query.allowExcelExport,
       isActive: query.isActive,
       isPublished: query.isPublished,
+      isArchived: query.isArchived,
+      archivedAtUtc: query.archivedAtUtc,
     });
   }
 
@@ -213,6 +232,48 @@ export function QueryPublisherPage() {
     }
   }
 
+  async function archiveSelected() {
+    if (!form.id) return;
+    if (!window.confirm(`確定封存 Query「${form.name}」？封存後不會出現在使用者查詢 Portal，但 Audit 歷史會保留。`)) return;
+
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{
+        status: string;
+        queryDefinition: QueryDefinition;
+      }>(`/query-definitions/${form.id}/archive`, { method: "POST" }, accessToken);
+
+      if (result.queryDefinition) applyQueryToForm(result.queryDefinition);
+      setQueryFilter("ARCHIVED");
+      setNotice("Query 已封存，Audit 歷史已保留。");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "封存 Query 失敗。");
+    }
+  }
+
+  async function restoreSelected() {
+    if (!form.id) return;
+    if (!window.confirm(`確定還原 Query「${form.name}」？還原後會回到 Draft，需重新啟用並發佈。`)) return;
+
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{
+        status: string;
+        queryDefinition: QueryDefinition;
+      }>(`/query-definitions/${form.id}/restore`, { method: "POST" }, accessToken);
+
+      if (result.queryDefinition) applyQueryToForm(result.queryDefinition);
+      setQueryFilter("DRAFT");
+      setNotice("Query 已還原為 Draft，請確認設定後重新啟用與發佈。");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "還原 Query 失敗。");
+    }
+  }
+
   async function createCategory() {
     setError("");
     try {
@@ -290,7 +351,7 @@ export function QueryPublisherPage() {
 
       if (!impact.canDelete) {
         setError(
-          `Query「${form.name}」已有 ${impact.auditCount} 筆 Audit 歷史，為保留稽核紀錄不能直接刪除。請改用「取消發佈」並取消「啟用」。`,
+          `Query「${form.name}」已有 ${impact.auditCount} 筆 Audit 歷史，不能永久刪除，請改用「封存」。`,
         );
         return;
       }
@@ -426,15 +487,33 @@ export function QueryPublisherPage() {
         <aside className="query-list">
           <div className="section-title">
             <h2>Queries</h2>
-            <button className="secondary-button" type="button" onClick={reset}>＋新增</button>
+            <button className="secondary-button" type="button" onClick={() => { setQueryFilter("DRAFT"); reset(); }}>＋新增</button>
           </div>
 
-          {loading ? <div className="notice">載入中…</div> : queries.map((query) => (
+          <div className="query-status-filter" role="tablist" aria-label="Query 狀態">
+            <button type="button" className={queryFilter === "PUBLISHED" ? "active" : ""}
+              onClick={() => { setQueryFilter("PUBLISHED"); reset(); }}>
+              已發佈 <span>{queries.filter((q) => !q.isArchived && q.isPublished).length}</span>
+            </button>
+            <button type="button" className={queryFilter === "DRAFT" ? "active" : ""}
+              onClick={() => { setQueryFilter("DRAFT"); reset(); }}>
+              草稿 <span>{queries.filter((q) => !q.isArchived && !q.isPublished).length}</span>
+            </button>
+            <button type="button" className={queryFilter === "ARCHIVED" ? "active" : ""}
+              onClick={() => { setQueryFilter("ARCHIVED"); reset(); }}>
+              已封存 <span>{queries.filter((q) => q.isArchived).length}</span>
+            </button>
+          </div>
+
+          {loading ? <div className="notice">載入中…</div> : filteredQueries.map((query) => (
             <button className={`query-list-item ${form.id === query.id ? "selected" : ""}`}
               type="button" key={query.id} onClick={() => selectQuery(query)}>
               <strong>{query.name}</strong>
               <small>{query.code}</small>
-              <span>{query.category || "未分類"} · {query.isPublished ? "已發佈" : "草稿"}</span>
+              <span>
+                {query.category || "未分類"} · {query.isArchived ? "已封存" : query.isPublished ? "已發佈" : "草稿"}
+                {query.auditCount > 0 ? ` · Audit ${query.auditCount}` : ""}
+              </span>
             </button>
           ))}
         </aside>
@@ -443,8 +522,16 @@ export function QueryPublisherPage() {
           <form onSubmit={save}>
             <div className="section-title">
               <h2>{form.id ? "編輯 Query" : "新增 Query"}</h2>
-              <span className={form.isPublished ? "publish-badge live" : "publish-badge"}>{form.isPublished ? "Published" : "Draft"}</span>
+              <span className={form.isArchived ? "publish-badge archived" : form.isPublished ? "publish-badge live" : "publish-badge"}>
+                {form.isArchived ? "Archived" : form.isPublished ? "Published" : "Draft"}
+              </span>
             </div>
+
+            {form.isArchived && (
+              <div className="archive-notice">
+                此 Query 已封存，只供查閱。{form.archivedAtUtc ? `封存時間：${new Date(form.archivedAtUtc).toLocaleString("zh-TW")}` : ""}
+              </div>
+            )}
 
             <div className="form-grid two">
               <label>代碼
@@ -538,20 +625,26 @@ export function QueryPublisherPage() {
             </div>
 
             <div className="form-actions">
-              <button className="primary-button" type="submit">儲存</button>
-              {form.id && canPublish && (
+              {!form.isArchived && <button className="primary-button" type="submit">儲存</button>}
+              {form.id && !form.isArchived && canPublish && (
                 <button className="secondary-button" type="button" onClick={() => void setPublished(!form.isPublished)}>
                   {form.isPublished ? "取消發佈" : "發佈"}
                 </button>
               )}
-              {form.id && (
-                <button className="danger-button" type="button" onClick={() => void remove()}>刪除</button>
+              {form.id && !form.isArchived && (
+                <button className="secondary-button" type="button" onClick={() => void archiveSelected()}>封存</button>
+              )}
+              {form.id && !form.isArchived && (selectedQuery?.auditCount ?? 0) === 0 && (
+                <button className="danger-button" type="button" onClick={() => void remove()}>永久刪除</button>
+              )}
+              {form.id && form.isArchived && (
+                <button className="primary-button" type="button" onClick={() => void restoreSelected()}>還原為 Draft</button>
               )}
             </div>
           </form>
 
-          {form.id && <ReportColumnsEditor queryId={form.id} />}
-          {form.id && canManageAccess && <QueryAccessEditor queryId={form.id} />}
+          {form.id && !form.isArchived && <ReportColumnsEditor queryId={form.id} />}
+          {form.id && !form.isArchived && canManageAccess && <QueryAccessEditor queryId={form.id} />}
         </section>
       </div>
     </main>
