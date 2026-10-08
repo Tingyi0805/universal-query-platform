@@ -163,18 +163,19 @@ export async function archiveDataset(id: number, userId: number): Promise<void> 
     await new sql.Request(tx)
       .input("datasetId", sql.BigInt, id)
       .query(`
-        UPDATE uqp.QueryDefinition
+        UPDATE q
         SET IsPublished=0,
             PublishedAtUtc=NULL,
             PublishedByUserId=NULL,
             UpdatedAtUtc=SYSUTCDATETIME()
-        WHERE IsPublished=1
+        FROM uqp.QueryDefinition q
+        WHERE q.IsPublished=1
           AND (
-            DatasetId=@datasetId
+            q.DatasetId=@datasetId
             OR EXISTS (
               SELECT 1
               FROM uqp.DatasetParameter dp
-              WHERE dp.DatasetId=uqp.QueryDefinition.DatasetId
+              WHERE dp.DatasetId=q.DatasetId
                 AND dp.LookupDatasetId=@datasetId
             )
           )
