@@ -21,6 +21,10 @@ import {
   replaceDatasetParameters,
   syncDatasetParameters,
 } from "./parameter.repository.js";
+import {
+  listDatasetVersions,
+  restoreDatasetVersion,
+} from "../version/version.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
 
@@ -342,7 +346,7 @@ datasetRouter.put("/:id/parameters", async (req, res, next) => {
       return;
     }
 
-    await replaceDatasetParameters(id.data, parsed.data.parameters);
+    await replaceDatasetParameters(id.data, parsed.data.parameters, req.authUser!.id);
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "PARAMETER_LOOKUP_DATASET_ARCHIVED") {
@@ -409,7 +413,7 @@ datasetRouter.put("/:id", async (req, res, next) => {
       return;
     }
     assertSelectOnlySql(parsed.data.sqlText);
-    await updateDataset(id.data, parsed.data);
+    await updateDataset(id.data, parsed.data, req.authUser!.id);
     const parameterNames = extractParameterNames(parsed.data.sqlText);
     await syncDatasetParameters(id.data, parameterNames);
     res.json({ status: "OK", parameterNames });
@@ -424,6 +428,45 @@ datasetRouter.put("/:id", async (req, res, next) => {
     }
     if (error instanceof Error && error.message.startsWith("SQL_")) {
       res.status(400).json({ error: { code: error.message, message: "只允許單一 SELECT / WITH 查詢。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+datasetRouter.get("/:id/versions", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset ID 不正確。" } });
+      return;
+    }
+    res.json({ versions: await listDatasetVersions(id.data) });
+  } catch (error) { next(error); }
+});
+
+datasetRouter.post("/:id/versions/:versionNo/restore", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const versionNo = z.coerce.number().int().positive().safeParse(req.params.versionNo);
+    if (!id.success || !versionNo.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset 版本資料不正確。" } });
+      return;
+    }
+
+    await restoreDatasetVersion(id.data, versionNo.data, req.authUser.id);
+    res.json({ status: "OK", dataset: await getDataset(id.data) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_VERSION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到指定的 Dataset 版本。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "DATASET_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "已封存 Dataset 請先還原，再進行版本還原。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "PARAMETER_LOOKUP_DATASET_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "該版本引用的 Lookup Dataset 已封存或不存在，無法還原。" } });
       return;
     }
     next(error);
