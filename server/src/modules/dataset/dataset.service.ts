@@ -24,6 +24,10 @@ export async function previewDataset(input: {
   let values = input.values;
 
   if (input.datasetId) {
+    const dataset = await getDataset(input.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    if (dataset.isArchived) throw new Error("DATASET_ARCHIVED");
+
     const definitions = await listDatasetParameters(input.datasetId);
     const tokenNames = extractParameterNames(input.sqlText);
     const definitionNames = definitions.map((parameter) => parameter.name);
@@ -54,6 +58,7 @@ export async function executeSavedDataset(
 ): Promise<QueryResult> {
   const dataset = await getDataset(datasetId);
   if (!dataset) throw new Error("DATASET_NOT_FOUND");
+  if (dataset.isArchived) throw new Error("DATASET_ARCHIVED");
   if (!dataset.isActive) throw new Error("DATASET_DISABLED");
 
   assertSelectOnlySql(dataset.sqlText);
