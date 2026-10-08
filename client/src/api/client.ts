@@ -1,6 +1,6 @@
 const API_BASE = "/api";
 
-type ApiError = { error?: { code?: string; message?: string } };
+type ApiError = { error?: { code?: string; message?: string; detail?: string } };
 
 export async function apiRequest<T>(
   path: string,
@@ -15,7 +15,9 @@ export async function apiRequest<T>(
   const body = (await response.json().catch(() => ({}))) as T & ApiError;
 
   if (!response.ok) {
-    const error = new Error(body.error?.message ?? "系統發生錯誤。");
+    const message = body.error?.message ?? "系統發生錯誤。";
+    const detail = body.error?.detail?.trim();
+    const error = new Error(detail ? `${message}（${detail}）` : message);
     Object.assign(error, { code: body.error?.code, status: response.status });
     throw error;
   }
