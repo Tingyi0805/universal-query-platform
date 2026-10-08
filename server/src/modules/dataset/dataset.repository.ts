@@ -2,6 +2,7 @@ import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
 import type { DatasetInput, DatasetRecord } from "./dataset.types.js";
+import { snapshotDatasetVersion } from "../version/version.repository.js";
 
 async function requirePool() {
   const pool = await getPlatformDbPool();
@@ -82,12 +83,16 @@ export async function createDataset(input: DatasetInput): Promise<number> {
   return Number(result.recordset[0].Id);
 }
 
-export async function updateDataset(id: number, input: DatasetInput): Promise<void> {
+export async function updateDataset(id: number, input: DatasetInput, userId?: number): Promise<void> {
   const pool = await requirePool();
   const tx = new sql.Transaction(pool);
   await tx.begin();
 
   try {
+    if (userId) {
+      await snapshotDatasetVersion(tx, id, userId, "DATASET_UPDATE");
+    }
+
     const result = await new sql.Request(tx)
       .input("id", sql.BigInt, id)
       .input("name", sql.NVarChar(200), input.name)
