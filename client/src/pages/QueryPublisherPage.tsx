@@ -630,7 +630,7 @@ export function QueryPublisherPage() {
 
             <div className="check-row">
               <label><input type="checkbox" checked={form.allowExcelExport}
-                onChange={(e) => setForm({ ...form, allowExcelExport: e.target.checked })} />允許 Excel 匯出</label>
+                onChange={(e) => setForm({ ...form, allowExcelExport: e.target.checked })} />允許匯出（Excel / CSV）</label>
               <label><input type="checkbox" checked={form.isActive}
                 onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />啟用 Query</label>
             </div>
