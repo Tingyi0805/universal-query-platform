@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { DatasetParametersEditor } from "../components/DatasetParametersEditor";
+import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import "./DatasetDesignerPage.css";
 
 type DataSourceOption = {
@@ -94,6 +95,7 @@ export function DatasetDesignerPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [versionRefreshKey, setVersionRefreshKey] = useState(0);
   const [datasetFilter, setDatasetFilter] = useState<"ACTIVE" | "INACTIVE" | "ARCHIVED">("ACTIVE");
 
   const filteredDatasets = datasets.filter((dataset) =>
@@ -237,6 +239,7 @@ export function DatasetDesignerPage() {
 
       await load();
       await loadPreviewParameterDefinitions(form.id);
+      setVersionRefreshKey((current) => current + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "儲存 Dataset 失敗。");
     } finally {
@@ -629,13 +632,36 @@ export function DatasetDesignerPage() {
             </div>
           </form>
 
+          {form.id && (
+            <VersionHistoryPanel
+              basePath={`/datasets/${form.id}`}
+              entityLabel={`Dataset「${form.name}」`}
+              refreshKey={versionRefreshKey}
+              disabled={form.isArchived}
+              onRestored={async () => {
+                const result = await apiRequest<{ dataset: DatasetRow }>(
+                  `/datasets/${form.id}`,
+                  {},
+                  accessToken,
+                );
+                selectDataset(result.dataset);
+                setDatasetFilter("INACTIVE");
+                setVersionRefreshKey((current) => current + 1);
+                await load();
+              }}
+            />
+          )}
+
           {form.id && !form.isArchived && (
             <DatasetParametersEditor
               datasetId={form.id}
               datasets={datasets
                 .filter((dataset) => !dataset.isArchived)
                 .map((dataset) => ({ id: dataset.id, code: dataset.code, name: dataset.name }))}
-              onChanged={() => loadPreviewParameterDefinitions(form.id)}
+              onChanged={async () => {
+                await loadPreviewParameterDefinitions(form.id);
+                setVersionRefreshKey((current) => current + 1);
+              }}
             />
           )}
 
