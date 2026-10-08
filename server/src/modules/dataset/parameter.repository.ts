@@ -74,7 +74,7 @@ export async function syncDatasetParameters(datasetId: number, names: string[]):
     const existingNames = new Set(existing.recordset.map((row) => String(row.Name)));
 
     for (let index = 0; index < normalized.length; index += 1) {
-      const name = normalized[index];
+      const name = normalized[index]!;
       if (existingNames.has(name)) {
         await new sql.Request(tx)
           .input("datasetId", sql.BigInt, datasetId)
