@@ -2,6 +2,7 @@ import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { getQueryDefinition } from "./queryDefinition.repository.js";
 import { listDatasetColumns } from "../dataset/column.repository.js";
+import { snapshotQueryVersion } from "../version/version.repository.js";
 
 export type ReportColumnRecord = {
   columnName: string;
@@ -60,6 +61,7 @@ export async function listReportColumns(queryId: number): Promise<ReportColumnRe
 export async function replaceReportColumns(
   queryId: number,
   columns: Omit<ReportColumnRecord, "dataType">[],
+  userId?: number,
 ): Promise<void> {
   const query = await getQueryDefinition(queryId);
   if (!query) throw new Error("QUERY_DEFINITION_NOT_FOUND");
@@ -75,6 +77,10 @@ export async function replaceReportColumns(
   await tx.begin();
 
   try {
+    if (userId) {
+      await snapshotQueryVersion(tx, queryId, userId, "REPORT_UPDATE");
+    }
+
     await new sql.Request(tx)
       .input("queryId", sql.BigInt, queryId)
       .query("DELETE FROM uqp.ReportColumn WHERE QueryDefinitionId=@queryId");
