@@ -439,7 +439,7 @@ export function DatasetDesignerPage() {
         ].filter(Boolean).join("、");
 
         setError(
-          `Dataset「${form.name}」目前仍被 ${details} 使用，不能直接刪除。請先解除關聯，或取消「啟用」後儲存。`,
+          `Dataset「${form.name}」目前仍被 ${details} 使用，不能永久刪除，請改用「封存」。`,
         );
         return;
       }
