@@ -24,6 +24,9 @@ type DatasetRow = {
   maxRows: number;
   queryTimeoutSec: number | null;
   isActive: boolean;
+  isArchived: boolean;
+  archivedAtUtc: string | null;
+  archivedByUserId: number | null;
   parameterNames: string[];
 };
 
@@ -57,6 +60,8 @@ type FormState = {
   maxRows: number;
   queryTimeoutSec: number | "";
   isActive: boolean;
+  isArchived: boolean;
+  archivedAtUtc: string | null;
 };
 
 const emptyForm: FormState = {
@@ -68,6 +73,8 @@ const emptyForm: FormState = {
   maxRows: 500,
   queryTimeoutSec: "",
   isActive: true,
+  isArchived: false,
+  archivedAtUtc: null,
 };
 
 function extractParameters(sqlText: string): string[] {
@@ -87,6 +94,15 @@ export function DatasetDesignerPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [datasetFilter, setDatasetFilter] = useState<"ACTIVE" | "INACTIVE" | "ARCHIVED">("ACTIVE");
+
+  const filteredDatasets = datasets.filter((dataset) =>
+    datasetFilter === "ARCHIVED"
+      ? dataset.isArchived
+      : datasetFilter === "ACTIVE"
+        ? !dataset.isArchived && dataset.isActive
+        : !dataset.isArchived && !dataset.isActive
+  );
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
 
@@ -167,6 +183,8 @@ export function DatasetDesignerPage() {
       maxRows: dataset.maxRows,
       queryTimeoutSec: dataset.queryTimeoutSec ?? "",
       isActive: dataset.isActive,
+      isArchived: dataset.isArchived,
+      archivedAtUtc: dataset.archivedAtUtc,
     });
     setParameterValues({});
     setPreview(null);
@@ -188,6 +206,10 @@ export function DatasetDesignerPage() {
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (form.isArchived) {
+      setError("此 Dataset 已封存，請先還原後再修改。");
+      return;
+    }
     setBusy(true);
     setError("");
     setNotice("");
@@ -349,6 +371,54 @@ export function DatasetDesignerPage() {
     }
   }
 
+  async function archiveSelected() {
+    if (!form.id || form.isArchived) return;
+    if (!window.confirm(`確定封存 Dataset「${form.name}」？封存後會停用，引用它的已發佈 Query 也會自動取消發佈。`)) return;
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{ status: string; dataset: DatasetRow }>(
+        `/datasets/${form.id}/archive`,
+        { method: "POST" },
+        accessToken,
+      );
+      selectDataset(result.dataset);
+      setDatasetFilter("ARCHIVED");
+      setNotice("Dataset 已封存；相關已發佈 Query 已自動取消發佈。");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "封存 Dataset 失敗。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restoreSelected() {
+    if (!form.id || !form.isArchived) return;
+    if (!window.confirm(`確定還原 Dataset「${form.name}」？還原後會維持停用，請確認設定後再啟用。`)) return;
+
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{ status: string; dataset: DatasetRow }>(
+        `/datasets/${form.id}/restore`,
+        { method: "POST" },
+        accessToken,
+      );
+      selectDataset(result.dataset);
+      setDatasetFilter("INACTIVE");
+      setNotice("Dataset 已還原，目前為停用狀態。");
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "還原 Dataset 失敗。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function remove() {
     if (!form.id) return;
 
@@ -408,7 +478,22 @@ export function DatasetDesignerPage() {
             <button className="secondary-button" type="button" onClick={resetForm}>＋新增</button>
           </div>
 
-          {loading ? <div className="notice">載入中…</div> : datasets.map((dataset) => (
+          <div className="dataset-status-filter" role="tablist" aria-label="Dataset 狀態">
+            <button type="button" className={datasetFilter === "ACTIVE" ? "active" : ""}
+              onClick={() => { setDatasetFilter("ACTIVE"); resetForm(); }}>
+              啟用 <span>{datasets.filter((d) => !d.isArchived && d.isActive).length}</span>
+            </button>
+            <button type="button" className={datasetFilter === "INACTIVE" ? "active" : ""}
+              onClick={() => { setDatasetFilter("INACTIVE"); resetForm(); }}>
+              停用 <span>{datasets.filter((d) => !d.isArchived && !d.isActive).length}</span>
+            </button>
+            <button type="button" className={datasetFilter === "ARCHIVED" ? "active" : ""}
+              onClick={() => { setDatasetFilter("ARCHIVED"); resetForm(); }}>
+              已封存 <span>{datasets.filter((d) => d.isArchived).length}</span>
+            </button>
+          </div>
+
+          {loading ? <div className="notice">載入中…</div> : filteredDatasets.map((dataset) => (
             <button
               type="button"
               className={`dataset-item ${form.id === dataset.id ? "selected" : ""}`}
@@ -417,23 +502,35 @@ export function DatasetDesignerPage() {
             >
               <strong>{dataset.name}</strong>
               <small>{dataset.code}</small>
-              <span>{dataset.dataSourceName} · {dataset.dataSourceType}</span>
+              <span>
+                {dataset.dataSourceName} · {dataset.dataSourceType} · {dataset.isArchived ? "已封存" : dataset.isActive ? "啟用" : "停用"}
+              </span>
             </button>
           ))}
 
-          {!loading && datasets.length === 0 && <div className="empty-state">尚未建立 Dataset。</div>}
+          {!loading && filteredDatasets.length === 0 && <div className="empty-state">此狀態目前沒有 Dataset。</div>}
         </aside>
 
         <section className="designer-editor">
-          <form onSubmit={save}>
+          <form className={form.isArchived ? "archived-form" : ""} onSubmit={save}>
             <div className="section-title">
               <h2>{form.id ? "編輯 Dataset" : "新增 Dataset"}</h2>
+              {form.isArchived ? (
+                <span className="dataset-archive-badge">Archived</span>
+              ) : (
               <label className="inline-check">
                 <input type="checkbox" checked={form.isActive}
                   onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
                 啟用
               </label>
+              )}
             </div>
+
+            {form.isArchived && (
+              <div className="archive-notice">
+                此 Dataset 已封存，只供查閱。{form.archivedAtUtc ? `封存時間：${new Date(form.archivedAtUtc).toLocaleString("zh-TW")}` : ""}
+              </div>
+            )}
 
             <div className="form-grid two">
               <label>代碼
@@ -505,24 +602,39 @@ export function DatasetDesignerPage() {
             </div>
 
             <div className="form-actions">
-              <button className="primary-button" disabled={busy} type="submit">
-                {busy ? "處理中…" : "儲存 Dataset"}
-              </button>
-              <button className="secondary-button" disabled={busy} type="button" onClick={() => void runPreview()}>
-                執行預覽
-              </button>
-              {form.id && (
-                <button className="danger-button" disabled={busy} type="button" onClick={() => void remove()}>
-                  刪除
+              {!form.isArchived ? (
+                <>
+                  <button className="primary-button" disabled={busy} type="submit">
+                    {busy ? "處理中…" : "儲存 Dataset"}
+                  </button>
+                  <button className="secondary-button" disabled={busy} type="button" onClick={() => void runPreview()}>
+                    執行預覽
+                  </button>
+                  {form.id && (
+                    <button className="secondary-button" disabled={busy} type="button" onClick={() => void archiveSelected()}>
+                      封存
+                    </button>
+                  )}
+                  {form.id && (
+                    <button className="danger-button" disabled={busy} type="button" onClick={() => void remove()}>
+                      永久刪除
+                    </button>
+                  )}
+                </>
+              ) : (
+                <button className="secondary-button" disabled={busy} type="button" onClick={() => void restoreSelected()}>
+                  還原為停用
                 </button>
               )}
             </div>
           </form>
 
-          {form.id && (
+          {form.id && !form.isArchived && (
             <DatasetParametersEditor
               datasetId={form.id}
-              datasets={datasets.map((dataset) => ({ id: dataset.id, code: dataset.code, name: dataset.name }))}
+              datasets={datasets
+                .filter((dataset) => !dataset.isArchived)
+                .map((dataset) => ({ id: dataset.id, code: dataset.code, name: dataset.name }))}
               onChanged={() => loadPreviewParameterDefinitions(form.id)}
             />
           )}
