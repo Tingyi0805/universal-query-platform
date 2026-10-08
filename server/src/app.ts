@@ -28,7 +28,13 @@ app.disable("x-powered-by");
 app.use(helmet());
 app.use(
   cors({
-    origin: env.CLIENT_ORIGIN,
+    origin(origin, callback) {
+      if (!origin || env.CLIENT_ORIGINS.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      callback(new Error("CORS_ORIGIN_NOT_ALLOWED"));
+    },
     credentials: true,
   }),
 );
