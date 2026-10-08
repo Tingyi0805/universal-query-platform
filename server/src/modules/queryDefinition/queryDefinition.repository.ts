@@ -1,6 +1,7 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import type { QueryDefinitionInput, QueryDefinitionRecord } from "./queryDefinition.types.js";
+import { snapshotQueryVersion } from "../version/version.repository.js";
 
 async function requirePool() {
   const pool = await getPlatformDbPool();
@@ -91,7 +92,7 @@ export async function createQueryDefinition(input: QueryDefinitionInput): Promis
   return Number(result.recordset[0].Id);
 }
 
-export async function updateQueryDefinition(id: number, input: QueryDefinitionInput): Promise<void> {
+export async function updateQueryDefinition(id: number, input: QueryDefinitionInput, userId?: number): Promise<void> {
   const pool = await requirePool();
   const tx = new sql.Transaction(pool);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
@@ -133,6 +134,10 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
       Number(current.SortOrder) !== input.sortOrder ||
       Boolean(current.AllowExcelExport) !== input.allowExcelExport ||
       Boolean(current.IsActive) !== input.isActive;
+
+    if (changed && userId) {
+      await snapshotQueryVersion(tx, id, userId, "QUERY_UPDATE");
+    }
 
     await new sql.Request(tx)
       .input("id", sql.BigInt, id)
