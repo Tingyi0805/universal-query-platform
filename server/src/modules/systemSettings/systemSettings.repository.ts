@@ -143,3 +143,66 @@ export async function updateVersionRetentionSettings(
     throw error;
   }
 }
+
+
+export type AuditRetentionSettings = {
+  onlineRetentionDays: number;
+  archiveRetentionDays: number;
+  importantPermanent: boolean;
+};
+
+export async function getAuditRetentionSettings(): Promise<AuditRetentionSettings> {
+  const pool = await requirePool();
+  const result = await pool.request().query(`
+    SELECT SettingKey, SettingValue
+    FROM uqp.SystemSetting
+    WHERE SettingKey IN (
+      'AUDIT_ONLINE_RETENTION_DAYS',
+      'AUDIT_ARCHIVE_RETENTION_DAYS',
+      'AUDIT_IMPORTANT_PERMANENT'
+    )
+  `);
+
+  let onlineRetentionDays = 365;
+  let archiveRetentionDays = 1825;
+  let importantPermanent = true;
+
+  for (const row of result.recordset) {
+    const key = String(row.SettingKey);
+    const value = String(row.SettingValue ?? "");
+    if (key === "AUDIT_ONLINE_RETENTION_DAYS" && Number.isInteger(Number(value))) onlineRetentionDays = Number(value);
+    if (key === "AUDIT_ARCHIVE_RETENTION_DAYS" && Number.isInteger(Number(value))) archiveRetentionDays = Number(value);
+    if (key === "AUDIT_IMPORTANT_PERMANENT") importantPermanent = value.toLowerCase() !== "false";
+  }
+
+  return { onlineRetentionDays, archiveRetentionDays, importantPermanent };
+}
+
+export async function updateAuditRetentionSettings(input: AuditRetentionSettings): Promise<void> {
+  const pool = await requirePool();
+  const tx = new sql.Transaction(pool);
+  await tx.begin();
+
+  try {
+    const values: [string, string][] = [
+      ["AUDIT_ONLINE_RETENTION_DAYS", String(input.onlineRetentionDays)],
+      ["AUDIT_ARCHIVE_RETENTION_DAYS", String(input.archiveRetentionDays)],
+      ["AUDIT_IMPORTANT_PERMANENT", input.importantPermanent ? "true" : "false"],
+    ];
+
+    for (const [key, value] of values) {
+      await new sql.Request(tx)
+        .input("key", sql.NVarChar(100), key)
+        .input("value", sql.NVarChar(1000), value)
+        .query(`
+          UPDATE uqp.SystemSetting
+          SET SettingValue=@value, UpdatedAtUtc=SYSUTCDATETIME()
+          WHERE SettingKey=@key
+        `);
+    }
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
