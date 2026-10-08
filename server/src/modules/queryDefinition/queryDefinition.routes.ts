@@ -102,6 +102,10 @@ queryDefinitionRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, r
       res.status(409).json({ error: { code: "QUERY_CODE_EXISTS", message: "Query 代碼已存在。" } });
       return;
     }
+    if (error instanceof Error && ["DATASET_ARCHIVED","DATASET_ARCHIVED_OR_NOT_FOUND","DATASET_NOT_FOUND"].includes(error.message)) {
+      res.status(409).json({ error: { code: error.message, message: "指定的 Dataset 已封存或不存在，請選擇可使用的 Dataset。" } });
+      return;
+    }
     next(error);
   }
 });
