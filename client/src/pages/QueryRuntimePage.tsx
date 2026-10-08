@@ -289,13 +289,13 @@ export function QueryRuntimePage() {
     [result, groupColumns],
   );
 
-  async function exportExcel() {
+  async function downloadExport(format: "excel" | "csv") {
     if (!query?.canExport) return;
 
     setError("");
     try {
       const download = await apiDownload(
-        `/queries/${queryId}/export/excel`,
+        `/queries/${queryId}/export/${format}`,
         { values },
         accessToken,
       );
@@ -309,7 +309,8 @@ export function QueryRuntimePage() {
       anchor.remove();
       URL.revokeObjectURL(url);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Excel 匯出失敗。");
+      const fallback = format === "excel" ? "Excel 匯出失敗。" : "CSV 匯出失敗。";
+      setError(e instanceof Error ? e.message : fallback);
     }
   }
 
@@ -439,7 +440,12 @@ export function QueryRuntimePage() {
               <h2>查詢結果</h2>
               <p>{result.rowCount} 筆 · {result.elapsedMs} ms {result.truncated ? "· 已達筆數上限" : ""}</p>
             </div>
-            {query?.canExport && <button className="secondary-button" type="button" onClick={() => void exportExcel()}>匯出 Excel</button>}
+            {query?.canExport && (
+              <div className="runtime-export-actions">
+                <button className="secondary-button" type="button" onClick={() => void downloadExport("excel")}>匯出 Excel</button>
+                <button className="secondary-button" type="button" onClick={() => void downloadExport("csv")}>匯出 CSV</button>
+              </div>
+            )}
           </div>
 
           <div className="runtime-table-wrap">
