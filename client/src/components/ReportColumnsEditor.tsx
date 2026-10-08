@@ -16,7 +16,13 @@ type ReportColumn = {
   aggregateType: "NONE" | "SUM" | "AVG" | "MIN" | "MAX" | "COUNT";
 };
 
-export function ReportColumnsEditor({ queryId }: { queryId: number }) {
+export function ReportColumnsEditor({
+  queryId,
+  onChanged,
+}: {
+  queryId: number;
+  onChanged?: () => void | Promise<void>;
+}) {
   const { accessToken } = useAuth();
   const [columns, setColumns] = useState<ReportColumn[]>([]);
   const [error, setError] = useState("");
@@ -79,6 +85,7 @@ export function ReportColumnsEditor({ queryId }: { queryId: number }) {
       }, accessToken);
       setNotice("Report 欄位設定已儲存。");
       await load();
+      await onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : "儲存 Report 欄位失敗。");
     }
