@@ -58,7 +58,7 @@ async function main() {
 
       for (let index = 0; index < batches.length; index += 1) {
         try {
-          await new sql.Request(transaction).batch(batches[index]);
+          await new sql.Request(transaction).batch(batches[index]!);
         } catch (error) {
           logger.error(
             { err: error, migration: file, batch: index + 1, batchCount: batches.length },
