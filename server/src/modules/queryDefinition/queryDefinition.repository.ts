@@ -80,11 +80,14 @@ export async function createQueryDefinition(input: QueryDefinitionInput): Promis
         SortOrder, AllowExcelExport, IsActive
       )
       OUTPUT INSERTED.Id
-      VALUES (
+      SELECT
         @code,@name,@description,@categoryId,@icon,@datasetId,
         @sortOrder,@allowExcelExport,@isActive
-      )
+      FROM uqp.Dataset d
+      WHERE d.Id=@datasetId AND d.IsArchived=0
     `);
+
+  if (!result.recordset[0]) throw new Error("DATASET_ARCHIVED_OR_NOT_FOUND");
   return Number(result.recordset[0].Id);
 }
 
@@ -112,6 +115,14 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
       if (exists.recordset[0]?.IsArchived) throw new Error("QUERY_ARCHIVED");
       throw new Error("QUERY_DEFINITION_NOT_FOUND");
     }
+
+    const datasetResult = await new sql.Request(tx)
+      .input("datasetId", sql.BigInt, input.datasetId)
+      .query("SELECT Id, IsArchived FROM uqp.Dataset WHERE Id=@datasetId");
+
+    const selectedDataset = datasetResult.recordset[0];
+    if (!selectedDataset) throw new Error("DATASET_NOT_FOUND");
+    if (selectedDataset.IsArchived) throw new Error("DATASET_ARCHIVED");
 
     const changed =
       String(current.Name) !== input.name ||
@@ -173,7 +184,7 @@ export async function publishQueryDefinition(id: number, userId: number): Promis
       INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
       INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
       WHERE q.Id=@id AND q.IsActive=1 AND q.IsArchived=0
-        AND d.IsActive=1 AND s.IsActive=1;
+        AND d.IsActive=1 AND d.IsArchived=0 AND s.IsActive=1;
       SELECT @@ROWCOUNT AS Affected;
     `);
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("QUERY_NOT_PUBLISHABLE");
@@ -280,7 +291,7 @@ export async function listAccessibleQueries(userId: number) {
            CASE WHEN ISNULL(ra.CanExecute,0)=1 OR ISNULL(ua.CanExecute,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExecute,
            CASE WHEN ISNULL(ra.CanExport,0)=1 OR ISNULL(ua.CanExport,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExport
     FROM uqp.QueryDefinition q
-    INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId AND d.IsActive=1
+    INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId AND d.IsActive=1 AND d.IsArchived=0
     INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId AND s.IsActive=1
     LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
     LEFT JOIN RoleAccess ra ON ra.QueryDefinitionId=q.Id
