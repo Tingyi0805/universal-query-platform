@@ -1,5 +1,6 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
+import { snapshotDatasetVersion } from "../version/version.repository.js";
 
 export type DatasetParameterRecord = {
   id: number;
@@ -130,6 +131,7 @@ export async function syncDatasetParameters(datasetId: number, names: string[]):
 export async function replaceDatasetParameters(
   datasetId: number,
   parameters: Omit<DatasetParameterRecord, "id" | "datasetId">[],
+  userId?: number,
 ): Promise<void> {
   const pool = await requirePool();
   const tx = new sql.Transaction(pool);
@@ -140,6 +142,10 @@ export async function replaceDatasetParameters(
       .input("datasetId", sql.BigInt, datasetId)
       .query("SELECT Id FROM uqp.Dataset WHERE Id=@datasetId");
     if (!dataset.recordset[0]) throw new Error("DATASET_NOT_FOUND");
+
+    if (userId) {
+      await snapshotDatasetVersion(tx, datasetId, userId, "PARAMETER_UPDATE");
+    }
 
     await new sql.Request(tx)
       .input("datasetId", sql.BigInt, datasetId)
