@@ -10,6 +10,9 @@ export type DatasetRecord = {
   maxRows: number;
   queryTimeoutSec: number | null;
   isActive: boolean;
+  isArchived: boolean;
+  archivedAtUtc: string | null;
+  archivedByUserId: number | null;
   parameterNames: string[];
 };
 
