@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import cors from "cors";
-import express from "express";
+import express, { type Request, type Response } from "express";
 import helmet from "helmet";
-import pinoHttp from "pino-http";
+import pinoHttpModule from "pino-http";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { errorHandler } from "./middleware/errorHandler.js";
@@ -16,6 +16,11 @@ import { queryDefinitionRouter } from "./modules/queryDefinition/queryDefinition
 import { queryRuntimeRouter } from "./modules/queryDefinition/queryRuntime.routes.js";
 import { systemSettingsRouter } from "./modules/systemSettings/systemSettings.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
+
+const pinoHttp = pinoHttpModule as unknown as (options: {
+  logger: typeof logger;
+  genReqId: (req: Request, res: Response) => string;
+}) => express.RequestHandler;
 
 export const app = express();
 
@@ -31,7 +36,7 @@ app.use(express.json({ limit: "1mb" }));
 app.use(
   pinoHttp({
     logger,
-    genReqId: (req, res) => {
+    genReqId: (req: Request, res: Response) => {
       const incoming = req.headers["x-request-id"];
       const requestId =
         typeof incoming === "string" && incoming.trim()
