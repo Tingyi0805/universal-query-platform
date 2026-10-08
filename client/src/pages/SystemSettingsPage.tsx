@@ -4,6 +4,17 @@ import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./SystemSettingsPage.css";
 
+type AuditRetentionSettings = {
+  onlineRetentionDays: number;
+  archiveRetentionDays: number;
+  importantPermanent: boolean;
+};
+
+type AuditLifecyclePreview = AuditRetentionSettings & {
+  archiveCount: number;
+  deleteCount: number;
+};
+
 type VersionRetentionSettings = {
   retentionCount: number;
   retentionDays: number;
@@ -32,6 +43,12 @@ const defaults: BrandingSettings = {
 export function SystemSettingsPage() {
   const { accessToken } = useAuth();
   const [form, setForm] = useState<BrandingSettings>(defaults);
+  const [auditRetention, setAuditRetention] = useState<AuditRetentionSettings>({
+    onlineRetentionDays: 365,
+    archiveRetentionDays: 1825,
+    importantPermanent: true,
+  });
+  const [auditPreview, setAuditPreview] = useState<AuditLifecyclePreview | null>(null);
   const [retention, setRetention] = useState<VersionRetentionSettings>({
     retentionCount: 30,
     retentionDays: 365,
@@ -41,6 +58,9 @@ export function SystemSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [savingRetention, setSavingRetention] = useState(false);
   const [cleaning, setCleaning] = useState(false);
+  const [savingAuditRetention, setSavingAuditRetention] = useState(false);
+  const [archivingAudit, setArchivingAudit] = useState(false);
+  const [cleaningAudit, setCleaningAudit] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -48,14 +68,18 @@ export function SystemSettingsPage() {
     setLoading(true);
     setError("");
     try {
-      const [brandingResult, retentionResult, cleanupResult] = await Promise.all([
+      const [brandingResult, retentionResult, cleanupResult, auditRetentionResult, auditPreviewResult] = await Promise.all([
         apiRequest<BrandingSettings>("/system-settings/branding", {}, accessToken),
         apiRequest<VersionRetentionSettings>("/system-settings/version-retention", {}, accessToken),
         apiRequest<CleanupPreview>("/system-settings/version-retention/cleanup-preview", {}, accessToken),
+        apiRequest<AuditRetentionSettings>("/system-settings/audit-retention", {}, accessToken),
+        apiRequest<AuditLifecyclePreview>("/audit/lifecycle-preview", {}, accessToken),
       ]);
       setForm(brandingResult);
       setRetention(retentionResult);
       setCleanupPreview(cleanupResult);
+      setAuditRetention(auditRetentionResult);
+      setAuditPreview(auditPreviewResult);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入系統設定失敗。");
     } finally {
@@ -146,6 +170,80 @@ export function SystemSettingsPage() {
       setError(e instanceof Error ? e.message : "版本清理失敗。");
     } finally {
       setCleaning(false);
+    }
+  }
+
+  async function refreshAuditPreview() {
+    try {
+      const result = await apiRequest<AuditLifecyclePreview>("/audit/lifecycle-preview", {}, accessToken);
+      setAuditPreview(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "載入 Audit 生命週期資訊失敗。");
+    }
+  }
+
+  async function saveAuditRetention(event: FormEvent) {
+    event.preventDefault();
+    setSavingAuditRetention(true);
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest("/system-settings/audit-retention", {
+        method: "PUT",
+        body: JSON.stringify(auditRetention),
+      }, accessToken);
+      setNotice("Audit 保留策略已儲存。");
+      await refreshAuditPreview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "儲存 Audit 保留策略失敗。");
+    } finally {
+      setSavingAuditRetention(false);
+    }
+  }
+
+  async function archiveAuditLogs() {
+    const count = auditPreview?.archiveCount ?? 0;
+    if (count <= 0) {
+      setNotice("目前沒有符合封存條件的 Audit Log。");
+      return;
+    }
+    if (!window.confirm(`目前有 ${count} 筆 Audit Log 可移至 Archive。確定執行？`)) return;
+
+    setArchivingAudit(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{ archivedCount: number }>("/audit/archive", { method: "POST" }, accessToken);
+      setNotice(`Audit 封存完成，共移轉 ${result.archivedCount} 筆。`);
+      await refreshAuditPreview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Audit 封存失敗。");
+    } finally {
+      setArchivingAudit(false);
+    }
+  }
+
+  async function cleanupAuditArchive() {
+    const count = auditPreview?.deleteCount ?? 0;
+    if (count <= 0) {
+      setNotice("目前沒有符合清理條件的 Archive Audit。");
+      return;
+    }
+    if (!window.confirm(
+      `目前有 ${count} 筆 Archive Audit 符合清理條件。\n重要 Audit 會依目前策略保留。\n\n確定清理？`,
+    )) return;
+
+    setCleaningAudit(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{ deletedCount: number }>("/audit/archive/cleanup", { method: "POST" }, accessToken);
+      setNotice(`Audit Archive 清理完成，共刪除 ${result.deletedCount} 筆到期資料。`);
+      await refreshAuditPreview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Audit Archive 清理失敗。");
+    } finally {
+      setCleaningAudit(false);
     }
   }
 
@@ -291,6 +389,95 @@ export function SystemSettingsPage() {
                 onClick={() => void cleanupVersions()}
               >
                 {cleaning ? "清理中…" : "清理舊版本"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+      {!loading && (
+        <section className="settings-card version-retention-card">
+          <div className="section-title">
+            <div>
+              <h2>Audit Log 保留策略</h2>
+              <p className="settings-hint">
+                線上 Audit 到期後先移入 Archive；Archive 到期後才清理。重要 Audit 可設定永久保留。
+              </p>
+            </div>
+          </div>
+
+          <form className="settings-form" onSubmit={saveAuditRetention}>
+            <div className="retention-grid">
+              <label>
+                線上 Audit 保留天數
+                <input
+                  type="number"
+                  min={30}
+                  max={3650}
+                  value={auditRetention.onlineRetentionDays}
+                  onChange={(e) => setAuditRetention({
+                    ...auditRetention,
+                    onlineRetentionDays: Number(e.target.value),
+                  })}
+                />
+                <small>預設 365 天；到期資料會先封存，不直接刪除。</small>
+              </label>
+
+              <label>
+                Archive 保留天數
+                <input
+                  type="number"
+                  min={365}
+                  max={7300}
+                  value={auditRetention.archiveRetentionDays}
+                  onChange={(e) => setAuditRetention({
+                    ...auditRetention,
+                    archiveRetentionDays: Number(e.target.value),
+                  })}
+                />
+                <small>預設 1825 天（5 年）。</small>
+              </label>
+            </div>
+
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={auditRetention.importantPermanent}
+                onChange={(e) => setAuditRetention({
+                  ...auditRetention,
+                  importantPermanent: e.target.checked,
+                })}
+              />
+              重要 Audit 永久保留
+            </label>
+
+            <div className="retention-summary">
+              <strong>目前 Audit 生命週期狀態</strong>
+              <span>可移至 Archive：{auditPreview?.archiveCount ?? 0} 筆</span>
+              <span>Archive 可清理：{auditPreview?.deleteCount ?? 0} 筆</span>
+            </div>
+
+            <div className="form-actions">
+              <button className="primary-button" type="submit" disabled={savingAuditRetention}>
+                {savingAuditRetention ? "儲存中…" : "儲存 Audit 策略"}
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void refreshAuditPreview()}>
+                重新計算
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={archivingAudit || (auditPreview?.archiveCount ?? 0) === 0}
+                onClick={() => void archiveAuditLogs()}
+              >
+                {archivingAudit ? "封存中…" : "封存到期 Audit"}
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={cleaningAudit || (auditPreview?.deleteCount ?? 0) === 0}
+                onClick={() => void cleanupAuditArchive()}
+              >
+                {cleaningAudit ? "清理中…" : "清理到期 Archive"}
               </button>
             </div>
           </form>
