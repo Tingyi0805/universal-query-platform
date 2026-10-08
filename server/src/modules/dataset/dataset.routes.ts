@@ -344,7 +344,18 @@ datasetRouter.put("/:id/parameters", async (req, res, next) => {
 
     await replaceDatasetParameters(id.data, parsed.data.parameters);
     res.json({ status: "OK" });
-  } catch (error) { next(error); }
+  } catch (error) {
+    if (error instanceof Error && error.message === "PARAMETER_LOOKUP_DATASET_ARCHIVED") {
+      res.status(409).json({
+        error: {
+          code: error.message,
+          message: "參數選項來源 Dataset 已封存或不存在，請改選其他 Dataset。",
+        },
+      });
+      return;
+    }
+    next(error);
+  }
 });
 
 datasetRouter.get("/:id", async (req, res, next) => {
