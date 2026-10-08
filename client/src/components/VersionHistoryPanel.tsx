@@ -20,6 +20,7 @@ const reasonLabels: Record<string, string> = {
   PARAMETER_UPDATE: "Parameter 修改",
   QUERY_UPDATE: "Query 修改",
   REPORT_UPDATE: "Report 修改",
+  PUBLISHED_SNAPSHOT: "正式發佈版本",
 };
 
 function reasonLabel(reason: string | null) {
