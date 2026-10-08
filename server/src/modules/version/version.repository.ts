@@ -94,7 +94,16 @@ export async function snapshotDatasetVersion(
              CASE WHEN EXISTS (
                SELECT 1
                FROM uqp.QueryDefinition q
-               WHERE q.DatasetId=d.Id AND q.IsPublished=1
+               WHERE q.IsPublished=1
+                 AND (
+                   q.DatasetId=d.Id
+                   OR EXISTS (
+                     SELECT 1
+                     FROM uqp.DatasetParameter dp
+                     WHERE dp.DatasetId=q.DatasetId
+                       AND dp.LookupDatasetId=d.Id
+                   )
+                 )
              ) THEN 1 ELSE 0 END AS IsPublishedSnapshot
       FROM uqp.Dataset d
       WHERE d.Id=@datasetId
@@ -571,24 +580,34 @@ export async function previewVersionCleanup() {
     .query(`
       WITH DatasetRanked AS (
         SELECT Id, DatasetId, VersionNo, IsPinned, IsPublishedSnapshot, CreatedAtUtc,
-               ROW_NUMBER() OVER (PARTITION BY DatasetId ORDER BY VersionNo DESC) AS rn
+               ROW_NUMBER() OVER (PARTITION BY DatasetId ORDER BY VersionNo DESC) AS rn,
+               ROW_NUMBER() OVER (
+                 PARTITION BY DatasetId, YEAR(CreatedAtUtc), MONTH(CreatedAtUtc)
+                 ORDER BY VersionNo DESC
+               ) AS monthRn
         FROM uqp.DatasetVersion
       ),
       QueryRanked AS (
         SELECT Id, QueryDefinitionId, VersionNo, IsPinned, IsPublishedSnapshot, CreatedAtUtc,
-               ROW_NUMBER() OVER (PARTITION BY QueryDefinitionId ORDER BY VersionNo DESC) AS rn
+               ROW_NUMBER() OVER (PARTITION BY QueryDefinitionId ORDER BY VersionNo DESC) AS rn,
+               ROW_NUMBER() OVER (
+                 PARTITION BY QueryDefinitionId, YEAR(CreatedAtUtc), MONTH(CreatedAtUtc)
+                 ORDER BY VersionNo DESC
+               ) AS monthRn
         FROM uqp.QueryDefinitionVersion
       )
       SELECT
         (SELECT COUNT(1)
          FROM DatasetRanked
          WHERE rn>@retentionCount
+           AND monthRn>1
            AND IsPinned=0
            AND IsPublishedSnapshot=0
            AND CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME())) AS DatasetDeleteCount,
         (SELECT COUNT(1)
          FROM QueryRanked
          WHERE rn>@retentionCount
+           AND monthRn>1
            AND IsPinned=0
            AND IsPublishedSnapshot=0
            AND CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME())) AS QueryDeleteCount
@@ -620,13 +639,18 @@ export async function cleanupOldVersions() {
       .query(`
         WITH Ranked AS (
           SELECT Id,
-                 ROW_NUMBER() OVER (PARTITION BY DatasetId ORDER BY VersionNo DESC) AS rn
+                 ROW_NUMBER() OVER (PARTITION BY DatasetId ORDER BY VersionNo DESC) AS rn,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY DatasetId, YEAR(CreatedAtUtc), MONTH(CreatedAtUtc)
+                   ORDER BY VersionNo DESC
+                 ) AS monthRn
           FROM uqp.DatasetVersion
         )
         DELETE v
         FROM uqp.DatasetVersion v
         INNER JOIN Ranked r ON r.Id=v.Id
         WHERE r.rn>@retentionCount
+          AND r.monthRn>1
           AND v.IsPinned=0
           AND v.IsPublishedSnapshot=0
           AND v.CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME());
@@ -639,13 +663,18 @@ export async function cleanupOldVersions() {
       .query(`
         WITH Ranked AS (
           SELECT Id,
-                 ROW_NUMBER() OVER (PARTITION BY QueryDefinitionId ORDER BY VersionNo DESC) AS rn
+                 ROW_NUMBER() OVER (PARTITION BY QueryDefinitionId ORDER BY VersionNo DESC) AS rn,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY QueryDefinitionId, YEAR(CreatedAtUtc), MONTH(CreatedAtUtc)
+                   ORDER BY VersionNo DESC
+                 ) AS monthRn
           FROM uqp.QueryDefinitionVersion
         )
         DELETE v
         FROM uqp.QueryDefinitionVersion v
         INNER JOIN Ranked r ON r.Id=v.Id
         WHERE r.rn>@retentionCount
+          AND r.monthRn>1
           AND v.IsPinned=0
           AND v.IsPublishedSnapshot=0
           AND v.CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME());
