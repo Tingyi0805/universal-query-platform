@@ -117,7 +117,7 @@ export async function listAuditLogs(input: {
 
   const recordsets = result.recordsets as any[];
   return {
-    items: (recordsets[0] ?? []).map((row) => ({
+    items: (recordsets[0] ?? []).map((row: any) => ({
       id: Number(row.Id),
       eventType: String(row.EventType),
       status: String(row.Status),
