@@ -19,6 +19,10 @@ import {
   searchQueryAccessUsers,
 } from "./queryAccess.repository.js";
 import { listReportColumns, replaceReportColumns } from "./reportColumn.repository.js";
+import {
+  listQueryVersions,
+  restoreQueryVersion,
+} from "../version/version.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
 
@@ -118,7 +122,7 @@ queryDefinitionRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req,
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query Definition 格式不正確。" } });
       return;
     }
-    await updateQueryDefinition(id.data, parsed.data);
+    await updateQueryDefinition(id.data, parsed.data, req.authUser!.id);
     res.json({
       status: "OK",
       queryDefinition: await getQueryDefinition(id.data),
@@ -139,6 +143,45 @@ queryDefinitionRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req,
           message: "指定的 Dataset 已封存或不存在，請選擇可使用的 Dataset。",
         },
       });
+      return;
+    }
+    next(error);
+  }
+});
+
+queryDefinitionRouter.get("/:id/versions", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
+      return;
+    }
+    res.json({ versions: await listQueryVersions(id.data) });
+  } catch (error) { next(error); }
+});
+
+queryDefinitionRouter.post("/:id/versions/:versionNo/restore", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const versionNo = z.coerce.number().int().positive().safeParse(req.params.versionNo);
+    if (!id.success || !versionNo.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query 版本資料不正確。" } });
+      return;
+    }
+
+    await restoreQueryVersion(id.data, versionNo.data, req.authUser.id);
+    res.json({ status: "OK", queryDefinition: await getQueryDefinition(id.data) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "QUERY_VERSION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到指定的 Query 版本。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "QUERY_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "已封存 Query 請先還原，再進行版本還原。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "DATASET_ARCHIVED_OR_NOT_FOUND") {
+      res.status(409).json({ error: { code: error.message, message: "該版本使用的 Dataset 已封存或不存在，無法還原。" } });
       return;
     }
     next(error);
@@ -319,7 +362,7 @@ queryDefinitionRouter.put("/:id/report-columns", requirePermission("DESIGN_QUERY
       return;
     }
 
-    await replaceReportColumns(id.data, parsed.data.columns);
+    await replaceReportColumns(id.data, parsed.data.columns, req.authUser!.id);
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "REPORT_COLUMN_NOT_IN_DATASET") {
