@@ -7,6 +7,8 @@ import "./AuditLogPage.css";
 type AuditRow = {
   id: number;
   eventType: string;
+  eventCategory: "SECURITY" | "CONFIG" | "USAGE" | "SYSTEM";
+  isImportant: boolean;
   status: string;
   parametersJson: string | null;
   rowCount: number | null;
@@ -28,6 +30,8 @@ export function AuditLogPage() {
   const [page, setPage] = useState(1);
   const [eventType, setEventType] = useState("");
   const [username, setUsername] = useState("");
+  const [eventCategory, setEventCategory] = useState("");
+  const [source, setSource] = useState<"LIVE" | "ARCHIVE">("LIVE");
   const [error, setError] = useState("");
   const pageSize = 50;
 
@@ -39,7 +43,9 @@ export function AuditLogPage() {
         pageSize: String(pageSize),
       });
       if (eventType.trim()) search.set("eventType", eventType.trim());
+      if (eventCategory) search.set("eventCategory", eventCategory);
       if (username.trim()) search.set("username", username.trim());
+      search.set("source", source);
 
       const result = await apiRequest<{ items: AuditRow[]; total: number }>(
         `/audit?${search.toString()}`,
@@ -52,7 +58,7 @@ export function AuditLogPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入 Audit Log 失敗。");
     }
-  }, [accessToken, eventType, page, username]);
+  }, [accessToken, eventCategory, eventType, page, source, username]);
 
   useEffect(() => { void load(1); }, []);
 
@@ -69,17 +75,33 @@ export function AuditLogPage() {
         <div>
           <p className="eyebrow">Audit</p>
           <h1>Audit Log</h1>
-          <p className="subtitle">查詢與 Excel 匯出的稽核紀錄。</p>
+          <p className="subtitle">查詢線上與封存 Audit Log，支援事件分類與重要紀錄識別。</p>
         </div>
         <Link className="secondary-button link-button" to="/">返回首頁</Link>
       </div>
 
       <form className="audit-filter" onSubmit={search}>
+        <label>資料區
+          <select value={source} onChange={(e) => setSource(e.target.value as "LIVE" | "ARCHIVE")}>
+            <option value="LIVE">線上 Audit</option>
+            <option value="ARCHIVE">Archive</option>
+          </select>
+        </label>
+        <label>分類
+          <select value={eventCategory} onChange={(e) => setEventCategory(e.target.value)}>
+            <option value="">全部</option>
+            <option value="SECURITY">SECURITY</option>
+            <option value="CONFIG">CONFIG</option>
+            <option value="USAGE">USAGE</option>
+            <option value="SYSTEM">SYSTEM</option>
+          </select>
+        </label>
         <label>事件
           <select value={eventType} onChange={(e) => setEventType(e.target.value)}>
             <option value="">全部</option>
             <option value="QUERY_EXECUTE">QUERY_EXECUTE</option>
             <option value="QUERY_EXPORT_EXCEL">QUERY_EXPORT_EXCEL</option>
+            <option value="QUERY_EXPORT_CSV">QUERY_EXPORT_CSV</option>
           </select>
         </label>
         <label>帳號
@@ -97,6 +119,7 @@ export function AuditLogPage() {
               <tr>
                 <th>時間</th>
                 <th>使用者</th>
+                <th>分類</th>
                 <th>事件</th>
                 <th>Query</th>
                 <th>狀態</th>
@@ -112,6 +135,10 @@ export function AuditLogPage() {
                 <tr key={item.id}>
                   <td>{new Date(item.createdAtUtc).toLocaleString()}</td>
                   <td>{item.displayName || item.username || "—"}<small>{item.username}</small></td>
+                  <td>
+                    <span>{item.eventCategory}</span>
+                    {item.isImportant && <small>重要</small>}
+                  </td>
                   <td>{item.eventType}</td>
                   <td>{item.queryName || item.queryCode || "—"}<small>{item.queryCode}</small></td>
                   <td><span className={`audit-status ${item.status.toLowerCase()}`}>{item.status}</span></td>
