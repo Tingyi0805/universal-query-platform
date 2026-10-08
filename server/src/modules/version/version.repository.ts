@@ -90,9 +90,14 @@ export async function snapshotDatasetVersion(
   const datasetResult = await new sql.Request(parent)
     .input("datasetId", sql.BigInt, datasetId)
     .query(`
-      SELECT Name, Description, DataSourceId, SqlText, MaxRows, QueryTimeoutSec, IsActive
-      FROM uqp.Dataset
-      WHERE Id=@datasetId
+      SELECT d.Name, d.Description, d.DataSourceId, d.SqlText, d.MaxRows, d.QueryTimeoutSec, d.IsActive,
+             CASE WHEN EXISTS (
+               SELECT 1
+               FROM uqp.QueryDefinition q
+               WHERE q.DatasetId=d.Id AND q.IsPublished=1
+             ) THEN 1 ELSE 0 END AS IsPublishedSnapshot
+      FROM uqp.Dataset d
+      WHERE d.Id=@datasetId
     `);
 
   const row = datasetResult.recordset[0];
@@ -144,11 +149,12 @@ export async function snapshotDatasetVersion(
     .input("snapshotJson", sql.NVarChar(sql.MAX), JSON.stringify(snapshot))
     .input("reason", sql.NVarChar(100), reason)
     .input("userId", sql.BigInt, userId)
+    .input("isPublishedSnapshot", sql.Bit, Boolean(row.IsPublishedSnapshot))
     .query(`
       INSERT INTO uqp.DatasetVersion (
-        DatasetId, VersionNo, SnapshotJson, Reason, CreatedByUserId
+        DatasetId, VersionNo, SnapshotJson, Reason, CreatedByUserId, IsPublishedSnapshot
       )
-      VALUES (@datasetId, @versionNo, @snapshotJson, @reason, @userId)
+      VALUES (@datasetId, @versionNo, @snapshotJson, @reason, @userId, @isPublishedSnapshot)
     `);
 
   return versionNo;
@@ -164,7 +170,7 @@ export async function snapshotQueryVersion(
     .input("queryId", sql.BigInt, queryId)
     .query(`
       SELECT Name, Description, CategoryId, Icon, DatasetId,
-             SortOrder, AllowExcelExport, IsActive
+             SortOrder, AllowExcelExport, IsActive, IsPublished
       FROM uqp.QueryDefinition
       WHERE Id=@queryId
     `);
@@ -213,11 +219,12 @@ export async function snapshotQueryVersion(
     .input("snapshotJson", sql.NVarChar(sql.MAX), JSON.stringify(snapshot))
     .input("reason", sql.NVarChar(100), reason)
     .input("userId", sql.BigInt, userId)
+    .input("isPublishedSnapshot", sql.Bit, Boolean(row.IsPublished))
     .query(`
       INSERT INTO uqp.QueryDefinitionVersion (
-        QueryDefinitionId, VersionNo, SnapshotJson, Reason, CreatedByUserId
+        QueryDefinitionId, VersionNo, SnapshotJson, Reason, CreatedByUserId, IsPublishedSnapshot
       )
-      VALUES (@queryId, @versionNo, @snapshotJson, @reason, @userId)
+      VALUES (@queryId, @versionNo, @snapshotJson, @reason, @userId, @isPublishedSnapshot)
     `);
 
   return versionNo;
@@ -229,6 +236,7 @@ export async function listDatasetVersions(datasetId: number) {
     .input("datasetId", sql.BigInt, datasetId)
     .query(`
       SELECT v.Id, v.VersionNo, v.Reason, v.CreatedAtUtc, v.CreatedByUserId,
+             v.IsPinned, v.IsPublishedSnapshot,
              u.Username AS CreatedByUsername, u.DisplayName AS CreatedByDisplayName
       FROM uqp.DatasetVersion v
       LEFT JOIN uqp.AppUser u ON u.Id=v.CreatedByUserId
@@ -242,6 +250,8 @@ export async function listDatasetVersions(datasetId: number) {
     reason: row.Reason == null ? null : String(row.Reason),
     createdAtUtc: new Date(row.CreatedAtUtc).toISOString(),
     createdByUserId: row.CreatedByUserId == null ? null : Number(row.CreatedByUserId),
+    isPinned: Boolean(row.IsPinned),
+    isPublishedSnapshot: Boolean(row.IsPublishedSnapshot),
     createdByUsername: row.CreatedByUsername == null ? null : String(row.CreatedByUsername),
     createdByDisplayName: row.CreatedByDisplayName == null ? null : String(row.CreatedByDisplayName),
   }));
@@ -253,6 +263,7 @@ export async function listQueryVersions(queryId: number) {
     .input("queryId", sql.BigInt, queryId)
     .query(`
       SELECT v.Id, v.VersionNo, v.Reason, v.CreatedAtUtc, v.CreatedByUserId,
+             v.IsPinned, v.IsPublishedSnapshot,
              u.Username AS CreatedByUsername, u.DisplayName AS CreatedByDisplayName
       FROM uqp.QueryDefinitionVersion v
       LEFT JOIN uqp.AppUser u ON u.Id=v.CreatedByUserId
@@ -266,6 +277,8 @@ export async function listQueryVersions(queryId: number) {
     reason: row.Reason == null ? null : String(row.Reason),
     createdAtUtc: new Date(row.CreatedAtUtc).toISOString(),
     createdByUserId: row.CreatedByUserId == null ? null : Number(row.CreatedByUserId),
+    isPinned: Boolean(row.IsPinned),
+    isPublishedSnapshot: Boolean(row.IsPublishedSnapshot),
     createdByUsername: row.CreatedByUsername == null ? null : String(row.CreatedByUsername),
     createdByDisplayName: row.CreatedByDisplayName == null ? null : String(row.CreatedByDisplayName),
   }));
@@ -475,6 +488,184 @@ export async function restoreQueryVersion(
     }
 
     await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
+
+
+export async function setDatasetVersionPinned(
+  datasetId: number,
+  versionNo: number,
+  isPinned: boolean,
+): Promise<void> {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("datasetId", sql.BigInt, datasetId)
+    .input("versionNo", sql.Int, versionNo)
+    .input("isPinned", sql.Bit, isPinned)
+    .query(`
+      UPDATE uqp.DatasetVersion
+      SET IsPinned=@isPinned
+      WHERE DatasetId=@datasetId AND VersionNo=@versionNo;
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+    throw new Error("DATASET_VERSION_NOT_FOUND");
+  }
+}
+
+export async function setQueryVersionPinned(
+  queryId: number,
+  versionNo: number,
+  isPinned: boolean,
+): Promise<void> {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("queryId", sql.BigInt, queryId)
+    .input("versionNo", sql.Int, versionNo)
+    .input("isPinned", sql.Bit, isPinned)
+    .query(`
+      UPDATE uqp.QueryDefinitionVersion
+      SET IsPinned=@isPinned
+      WHERE QueryDefinitionId=@queryId AND VersionNo=@versionNo;
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+    throw new Error("QUERY_VERSION_NOT_FOUND");
+  }
+}
+
+async function readRetentionSettings() {
+  const pool = await requirePool();
+  const result = await pool.request().query(`
+    SELECT SettingKey, SettingValue
+    FROM uqp.SystemSetting
+    WHERE SettingKey IN ('VERSION_RETENTION_COUNT','VERSION_RETENTION_DAYS')
+  `);
+
+  let retentionCount = 30;
+  let retentionDays = 365;
+
+  for (const row of result.recordset) {
+    const value = Number(row.SettingValue);
+    if (row.SettingKey === "VERSION_RETENTION_COUNT" && Number.isInteger(value) && value >= 1) {
+      retentionCount = value;
+    }
+    if (row.SettingKey === "VERSION_RETENTION_DAYS" && Number.isInteger(value) && value >= 1) {
+      retentionDays = value;
+    }
+  }
+
+  return { retentionCount, retentionDays };
+}
+
+export async function previewVersionCleanup() {
+  const pool = await requirePool();
+  const { retentionCount, retentionDays } = await readRetentionSettings();
+
+  const result = await pool.request()
+    .input("retentionCount", sql.Int, retentionCount)
+    .input("retentionDays", sql.Int, retentionDays)
+    .query(`
+      WITH DatasetRanked AS (
+        SELECT Id, DatasetId, VersionNo, IsPinned, IsPublishedSnapshot, CreatedAtUtc,
+               ROW_NUMBER() OVER (PARTITION BY DatasetId ORDER BY VersionNo DESC) AS rn
+        FROM uqp.DatasetVersion
+      ),
+      QueryRanked AS (
+        SELECT Id, QueryDefinitionId, VersionNo, IsPinned, IsPublishedSnapshot, CreatedAtUtc,
+               ROW_NUMBER() OVER (PARTITION BY QueryDefinitionId ORDER BY VersionNo DESC) AS rn
+        FROM uqp.QueryDefinitionVersion
+      )
+      SELECT
+        (SELECT COUNT(1)
+         FROM DatasetRanked
+         WHERE rn>@retentionCount
+           AND IsPinned=0
+           AND IsPublishedSnapshot=0
+           AND CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME())) AS DatasetDeleteCount,
+        (SELECT COUNT(1)
+         FROM QueryRanked
+         WHERE rn>@retentionCount
+           AND IsPinned=0
+           AND IsPublishedSnapshot=0
+           AND CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME())) AS QueryDeleteCount
+    `);
+
+  const row = result.recordset[0] ?? {};
+  const datasetDeleteCount = Number(row.DatasetDeleteCount ?? 0);
+  const queryDeleteCount = Number(row.QueryDeleteCount ?? 0);
+
+  return {
+    retentionCount,
+    retentionDays,
+    datasetDeleteCount,
+    queryDeleteCount,
+    totalDeleteCount: datasetDeleteCount + queryDeleteCount,
+  };
+}
+
+export async function cleanupOldVersions() {
+  const pool = await requirePool();
+  const { retentionCount, retentionDays } = await readRetentionSettings();
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+  try {
+    const datasetResult = await new sql.Request(tx)
+      .input("retentionCount", sql.Int, retentionCount)
+      .input("retentionDays", sql.Int, retentionDays)
+      .query(`
+        WITH Ranked AS (
+          SELECT Id,
+                 ROW_NUMBER() OVER (PARTITION BY DatasetId ORDER BY VersionNo DESC) AS rn
+          FROM uqp.DatasetVersion
+          WHERE IsPinned=0 AND IsPublishedSnapshot=0
+        )
+        DELETE v
+        FROM uqp.DatasetVersion v
+        INNER JOIN Ranked r ON r.Id=v.Id
+        WHERE r.rn>@retentionCount
+          AND v.IsPinned=0
+          AND v.IsPublishedSnapshot=0
+          AND v.CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME());
+        SELECT @@ROWCOUNT AS DeletedCount;
+      `);
+
+    const queryResult = await new sql.Request(tx)
+      .input("retentionCount", sql.Int, retentionCount)
+      .input("retentionDays", sql.Int, retentionDays)
+      .query(`
+        WITH Ranked AS (
+          SELECT Id,
+                 ROW_NUMBER() OVER (PARTITION BY QueryDefinitionId ORDER BY VersionNo DESC) AS rn
+          FROM uqp.QueryDefinitionVersion
+          WHERE IsPinned=0 AND IsPublishedSnapshot=0
+        )
+        DELETE v
+        FROM uqp.QueryDefinitionVersion v
+        INNER JOIN Ranked r ON r.Id=v.Id
+        WHERE r.rn>@retentionCount
+          AND v.IsPinned=0
+          AND v.IsPublishedSnapshot=0
+          AND v.CreatedAtUtc < DATEADD(DAY, -@retentionDays, SYSUTCDATETIME());
+        SELECT @@ROWCOUNT AS DeletedCount;
+      `);
+
+    await tx.commit();
+
+    const datasetDeletedCount = Number(datasetResult.recordset[0]?.DeletedCount ?? 0);
+    const queryDeletedCount = Number(queryResult.recordset[0]?.DeletedCount ?? 0);
+
+    return {
+      retentionCount,
+      retentionDays,
+      datasetDeletedCount,
+      queryDeletedCount,
+      totalDeletedCount: datasetDeletedCount + queryDeletedCount,
+    };
   } catch (error) {
     await tx.rollback();
     throw error;
