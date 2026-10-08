@@ -8,6 +8,7 @@ import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { QueryAccessEditor } from "../components/QueryAccessEditor";
 import { ReportColumnsEditor } from "../components/ReportColumnsEditor";
+import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import "./QueryPublisherPage.css";
 
 type Dataset = { id: number; code: string; name: string; isActive: boolean; isArchived: boolean };
@@ -99,6 +100,7 @@ export function QueryPublisherPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [versionRefreshKey, setVersionRefreshKey] = useState(0);
   const [queryFilter, setQueryFilter] = useState<"PUBLISHED" | "DRAFT" | "ARCHIVED">("PUBLISHED");
   const canPublish = hasPermission("PUBLISH_QUERY");
   const canManageAccess = hasPermission("MANAGE_USERS");
@@ -211,6 +213,7 @@ export function QueryPublisherPage() {
       }
 
       await load();
+      setVersionRefreshKey((current) => current + 1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "儲存 Query Definition 失敗。");
     }
@@ -654,7 +657,32 @@ export function QueryPublisherPage() {
             </div>
           </form>
 
-          {form.id && !form.isArchived && <ReportColumnsEditor queryId={form.id} />}
+          {form.id && (
+            <VersionHistoryPanel
+              basePath={`/query-definitions/${form.id}`}
+              entityLabel={`Query「${form.name}」`}
+              refreshKey={versionRefreshKey}
+              disabled={form.isArchived}
+              onRestored={async () => {
+                const result = await apiRequest<{ queryDefinition: QueryDefinition }>(
+                  `/query-definitions/${form.id}`,
+                  {},
+                  accessToken,
+                );
+                applyQueryToForm(result.queryDefinition);
+                setQueryFilter("DRAFT");
+                setVersionRefreshKey((current) => current + 1);
+                await load();
+              }}
+            />
+          )}
+
+          {form.id && !form.isArchived && (
+            <ReportColumnsEditor
+              queryId={form.id}
+              onChanged={() => setVersionRefreshKey((current) => current + 1)}
+            />
+          )}
           {form.id && !form.isArchived && canManageAccess && <QueryAccessEditor queryId={form.id} />}
         </section>
       </div>
