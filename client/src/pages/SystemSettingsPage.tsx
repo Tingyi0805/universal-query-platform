@@ -123,7 +123,7 @@ export function SystemSettingsPage() {
     }
 
     if (!window.confirm(
-      `目前有 ${count} 個舊版本符合清理條件。\nPinned 與 Published Snapshot 不會刪除。\n\n確定執行清理？`,
+      `目前有 ${count} 個舊版本符合清理條件。\n每月最後一版、Pinned 與 Published Snapshot 不會刪除。\n\n確定執行清理？`,
     )) return;
 
     setCleaning(true);
@@ -232,7 +232,7 @@ export function SystemSettingsPage() {
             <div>
               <h2>版本保留策略</h2>
               <p className="settings-hint">
-                最近版本與保留天數同時受到保護；Pinned 與 Published Snapshot 永久保留，不會被清理。
+                最近版本與保留天數同時受到保護；每月最後一版、Pinned 與 Published Snapshot 都不會被清理。
               </p>
             </div>
           </div>
