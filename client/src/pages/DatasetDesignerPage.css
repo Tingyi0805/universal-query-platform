@@ -218,3 +218,66 @@
   min-height: 18px;
   line-height: 18px;
 }
+
+
+.dataset-status-filter {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.dataset-status-filter button {
+  border: 1px solid #d8e1ed;
+  border-radius: 9px;
+  background: #f7f9fc;
+  padding: 8px 6px;
+  color: #59677c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.dataset-status-filter button.active {
+  background: #172033;
+  border-color: #172033;
+  color: white;
+}
+
+.dataset-status-filter button span {
+  margin-left: 3px;
+  opacity: .8;
+}
+
+.dataset-archive-badge {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #eef1f5;
+  color: #68758a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.archive-notice {
+  padding: 11px 13px;
+  border: 1px solid #e2e7ee;
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: #66758b;
+  font-size: 13px;
+}
+
+.archived-form input,
+.archived-form select,
+.archived-form textarea {
+  pointer-events: none;
+  background: #f4f6f9;
+  color: #6b778a;
+}
+
+@media (max-width: 760px) {
+  .dataset-status-filter {
+    grid-template-columns: 1fr;
+  }
+}
