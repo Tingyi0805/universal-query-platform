@@ -4,12 +4,14 @@ import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import {
+  archiveDataset,
   createDataset,
   deleteDataset,
   getDataset,
   getDatasetDeleteImpact,
   listDatasets,
   listDesignerDataSources,
+  restoreDataset,
   updateDataset,
 } from "./dataset.repository.js";
 import { executeSavedDataset, getParameterOptions, previewDataset } from "./dataset.service.js";
@@ -228,7 +230,7 @@ datasetRouter.post("/preview/run", async (req, res, next) => {
       res.status(400).json({ error: { code: error.message, message: "只允許單一 SELECT / WITH 查詢。" } });
       return;
     }
-    if (error instanceof Error && ["DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
+    if (error instanceof Error && ["DATASET_NOT_FOUND","DATASET_ARCHIVED","DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
       res.status(400).json({ error: { code: error.message, message: "指定的資料來源不存在或已停用。" } });
       return;
     }
@@ -258,7 +260,7 @@ datasetRouter.post("/:id/execute", async (req, res, next) => {
       res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
       return;
     }
-    if (error instanceof Error && ["DATASET_NOT_FOUND","DATASET_DISABLED","DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
+    if (error instanceof Error && ["DATASET_NOT_FOUND","DATASET_ARCHIVED","DATASET_DISABLED","DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
       res.status(400).json({ error: { code: error.message, message: "Dataset 或資料來源不存在或已停用。" } });
       return;
     }
@@ -296,7 +298,9 @@ datasetRouter.get("/:id/parameters", async (req, res, next) => {
       res.status(404).json({ error: { code: "DATASET_NOT_FOUND", message: "找不到 Dataset。" } });
       return;
     }
-    await syncDatasetParameters(id.data, extractParameterNames(dataset.sqlText));
+    if (!dataset.isArchived) {
+      await syncDatasetParameters(id.data, extractParameterNames(dataset.sqlText));
+    }
     res.json({ parameters: await listDatasetParameters(id.data) });
   } catch (error) { next(error); }
 });
@@ -313,6 +317,10 @@ datasetRouter.put("/:id/parameters", async (req, res, next) => {
     const dataset = await getDataset(id.data);
     if (!dataset) {
       res.status(404).json({ error: { code: "DATASET_NOT_FOUND", message: "找不到 Dataset。" } });
+      return;
+    }
+    if (dataset.isArchived) {
+      res.status(409).json({ error: { code: "DATASET_ARCHIVED", message: "此 Dataset 已封存，請先還原後再修改參數設定。" } });
       return;
     }
 
@@ -399,8 +407,58 @@ datasetRouter.put("/:id", async (req, res, next) => {
       res.status(404).json({ error: { code: error.message, message: "找不到 Dataset。" } });
       return;
     }
+    if (error instanceof Error && error.message === "DATASET_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "此 Dataset 已封存，請先還原後再修改。" } });
+      return;
+    }
     if (error instanceof Error && error.message.startsWith("SQL_")) {
       res.status(400).json({ error: { code: error.message, message: "只允許單一 SELECT / WITH 查詢。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+datasetRouter.post("/:id/archive", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset ID 不正確。" } });
+      return;
+    }
+
+    await archiveDataset(id.data, req.authUser!.id);
+    res.json({ status: "OK", dataset: await getDataset(id.data) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到 Dataset。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "DATASET_ALREADY_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "Dataset 已經封存。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+datasetRouter.post("/:id/restore", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset ID 不正確。" } });
+      return;
+    }
+
+    await restoreDataset(id.data);
+    res.json({ status: "OK", dataset: await getDataset(id.data) });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到 Dataset。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "DATASET_NOT_ARCHIVED") {
+      res.status(409).json({ error: { code: error.message, message: "Dataset 尚未封存。" } });
       return;
     }
     next(error);
@@ -436,6 +494,15 @@ datasetRouter.delete("/:id", async (req, res, next) => {
   } catch (error) {
     if (error instanceof Error && error.message === "DATASET_NOT_FOUND") {
       res.status(404).json({ error: { code: error.message, message: "找不到 Dataset。" } });
+      return;
+    }
+    if (error instanceof Error && error.message === "DATASET_IN_USE") {
+      res.status(409).json({
+        error: {
+          code: error.message,
+          message: "此 Dataset 已被 Query 或參數選項來源使用，不能永久刪除，請改用「封存」。",
+        },
+      });
       return;
     }
     if ((error as { number?: number })?.number === 547) {
