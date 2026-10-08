@@ -16,6 +16,10 @@ import {
   buildExcelFilename,
   createQueryExcel,
 } from "../export/excelExport.service.js";
+import {
+  buildCsvFilename,
+  createQueryCsv,
+} from "../export/csvExport.service.js";
 import { listReportColumns } from "./reportColumn.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
@@ -184,6 +188,62 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
     }).catch(() => undefined);
 
     res.json({ result });
+  } catch (error) {
+    if (auditId) {
+      await completeAuditFailure(auditId, {
+        errorCode: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+        durationMs: Date.now() - started,
+      }).catch(() => undefined);
+    }
+
+    if (sendRuntimeError(res, error)) return;
+    next(error);
+  }
+});
+
+queryRuntimeRouter.post("/:id/export/csv", requirePermission("EXPORT_QUERY"), async (req, res, next) => {
+  let auditId: number | null = null;
+  let started = Date.now();
+
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const body = executeBodySchema.safeParse(req.body);
+
+    if (!id.success || !body.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "匯出參數格式不正確。" } });
+      return;
+    }
+
+    const query = await getEffectiveQueryAccess(req.authUser!.id, id.data);
+    if (!query?.canExport) {
+      res.status(403).json({ error: { code: "QUERY_EXPORT_FORBIDDEN", message: "沒有匯出此查詢的權限。" } });
+      return;
+    }
+
+    started = Date.now();
+    auditId = await startAudit({
+      eventType: "QUERY_EXPORT_CSV",
+      userId: req.authUser!.id,
+      queryDefinitionId: query.id,
+      datasetId: query.datasetId,
+      parameters: body.data.values,
+      ipAddress: req.ip,
+      userAgent: req.get("user-agent") ?? null,
+    });
+
+    const result = await executeSavedDataset(query.datasetId, body.data.values);
+    const reportColumns = await listReportColumns(query.id);
+    const buffer = createQueryCsv(result, reportColumns);
+    const filename = buildCsvFilename(query.code);
+
+    await completeAuditSuccess(auditId, {
+      rowCount: result.rowCount,
+      durationMs: Date.now() - started,
+    }).catch(() => undefined);
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buffer);
   } catch (error) {
     if (auditId) {
       await completeAuditFailure(auditId, {
