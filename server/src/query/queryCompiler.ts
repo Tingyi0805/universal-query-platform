@@ -3,7 +3,10 @@ import type { DataSourceType } from "../modules/datasource/datasource.types.js";
 const tokenRegex = /\{\{([A-Z][A-Z0-9_]*)\}\}/g;
 
 export function extractParameterNames(sqlText: string): string[] {
-  return [...new Set(Array.from(sqlText.matchAll(tokenRegex), (match) => match[1]))];
+  return [...new Set(
+    Array.from(sqlText.matchAll(tokenRegex), (match) => match[1])
+      .filter((name): name is string => Boolean(name)),
+  )];
 }
 
 export function compileQuery(
