@@ -59,7 +59,7 @@ export function DatasetParametersEditor({
     } finally {
       setLoading(false);
     }
-  }, [accessToken, datasetId, onChanged]);
+  }, [accessToken, datasetId]);
 
   useEffect(() => { void load(); }, [load]);
 
