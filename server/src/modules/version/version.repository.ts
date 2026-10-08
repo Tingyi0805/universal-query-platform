@@ -1,8 +1,6 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
-type Parent = sql.ConnectionPool | sql.Transaction;
-
 type DatasetSnapshot = {
   dataset: {
     name: string;
@@ -61,7 +59,7 @@ async function requirePool() {
   return pool;
 }
 
-async function nextDatasetVersionNo(parent: Parent, datasetId: number): Promise<number> {
+async function nextDatasetVersionNo(parent: sql.Transaction, datasetId: number): Promise<number> {
   const result = await new sql.Request(parent)
     .input("datasetId", sql.BigInt, datasetId)
     .query(`
@@ -72,7 +70,7 @@ async function nextDatasetVersionNo(parent: Parent, datasetId: number): Promise<
   return Number(result.recordset[0]?.NextVersionNo ?? 1);
 }
 
-async function nextQueryVersionNo(parent: Parent, queryId: number): Promise<number> {
+async function nextQueryVersionNo(parent: sql.Transaction, queryId: number): Promise<number> {
   const result = await new sql.Request(parent)
     .input("queryId", sql.BigInt, queryId)
     .query(`
@@ -84,7 +82,7 @@ async function nextQueryVersionNo(parent: Parent, queryId: number): Promise<numb
 }
 
 export async function snapshotDatasetVersion(
-  parent: Parent,
+  parent: sql.Transaction,
   datasetId: number,
   userId: number | null,
   reason: string,
@@ -157,7 +155,7 @@ export async function snapshotDatasetVersion(
 }
 
 export async function snapshotQueryVersion(
-  parent: Parent,
+  parent: sql.Transaction,
   queryId: number,
   userId: number | null,
   reason: string,
