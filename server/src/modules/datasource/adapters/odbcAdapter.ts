@@ -59,9 +59,11 @@ export class OdbcAdapter implements DataSourceAdapter {
     let cursor: any;
 
     try {
+      const parameters = (input.bindValues ?? []) as unknown as (string | number)[];
+
       cursor = await connection.query(
         input.sql,
-        input.bindValues ?? [],
+        parameters,
         {
           cursor: true,
           fetchSize: fetchRows,
@@ -84,7 +86,7 @@ export class OdbcAdapter implements DataSourceAdapter {
             dataType: column.dataType == null ? undefined : String(column.dataType),
           }))
         : visibleRows.length > 0
-          ? Object.keys(visibleRows[0]).map((name) => ({ name }))
+          ? Object.keys(visibleRows[0]!).map((name) => ({ name }))
           : [];
 
       return {
