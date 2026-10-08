@@ -10,7 +10,7 @@ import { QueryAccessEditor } from "../components/QueryAccessEditor";
 import { ReportColumnsEditor } from "../components/ReportColumnsEditor";
 import "./QueryPublisherPage.css";
 
-type Dataset = { id: number; code: string; name: string; isActive: boolean };
+type Dataset = { id: number; code: string; name: string; isActive: boolean; isArchived: boolean };
 
 type QueryCategory = {
   id: number;
