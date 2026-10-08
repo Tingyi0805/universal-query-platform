@@ -9,6 +9,8 @@ type VersionItem = {
   reason: string | null;
   createdAtUtc: string;
   createdByUserId: number | null;
+  isPinned: boolean;
+  isPublishedSnapshot: boolean;
   createdByUsername: string | null;
   createdByDisplayName: string | null;
 };
@@ -46,6 +48,7 @@ export function VersionHistoryPanel({
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [restoring, setRestoring] = useState<number | null>(null);
+  const [pinning, setPinning] = useState<number | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -69,6 +72,28 @@ export function VersionHistoryPanel({
   useEffect(() => {
     if (expanded) void load();
   }, [expanded, load, refreshKey]);
+
+  async function togglePinned(version: VersionItem) {
+    setPinning(version.versionNo);
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest(
+        `${basePath}/versions/${version.versionNo}/pin`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ isPinned: !version.isPinned }),
+        },
+        accessToken,
+      );
+      setNotice(version.isPinned ? `V${version.versionNo} 已取消永久保留。` : `V${version.versionNo} 已標記永久保留。`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "版本保留狀態更新失敗。");
+    } finally {
+      setPinning(null);
+    }
+  }
 
   async function restore(version: VersionItem) {
     if (disabled) return;
@@ -127,6 +152,8 @@ export function VersionHistoryPanel({
                   <div>
                     <strong>V{version.versionNo}</strong>
                     <span>{reasonLabel(version.reason)}</span>
+                    {version.isPublishedSnapshot && <span className="version-badge published">Published</span>}
+                    {version.isPinned && <span className="version-badge pinned">★ 保留</span>}
                   </div>
                   <div className="version-meta">
                     <span>{new Date(version.createdAtUtc).toLocaleString("zh-TW")}</span>
@@ -134,14 +161,24 @@ export function VersionHistoryPanel({
                       {version.createdByDisplayName || version.createdByUsername || "系統"}
                     </span>
                   </div>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={disabled || restoring !== null}
-                    onClick={() => void restore(version)}
-                  >
-                    {restoring === version.versionNo ? "還原中…" : "還原此版"}
-                  </button>
+                  <div className="version-actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={pinning !== null}
+                      onClick={() => void togglePinned(version)}
+                    >
+                      {pinning === version.versionNo ? "處理中…" : version.isPinned ? "取消保留" : "永久保留"}
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      disabled={disabled || restoring !== null}
+                      onClick={() => void restore(version)}
+                    >
+                      {restoring === version.versionNo ? "還原中…" : "還原此版"}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
