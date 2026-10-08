@@ -73,7 +73,7 @@ export function SystemSettingsPage() {
         apiRequest<VersionRetentionSettings>("/system-settings/version-retention", {}, accessToken),
         apiRequest<CleanupPreview>("/system-settings/version-retention/cleanup-preview", {}, accessToken),
         apiRequest<AuditRetentionSettings>("/system-settings/audit-retention", {}, accessToken),
-        apiRequest<AuditLifecyclePreview>("/audit/lifecycle-preview", {}, accessToken),
+        apiRequest<AuditLifecyclePreview>("/system-settings/audit-retention/lifecycle-preview", {}, accessToken),
       ]);
       setForm(brandingResult);
       setRetention(retentionResult);
@@ -175,7 +175,7 @@ export function SystemSettingsPage() {
 
   async function refreshAuditPreview() {
     try {
-      const result = await apiRequest<AuditLifecyclePreview>("/audit/lifecycle-preview", {}, accessToken);
+      const result = await apiRequest<AuditLifecyclePreview>("/system-settings/audit-retention/lifecycle-preview", {}, accessToken);
       setAuditPreview(result);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入 Audit 生命週期資訊失敗。");
@@ -213,7 +213,7 @@ export function SystemSettingsPage() {
     setError("");
     setNotice("");
     try {
-      const result = await apiRequest<{ archivedCount: number }>("/audit/archive", { method: "POST" }, accessToken);
+      const result = await apiRequest<{ archivedCount: number }>("/system-settings/audit-retention/archive", { method: "POST" }, accessToken);
       setNotice(`Audit 封存完成，共移轉 ${result.archivedCount} 筆。`);
       await refreshAuditPreview();
     } catch (e) {
@@ -237,7 +237,7 @@ export function SystemSettingsPage() {
     setError("");
     setNotice("");
     try {
-      const result = await apiRequest<{ deletedCount: number }>("/audit/archive/cleanup", { method: "POST" }, accessToken);
+      const result = await apiRequest<{ deletedCount: number }>("/system-settings/audit-retention/archive/cleanup", { method: "POST" }, accessToken);
       setNotice(`Audit Archive 清理完成，共刪除 ${result.deletedCount} 筆到期資料。`);
       await refreshAuditPreview();
     } catch (e) {
