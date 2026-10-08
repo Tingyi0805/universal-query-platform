@@ -1,7 +1,10 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import type { QueryDefinitionInput, QueryDefinitionRecord } from "./queryDefinition.types.js";
-import { snapshotQueryVersion } from "../version/version.repository.js";
+import {
+  snapshotDatasetVersion,
+  snapshotQueryVersion,
+} from "../version/version.repository.js";
 
 async function requirePool() {
   const pool = await getPlatformDbPool();
@@ -176,29 +179,47 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
 
 export async function publishQueryDefinition(id: number, userId: number): Promise<void> {
   const pool = await requirePool();
-  const result = await pool.request()
-    .input("id", sql.BigInt, id)
-    .input("userId", sql.BigInt, userId)
-    .query(`
-      UPDATE q SET
-        IsPublished=1,
-        PublishedAtUtc=SYSUTCDATETIME(),
-        PublishedByUserId=@userId,
-        UpdatedAtUtc=SYSUTCDATETIME()
-      FROM uqp.QueryDefinition q
-      INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
-      INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
-      WHERE q.Id=@id AND q.IsActive=1 AND q.IsArchived=0
-        AND d.IsActive=1 AND d.IsArchived=0 AND s.IsActive=1
-        AND NOT EXISTS (
-          SELECT 1
-          FROM uqp.DatasetParameter dp
-          INNER JOIN uqp.Dataset lookupDataset ON lookupDataset.Id=dp.LookupDatasetId
-          WHERE dp.DatasetId=d.Id AND lookupDataset.IsArchived=1
-        );
-      SELECT @@ROWCOUNT AS Affected;
-    `);
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("QUERY_NOT_PUBLISHABLE");
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+  try {
+    const result = await new sql.Request(tx)
+      .input("id", sql.BigInt, id)
+      .input("userId", sql.BigInt, userId)
+      .query(`
+        UPDATE q SET
+          IsPublished=1,
+          PublishedAtUtc=SYSUTCDATETIME(),
+          PublishedByUserId=@userId,
+          UpdatedAtUtc=SYSUTCDATETIME()
+        OUTPUT INSERTED.DatasetId
+        FROM uqp.QueryDefinition q
+        INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
+        INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
+        WHERE q.Id=@id AND q.IsActive=1 AND q.IsArchived=0
+          AND d.IsActive=1 AND d.IsArchived=0 AND s.IsActive=1
+          AND NOT EXISTS (
+            SELECT 1
+            FROM uqp.DatasetParameter dp
+            INNER JOIN uqp.Dataset lookupDataset ON lookupDataset.Id=dp.LookupDatasetId
+            WHERE dp.DatasetId=d.Id AND lookupDataset.IsArchived=1
+          );
+      `);
+
+    const datasetId = result.recordset[0]?.DatasetId == null
+      ? null
+      : Number(result.recordset[0].DatasetId);
+
+    if (!datasetId) throw new Error("QUERY_NOT_PUBLISHABLE");
+
+    await snapshotQueryVersion(tx, id, userId, "PUBLISHED_SNAPSHOT");
+    await snapshotDatasetVersion(tx, datasetId, userId, "PUBLISHED_SNAPSHOT");
+
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
 }
 
 export async function unpublishQueryDefinition(id: number): Promise<void> {
