@@ -40,4 +40,12 @@ const envSchema = z.object({
   ORACLE_CLIENT_LIB_DIR: optionalString,
 });
 
-export const env = envSchema.parse(process.env);
+const parsedEnv = envSchema.parse(process.env);
+
+export const env = {
+  ...parsedEnv,
+  CLIENT_ORIGINS: parsedEnv.CLIENT_ORIGIN
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean),
+};
