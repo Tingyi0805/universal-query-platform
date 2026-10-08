@@ -407,7 +407,7 @@ export function QueryRuntimePage() {
       {error && <section className="form-error">{error}</section>}
 
       <form className="runtime-filter-card" onSubmit={execute}>
-        <div className="runtime-parameter-grid">
+        <div className={`runtime-parameter-grid parameter-count-${Math.min(parameters.length, 3)}`}>
           {parameters.map((parameter) => (
             <label key={parameter.name} className={parameter.controlType === "CHECKBOX" ? "checkbox-parameter" : ""}>
               <span>{parameter.label}{parameter.isRequired && <b> *</b>}</span>
