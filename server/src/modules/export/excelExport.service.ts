@@ -143,7 +143,7 @@ export async function createQueryExcel(
         return;
       }
 
-      const column = groupColumns[level];
+      const column = groupColumns[level]!;
       const groups = new Map<string, { label: string; rows: Record<string, unknown>[] }>();
 
       for (const row of levelRows) {
