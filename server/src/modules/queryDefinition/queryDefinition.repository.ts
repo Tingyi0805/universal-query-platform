@@ -184,7 +184,13 @@ export async function publishQueryDefinition(id: number, userId: number): Promis
       INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
       INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
       WHERE q.Id=@id AND q.IsActive=1 AND q.IsArchived=0
-        AND d.IsActive=1 AND d.IsArchived=0 AND s.IsActive=1;
+        AND d.IsActive=1 AND d.IsArchived=0 AND s.IsActive=1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM uqp.DatasetParameter dp
+          INNER JOIN uqp.Dataset lookupDataset ON lookupDataset.Id=dp.LookupDatasetId
+          WHERE dp.DatasetId=d.Id AND lookupDataset.IsArchived=1
+        );
       SELECT @@ROWCOUNT AS Affected;
     `);
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("QUERY_NOT_PUBLISHABLE");
@@ -297,6 +303,12 @@ export async function listAccessibleQueries(userId: number) {
     LEFT JOIN RoleAccess ra ON ra.QueryDefinitionId=q.Id
     LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
     WHERE q.IsPublished=1 AND q.IsActive=1 AND q.IsArchived=0
+      AND NOT EXISTS (
+        SELECT 1
+        FROM uqp.DatasetParameter dp
+        INNER JOIN uqp.Dataset lookupDataset ON lookupDataset.Id=dp.LookupDatasetId
+        WHERE dp.DatasetId=d.Id AND lookupDataset.IsArchived=1
+      )
       AND (ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1)
     ORDER BY ISNULL(c.SortOrder, 2147483647), c.Name, q.SortOrder, q.Name
   `);
