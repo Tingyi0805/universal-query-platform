@@ -22,6 +22,9 @@ function mapDataset(row: any): DatasetRecord {
     maxRows: Number(row.MaxRows),
     queryTimeoutSec: row.QueryTimeoutSec == null ? null : Number(row.QueryTimeoutSec),
     isActive: Boolean(row.IsActive),
+    isArchived: Boolean(row.IsArchived),
+    archivedAtUtc: row.ArchivedAtUtc ? new Date(row.ArchivedAtUtc).toISOString() : null,
+    archivedByUserId: row.ArchivedByUserId == null ? null : Number(row.ArchivedByUserId),
     parameterNames: extractParameterNames(String(row.SqlText)),
   };
 }
@@ -31,6 +34,7 @@ export async function listDatasets(): Promise<DatasetRecord[]> {
   const result = await pool.request().query(`
     SELECT d.Id, d.Code, d.Name, d.Description, d.DataSourceId, d.SqlText,
            d.MaxRows, d.QueryTimeoutSec, d.IsActive,
+           d.IsArchived, d.ArchivedAtUtc, d.ArchivedByUserId,
            s.Name AS DataSourceName, s.Type AS DataSourceType
     FROM uqp.Dataset d
     INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
@@ -44,6 +48,7 @@ export async function getDataset(id: number): Promise<DatasetRecord | null> {
   const result = await pool.request().input("id", sql.BigInt, id).query(`
     SELECT d.Id, d.Code, d.Name, d.Description, d.DataSourceId, d.SqlText,
            d.MaxRows, d.QueryTimeoutSec, d.IsActive,
+           d.IsArchived, d.ArchivedAtUtc, d.ArchivedByUserId,
            s.Name AS DataSourceName, s.Type AS DataSourceType
     FROM uqp.Dataset d
     INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
@@ -97,11 +102,15 @@ export async function updateDataset(id: number, input: DatasetInput): Promise<vo
           Name=@name, Description=@description, DataSourceId=@dataSourceId,
           SqlText=@sqlText, MaxRows=@maxRows, QueryTimeoutSec=@queryTimeoutSec,
           IsActive=@isActive, UpdatedAtUtc=SYSUTCDATETIME()
-        WHERE Id=@id;
+        WHERE Id=@id AND IsArchived=0;
         SELECT @@ROWCOUNT AS Affected;
       `);
 
     if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+      const exists = await new sql.Request(tx)
+        .input("id", sql.BigInt, id)
+        .query("SELECT IsArchived FROM uqp.Dataset WHERE Id=@id");
+      if (exists.recordset[0]?.IsArchived) throw new Error("DATASET_ARCHIVED");
       throw new Error("DATASET_NOT_FOUND");
     }
 
@@ -123,8 +132,79 @@ export async function updateDataset(id: number, input: DatasetInput): Promise<vo
   }
 }
 
+export async function archiveDataset(id: number, userId: number): Promise<void> {
+  const pool = await requirePool();
+  const tx = new sql.Transaction(pool);
+  await tx.begin();
+
+  try {
+    const result = await new sql.Request(tx)
+      .input("id", sql.BigInt, id)
+      .input("userId", sql.BigInt, userId)
+      .query(`
+        UPDATE uqp.Dataset
+        SET IsArchived=1,
+            IsActive=0,
+            ArchivedAtUtc=SYSUTCDATETIME(),
+            ArchivedByUserId=@userId,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE Id=@id AND IsArchived=0;
+        SELECT @@ROWCOUNT AS Affected;
+      `);
+
+    if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+      const exists = await new sql.Request(tx)
+        .input("id", sql.BigInt, id)
+        .query("SELECT IsArchived FROM uqp.Dataset WHERE Id=@id");
+      if (!exists.recordset[0]) throw new Error("DATASET_NOT_FOUND");
+      throw new Error("DATASET_ALREADY_ARCHIVED");
+    }
+
+    await new sql.Request(tx)
+      .input("datasetId", sql.BigInt, id)
+      .query(`
+        UPDATE uqp.QueryDefinition
+        SET IsPublished=0,
+            PublishedAtUtc=NULL,
+            PublishedByUserId=NULL,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE DatasetId=@datasetId AND IsPublished=1
+      `);
+
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
+
+export async function restoreDataset(id: number): Promise<void> {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("id", sql.BigInt, id)
+    .query(`
+      UPDATE uqp.Dataset
+      SET IsArchived=0,
+          IsActive=0,
+          ArchivedAtUtc=NULL,
+          ArchivedByUserId=NULL,
+          UpdatedAtUtc=SYSUTCDATETIME()
+      WHERE Id=@id AND IsArchived=1;
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+
+  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+    const exists = await getDataset(id);
+    if (!exists) throw new Error("DATASET_NOT_FOUND");
+    throw new Error("DATASET_NOT_ARCHIVED");
+  }
+}
+
 export async function deleteDataset(id: number): Promise<void> {
   const pool = await requirePool();
+  const impact = await getDatasetDeleteImpact(id);
+  if (!impact.canDelete) throw new Error("DATASET_IN_USE");
+
   const result = await pool.request().input("id", sql.BigInt, id)
     .query("DELETE FROM uqp.Dataset WHERE Id=@id; SELECT @@ROWCOUNT AS Affected;");
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
