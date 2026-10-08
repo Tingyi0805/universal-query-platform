@@ -622,7 +622,6 @@ export async function cleanupOldVersions() {
           SELECT Id,
                  ROW_NUMBER() OVER (PARTITION BY DatasetId ORDER BY VersionNo DESC) AS rn
           FROM uqp.DatasetVersion
-          WHERE IsPinned=0 AND IsPublishedSnapshot=0
         )
         DELETE v
         FROM uqp.DatasetVersion v
@@ -642,7 +641,6 @@ export async function cleanupOldVersions() {
           SELECT Id,
                  ROW_NUMBER() OVER (PARTITION BY QueryDefinitionId ORDER BY VersionNo DESC) AS rn
           FROM uqp.QueryDefinitionVersion
-          WHERE IsPinned=0 AND IsPublishedSnapshot=0
         )
         DELETE v
         FROM uqp.QueryDefinitionVersion v
