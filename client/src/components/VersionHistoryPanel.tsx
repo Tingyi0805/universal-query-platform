@@ -105,10 +105,7 @@ export function VersionHistoryPanel({
         <button
           className="secondary-button"
           type="button"
-          onClick={() => {
-            setExpanded((current) => !current);
-            if (!expanded) void load();
-          }}
+          onClick={() => setExpanded((current) => !current)}
         >
           {expanded ? "收合版本" : "查看版本"}
         </button>
