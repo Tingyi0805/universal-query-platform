@@ -610,9 +610,16 @@ export function QueryPublisherPage() {
                 <select value={form.datasetId}
                   onChange={(e) => setForm({ ...form, datasetId: e.target.value ? Number(e.target.value) : "" })}>
                   <option value="">請選擇</option>
-                  {datasets.filter((dataset) => dataset.isActive).map((dataset) => (
-                    <option key={dataset.id} value={dataset.id}>{dataset.name} ({dataset.code})</option>
-                  ))}
+                  {datasets
+                    .filter((dataset) =>
+                      (!dataset.isArchived && dataset.isActive) || dataset.id === form.datasetId
+                    )
+                    .map((dataset) => (
+                      <option key={dataset.id} value={dataset.id}>
+                        {dataset.name} ({dataset.code})
+                        {dataset.isArchived ? "（已封存）" : dataset.isActive ? "" : "（已停用）"}
+                      </option>
+                    ))}
                 </select>
               </label>
               <label>排序
