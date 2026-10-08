@@ -24,6 +24,7 @@ import {
 import {
   listDatasetVersions,
   restoreDatasetVersion,
+  setDatasetVersionPinned,
 } from "../version/version.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
@@ -443,6 +444,27 @@ datasetRouter.get("/:id/versions", async (req, res, next) => {
     }
     res.json({ versions: await listDatasetVersions(id.data) });
   } catch (error) { next(error); }
+});
+
+datasetRouter.put("/:id/versions/:versionNo/pin", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const versionNo = z.coerce.number().int().positive().safeParse(req.params.versionNo);
+    const body = z.object({ isPinned: z.boolean() }).safeParse(req.body);
+    if (!id.success || !versionNo.success || !body.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset 版本保留設定不正確。" } });
+      return;
+    }
+
+    await setDatasetVersionPinned(id.data, versionNo.data, body.data.isPinned);
+    res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_VERSION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到指定的 Dataset 版本。" } });
+      return;
+    }
+    next(error);
+  }
 });
 
 datasetRouter.post("/:id/versions/:versionNo/restore", async (req, res, next) => {
