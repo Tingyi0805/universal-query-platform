@@ -1,7 +1,21 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
-import { getBrandingSettings, updateBrandingSettings } from "./systemSettings.repository.js";
+import {
+  getBrandingSettings,
+  getVersionRetentionSettings,
+  updateBrandingSettings,
+  updateVersionRetentionSettings,
+} from "./systemSettings.repository.js";
+import {
+  cleanupOldVersions,
+  previewVersionCleanup,
+} from "../version/version.repository.js";
+
+const versionRetentionSchema = z.object({
+  retentionCount: z.coerce.number().int().min(5).max(500),
+  retentionDays: z.coerce.number().int().min(30).max(3650),
+});
 
 const brandingSchema = z.object({
   organizationName: z.string().trim().max(200),
@@ -41,5 +55,42 @@ systemSettingsRouter.put("/branding", requirePermission("MANAGE_SETTINGS"), asyn
 
     await updateBrandingSettings(parsed.data);
     res.json({ status: "OK" });
+  } catch (error) { next(error); }
+});
+
+
+systemSettingsRouter.get("/version-retention", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+  try {
+    res.json(await getVersionRetentionSettings());
+  } catch (error) { next(error); }
+});
+
+systemSettingsRouter.put("/version-retention", requirePermission("MANAGE_SETTINGS"), async (req, res, next) => {
+  try {
+    const parsed = versionRetentionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "版本保留設定格式不正確。",
+        },
+      });
+      return;
+    }
+
+    await updateVersionRetentionSettings(parsed.data);
+    res.json({ status: "OK" });
+  } catch (error) { next(error); }
+});
+
+systemSettingsRouter.get("/version-retention/cleanup-preview", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+  try {
+    res.json(await previewVersionCleanup());
+  } catch (error) { next(error); }
+});
+
+systemSettingsRouter.post("/version-retention/cleanup", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+  try {
+    res.json(await cleanupOldVersions());
   } catch (error) { next(error); }
 });
