@@ -168,7 +168,16 @@ export async function archiveDataset(id: number, userId: number): Promise<void> 
             PublishedAtUtc=NULL,
             PublishedByUserId=NULL,
             UpdatedAtUtc=SYSUTCDATETIME()
-        WHERE DatasetId=@datasetId AND IsPublished=1
+        WHERE IsPublished=1
+          AND (
+            DatasetId=@datasetId
+            OR EXISTS (
+              SELECT 1
+              FROM uqp.DatasetParameter dp
+              WHERE dp.DatasetId=uqp.QueryDefinition.DatasetId
+                AND dp.LookupDatasetId=@datasetId
+            )
+          )
       `);
 
     await tx.commit();
