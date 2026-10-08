@@ -2,8 +2,10 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import {
+  getAuditRetentionSettings,
   getBrandingSettings,
   getVersionRetentionSettings,
+  updateAuditRetentionSettings,
   updateBrandingSettings,
   updateVersionRetentionSettings,
 } from "./systemSettings.repository.js";
@@ -11,6 +13,12 @@ import {
   cleanupOldVersions,
   previewVersionCleanup,
 } from "../version/version.repository.js";
+
+const auditRetentionSchema = z.object({
+  onlineRetentionDays: z.coerce.number().int().min(30).max(3650),
+  archiveRetentionDays: z.coerce.number().int().min(365).max(7300),
+  importantPermanent: z.boolean(),
+});
 
 const versionRetentionSchema = z.object({
   retentionCount: z.coerce.number().int().min(5).max(500),
@@ -92,5 +100,30 @@ systemSettingsRouter.get("/version-retention/cleanup-preview", requirePermission
 systemSettingsRouter.post("/version-retention/cleanup", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
   try {
     res.json(await cleanupOldVersions());
+  } catch (error) { next(error); }
+});
+
+
+systemSettingsRouter.get("/audit-retention", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+  try {
+    res.json(await getAuditRetentionSettings());
+  } catch (error) { next(error); }
+});
+
+systemSettingsRouter.put("/audit-retention", requirePermission("MANAGE_SETTINGS"), async (req, res, next) => {
+  try {
+    const parsed = auditRetentionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "Audit 保留設定格式不正確。",
+        },
+      });
+      return;
+    }
+
+    await updateAuditRetentionSettings(parsed.data);
+    res.json({ status: "OK" });
   } catch (error) { next(error); }
 });
