@@ -215,6 +215,25 @@ export async function publishQueryDefinition(id: number, userId: number): Promis
     await snapshotQueryVersion(tx, id, userId, "PUBLISHED_SNAPSHOT");
     await snapshotDatasetVersion(tx, datasetId, userId, "PUBLISHED_SNAPSHOT");
 
+    const lookupDatasets = await new sql.Request(tx)
+      .input("datasetId", sql.BigInt, datasetId)
+      .query(`
+        SELECT DISTINCT LookupDatasetId
+        FROM uqp.DatasetParameter
+        WHERE DatasetId=@datasetId
+          AND LookupDatasetId IS NOT NULL
+          AND LookupDatasetId<>@datasetId
+      `);
+
+    for (const row of lookupDatasets.recordset) {
+      await snapshotDatasetVersion(
+        tx,
+        Number(row.LookupDatasetId),
+        userId,
+        "PUBLISHED_SNAPSHOT",
+      );
+    }
+
     await tx.commit();
   } catch (error) {
     await tx.rollback();
