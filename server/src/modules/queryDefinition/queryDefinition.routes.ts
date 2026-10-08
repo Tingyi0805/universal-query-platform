@@ -22,6 +22,7 @@ import { listReportColumns, replaceReportColumns } from "./reportColumn.reposito
 import {
   listQueryVersions,
   restoreQueryVersion,
+  setQueryVersionPinned,
 } from "../version/version.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
@@ -158,6 +159,27 @@ queryDefinitionRouter.get("/:id/versions", requirePermission("DESIGN_QUERY"), as
     }
     res.json({ versions: await listQueryVersions(id.data) });
   } catch (error) { next(error); }
+});
+
+queryDefinitionRouter.put("/:id/versions/:versionNo/pin", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const versionNo = z.coerce.number().int().positive().safeParse(req.params.versionNo);
+    const body = z.object({ isPinned: z.boolean() }).safeParse(req.body);
+    if (!id.success || !versionNo.success || !body.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query 版本保留設定不正確。" } });
+      return;
+    }
+
+    await setQueryVersionPinned(id.data, versionNo.data, body.data.isPinned);
+    res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "QUERY_VERSION_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到指定的 Query 版本。" } });
+      return;
+    }
+    next(error);
+  }
 });
 
 queryDefinitionRouter.post("/:id/versions/:versionNo/restore", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
