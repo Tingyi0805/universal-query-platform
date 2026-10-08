@@ -13,6 +13,11 @@ import {
   cleanupOldVersions,
   previewVersionCleanup,
 } from "../version/version.repository.js";
+import {
+  archiveOldAuditLogs,
+  cleanupAuditArchive,
+  previewAuditLifecycle,
+} from "../audit/audit.repository.js";
 
 const auditRetentionSchema = z.object({
   onlineRetentionDays: z.coerce.number().int().min(30).max(3650),
@@ -125,5 +130,24 @@ systemSettingsRouter.put("/audit-retention", requirePermission("MANAGE_SETTINGS"
 
     await updateAuditRetentionSettings(parsed.data);
     res.json({ status: "OK" });
+  } catch (error) { next(error); }
+});
+
+
+systemSettingsRouter.get("/audit-retention/lifecycle-preview", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+  try {
+    res.json(await previewAuditLifecycle());
+  } catch (error) { next(error); }
+});
+
+systemSettingsRouter.post("/audit-retention/archive", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+  try {
+    res.json(await archiveOldAuditLogs());
+  } catch (error) { next(error); }
+});
+
+systemSettingsRouter.post("/audit-retention/archive/cleanup", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+  try {
+    res.json(await cleanupAuditArchive());
   } catch (error) { next(error); }
 });
