@@ -145,6 +145,21 @@ export async function replaceDatasetParameters(
       .input("datasetId", sql.BigInt, datasetId)
       .query("DELETE FROM uqp.DatasetParameter WHERE DatasetId=@datasetId");
 
+    const lookupDatasetIds = [...new Set(
+      parameters
+        .filter((parameter) => parameter.optionMode === "DATASET" && parameter.lookupDatasetId)
+        .map((parameter) => parameter.lookupDatasetId as number),
+    )];
+
+    for (const lookupDatasetId of lookupDatasetIds) {
+      const lookup = await new sql.Request(tx)
+        .input("lookupDatasetId", sql.BigInt, lookupDatasetId)
+        .query("SELECT Id, IsArchived FROM uqp.Dataset WHERE Id=@lookupDatasetId");
+      if (!lookup.recordset[0] || lookup.recordset[0].IsArchived) {
+        throw new Error("PARAMETER_LOOKUP_DATASET_ARCHIVED");
+      }
+    }
+
     for (const parameter of parameters) {
       await new sql.Request(tx)
         .input("datasetId", sql.BigInt, datasetId)
