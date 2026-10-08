@@ -19,7 +19,7 @@ export async function syncDatasetColumns(datasetId: number, columns: QueryColumn
       .query("DELETE FROM uqp.DatasetColumn WHERE DatasetId=@datasetId");
 
     for (let index = 0; index < columns.length; index += 1) {
-      const column = columns[index];
+      const column = columns[index]!;
       await new sql.Request(tx)
         .input("datasetId", sql.BigInt, datasetId)
         .input("columnName", sql.NVarChar(256), column.name)
