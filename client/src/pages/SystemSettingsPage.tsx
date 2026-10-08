@@ -4,6 +4,17 @@ import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./SystemSettingsPage.css";
 
+type VersionRetentionSettings = {
+  retentionCount: number;
+  retentionDays: number;
+};
+
+type CleanupPreview = VersionRetentionSettings & {
+  datasetDeleteCount: number;
+  queryDeleteCount: number;
+  totalDeleteCount: number;
+};
+
 type BrandingSettings = {
   organizationName: string;
   platformName: string;
@@ -21,8 +32,15 @@ const defaults: BrandingSettings = {
 export function SystemSettingsPage() {
   const { accessToken } = useAuth();
   const [form, setForm] = useState<BrandingSettings>(defaults);
+  const [retention, setRetention] = useState<VersionRetentionSettings>({
+    retentionCount: 30,
+    retentionDays: 365,
+  });
+  const [cleanupPreview, setCleanupPreview] = useState<CleanupPreview | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingRetention, setSavingRetention] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -30,8 +48,14 @@ export function SystemSettingsPage() {
     setLoading(true);
     setError("");
     try {
-      const result = await apiRequest<BrandingSettings>("/system-settings/branding", {}, accessToken);
-      setForm(result);
+      const [brandingResult, retentionResult, cleanupResult] = await Promise.all([
+        apiRequest<BrandingSettings>("/system-settings/branding", {}, accessToken),
+        apiRequest<VersionRetentionSettings>("/system-settings/version-retention", {}, accessToken),
+        apiRequest<CleanupPreview>("/system-settings/version-retention/cleanup-preview", {}, accessToken),
+      ]);
+      setForm(brandingResult);
+      setRetention(retentionResult);
+      setCleanupPreview(cleanupResult);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入系統設定失敗。");
     } finally {
@@ -59,13 +83,79 @@ export function SystemSettingsPage() {
     }
   }
 
+  async function refreshCleanupPreview() {
+    try {
+      const result = await apiRequest<CleanupPreview>(
+        "/system-settings/version-retention/cleanup-preview",
+        {},
+        accessToken,
+      );
+      setCleanupPreview(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "載入版本清理資訊失敗。");
+    }
+  }
+
+  async function saveRetention(event: FormEvent) {
+    event.preventDefault();
+    setSavingRetention(true);
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest("/system-settings/version-retention", {
+        method: "PUT",
+        body: JSON.stringify(retention),
+      }, accessToken);
+      setNotice("版本保留策略已儲存。");
+      await refreshCleanupPreview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "儲存版本保留策略失敗。");
+    } finally {
+      setSavingRetention(false);
+    }
+  }
+
+  async function cleanupVersions() {
+    const count = cleanupPreview?.totalDeleteCount ?? 0;
+    if (count <= 0) {
+      setNotice("目前沒有符合清理條件的舊版本。");
+      return;
+    }
+
+    if (!window.confirm(
+      `目前有 ${count} 個舊版本符合清理條件。\nPinned 與 Published Snapshot 不會刪除。\n\n確定執行清理？`,
+    )) return;
+
+    setCleaning(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<{
+        datasetDeletedCount: number;
+        queryDeletedCount: number;
+        totalDeletedCount: number;
+      }>("/system-settings/version-retention/cleanup", {
+        method: "POST",
+      }, accessToken);
+
+      setNotice(
+        `版本清理完成：Dataset ${result.datasetDeletedCount} 版、Query ${result.queryDeletedCount} 版，共 ${result.totalDeletedCount} 版。`,
+      );
+      await refreshCleanupPreview();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "版本清理失敗。");
+    } finally {
+      setCleaning(false);
+    }
+  }
+
   return (
     <main className="page-shell">
       <div className="page-toolbar">
         <div>
           <p className="eyebrow">System Settings</p>
           <h1>系統設定</h1>
-          <p className="subtitle">調整首頁顯示的機構名稱與平台文字。</p>
+          <p className="subtitle">調整平台品牌文字與版本保留策略。</p>
         </div>
         <Link className="secondary-button link-button" to="/">返回首頁</Link>
       </div>
@@ -130,6 +220,77 @@ export function SystemSettingsPage() {
             <div className="form-actions">
               <button className="primary-button" type="submit" disabled={saving}>
                 {saving ? "儲存中…" : "儲存設定"}
+              </button>
+            </div>
+          </form>
+        </section>
+      )}
+
+      {!loading && (
+        <section className="settings-card version-retention-card">
+          <div className="section-title">
+            <div>
+              <h2>版本保留策略</h2>
+              <p className="settings-hint">
+                最近版本與保留天數同時受到保護；Pinned 與 Published Snapshot 永久保留，不會被清理。
+              </p>
+            </div>
+          </div>
+
+          <form className="settings-form" onSubmit={saveRetention}>
+            <div className="retention-grid">
+              <label>
+                每個項目最近保留版本數
+                <input
+                  type="number"
+                  min={5}
+                  max={500}
+                  value={retention.retentionCount}
+                  onChange={(e) => setRetention({
+                    ...retention,
+                    retentionCount: Number(e.target.value),
+                  })}
+                />
+                <small>預設 30；不論版本日期多舊，最近這些版本都不刪除。</small>
+              </label>
+
+              <label>
+                一般版本至少保留天數
+                <input
+                  type="number"
+                  min={30}
+                  max={3650}
+                  value={retention.retentionDays}
+                  onChange={(e) => setRetention({
+                    ...retention,
+                    retentionDays: Number(e.target.value),
+                  })}
+                />
+                <small>預設 365 天；只有超過此天數且超出最近保留數的版本才可清理。</small>
+              </label>
+            </div>
+
+            <div className="retention-summary">
+              <strong>目前可清理</strong>
+              <span>Dataset：{cleanupPreview?.datasetDeleteCount ?? 0} 版</span>
+              <span>Query：{cleanupPreview?.queryDeleteCount ?? 0} 版</span>
+              <span>合計：{cleanupPreview?.totalDeleteCount ?? 0} 版</span>
+            </div>
+
+            <div className="form-actions">
+              <button className="primary-button" type="submit" disabled={savingRetention}>
+                {savingRetention ? "儲存中…" : "儲存保留策略"}
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void refreshCleanupPreview()}>
+                重新計算
+              </button>
+              <button
+                className="danger-button"
+                type="button"
+                disabled={cleaning || (cleanupPreview?.totalDeleteCount ?? 0) === 0}
+                onClick={() => void cleanupVersions()}
+              >
+                {cleaning ? "清理中…" : "清理舊版本"}
               </button>
             </div>
           </form>
