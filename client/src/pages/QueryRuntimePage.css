@@ -7,9 +7,20 @@
 
 .runtime-parameter-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 16px;
   align-items: start;
+}
+
+.runtime-parameter-grid.parameter-count-1 {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.runtime-parameter-grid.parameter-count-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.runtime-parameter-grid.parameter-count-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .runtime-parameter-grid label {
@@ -97,8 +108,19 @@
   background: #f7f9fc;
 }
 
+@media (max-width: 900px) {
+  .runtime-parameter-grid.parameter-count-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 640px) {
-  .runtime-parameter-grid { grid-template-columns: 1fr; }
+  .runtime-parameter-grid,
+  .runtime-parameter-grid.parameter-count-1,
+  .runtime-parameter-grid.parameter-count-2,
+  .runtime-parameter-grid.parameter-count-3 {
+    grid-template-columns: 1fr;
+  }
 }
 
 
