@@ -21,6 +21,7 @@ import {
   createQueryCsv,
 } from "../export/csvExport.service.js";
 import { listReportColumns } from "./reportColumn.repository.js";
+import { setQueryFavorite } from "./queryFavorite.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
 const executeBodySchema = z.object({
@@ -94,6 +95,36 @@ queryRuntimeRouter.get("/", requirePermission("VIEW_QUERY"), async (req, res, ne
   try {
     res.json({ queries: await listAccessibleQueries(req.authUser!.id) });
   } catch (error) { next(error); }
+});
+
+queryRuntimeRouter.put("/:id/favorite", requirePermission("VIEW_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const body = z.object({ isFavorite: z.boolean() }).safeParse(req.body);
+    if (!id.success || !body.success) {
+      res.status(400).json({
+        error: {
+          code: "VALIDATION_ERROR",
+          message: "我的最愛設定格式不正確。",
+        },
+      });
+      return;
+    }
+
+    await setQueryFavorite(req.authUser!.id, id.data, body.data.isFavorite);
+    res.json({ status: "OK", isFavorite: body.data.isFavorite });
+  } catch (error) {
+    if (error instanceof Error && error.message === "QUERY_NOT_FOUND") {
+      res.status(404).json({
+        error: {
+          code: error.message,
+          message: "找不到可加入我的最愛的查詢。",
+        },
+      });
+      return;
+    }
+    next(error);
+  }
 });
 
 queryRuntimeRouter.get("/:id", requirePermission("VIEW_QUERY"), async (req, res, next) => {
