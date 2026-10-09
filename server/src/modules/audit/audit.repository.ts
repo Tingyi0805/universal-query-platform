@@ -30,6 +30,44 @@ async function requirePool() {
   return pool;
 }
 
+export async function writeAuditEvent(input: AuditStartInput & {
+  status?: "SUCCESS" | "FAILED";
+  errorCode?: string | null;
+}): Promise<number> {
+  const pool = await requirePool();
+  const parametersJson = input.parameters == null
+    ? null
+    : JSON.stringify(input.parameters).slice(0, 20000);
+  const classification = classifyEvent(input.eventType);
+  const status = input.status ?? "SUCCESS";
+
+  const result = await pool.request()
+    .input("eventType", sql.NVarChar(50), input.eventType)
+    .input("eventCategory", sql.NVarChar(20), classification.category)
+    .input("isImportant", sql.Bit, classification.important)
+    .input("userId", sql.BigInt, input.userId ?? null)
+    .input("queryDefinitionId", sql.BigInt, input.queryDefinitionId ?? null)
+    .input("datasetId", sql.BigInt, input.datasetId ?? null)
+    .input("status", sql.NVarChar(20), status)
+    .input("parametersJson", sql.NVarChar(sql.MAX), parametersJson)
+    .input("ipAddress", sql.NVarChar(100), input.ipAddress ?? null)
+    .input("userAgent", sql.NVarChar(500), input.userAgent?.slice(0, 500) ?? null)
+    .input("errorCode", sql.NVarChar(200), input.errorCode?.slice(0, 200) ?? null)
+    .query(`
+      INSERT INTO uqp.AuditLog (
+        EventType, EventCategory, IsImportant, UserId, QueryDefinitionId, DatasetId,
+        Status, ParametersJson, IpAddress, UserAgent, ErrorCode, CompletedAtUtc
+      )
+      OUTPUT INSERTED.Id
+      VALUES (
+        @eventType,@eventCategory,@isImportant,@userId,@queryDefinitionId,@datasetId,
+        @status,@parametersJson,@ipAddress,@userAgent,@errorCode,SYSUTCDATETIME()
+      )
+    `);
+
+  return Number(result.recordset[0].Id);
+}
+
 export async function startAudit(input: AuditStartInput): Promise<number> {
   const pool = await requirePool();
   const parametersJson = input.parameters == null
