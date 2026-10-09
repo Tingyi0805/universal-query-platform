@@ -3,6 +3,8 @@ import { z } from "zod";
 import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
+import { auditRequestContext } from "../audit/auditContext.js";
+import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import {
   archiveDataset,
   createDataset,
@@ -457,6 +459,13 @@ datasetRouter.put("/:id/versions/:versionNo/pin", async (req, res, next) => {
     }
 
     await setDatasetVersionPinned(id.data, versionNo.data, body.data.isPinned);
+    await tryWriteAuditEvent({
+      eventType: "VERSION_DATASET_PIN_CHANGED",
+      userId: req.authUser?.id ?? null,
+      datasetId: id.data,
+      parameters: { versionNo: versionNo.data, isPinned: body.data.isPinned },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASET_VERSION_NOT_FOUND") {
@@ -477,6 +486,13 @@ datasetRouter.post("/:id/versions/:versionNo/restore", async (req, res, next) =>
     }
 
     await restoreDatasetVersion(id.data, versionNo.data, req.authUser.id);
+    await tryWriteAuditEvent({
+      eventType: "DATASET_VERSION_RESTORED",
+      userId: req.authUser.id,
+      datasetId: id.data,
+      parameters: { versionNo: versionNo.data },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK", dataset: await getDataset(id.data) });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASET_VERSION_NOT_FOUND") {
@@ -504,6 +520,13 @@ datasetRouter.post("/:id/archive", async (req, res, next) => {
     }
 
     await archiveDataset(id.data, req.authUser!.id);
+    await tryWriteAuditEvent({
+      eventType: "DATASET_ARCHIVED",
+      userId: req.authUser?.id ?? null,
+      datasetId: id.data,
+      parameters: { datasetId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK", dataset: await getDataset(id.data) });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASET_NOT_FOUND") {
@@ -527,6 +550,13 @@ datasetRouter.post("/:id/restore", async (req, res, next) => {
     }
 
     await restoreDataset(id.data);
+    await tryWriteAuditEvent({
+      eventType: "DATASET_RESTORED",
+      userId: req.authUser?.id ?? null,
+      datasetId: id.data,
+      parameters: { datasetId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK", dataset: await getDataset(id.data) });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASET_NOT_FOUND") {
