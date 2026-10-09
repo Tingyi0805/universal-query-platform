@@ -364,7 +364,7 @@ export function QueryPortalPage() {
 
             {!collapsed && (
               <div className="query-icon-grid">
-                {items.map(renderQueryCard)}
+                {items.map((query) => renderQueryCard(query))}
               </div>
             )}
           </section>
