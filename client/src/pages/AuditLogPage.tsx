@@ -99,9 +99,49 @@ export function AuditLogPage() {
         <label>事件
           <select value={eventType} onChange={(e) => setEventType(e.target.value)}>
             <option value="">全部</option>
-            <option value="QUERY_EXECUTE">QUERY_EXECUTE</option>
-            <option value="QUERY_EXPORT_EXCEL">QUERY_EXPORT_EXCEL</option>
-            <option value="QUERY_EXPORT_CSV">QUERY_EXPORT_CSV</option>
+            <optgroup label="登入 / 帳號">
+              <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
+              <option value="LOGIN_FAILED">LOGIN_FAILED</option>
+              <option value="USER_CREATED">USER_CREATED</option>
+              <option value="USER_UPDATED">USER_UPDATED</option>
+              <option value="USER_DELETED">USER_DELETED</option>
+              <option value="USER_PASSWORD_RESET">USER_PASSWORD_RESET</option>
+              <option value="USER_PASSWORD_CHANGED">USER_PASSWORD_CHANGED</option>
+              <option value="USER_PASSWORD_CHANGE_FAILED">USER_PASSWORD_CHANGE_FAILED</option>
+              <option value="ROLE_CREATED">ROLE_CREATED</option>
+              <option value="ROLE_UPDATED">ROLE_UPDATED</option>
+            </optgroup>
+            <optgroup label="DataSource">
+              <option value="DATASOURCE_CREATED">DATASOURCE_CREATED</option>
+              <option value="DATASOURCE_UPDATED">DATASOURCE_UPDATED</option>
+              <option value="DATASOURCE_DELETED">DATASOURCE_DELETED</option>
+            </optgroup>
+            <optgroup label="Dataset / Version">
+              <option value="DATASET_ARCHIVED">DATASET_ARCHIVED</option>
+              <option value="DATASET_RESTORED">DATASET_RESTORED</option>
+              <option value="DATASET_VERSION_RESTORED">DATASET_VERSION_RESTORED</option>
+              <option value="VERSION_DATASET_PIN_CHANGED">VERSION_DATASET_PIN_CHANGED</option>
+            </optgroup>
+            <optgroup label="Query">
+              <option value="QUERY_EXECUTE">QUERY_EXECUTE</option>
+              <option value="QUERY_EXPORT_EXCEL">QUERY_EXPORT_EXCEL</option>
+              <option value="QUERY_EXPORT_CSV">QUERY_EXPORT_CSV</option>
+              <option value="QUERY_PUBLISHED">QUERY_PUBLISHED</option>
+              <option value="QUERY_UNPUBLISHED">QUERY_UNPUBLISHED</option>
+              <option value="QUERY_ARCHIVED">QUERY_ARCHIVED</option>
+              <option value="QUERY_RESTORED">QUERY_RESTORED</option>
+              <option value="QUERY_VERSION_RESTORED">QUERY_VERSION_RESTORED</option>
+              <option value="QUERY_ACCESS_UPDATED">QUERY_ACCESS_UPDATED</option>
+              <option value="VERSION_QUERY_PIN_CHANGED">VERSION_QUERY_PIN_CHANGED</option>
+            </optgroup>
+            <optgroup label="系統治理">
+              <option value="SETTING_BRANDING_UPDATED">SETTING_BRANDING_UPDATED</option>
+              <option value="SETTING_VERSION_RETENTION_UPDATED">SETTING_VERSION_RETENTION_UPDATED</option>
+              <option value="SETTING_AUDIT_RETENTION_UPDATED">SETTING_AUDIT_RETENTION_UPDATED</option>
+              <option value="VERSION_CLEANUP_EXECUTED">VERSION_CLEANUP_EXECUTED</option>
+              <option value="AUDIT_ARCHIVE_EXECUTED">AUDIT_ARCHIVE_EXECUTED</option>
+              <option value="AUDIT_ARCHIVE_CLEANUP_EXECUTED">AUDIT_ARCHIVE_CLEANUP_EXECUTED</option>
+            </optgroup>
           </select>
         </label>
         <label>帳號
