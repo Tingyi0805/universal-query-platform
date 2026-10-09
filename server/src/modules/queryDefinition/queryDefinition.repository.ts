@@ -338,6 +338,7 @@ export async function listAccessibleQueries(userId: number) {
            ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder,
            q.Icon, q.DatasetId, q.SortOrder, q.AllowExcelExport, q.IsPublished,
            q.IsActive, q.PublishedAtUtc, d.Name AS DatasetName,
+           CASE WHEN f.UserId IS NULL THEN 0 ELSE 1 END AS IsFavorite,
            CASE WHEN ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1 THEN 1 ELSE 0 END AS EffectiveCanView,
            CASE WHEN ISNULL(ra.CanExecute,0)=1 OR ISNULL(ua.CanExecute,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExecute,
            CASE WHEN ISNULL(ra.CanExport,0)=1 OR ISNULL(ua.CanExport,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExport
@@ -347,6 +348,8 @@ export async function listAccessibleQueries(userId: number) {
     LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
     LEFT JOIN RoleAccess ra ON ra.QueryDefinitionId=q.Id
     LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
+    LEFT JOIN uqp.UserQueryFavorite f
+      ON f.QueryDefinitionId=q.Id AND f.UserId=@userId
     WHERE q.IsPublished=1 AND q.IsActive=1 AND q.IsArchived=0
       AND NOT EXISTS (
         SELECT 1
@@ -363,6 +366,7 @@ export async function listAccessibleQueries(userId: number) {
     canView: Boolean(row.EffectiveCanView),
     canExecute: Boolean(row.EffectiveCanExecute),
     canExport: Boolean(row.EffectiveCanExport) && Boolean(row.AllowExcelExport),
+    isFavorite: Boolean(row.IsFavorite),
   }));
 }
 
