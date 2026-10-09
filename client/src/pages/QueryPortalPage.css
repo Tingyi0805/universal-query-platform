@@ -266,3 +266,33 @@
     padding-top: 3px;
   }
 }
+
+
+.query-section-more {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.query-recent {
+  padding: 18px;
+  border: 1px solid #d9e3f0;
+  border-radius: 18px;
+  background: #f8fbff;
+}
+
+.query-recent .query-category-heading.static {
+  cursor: default;
+}
+
+.query-recent .query-category-title {
+  color: #40597b;
+}
+
+.query-last-used {
+  display: block;
+  margin-top: 10px;
+  color: #8290a4;
+  font-size: 12px;
+  line-height: 1.4;
+}
