@@ -233,6 +233,8 @@ export function QueryRuntimePage() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [resultSort, setResultSort] = useState<ResultSort>(null);
+  const [resultPage, setResultPage] = useState(1);
+  const [resultPageSize, setResultPageSize] = useState(50);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
@@ -352,12 +354,42 @@ export function QueryRuntimePage() {
     [visibleColumns],
   );
 
+  const paginationEnabled = groupColumns.length === 0;
+
+  const resultPageCount = useMemo(() => {
+    if (!paginationEnabled) return 1;
+    return Math.max(1, Math.ceil(filteredAndSortedRows.length / resultPageSize));
+  }, [filteredAndSortedRows.length, paginationEnabled, resultPageSize]);
+
+  const pagedRows = useMemo(() => {
+    if (!paginationEnabled) return filteredAndSortedRows;
+
+    const safePage = Math.min(Math.max(resultPage, 1), resultPageCount);
+    const start = (safePage - 1) * resultPageSize;
+    return filteredAndSortedRows.slice(start, start + resultPageSize);
+  }, [
+    filteredAndSortedRows,
+    paginationEnabled,
+    resultPage,
+    resultPageCount,
+    resultPageSize,
+  ]);
+
+  useEffect(() => {
+    setResultPage(1);
+  }, [columnFilters, resultSort, resultPageSize]);
+
+  useEffect(() => {
+    if (resultPage > resultPageCount) setResultPage(resultPageCount);
+  }, [resultPage, resultPageCount]);
+
   const groupedRows = useMemo(
-    () => result ? buildGroupedRows(filteredAndSortedRows, groupColumns, resultSort) : [],
-    [filteredAndSortedRows, groupColumns, result, resultSort],
+    () => result ? buildGroupedRows(pagedRows, groupColumns, resultSort) : [],
+    [groupColumns, pagedRows, result, resultSort],
   );
 
   function cycleResultSort(columnName: string) {
+    setResultPage(1);
     setResultSort((current) => {
       if (!current || current.columnName !== columnName) {
         return { columnName, direction: "ASC" };
@@ -372,6 +404,7 @@ export function QueryRuntimePage() {
   function clearResultView() {
     setColumnFilters({});
     setResultSort(null);
+    setResultPage(1);
   }
 
   async function downloadExport(format: "excel" | "csv") {
@@ -530,6 +563,9 @@ export function QueryRuntimePage() {
                   ? `${result.rowCount} 筆`
                   : `顯示 ${filteredAndSortedRows.length} / ${result.rowCount} 筆`}
                 {" · "}{result.elapsedMs} ms {result.truncated ? "· 已達筆數上限" : ""}
+                {paginationEnabled && filteredAndSortedRows.length > 0
+                  ? ` · 第 ${resultPage} / ${resultPageCount} 頁`
+                  : ""}
               </p>
             </div>
             <div className="runtime-export-actions">
@@ -654,6 +690,75 @@ export function QueryRuntimePage() {
               )}
             </table>
           </div>
+
+          {paginationEnabled && filteredAndSortedRows.length > 0 && (
+            <div className="runtime-pagination">
+              <div className="runtime-page-size">
+                <label>
+                  每頁
+                  <select
+                    value={resultPageSize}
+                    onChange={(e) => {
+                      setResultPageSize(Number(e.target.value));
+                      setResultPage(1);
+                    }}
+                  >
+                    <option value={50}>50</option>
+                    <option value={100}>100</option>
+                    <option value={200}>200</option>
+                  </select>
+                  筆
+                </label>
+                <span>
+                  顯示第 {(resultPage - 1) * resultPageSize + 1}
+                  ～{Math.min(resultPage * resultPageSize, filteredAndSortedRows.length)}
+                  筆，共 {filteredAndSortedRows.length} 筆
+                </span>
+              </div>
+
+              <div className="runtime-page-buttons">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={resultPage <= 1}
+                  onClick={() => setResultPage(1)}
+                >
+                  第一頁
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={resultPage <= 1}
+                  onClick={() => setResultPage((page) => Math.max(1, page - 1))}
+                >
+                  上一頁
+                </button>
+                <span>第 {resultPage} / {resultPageCount} 頁</span>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={resultPage >= resultPageCount}
+                  onClick={() => setResultPage((page) => Math.min(resultPageCount, page + 1))}
+                >
+                  下一頁
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={resultPage >= resultPageCount}
+                  onClick={() => setResultPage(resultPageCount)}
+                >
+                  最後一頁
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!paginationEnabled && filteredAndSortedRows.length > 0 && (
+            <div className="runtime-pagination-note">
+              此查詢使用群組 / 小計設定，為避免群組被切斷，目前維持完整群組顯示。
+            </div>
+          )}
         </section>
       )}
     </main>
