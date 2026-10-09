@@ -462,7 +462,6 @@ datasetRouter.put("/:id/versions/:versionNo/pin", async (req, res, next) => {
     await tryWriteAuditEvent({
       eventType: "VERSION_DATASET_PIN_CHANGED",
       userId: req.authUser?.id ?? null,
-      datasetId: id.data,
       parameters: { versionNo: versionNo.data, isPinned: body.data.isPinned },
       ...auditRequestContext(req),
     });
@@ -489,7 +488,6 @@ datasetRouter.post("/:id/versions/:versionNo/restore", async (req, res, next) =>
     await tryWriteAuditEvent({
       eventType: "DATASET_VERSION_RESTORED",
       userId: req.authUser.id,
-      datasetId: id.data,
       parameters: { versionNo: versionNo.data },
       ...auditRequestContext(req),
     });
@@ -523,7 +521,6 @@ datasetRouter.post("/:id/archive", async (req, res, next) => {
     await tryWriteAuditEvent({
       eventType: "DATASET_ARCHIVED",
       userId: req.authUser?.id ?? null,
-      datasetId: id.data,
       parameters: { datasetId: id.data },
       ...auditRequestContext(req),
     });
@@ -553,7 +550,6 @@ datasetRouter.post("/:id/restore", async (req, res, next) => {
     await tryWriteAuditEvent({
       eventType: "DATASET_RESTORED",
       userId: req.authUser?.id ?? null,
-      datasetId: id.data,
       parameters: { datasetId: id.data },
       ...auditRequestContext(req),
     });
