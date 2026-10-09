@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
+import { auditRequestContext } from "../audit/auditContext.js";
+import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import {
   archiveQueryDefinition,
   createQueryDefinition,
@@ -172,6 +174,13 @@ queryDefinitionRouter.put("/:id/versions/:versionNo/pin", requirePermission("DES
     }
 
     await setQueryVersionPinned(id.data, versionNo.data, body.data.isPinned);
+    await tryWriteAuditEvent({
+      eventType: "VERSION_QUERY_PIN_CHANGED",
+      userId: req.authUser?.id ?? null,
+      queryDefinitionId: id.data,
+      parameters: { versionNo: versionNo.data, isPinned: body.data.isPinned },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "QUERY_VERSION_NOT_FOUND") {
@@ -192,6 +201,13 @@ queryDefinitionRouter.post("/:id/versions/:versionNo/restore", requirePermission
     }
 
     await restoreQueryVersion(id.data, versionNo.data, req.authUser.id);
+    await tryWriteAuditEvent({
+      eventType: "QUERY_VERSION_RESTORED",
+      userId: req.authUser.id,
+      queryDefinitionId: id.data,
+      parameters: { versionNo: versionNo.data },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK", queryDefinition: await getQueryDefinition(id.data) });
   } catch (error) {
     if (error instanceof Error && error.message === "QUERY_VERSION_NOT_FOUND") {
@@ -271,6 +287,13 @@ queryDefinitionRouter.post("/:id/archive", requirePermission("DESIGN_QUERY"), as
       return;
     }
     await archiveQueryDefinition(id.data, req.authUser.id);
+    await tryWriteAuditEvent({
+      eventType: "QUERY_ARCHIVED",
+      userId: req.authUser.id,
+      queryDefinitionId: id.data,
+      parameters: { queryDefinitionId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({
       status: "OK",
       queryDefinition: await getQueryDefinition(id.data),
@@ -296,6 +319,13 @@ queryDefinitionRouter.post("/:id/restore", requirePermission("DESIGN_QUERY"), as
       return;
     }
     await restoreQueryDefinition(id.data);
+    await tryWriteAuditEvent({
+      eventType: "QUERY_RESTORED",
+      userId: req.authUser?.id ?? null,
+      queryDefinitionId: id.data,
+      parameters: { queryDefinitionId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({
       status: "OK",
       queryDefinition: await getQueryDefinition(id.data),
@@ -321,6 +351,13 @@ queryDefinitionRouter.post("/:id/publish", requirePermission("PUBLISH_QUERY"), a
       return;
     }
     await publishQueryDefinition(id.data, req.authUser.id);
+    await tryWriteAuditEvent({
+      eventType: "QUERY_PUBLISHED",
+      userId: req.authUser.id,
+      queryDefinitionId: id.data,
+      parameters: { queryDefinitionId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({
       status: "OK",
       queryDefinition: await getQueryDefinition(id.data),
@@ -342,6 +379,13 @@ queryDefinitionRouter.post("/:id/unpublish", requirePermission("PUBLISH_QUERY"),
       return;
     }
     await unpublishQueryDefinition(id.data);
+    await tryWriteAuditEvent({
+      eventType: "QUERY_UNPUBLISHED",
+      userId: req.authUser?.id ?? null,
+      queryDefinitionId: id.data,
+      parameters: { queryDefinitionId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({
       status: "OK",
       queryDefinition: await getQueryDefinition(id.data),
@@ -442,6 +486,16 @@ queryDefinitionRouter.put("/:id/access", requirePermission("MANAGE_USERS"), asyn
     }
 
     await replaceQueryAccess(id.data, parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "QUERY_ACCESS_UPDATED",
+      userId: req.authUser?.id ?? null,
+      queryDefinitionId: id.data,
+      parameters: {
+        roleCount: parsed.data.roles.length,
+        userCount: parsed.data.users.length,
+      },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) { next(error); }
 });
