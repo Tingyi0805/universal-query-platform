@@ -90,6 +90,14 @@ adminRouter.post("/bootstrap", async (req, res, next) => {
     }
     const passwordHash = await bcrypt.hash(parsed.data.password, 12);
     await createInitialAdmin({ username: parsed.data.username, displayName: parsed.data.displayName, passwordHash });
+    await tryWriteAuditEvent({
+      eventType: "USER_BOOTSTRAP_ADMIN_CREATED",
+      parameters: {
+        username: parsed.data.username,
+        displayName: parsed.data.displayName,
+      },
+      ...auditRequestContext(req),
+    });
     res.status(201).json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "BOOTSTRAP_ALREADY_COMPLETED") {
