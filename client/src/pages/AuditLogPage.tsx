@@ -102,6 +102,7 @@ export function AuditLogPage() {
             <optgroup label="登入 / 帳號">
               <option value="LOGIN_SUCCESS">LOGIN_SUCCESS</option>
               <option value="LOGIN_FAILED">LOGIN_FAILED</option>
+              <option value="USER_BOOTSTRAP_ADMIN_CREATED">USER_BOOTSTRAP_ADMIN_CREATED</option>
               <option value="USER_CREATED">USER_CREATED</option>
               <option value="USER_UPDATED">USER_UPDATED</option>
               <option value="USER_DELETED">USER_DELETED</option>
