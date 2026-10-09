@@ -1,5 +1,6 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
+import { logger } from "../../config/logger.js";
 
 export type AuditStartInput = {
   eventType: string;
@@ -66,6 +67,20 @@ export async function writeAuditEvent(input: AuditStartInput & {
     `);
 
   return Number(result.recordset[0].Id);
+}
+
+export async function tryWriteAuditEvent(input: AuditStartInput & {
+  status?: "SUCCESS" | "FAILED";
+  errorCode?: string | null;
+}): Promise<void> {
+  try {
+    await writeAuditEvent(input);
+  } catch (error) {
+    logger.warn(
+      { err: error, eventType: input.eventType },
+      "Failed to write management Audit event",
+    );
+  }
 }
 
 export async function startAudit(input: AuditStartInput): Promise<number> {
