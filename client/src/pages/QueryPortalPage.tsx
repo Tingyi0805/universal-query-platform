@@ -1,6 +1,6 @@
 import {
   BarChart3, CalendarDays, ChevronDown, ChevronRight, ClipboardList, Database,
-  FileSpreadsheet, Hospital, MessageSquare, Search, Star, Table2, Users,
+  Clock3, FileSpreadsheet, Hospital, MessageSquare, Search, Star, Table2, Users,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import { Link } from "react-router-dom";
@@ -21,6 +21,7 @@ type QueryItem = {
   canExecute: boolean;
   canExport: boolean;
   isFavorite: boolean;
+  lastUsedAtUtc: string | null;
 };
 
 const icons: Record<string, ComponentType<{ size?: number }>> = {
@@ -29,6 +30,10 @@ const icons: Record<string, ComponentType<{ size?: number }>> = {
 };
 
 const ALL_CATEGORIES = "__ALL__";
+const FAVORITE_CATEGORY = "__FAVORITES__";
+const RECENT_CATEGORY = "__RECENT__";
+const FAVORITE_PREVIEW_COUNT = 8;
+const RECENT_PREVIEW_COUNT = 8;
 
 export function QueryPortalPage() {
   const { accessToken } = useAuth();
@@ -39,6 +44,7 @@ export function QueryPortalPage() {
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORIES);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [favoriteUpdating, setFavoriteUpdating] = useState<Set<number>>(new Set());
+  const [showAllFavorites, setShowAllFavorites] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -73,7 +79,18 @@ export function QueryPortalPage() {
 
     return queries.filter((query) => {
       const category = query.category?.trim() || "其他";
-      if (selectedCategory !== ALL_CATEGORIES && category !== selectedCategory) return false;
+
+      if (selectedCategory === FAVORITE_CATEGORY && !query.isFavorite) return false;
+      if (selectedCategory === RECENT_CATEGORY && !query.lastUsedAtUtc) return false;
+      if (
+        selectedCategory !== ALL_CATEGORIES &&
+        selectedCategory !== FAVORITE_CATEGORY &&
+        selectedCategory !== RECENT_CATEGORY &&
+        category !== selectedCategory
+      ) {
+        return false;
+      }
+
       if (!keyword) return true;
 
       return [
@@ -85,9 +102,38 @@ export function QueryPortalPage() {
     });
   }, [queries, searchText, selectedCategory]);
 
+  const favoriteCount = useMemo(
+    () => queries.filter((query) => query.isFavorite).length,
+    [queries],
+  );
+
+  const recentCount = useMemo(
+    () => queries.filter((query) => Boolean(query.lastUsedAtUtc)).length,
+    [queries],
+  );
+
   const favoriteQueries = useMemo(
     () => filteredQueries.filter((query) => query.isFavorite),
     [filteredQueries],
+  );
+
+  const recentQueries = useMemo(
+    () => filteredQueries
+      .filter((query) => Boolean(query.lastUsedAtUtc))
+      .sort((a, b) =>
+        new Date(b.lastUsedAtUtc!).getTime() - new Date(a.lastUsedAtUtc!).getTime()
+      ),
+    [filteredQueries],
+  );
+
+  const visibleFavoriteQueries = useMemo(() => {
+    if (selectedCategory === FAVORITE_CATEGORY || showAllFavorites) return favoriteQueries;
+    return favoriteQueries.slice(0, FAVORITE_PREVIEW_COUNT);
+  }, [favoriteQueries, selectedCategory, showAllFavorites]);
+
+  const visibleRecentQueries = useMemo(
+    () => recentQueries.slice(0, RECENT_PREVIEW_COUNT),
+    [recentQueries],
   );
 
   const groups = useMemo(() => {
@@ -129,7 +175,7 @@ export function QueryPortalPage() {
     }
   }
 
-  function renderQueryCard(query: QueryItem) {
+  function renderQueryCard(query: QueryItem, showRecentTime = false) {
     const Icon = icons[query.icon] ?? Table2;
     const updating = favoriteUpdating.has(query.id);
 
@@ -150,6 +196,11 @@ export function QueryPortalPage() {
           <div className="query-icon"><Icon size={28} /></div>
           <strong>{query.name}</strong>
           <p>{query.description || query.code}</p>
+          {showRecentTime && query.lastUsedAtUtc && (
+            <small className="query-last-used">
+              最近使用：{new Date(query.lastUsedAtUtc).toLocaleString()}
+            </small>
+          )}
         </Link>
       </article>
     );
@@ -207,6 +258,20 @@ export function QueryPortalPage() {
             >
               全部 <span>{queries.length}</span>
             </button>
+            <button
+              type="button"
+              className={selectedCategory === FAVORITE_CATEGORY ? "active" : ""}
+              onClick={() => setSelectedCategory(FAVORITE_CATEGORY)}
+            >
+              ★ 我的最愛 <span>{favoriteCount}</span>
+            </button>
+            <button
+              type="button"
+              className={selectedCategory === RECENT_CATEGORY ? "active" : ""}
+              onClick={() => setSelectedCategory(RECENT_CATEGORY)}
+            >
+              最近使用 <span>{recentCount}</span>
+            </button>
             {categories.map(([category, count]) => (
               <button
                 type="button"
@@ -225,7 +290,9 @@ export function QueryPortalPage() {
         </section>
       )}
 
-      {!loading && favoriteQueries.length > 0 && (
+      {!loading &&
+        (selectedCategory === ALL_CATEGORIES || selectedCategory === FAVORITE_CATEGORY) &&
+        favoriteQueries.length > 0 && (
         <section className="query-category query-favorites">
           <div className="query-category-heading static">
             <span className="query-category-title">
@@ -236,12 +303,49 @@ export function QueryPortalPage() {
           </div>
 
           <div className="query-icon-grid">
-            {favoriteQueries.map(renderQueryCard)}
+            {visibleFavoriteQueries.map((query) => renderQueryCard(query))}
+          </div>
+
+          {selectedCategory === ALL_CATEGORIES && favoriteQueries.length > FAVORITE_PREVIEW_COUNT && (
+            <div className="query-section-more">
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => setShowAllFavorites((current) => !current)}
+              >
+                {showAllFavorites
+                  ? "收合我的最愛"
+                  : `查看全部 ${favoriteQueries.length} 個我的最愛`}
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
+      {!loading &&
+        (selectedCategory === ALL_CATEGORIES || selectedCategory === RECENT_CATEGORY) &&
+        recentQueries.length > 0 && (
+        <section className="query-category query-recent">
+          <div className="query-category-heading static">
+            <span className="query-category-title">
+              <Clock3 size={21} aria-hidden="true" />
+              <strong>最近使用</strong>
+            </span>
+            <span className="query-category-count">
+              最近 {Math.min(recentQueries.length, RECENT_PREVIEW_COUNT)} 個
+            </span>
+          </div>
+
+          <div className="query-icon-grid">
+            {visibleRecentQueries.map((query) => renderQueryCard(query, true))}
           </div>
         </section>
       )}
 
-      {!loading && groups.map(([category, items]) => {
+      {!loading &&
+        selectedCategory !== FAVORITE_CATEGORY &&
+        selectedCategory !== RECENT_CATEGORY &&
+        groups.map(([category, items]) => {
         const collapsed = collapsedCategories.has(category);
         return (
           <section className="query-category" key={category}>
