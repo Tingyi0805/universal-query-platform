@@ -3,6 +3,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { env } from "../../config/env.js";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
+import { auditRequestContext } from "../audit/auditContext.js";
+import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import {
   countUsers,
   createInitialAdmin,
@@ -120,6 +122,17 @@ adminRouter.post("/users", async (req, res, next) => {
     }
     const passwordHash = await bcrypt.hash(parsed.data.password, 12);
     const id = await createUser({ ...parsed.data, passwordHash });
+    await tryWriteAuditEvent({
+      eventType: "USER_CREATED",
+      userId: req.authUser?.id ?? null,
+      parameters: {
+        targetUserId: id,
+        username: parsed.data.username,
+        displayName: parsed.data.displayName,
+        roleCodes: parsed.data.roleCodes,
+      },
+      ...auditRequestContext(req),
+    });
     res.status(201).json({ id });
   } catch (error) {
     if ((error as { number?: number })?.number === 2627 || (error as { number?: number })?.number === 2601) {
@@ -139,6 +152,17 @@ adminRouter.put("/users/:id", async (req, res, next) => {
       return;
     }
     await updateUser(id.data, body.data);
+    await tryWriteAuditEvent({
+      eventType: "USER_UPDATED",
+      userId: req.authUser?.id ?? null,
+      parameters: {
+        targetUserId: id.data,
+        displayName: body.data.displayName,
+        isActive: body.data.isActive,
+        roleCodes: body.data.roleCodes,
+      },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "LAST_SYSTEM_ADMIN") {
@@ -184,6 +208,12 @@ adminRouter.delete("/users/:id", async (req, res, next) => {
     }
 
     await deleteUser(id.data);
+    await tryWriteAuditEvent({
+      eventType: "USER_DELETED",
+      userId: req.authUser.id,
+      parameters: { targetUserId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "LAST_SYSTEM_ADMIN") {
@@ -215,6 +245,12 @@ adminRouter.post("/users/:id/reset-password", async (req, res, next) => {
       return;
     }
     await resetUserPassword(id.data, await bcrypt.hash(body.data.password, 12));
+    await tryWriteAuditEvent({
+      eventType: "USER_PASSWORD_RESET",
+      userId: req.authUser?.id ?? null,
+      parameters: { targetUserId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "USER_NOT_FOUND_OR_NOT_LOCAL") {
@@ -248,6 +284,16 @@ adminRouter.post("/roles", async (req, res, next) => {
       return;
     }
     const id = await createRole(parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "ROLE_CREATED",
+      userId: req.authUser?.id ?? null,
+      parameters: {
+        roleId: id,
+        code: parsed.data.code,
+        permissionCodes: parsed.data.permissionCodes,
+      },
+      ...auditRequestContext(req),
+    });
     res.status(201).json({ id });
   } catch (error) {
     if ((error as { number?: number })?.number === 2627 || (error as { number?: number })?.number === 2601) {
@@ -267,6 +313,17 @@ adminRouter.put("/roles/:id", async (req, res, next) => {
       return;
     }
     await updateRole(id.data, body.data);
+    await tryWriteAuditEvent({
+      eventType: "ROLE_UPDATED",
+      userId: req.authUser?.id ?? null,
+      parameters: {
+        roleId: id.data,
+        name: body.data.name,
+        isActive: body.data.isActive,
+        permissionCodes: body.data.permissionCodes,
+      },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "SYSTEM_ROLE_PROTECTED") {
