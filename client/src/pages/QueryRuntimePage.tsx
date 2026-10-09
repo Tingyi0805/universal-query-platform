@@ -43,6 +43,11 @@ type ReportColumn = {
 
 type Option = { value: unknown; label: string };
 
+type ResultSort = {
+  columnName: string;
+  direction: "ASC" | "DESC";
+} | null;
+
 type QueryResult = {
   columns: { name: string; dataType?: string }[];
   rows: Record<string, unknown>[];
@@ -108,21 +113,42 @@ type GroupedDisplayRow =
   | { kind: "data"; key: string; row: Record<string, unknown> }
   | { kind: "subtotal"; key: string; level: number; label: string; rows: Record<string, unknown>[] };
 
-function compareGroupValue(a: unknown, b: unknown): number {
+function compareRuntimeValue(a: unknown, b: unknown): number {
   if (a == null && b == null) return 0;
   if (a == null) return -1;
   if (b == null) return 1;
 
+  if (a instanceof Date || b instanceof Date) {
+    const aDate = a instanceof Date ? a : new Date(String(a));
+    const bDate = b instanceof Date ? b : new Date(String(b));
+    if (!Number.isNaN(aDate.getTime()) && !Number.isNaN(bDate.getTime())) {
+      return aDate.getTime() - bDate.getTime();
+    }
+  }
+
   const aNumber = Number(a);
   const bNumber = Number(b);
-  if (Number.isFinite(aNumber) && Number.isFinite(bNumber)) return aNumber - bNumber;
+  if (
+    a !== "" && b !== "" &&
+    Number.isFinite(aNumber) && Number.isFinite(bNumber)
+  ) {
+    return aNumber - bNumber;
+  }
 
-  return String(a).localeCompare(String(b), "zh-Hant", { numeric: true });
+  return String(a).localeCompare(String(b), "zh-Hant", {
+    numeric: true,
+    sensitivity: "base",
+  });
+}
+
+function compareGroupValue(a: unknown, b: unknown): number {
+  return compareRuntimeValue(a, b);
 }
 
 function buildGroupedRows(
   rows: Record<string, unknown>[],
   groupColumns: ReportColumn[],
+  sort: ResultSort = null,
 ): GroupedDisplayRow[] {
   if (groupColumns.length === 0) {
     return rows.map((row, index) => ({ kind: "data" as const, key: `data-${index}`, row }));
@@ -133,7 +159,13 @@ function buildGroupedRows(
     .sort((a, b) => {
       for (const column of groupColumns) {
         const compared = compareGroupValue(a.row[column.columnName], b.row[column.columnName]);
-        if (compared !== 0) return compared;
+        if (compared !== 0) {
+          const direction =
+            sort?.columnName === column.columnName && sort.direction === "DESC"
+              ? -1
+              : 1;
+          return compared * direction;
+        }
       }
       return a.index - b.index;
     })
@@ -199,6 +231,8 @@ export function QueryRuntimePage() {
   const [values, setValues] = useState<Record<string, unknown>>({});
   const [options, setOptions] = useState<Record<string, Option[]>>({});
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [resultSort, setResultSort] = useState<ResultSort>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
@@ -272,6 +306,40 @@ export function QueryRuntimePage() {
     }));
   }, [reportColumns, result]);
 
+  const filteredAndSortedRows = useMemo(() => {
+    if (!result) return [];
+
+    const filtered = result.rows.filter((row) =>
+      visibleColumns.every((column) => {
+        const filter = (columnFilters[column.columnName] ?? "").trim().toLocaleLowerCase("zh-Hant");
+        if (!filter) return true;
+
+        const formatted = formatValue(
+          row[column.columnName],
+          column.displayFormat,
+        ).toLocaleLowerCase("zh-Hant");
+
+        return formatted.includes(filter);
+      }),
+    );
+
+    if (!resultSort) return filtered;
+
+    return filtered
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        const compared = compareRuntimeValue(
+          a.row[resultSort.columnName],
+          b.row[resultSort.columnName],
+        );
+        if (compared !== 0) {
+          return compared * (resultSort.direction === "ASC" ? 1 : -1);
+        }
+        return a.index - b.index;
+      })
+      .map((item) => item.row);
+  }, [columnFilters, result, resultSort, visibleColumns]);
+
   const hasAggregates = visibleColumns.some((column) => column.aggregateType !== "NONE");
 
   const groupColumns = useMemo(
@@ -285,9 +353,26 @@ export function QueryRuntimePage() {
   );
 
   const groupedRows = useMemo(
-    () => result ? buildGroupedRows(result.rows, groupColumns) : [],
-    [result, groupColumns],
+    () => result ? buildGroupedRows(filteredAndSortedRows, groupColumns, resultSort) : [],
+    [filteredAndSortedRows, groupColumns, result, resultSort],
   );
+
+  function cycleResultSort(columnName: string) {
+    setResultSort((current) => {
+      if (!current || current.columnName !== columnName) {
+        return { columnName, direction: "ASC" };
+      }
+      if (current.direction === "ASC") {
+        return { columnName, direction: "DESC" };
+      }
+      return null;
+    });
+  }
+
+  function clearResultView() {
+    setColumnFilters({});
+    setResultSort(null);
+  }
 
   async function downloadExport(format: "excel" | "csv") {
     if (!query?.canExport) return;
@@ -321,6 +406,7 @@ export function QueryRuntimePage() {
     setRunning(true);
     setError("");
     setResult(null);
+    clearResultView();
     try {
       const response = await apiRequest<{ result: QueryResult }>(
         `/queries/${queryId}/execute`,
@@ -429,6 +515,7 @@ export function QueryRuntimePage() {
               parameter.defaultValue ?? "",
             ])));
             setResult(null);
+            clearResultView();
           }}>清除</button>
         </div>
       </form>
@@ -438,27 +525,70 @@ export function QueryRuntimePage() {
           <div className="section-title">
             <div>
               <h2>查詢結果</h2>
-              <p>{result.rowCount} 筆 · {result.elapsedMs} ms {result.truncated ? "· 已達筆數上限" : ""}</p>
+              <p>
+                {filteredAndSortedRows.length === result.rows.length
+                  ? `${result.rowCount} 筆`
+                  : `顯示 ${filteredAndSortedRows.length} / ${result.rowCount} 筆`}
+                {" · "}{result.elapsedMs} ms {result.truncated ? "· 已達筆數上限" : ""}
+              </p>
             </div>
-            {query?.canExport && (
-              <div className="runtime-export-actions">
-                <button className="secondary-button" type="button" onClick={() => void downloadExport("excel")}>匯出 Excel</button>
-                <button className="secondary-button" type="button" onClick={() => void downloadExport("csv")}>匯出 CSV</button>
-              </div>
-            )}
+            <div className="runtime-export-actions">
+              {(resultSort || Object.values(columnFilters).some((value) => value.trim())) && (
+                <button className="secondary-button" type="button" onClick={clearResultView}>
+                  清除排序與篩選
+                </button>
+              )}
+              {query?.canExport && (
+                <>
+                  <button className="secondary-button" type="button" onClick={() => void downloadExport("excel")}>匯出 Excel</button>
+                  <button className="secondary-button" type="button" onClick={() => void downloadExport("csv")}>匯出 CSV</button>
+                </>
+              )}
+            </div>
           </div>
 
           <div className="runtime-table-wrap">
             <table>
               <thead>
-                <tr>
+                <tr className="runtime-column-heading-row">
+                  {visibleColumns.map((column) => {
+                    const activeSort = resultSort?.columnName === column.columnName
+                      ? resultSort.direction
+                      : null;
+                    return (
+                      <th key={column.columnName}
+                        style={{
+                          minWidth: column.width ? `${column.width}px` : undefined,
+                          textAlign: column.alignment.toLowerCase() as "left" | "center" | "right",
+                        }}>
+                        <button
+                          className={`runtime-sort-button${activeSort ? " active" : ""}`}
+                          type="button"
+                          title="點擊切換升冪、降冪、取消排序"
+                          onClick={() => cycleResultSort(column.columnName)}
+                        >
+                          <span>{column.displayLabel}</span>
+                          <span className="runtime-sort-indicator" aria-hidden="true">
+                            {activeSort === "ASC" ? "▲" : activeSort === "DESC" ? "▼" : "↕"}
+                          </span>
+                        </button>
+                      </th>
+                    );
+                  })}
+                </tr>
+                <tr className="runtime-column-filter-row">
                   {visibleColumns.map((column) => (
-                    <th key={column.columnName}
-                      style={{
-                        minWidth: column.width ? `${column.width}px` : undefined,
-                        textAlign: column.alignment.toLowerCase() as "left" | "center" | "right",
-                      }}>
-                      {column.displayLabel}
+                    <th key={column.columnName}>
+                      <input
+                        type="search"
+                        value={columnFilters[column.columnName] ?? ""}
+                        placeholder="篩選…"
+                        aria-label={`${column.displayLabel} 篩選`}
+                        onChange={(e) => setColumnFilters((current) => ({
+                          ...current,
+                          [column.columnName]: e.target.value,
+                        }))}
+                      />
                     </th>
                   ))}
                 </tr>
@@ -516,7 +646,7 @@ export function QueryRuntimePage() {
                         style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}>
                         {index === 0 && column.aggregateType === "NONE"
                           ? "彙總"
-                          : aggregateValue(column, result.rows)}
+                          : aggregateValue(column, filteredAndSortedRows)}
                       </td>
                     ))}
                   </tr>
