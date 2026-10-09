@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
+import { auditRequestContext } from "../audit/auditContext.js";
+import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import {
   createDataSource,
   deleteDataSource,
@@ -99,6 +101,18 @@ dataSourceRouter.post("/", async (req, res, next) => {
       return;
     }
     const id = await createDataSource(parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "DATASOURCE_CREATED",
+      userId: req.authUser?.id ?? null,
+      parameters: {
+        dataSourceId: id,
+        code: parsed.data.code,
+        name: parsed.data.name,
+        type: parsed.data.type,
+        isActive: parsed.data.isActive,
+      },
+      ...auditRequestContext(req),
+    });
     res.status(201).json({ id });
   } catch (error) {
     const number = (error as { number?: number })?.number;
@@ -119,6 +133,18 @@ dataSourceRouter.put("/:id", async (req, res, next) => {
       return;
     }
     await updateDataSource(id.data, parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "DATASOURCE_UPDATED",
+      userId: req.authUser?.id ?? null,
+      parameters: {
+        dataSourceId: id.data,
+        code: parsed.data.code,
+        name: parsed.data.name,
+        type: parsed.data.type,
+        isActive: parsed.data.isActive,
+      },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASOURCE_NOT_FOUND") {
@@ -163,6 +189,12 @@ dataSourceRouter.delete("/:id", async (req, res, next) => {
       return;
     }
     await deleteDataSource(id.data);
+    await tryWriteAuditEvent({
+      eventType: "DATASOURCE_DELETED",
+      userId: req.authUser?.id ?? null,
+      parameters: { dataSourceId: id.data },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASOURCE_NOT_FOUND") {
