@@ -1,6 +1,6 @@
 import {
   BarChart3, CalendarDays, ChevronDown, ChevronRight, ClipboardList, Database,
-  FileSpreadsheet, Hospital, MessageSquare, Search, Table2, Users,
+  FileSpreadsheet, Hospital, MessageSquare, Search, Star, Table2, Users,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type ComponentType } from "react";
 import { Link } from "react-router-dom";
@@ -20,6 +20,7 @@ type QueryItem = {
   canView: boolean;
   canExecute: boolean;
   canExport: boolean;
+  isFavorite: boolean;
 };
 
 const icons: Record<string, ComponentType<{ size?: number }>> = {
@@ -37,6 +38,7 @@ export function QueryPortalPage() {
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState(ALL_CATEGORIES);
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [favoriteUpdating, setFavoriteUpdating] = useState<Set<number>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -83,6 +85,11 @@ export function QueryPortalPage() {
     });
   }, [queries, searchText, selectedCategory]);
 
+  const favoriteQueries = useMemo(
+    () => filteredQueries.filter((query) => query.isFavorite),
+    [filteredQueries],
+  );
+
   const groups = useMemo(() => {
     const map = new Map<string, QueryItem[]>();
     for (const query of filteredQueries) {
@@ -94,6 +101,59 @@ export function QueryPortalPage() {
       || a.localeCompare(b, "zh-Hant")
     );
   }, [filteredQueries]);
+
+  async function toggleFavorite(query: QueryItem) {
+    setFavoriteUpdating((current) => new Set(current).add(query.id));
+    setError("");
+    try {
+      const nextFavorite = !query.isFavorite;
+      await apiRequest(
+        `/queries/${query.id}/favorite`,
+        {
+          method: "PUT",
+          body: JSON.stringify({ isFavorite: nextFavorite }),
+        },
+        accessToken,
+      );
+      setQueries((current) => current.map((item) =>
+        item.id === query.id ? { ...item, isFavorite: nextFavorite } : item
+      ));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更新我的最愛失敗。");
+    } finally {
+      setFavoriteUpdating((current) => {
+        const next = new Set(current);
+        next.delete(query.id);
+        return next;
+      });
+    }
+  }
+
+  function renderQueryCard(query: QueryItem) {
+    const Icon = icons[query.icon] ?? Table2;
+    const updating = favoriteUpdating.has(query.id);
+
+    return (
+      <article className="query-icon-card" key={query.id}>
+        <button
+          className={`query-favorite-button${query.isFavorite ? " active" : ""}`}
+          type="button"
+          aria-label={query.isFavorite ? `從我的最愛移除 ${query.name}` : `加入我的最愛 ${query.name}`}
+          title={query.isFavorite ? "從我的最愛移除" : "加入我的最愛"}
+          disabled={updating}
+          onClick={() => void toggleFavorite(query)}
+        >
+          <Star size={19} fill={query.isFavorite ? "currentColor" : "none"} />
+        </button>
+
+        <Link className="query-card-link" to={`/queries/${query.id}`}>
+          <div className="query-icon"><Icon size={28} /></div>
+          <strong>{query.name}</strong>
+          <p>{query.description || query.code}</p>
+        </Link>
+      </article>
+    );
+  }
 
   function toggleCategory(category: string) {
     setCollapsedCategories((current) => {
@@ -165,6 +225,22 @@ export function QueryPortalPage() {
         </section>
       )}
 
+      {!loading && favoriteQueries.length > 0 && (
+        <section className="query-category query-favorites">
+          <div className="query-category-heading static">
+            <span className="query-category-title">
+              <Star size={21} fill="currentColor" aria-hidden="true" />
+              <strong>我的最愛</strong>
+            </span>
+            <span className="query-category-count">{favoriteQueries.length} 個查詢</span>
+          </div>
+
+          <div className="query-icon-grid">
+            {favoriteQueries.map(renderQueryCard)}
+          </div>
+        </section>
+      )}
+
       {!loading && groups.map(([category, items]) => {
         const collapsed = collapsedCategories.has(category);
         return (
@@ -184,16 +260,7 @@ export function QueryPortalPage() {
 
             {!collapsed && (
               <div className="query-icon-grid">
-                {items.map((query) => {
-                  const Icon = icons[query.icon] ?? Table2;
-                  return (
-                    <Link className="query-icon-card" to={`/queries/${query.id}`} key={query.id}>
-                      <div className="query-icon"><Icon size={28} /></div>
-                      <strong>{query.name}</strong>
-                      <p>{query.description || query.code}</p>
-                    </Link>
-                  );
-                })}
+                {items.map(renderQueryCard)}
               </div>
             )}
           </section>
