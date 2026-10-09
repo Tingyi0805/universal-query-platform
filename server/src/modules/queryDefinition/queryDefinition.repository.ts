@@ -339,6 +339,7 @@ export async function listAccessibleQueries(userId: number) {
            q.Icon, q.DatasetId, q.SortOrder, q.AllowExcelExport, q.IsPublished,
            q.IsActive, q.PublishedAtUtc, d.Name AS DatasetName,
            CASE WHEN f.UserId IS NULL THEN 0 ELSE 1 END AS IsFavorite,
+           recent.LastUsedAtUtc,
            CASE WHEN ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1 THEN 1 ELSE 0 END AS EffectiveCanView,
            CASE WHEN ISNULL(ra.CanExecute,0)=1 OR ISNULL(ua.CanExecute,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExecute,
            CASE WHEN ISNULL(ra.CanExport,0)=1 OR ISNULL(ua.CanExport,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExport
@@ -350,6 +351,14 @@ export async function listAccessibleQueries(userId: number) {
     LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
     LEFT JOIN uqp.UserQueryFavorite f
       ON f.QueryDefinitionId=q.Id AND f.UserId=@userId
+    OUTER APPLY (
+      SELECT MAX(a.CreatedAtUtc) AS LastUsedAtUtc
+      FROM uqp.AuditLog a
+      WHERE a.UserId=@userId
+        AND a.QueryDefinitionId=q.Id
+        AND a.EventType='QUERY_EXECUTE'
+        AND a.Status='SUCCESS'
+    ) recent
     WHERE q.IsPublished=1 AND q.IsActive=1 AND q.IsArchived=0
       AND NOT EXISTS (
         SELECT 1
@@ -367,6 +376,7 @@ export async function listAccessibleQueries(userId: number) {
     canExecute: Boolean(row.EffectiveCanExecute),
     canExport: Boolean(row.EffectiveCanExport) && Boolean(row.AllowExcelExport),
     isFavorite: Boolean(row.IsFavorite),
+    lastUsedAtUtc: row.LastUsedAtUtc ? new Date(row.LastUsedAtUtc).toISOString() : null,
   }));
 }
 
