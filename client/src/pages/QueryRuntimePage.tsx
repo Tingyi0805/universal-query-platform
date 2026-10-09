@@ -287,7 +287,7 @@ export function QueryRuntimePage() {
   useEffect(() => { if (Number.isFinite(queryId)) void load(); }, [load, queryId]);
 
   useEffect(() => {
-    setHiddenColumns(new Set());
+    setHiddenColumns(new Set<string>());
     setColumnPickerOpen(false);
   }, [queryId]);
 
@@ -299,7 +299,7 @@ export function QueryRuntimePage() {
       .filter((column) => column.isVisible && resultNames.has(column.columnName))
       .sort((a, b) => a.displayOrder - b.displayOrder);
 
-    if (configured.length > 0) return configured;
+    if (reportColumns.length > 0) return configured;
 
     return result.columns.map((column, index) => ({
       columnName: column.name,
@@ -427,12 +427,12 @@ export function QueryRuntimePage() {
   }
 
   function showAllColumns() {
-    setHiddenColumns(new Set());
+    setHiddenColumns(new Set<string>());
     setResultPage(1);
   }
 
   function restoreDefaultColumns() {
-    setHiddenColumns(new Set());
+    setHiddenColumns(new Set<string>());
     setColumnPickerOpen(false);
     setResultPage(1);
   }
