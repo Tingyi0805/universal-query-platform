@@ -235,6 +235,8 @@ export function QueryRuntimePage() {
   const [resultSort, setResultSort] = useState<ResultSort>(null);
   const [resultPage, setResultPage] = useState(1);
   const [resultPageSize, setResultPageSize] = useState(50);
+  const [hiddenColumns, setHiddenColumns] = useState<Set<string>>(new Set());
+  const [columnPickerOpen, setColumnPickerOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState("");
@@ -284,7 +286,12 @@ export function QueryRuntimePage() {
 
   useEffect(() => { if (Number.isFinite(queryId)) void load(); }, [load, queryId]);
 
-  const visibleColumns = useMemo(() => {
+  useEffect(() => {
+    setHiddenColumns(new Set());
+    setColumnPickerOpen(false);
+  }, [queryId]);
+
+  const availableColumns = useMemo(() => {
     if (!result) return [];
 
     const resultNames = new Set(result.columns.map((column) => column.name));
@@ -307,6 +314,13 @@ export function QueryRuntimePage() {
       aggregateType: "NONE" as const,
     }));
   }, [reportColumns, result]);
+
+  const visibleColumns = useMemo(
+    () => availableColumns.filter((column) => !hiddenColumns.has(column.columnName)),
+    [availableColumns, hiddenColumns],
+  );
+
+  const visibleColumnCount = visibleColumns.length;
 
   const filteredAndSortedRows = useMemo(() => {
     if (!result) return [];
@@ -345,13 +359,13 @@ export function QueryRuntimePage() {
   const hasAggregates = visibleColumns.some((column) => column.aggregateType !== "NONE");
 
   const groupColumns = useMemo(
-    () => visibleColumns
+    () => availableColumns
       .filter((column) => column.groupOrder !== null)
       .sort((a, b) =>
         (a.groupOrder ?? Number.MAX_SAFE_INTEGER) - (b.groupOrder ?? Number.MAX_SAFE_INTEGER)
         || a.displayOrder - b.displayOrder
       ),
-    [visibleColumns],
+    [availableColumns],
   );
 
   const paginationEnabled = groupColumns.length === 0;
@@ -387,6 +401,41 @@ export function QueryRuntimePage() {
     () => result ? buildGroupedRows(pagedRows, groupColumns, resultSort) : [],
     [groupColumns, pagedRows, result, resultSort],
   );
+
+  function toggleColumnVisibility(columnName: string) {
+    const isCurrentlyVisible = !hiddenColumns.has(columnName);
+    if (isCurrentlyVisible && visibleColumnCount <= 1) return;
+
+    setHiddenColumns((current) => {
+      const next = new Set(current);
+      if (next.has(columnName)) next.delete(columnName);
+      else next.add(columnName);
+      return next;
+    });
+
+    setColumnFilters((current) => {
+      if (!(columnName in current)) return current;
+      const next = { ...current };
+      delete next[columnName];
+      return next;
+    });
+
+    setResultSort((current) =>
+      current?.columnName === columnName ? null : current
+    );
+    setResultPage(1);
+  }
+
+  function showAllColumns() {
+    setHiddenColumns(new Set());
+    setResultPage(1);
+  }
+
+  function restoreDefaultColumns() {
+    setHiddenColumns(new Set());
+    setColumnPickerOpen(false);
+    setResultPage(1);
+  }
 
   function cycleResultSort(columnName: string) {
     setResultPage(1);
@@ -569,6 +618,49 @@ export function QueryRuntimePage() {
               </p>
             </div>
             <div className="runtime-export-actions">
+              <div className="runtime-column-picker-wrap">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  aria-expanded={columnPickerOpen}
+                  onClick={() => setColumnPickerOpen((open) => !open)}
+                >
+                  欄位顯示 {visibleColumnCount}/{availableColumns.length}
+                </button>
+
+                {columnPickerOpen && (
+                  <div className="runtime-column-picker">
+                    <div className="runtime-column-picker-head">
+                      <strong>顯示欄位</strong>
+                      <span>至少保留 1 欄</span>
+                    </div>
+
+                    <div className="runtime-column-picker-actions">
+                      <button type="button" onClick={showAllColumns}>全部顯示</button>
+                      <button type="button" onClick={restoreDefaultColumns}>恢復預設</button>
+                    </div>
+
+                    <div className="runtime-column-picker-list">
+                      {availableColumns.map((column) => {
+                        const checked = !hiddenColumns.has(column.columnName);
+                        const disableLastVisible = checked && visibleColumnCount <= 1;
+                        return (
+                          <label key={column.columnName}>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={disableLastVisible}
+                              onChange={() => toggleColumnVisibility(column.columnName)}
+                            />
+                            <span>{column.displayLabel}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {(resultSort || Object.values(columnFilters).some((value) => value.trim())) && (
                 <button className="secondary-button" type="button" onClick={clearResultView}>
                   清除排序與篩選
