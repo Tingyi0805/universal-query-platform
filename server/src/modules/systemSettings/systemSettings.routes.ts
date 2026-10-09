@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
+import { auditRequestContext } from "../audit/auditContext.js";
+import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import {
   getAuditRetentionSettings,
   getBrandingSettings,
@@ -67,6 +69,16 @@ systemSettingsRouter.put("/branding", requirePermission("MANAGE_SETTINGS"), asyn
     }
 
     await updateBrandingSettings(parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "SETTING_BRANDING_UPDATED",
+      userId: req.authUser?.id ?? null,
+      parameters: {
+        organizationName: parsed.data.organizationName,
+        platformName: parsed.data.platformName,
+        platformTitle: parsed.data.platformTitle,
+      },
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) { next(error); }
 });
@@ -92,6 +104,12 @@ systemSettingsRouter.put("/version-retention", requirePermission("MANAGE_SETTING
     }
 
     await updateVersionRetentionSettings(parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "SETTING_VERSION_RETENTION_UPDATED",
+      userId: req.authUser?.id ?? null,
+      parameters: parsed.data,
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) { next(error); }
 });
@@ -102,9 +120,16 @@ systemSettingsRouter.get("/version-retention/cleanup-preview", requirePermission
   } catch (error) { next(error); }
 });
 
-systemSettingsRouter.post("/version-retention/cleanup", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+systemSettingsRouter.post("/version-retention/cleanup", requirePermission("MANAGE_SETTINGS"), async (req, res, next) => {
   try {
-    res.json(await cleanupOldVersions());
+    const result = await cleanupOldVersions();
+    await tryWriteAuditEvent({
+      eventType: "VERSION_CLEANUP_EXECUTED",
+      userId: req.authUser?.id ?? null,
+      parameters: result,
+      ...auditRequestContext(req),
+    });
+    res.json(result);
   } catch (error) { next(error); }
 });
 
@@ -129,6 +154,12 @@ systemSettingsRouter.put("/audit-retention", requirePermission("MANAGE_SETTINGS"
     }
 
     await updateAuditRetentionSettings(parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "SETTING_AUDIT_RETENTION_UPDATED",
+      userId: req.authUser?.id ?? null,
+      parameters: parsed.data,
+      ...auditRequestContext(req),
+    });
     res.json({ status: "OK" });
   } catch (error) { next(error); }
 });
@@ -140,14 +171,28 @@ systemSettingsRouter.get("/audit-retention/lifecycle-preview", requirePermission
   } catch (error) { next(error); }
 });
 
-systemSettingsRouter.post("/audit-retention/archive", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+systemSettingsRouter.post("/audit-retention/archive", requirePermission("MANAGE_SETTINGS"), async (req, res, next) => {
   try {
-    res.json(await archiveOldAuditLogs());
+    const result = await archiveOldAuditLogs();
+    await tryWriteAuditEvent({
+      eventType: "AUDIT_ARCHIVE_EXECUTED",
+      userId: req.authUser?.id ?? null,
+      parameters: result,
+      ...auditRequestContext(req),
+    });
+    res.json(result);
   } catch (error) { next(error); }
 });
 
-systemSettingsRouter.post("/audit-retention/archive/cleanup", requirePermission("MANAGE_SETTINGS"), async (_req, res, next) => {
+systemSettingsRouter.post("/audit-retention/archive/cleanup", requirePermission("MANAGE_SETTINGS"), async (req, res, next) => {
   try {
-    res.json(await cleanupAuditArchive());
+    const result = await cleanupAuditArchive();
+    await tryWriteAuditEvent({
+      eventType: "AUDIT_ARCHIVE_CLEANUP_EXECUTED",
+      userId: req.authUser?.id ?? null,
+      parameters: result,
+      ...auditRequestContext(req),
+    });
+    res.json(result);
   } catch (error) { next(error); }
 });
