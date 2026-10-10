@@ -150,6 +150,38 @@ export async function updateDashboardDisplayDeviceSettings(input: {
   return mapRow(result.recordset[0]);
 }
 
+export async function reissueDashboardDisplayDeviceToken(
+  dashboardId: number,
+  deviceId: number,
+) {
+  const pool = await requirePool();
+  const token = crypto.randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(token);
+
+  const result = await pool.request()
+    .input("dashboardId", sql.BigInt, dashboardId)
+    .input("deviceId", sql.BigInt, deviceId)
+    .input("tokenHash", sql.Char(64), tokenHash)
+    .query(`
+      UPDATE uqp.DashboardDisplayDevice
+      SET TokenHash=@tokenHash,
+          LastUsedAtUtc=NULL
+      OUTPUT INSERTED.*
+      WHERE Id=@deviceId
+        AND DashboardId=@dashboardId
+        AND IsActive=1
+    `);
+
+  if (!result.recordset[0]) {
+    throw new Error("DASHBOARD_DEVICE_NOT_FOUND");
+  }
+
+  return {
+    device: mapRow(result.recordset[0]),
+    token,
+  };
+}
+
 export async function renewDashboardDisplayDevice(
   dashboardId: number,
   deviceId: number,
