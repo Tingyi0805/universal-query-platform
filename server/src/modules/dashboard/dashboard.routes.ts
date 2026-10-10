@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
@@ -65,7 +65,7 @@ const deviceSchema = z.object({
   expiresDays: z.coerce.number().int().min(1).max(3650).nullable().optional().default(365),
 });
 
-function getDeviceToken(req: Parameters<typeof dashboardRouter.get>[1] extends never ? never : any): string {
+function getDeviceToken(req: Request): string {
   const value = req.headers["x-dashboard-device-token"];
   return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
 }
