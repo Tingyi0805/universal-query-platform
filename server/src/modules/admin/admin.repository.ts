@@ -230,17 +230,6 @@ export async function createRole(input: { code: string; name: string; descriptio
         .query("INSERT INTO uqp.RolePermission (RoleId, PermissionId) SELECT @roleId, Id FROM uqp.Permission WHERE Code=@code");
     }
 
-    await new sql.Request(tx)
-      .input("roleId", sql.BigInt, roleId)
-      .query(`
-        UPDATE u
-        SET TokenVersion=TokenVersion+1,
-            UpdatedAtUtc=SYSUTCDATETIME()
-        FROM uqp.AppUser u
-        INNER JOIN uqp.UserRole ur ON ur.UserId=u.Id
-        WHERE ur.RoleId=@roleId
-      `);
-
     await tx.commit();
     return Number(roleId);
   } catch (error) { await tx.rollback(); throw error; }
@@ -272,6 +261,18 @@ export async function updateRole(roleId: number, input: { name: string; descript
       await new sql.Request(tx).input("roleId", sql.BigInt, roleId).input("code", sql.NVarChar(100), code)
         .query("INSERT INTO uqp.RolePermission (RoleId, PermissionId) SELECT @roleId, Id FROM uqp.Permission WHERE Code=@code");
     }
+
+    await new sql.Request(tx)
+      .input("roleId", sql.BigInt, roleId)
+      .query(`
+        UPDATE u
+        SET TokenVersion=TokenVersion+1,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        FROM uqp.AppUser u
+        INNER JOIN uqp.UserRole ur ON ur.UserId=u.Id
+        WHERE ur.RoleId=@roleId
+      `);
+
     await tx.commit();
   } catch (error) { await tx.rollback(); throw error; }
 }
