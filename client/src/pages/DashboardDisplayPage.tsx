@@ -143,6 +143,7 @@ export function DashboardDisplayPage() {
   const [searchParams] = useSearchParams();
   const dashboardId = Number(id);
   const requestedProfileId = Number(searchParams.get("profileId"));
+  const previewKey = searchParams.get("previewKey");
   const { accessToken } = useAuth();
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -173,6 +174,23 @@ export function DashboardDisplayPage() {
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
+
+    if (previewKey) {
+      try {
+        const raw = sessionStorage.getItem(previewKey);
+        if (!raw) {
+          setError("版型預覽資料已不存在，請回到版面設計重新預覽。");
+          return;
+        }
+        const profile = JSON.parse(raw) as LayoutProfile;
+        setProfiles([profile]);
+        return;
+      } catch {
+        setError("版型預覽資料格式不正確，請回到版面設計重新預覽。");
+        return;
+      }
+    }
+
     try {
       const result = await apiRequest<{ profiles: LayoutProfile[] }>(
         `/dashboards/${dashboardId}/layout`,
@@ -183,7 +201,7 @@ export function DashboardDisplayPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
     }
-  }, [accessToken, dashboardId]);
+  }, [accessToken, dashboardId, previewKey]);
 
   useEffect(() => {
     void Promise.all([loadData(), loadLayout()]);
@@ -204,6 +222,8 @@ export function DashboardDisplayPage() {
   }, []);
 
   const activeProfile = useMemo(() => {
+    if (previewKey && profiles.length > 0) return profiles[0];
+
     if (Number.isFinite(requestedProfileId)) {
       const requested = profiles.find((profile) => profile.id === requestedProfileId);
       if (requested) return requested;
@@ -229,7 +249,7 @@ export function DashboardDisplayPage() {
     return ranked[0]?.profile
       ?? profiles.find((profile) => profile.isDefault)
       ?? profiles[0];
-  }, [profiles, requestedProfileId, viewport]);
+  }, [previewKey, profiles, requestedProfileId, viewport]);
 
   const pageSize = Math.max(1, preview?.dashboard.pageSize ?? 5);
   const pageSeconds = Math.max(5, preview?.dashboard.pageSeconds ?? 20);
