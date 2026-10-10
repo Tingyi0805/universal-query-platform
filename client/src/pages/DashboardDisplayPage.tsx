@@ -86,10 +86,10 @@ export function DashboardDisplayPage() {
     if (!preview) return;
     const timer = window.setInterval(
       () => void load(),
-      Math.max(5, preview.dashboard.refreshSeconds) * 1000,
+      refreshSeconds * 1000,
     );
     return () => window.clearInterval(timer);
-  }, [load, preview?.dashboard.refreshSeconds]);
+  }, [load, refreshSeconds, Boolean(preview)]);
 
   const columns = useMemo(() => {
     if (!preview) return [];
@@ -110,6 +110,8 @@ export function DashboardDisplayPage() {
   }, [preview]);
 
   const pageSize = Math.max(1, preview?.dashboard.pageSize ?? 5);
+  const pageSeconds = Math.max(5, preview?.dashboard.pageSeconds ?? 20);
+  const refreshSeconds = Math.max(5, preview?.dashboard.refreshSeconds ?? 10);
   const totalPages = Math.max(1, Math.ceil((preview?.result.rows.length ?? 0) / pageSize));
   const safePage = Math.min(page, totalPages);
 
@@ -120,10 +122,13 @@ export function DashboardDisplayPage() {
   }, [pageSize, preview, safePage]);
 
   useEffect(() => {
-    if (!preview) return;
     setPage((current) => Math.min(Math.max(current, 1), totalPages));
-    setCountdown(Math.max(5, preview.dashboard.pageSeconds));
-  }, [preview, totalPages]);
+  }, [totalPages]);
+
+  useEffect(() => {
+    if (!preview) return;
+    setCountdown(pageSeconds);
+  }, [dashboardId, pageSeconds, Boolean(preview)]);
 
   useEffect(() => {
     if (!preview) return;
@@ -132,14 +137,14 @@ export function DashboardDisplayPage() {
       setCountdown((current) => {
         if (current <= 1) {
           setPage((currentPage) => currentPage >= totalPages ? 1 : currentPage + 1);
-          return Math.max(5, preview.dashboard.pageSeconds);
+          return pageSeconds;
         }
         return current - 1;
       });
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [preview, totalPages]);
+  }, [pageSeconds, totalPages, Boolean(preview)]);
 
   if (!preview && !error) {
     return <main className="dashboard-display-screen"><div className="dashboard-display-loading">載入中…</div></main>;
@@ -211,8 +216,8 @@ export function DashboardDisplayPage() {
       </section>
 
       <footer className="dashboard-display-footer">
-        <span>資料更新：每 {dashboard.refreshSeconds} 秒</span>
-        <span>換頁：每 {dashboard.pageSeconds} 秒</span>
+        <span>資料更新：每 {refreshSeconds} 秒</span>
+        <span>換頁：每 {pageSeconds} 秒</span>
         <button type="button" onClick={() => document.documentElement.requestFullscreen?.()}>
           全螢幕
         </button>
