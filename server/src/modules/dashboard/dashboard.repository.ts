@@ -42,12 +42,8 @@ function mapRow(row: any) {
   };
 }
 
-async function assertUsablePublishedQuery(parent: sql.ConnectionPool | sql.Transaction, queryDefinitionId: number) {
-  const request = parent instanceof sql.Transaction
-    ? new sql.Request(parent)
-    : parent.request();
-
-  const result = await request
+async function assertUsablePublishedQuery(pool: sql.ConnectionPool, queryDefinitionId: number) {
+  const result = await pool.request()
     .input("queryDefinitionId", sql.BigInt, queryDefinitionId)
     .query(`
       SELECT q.Id
@@ -60,6 +56,14 @@ async function assertUsablePublishedQuery(parent: sql.ConnectionPool | sql.Trans
         AND q.IsPublished=1
         AND q.IsActive=1
         AND q.IsArchived=0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM uqp.DatasetParameter dp
+          INNER JOIN uqp.Dataset lookupDataset
+            ON lookupDataset.Id=dp.LookupDatasetId
+          WHERE dp.DatasetId=d.Id
+            AND lookupDataset.IsArchived=1
+        )
     `);
 
   if (!result.recordset[0]) throw new Error("DASHBOARD_QUERY_NOT_AVAILABLE");
