@@ -35,6 +35,7 @@ export async function login(username: string, password: string): Promise<LoginRe
       username: user.username,
       displayName: user.displayName,
       permissions: user.permissions,
+      tokenVersion: record.tokenVersion,
     },
     env.JWT_SECRET,
     options,
