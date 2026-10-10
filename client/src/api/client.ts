@@ -2,6 +2,13 @@ const API_BASE = "/api";
 
 type ApiError = { error?: { code?: string; message?: string; detail?: string } };
 
+function notifyAuthInvalid(code?: string) {
+  if (typeof window === "undefined") return;
+  if (code === "TOKEN_REVOKED" || code === "INVALID_TOKEN") {
+    window.dispatchEvent(new CustomEvent("uqp-auth-invalid"));
+  }
+}
+
 export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
@@ -15,6 +22,7 @@ export async function apiRequest<T>(
   const body = (await response.json().catch(() => ({}))) as T & ApiError;
 
   if (!response.ok) {
+    notifyAuthInvalid(body.error?.code);
     const message = body.error?.message ?? "系統發生錯誤。";
     const detail = body.error?.detail?.trim();
     const error = new Error(detail ? `${message}（${detail}）` : message);
@@ -42,6 +50,7 @@ export async function apiDownload(
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({})) as ApiError;
+    notifyAuthInvalid(errorBody.error?.code);
     const error = new Error(errorBody.error?.message ?? "下載失敗。");
     Object.assign(error, { code: errorBody.error?.code, status: response.status });
     throw error;
