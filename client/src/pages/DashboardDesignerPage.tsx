@@ -112,6 +112,21 @@ function displayValue(value: unknown): string {
   return String(value);
 }
 
+function deviceDaysRemaining(expiresAtUtc: string | null): number | null {
+  if (!expiresAtUtc) return null;
+  const expires = new Date(expiresAtUtc).getTime();
+  if (!Number.isFinite(expires)) return null;
+  return Math.ceil((expires - Date.now()) / 86_400_000);
+}
+
+function deviceExpiryLabel(expiresAtUtc: string | null): string {
+  const days = deviceDaysRemaining(expiresAtUtc);
+  if (days == null) return "不過期";
+  if (days < 0) return `已到期 ${Math.abs(days)} 天`;
+  if (days === 0) return "今天到期";
+  return `剩餘 ${days} 天`;
+}
+
 export function DashboardDesignerPage() {
   const { accessToken } = useAuth();
 
@@ -481,6 +496,27 @@ export function DashboardDesignerPage() {
     }
   }
 
+  async function renewDevice(device: DisplayDevice) {
+    if (!deviceDashboard) return;
+    if (!window.confirm(`確定將顯示裝置「${device.deviceName}」延長 365 天？\n\n原本 Device Token 不會更換，看板端不需要重新設定。`)) return;
+
+    setError("");
+    try {
+      await apiRequest(
+        `/dashboards/${deviceDashboard.id}/devices/${device.id}/renew`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ days: 365 }),
+        },
+        accessToken,
+      );
+      setNotice(`顯示裝置「${device.deviceName}」已延長 365 天，原 Device Token 繼續有效。`);
+      await loadDevices(deviceDashboard);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "延長顯示裝置期限失敗。");
+    }
+  }
+
   async function revokeDevice(device: DisplayDevice) {
     if (!deviceDashboard) return;
     if (!window.confirm(`確定停用顯示裝置「${device.deviceName}」？停用後該螢幕下次更新資料時會停止播放。`)) return;
@@ -845,6 +881,7 @@ export function DashboardDesignerPage() {
                         <th>來源限制</th>
                         <th>最後使用</th>
                         <th>到期時間</th>
+                        <th>剩餘</th>
                         <th>建立時間</th>
                         <th>操作</th>
                       </tr>
@@ -861,16 +898,38 @@ export function DashboardDesignerPage() {
                           </td>
                           <td>{device.lastUsedAtUtc ? new Date(device.lastUsedAtUtc).toLocaleString() : "尚未使用"}</td>
                           <td>{device.expiresAtUtc ? new Date(device.expiresAtUtc).toLocaleString() : "不過期"}</td>
-                          <td>{device.createdAtUtc ? new Date(device.createdAtUtc).toLocaleString() : ""}</td>
                           <td>
+                            <span
+                              className={`device-expiry-badge ${
+                                (deviceDaysRemaining(device.expiresAtUtc) ?? 9999) <= 7
+                                  ? "danger"
+                                  : (deviceDaysRemaining(device.expiresAtUtc) ?? 9999) <= 30
+                                    ? "warning"
+                                    : "normal"
+                              }`}
+                            >
+                              {deviceExpiryLabel(device.expiresAtUtc)}
+                            </span>
+                          </td>
+                          <td>{device.createdAtUtc ? new Date(device.createdAtUtc).toLocaleString() : ""}</td>
+                          <td className="actions">
                             {device.isActive && (
-                              <button
-                                className="danger-button"
-                                type="button"
-                                onClick={() => void revokeDevice(device)}
-                              >
-                                停用
-                              </button>
+                              <>
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  onClick={() => void renewDevice(device)}
+                                >
+                                  延長 365 天
+                                </button>
+                                <button
+                                  className="danger-button"
+                                  type="button"
+                                  onClick={() => void revokeDevice(device)}
+                                >
+                                  停用
+                                </button>
+                              </>
                             )}
                           </td>
                         </tr>
