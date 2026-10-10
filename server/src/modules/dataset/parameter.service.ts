@@ -39,7 +39,8 @@ function parseDateValue(parameter: DatasetParameterRecord, value: unknown): unkn
     date = parseCanonicalDate(value, includeTime);
   } catch (error) {
     const code = includeTime ? "PARAMETER_DATETIME_INVALID" : "PARAMETER_DATE_INVALID";
-    throw new Error(`${code}:${parameter.name}`, { cause: error });
+    void error;
+    throw new Error(`${code}:${parameter.name}`);
   }
 
   if (parameter.dateOutputMode === "STRING") {
