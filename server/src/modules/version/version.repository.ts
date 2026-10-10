@@ -18,6 +18,9 @@ type DatasetSnapshot = {
     controlType: string;
     isRequired: boolean;
     defaultValue: string | null;
+    dateOutputMode?: "NATIVE" | "STRING";
+    dateCalendar?: "GREGORIAN" | "ROC";
+    dateFormat?: string | null;
     displayOrder: number;
     placeholder: string | null;
     helpText: string | null;
@@ -116,6 +119,7 @@ export async function snapshotDatasetVersion(
     .input("datasetId", sql.BigInt, datasetId)
     .query(`
       SELECT Name, Label, DataType, ControlType, IsRequired, DefaultValue,
+             DateOutputMode, DateCalendar, DateFormat,
              DisplayOrder, Placeholder, HelpText, OptionMode, FixedOptionsJson,
              LookupDatasetId, LookupValueField, LookupLabelField
       FROM uqp.DatasetParameter
@@ -140,6 +144,9 @@ export async function snapshotDatasetVersion(
       controlType: String(parameter.ControlType),
       isRequired: Boolean(parameter.IsRequired),
       defaultValue: parameter.DefaultValue == null ? null : String(parameter.DefaultValue),
+      dateOutputMode: String(parameter.DateOutputMode ?? "NATIVE") as "NATIVE" | "STRING",
+      dateCalendar: String(parameter.DateCalendar ?? "GREGORIAN") as "GREGORIAN" | "ROC",
+      dateFormat: parameter.DateFormat == null ? null : String(parameter.DateFormat),
       displayOrder: Number(parameter.DisplayOrder),
       placeholder: parameter.Placeholder == null ? null : String(parameter.Placeholder),
       helpText: parameter.HelpText == null ? null : String(parameter.HelpText),
