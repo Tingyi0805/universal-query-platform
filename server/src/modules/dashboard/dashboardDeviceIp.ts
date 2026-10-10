@@ -9,11 +9,14 @@ export function normalizeClientIp(value: string | null | undefined): string {
 function ipv4ToInt(ip: string): number | null {
   if (isIP(ip) !== 4) return null;
   const parts = ip.split(".").map(Number);
+  if (parts.length !== 4) return null;
+  const [a, b, c, d] = parts;
+  if (a == null || b == null || c == null || d == null) return null;
   return (
-    ((parts[0] << 24) >>> 0) +
-    ((parts[1] << 16) >>> 0) +
-    ((parts[2] << 8) >>> 0) +
-    (parts[3] >>> 0)
+    ((a << 24) >>> 0) +
+    ((b << 16) >>> 0) +
+    ((c << 8) >>> 0) +
+    (d >>> 0)
   ) >>> 0;
 }
 
@@ -23,7 +26,7 @@ export function isValidIpOrCidr(value: string): boolean {
   if (isIP(trimmed)) return true;
 
   const [network, prefixText, extra] = trimmed.split("/");
-  if (extra !== undefined || isIP(network) !== 4) return false;
+  if (!network || prefixText == null || extra !== undefined || isIP(network) !== 4) return false;
 
   const prefix = Number(prefixText);
   return Number.isInteger(prefix) && prefix >= 0 && prefix <= 32;
@@ -40,6 +43,7 @@ export function matchesIpRestriction(
   if (!allowedCidr) return false;
 
   const [network, prefixText] = allowedCidr.split("/");
+  if (!network || prefixText == null) return false;
   const prefix = Number(prefixText);
   const client = ipv4ToInt(normalized);
   const base = ipv4ToInt(network);
