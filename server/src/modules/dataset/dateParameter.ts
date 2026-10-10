@@ -61,7 +61,17 @@ export function resolveDynamicDateExpression(
     return new Date(Date.UTC(target.year, target.month - 1, target.day, 0, 0, 0, 0));
   }
 
-  if (expression === "$NOW") return now;
+  if (expression === "$NOW") {
+    return new Date(Date.UTC(
+      current.year,
+      current.month - 1,
+      current.day,
+      current.hour,
+      current.minute,
+      current.second,
+      now.getMilliseconds(),
+    ));
+  }
 
   if (expression === "$TODAY_START") {
     return new Date(Date.UTC(current.year, current.month - 1, current.day, 0, 0, 0, 0));
