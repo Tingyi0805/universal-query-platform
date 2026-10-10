@@ -154,3 +154,26 @@
     flex-direction: column;
   }
 }
+
+
+.dashboard-display-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid #e1e7ef;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.dashboard-display-options label {
+  display: inline-flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.dashboard-display-options input {
+  width: auto;
+}
