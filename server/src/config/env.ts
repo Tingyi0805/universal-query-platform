@@ -25,6 +25,9 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   PLATFORM_TIME_ZONE: z.string().default("Asia/Taipei"),
 
+  TRUST_PROXY_ENABLED: envBoolean(false),
+  TRUST_PROXY_ADDRESSES: z.string().default("127.0.0.1,::1"),
+
   PLATFORM_DB_SERVER: optionalString,
   PLATFORM_DB_PORT: z.coerce.number().int().min(1).max(65535).default(1433),
   PLATFORM_DB_DATABASE: optionalString,
@@ -48,5 +51,9 @@ export const env = {
   CLIENT_ORIGINS: parsedEnv.CLIENT_ORIGIN
     .split(",")
     .map((origin) => origin.trim())
+    .filter(Boolean),
+  TRUSTED_PROXY_ADDRESSES: parsedEnv.TRUST_PROXY_ADDRESSES
+    .split(",")
+    .map((value) => value.trim())
     .filter(Boolean),
 };
