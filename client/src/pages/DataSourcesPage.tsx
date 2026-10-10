@@ -314,6 +314,7 @@ export function DataSourcesPage() {
           </div>
 
           <ManagementListToolbar
+            compact
             search={listSearch}
             onSearch={(value) => { setListSearch(value); setListPage(1); }}
             page={listPage}
