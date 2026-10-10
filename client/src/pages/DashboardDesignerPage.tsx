@@ -496,6 +496,62 @@ export function DashboardDesignerPage() {
     }
   }
 
+  async function editDevice(device: DisplayDevice) {
+    if (!deviceDashboard) return;
+
+    const deviceName = window.prompt("裝置名稱", device.deviceName);
+    if (!deviceName?.trim()) return;
+
+    const enforceIpRestriction = window.confirm(
+      device.enforceIpRestriction
+        ? "此裝置目前已啟用來源 IP 限制。\n\n按「確定」保留 IP 限制；按「取消」則關閉 IP 限制。"
+        : "是否啟用此裝置的來源 IP 限制？",
+    );
+
+    let allowedIp: string | null = null;
+    let allowedCidr: string | null = null;
+
+    if (enforceIpRestriction) {
+      const currentRestriction = device.allowedIp ?? device.allowedCidr ?? "";
+      const restriction = window.prompt(
+        "請輸入允許的來源 IP 或 IPv4 CIDR。\n\n單一 IP 範例：10.145.143.50\n網段範例：10.145.143.0/24",
+        currentRestriction,
+      );
+
+      if (!restriction?.trim()) {
+        setError("已取消修改：啟用來源 IP 限制時必須輸入允許的 IP 或 CIDR。");
+        return;
+      }
+
+      if (restriction.includes("/")) {
+        allowedCidr = restriction.trim();
+      } else {
+        allowedIp = restriction.trim();
+      }
+    }
+
+    setError("");
+    try {
+      await apiRequest(
+        `/dashboards/${deviceDashboard.id}/devices/${device.id}/settings`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            deviceName: deviceName.trim(),
+            enforceIpRestriction,
+            allowedIp,
+            allowedCidr,
+          }),
+        },
+        accessToken,
+      );
+      setNotice(`顯示裝置「${deviceName.trim()}」設定已更新，原 Device Token 繼續有效。`);
+      await loadDevices(deviceDashboard);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "更新顯示裝置設定失敗。");
+    }
+  }
+
   async function renewDevice(device: DisplayDevice) {
     if (!deviceDashboard) return;
     if (!window.confirm(`確定將顯示裝置「${device.deviceName}」延長 365 天？\n\n原本 Device Token 不會更換，看板端不需要重新設定。`)) return;
@@ -915,6 +971,13 @@ export function DashboardDesignerPage() {
                           <td className="actions">
                             {device.isActive && (
                               <>
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  onClick={() => void editDevice(device)}
+                                >
+                                  編輯
+                                </button>
                                 <button
                                   className="secondary-button"
                                   type="button"
