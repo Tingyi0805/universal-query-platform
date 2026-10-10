@@ -23,6 +23,7 @@ import {
   replaceDatasetParameters,
   syncDatasetParameters,
 } from "./parameter.repository.js";
+import { isDynamicDateExpression } from "./dateParameter.js";
 import {
   listDatasetVersions,
   restoreDatasetVersion,
@@ -58,6 +59,9 @@ const parameterSchema = z.object({
   controlType: z.enum(["TEXT","NUMBER","DATE","DATETIME","SELECT","MULTISELECT","CHECKBOX"]),
   isRequired: z.boolean(),
   defaultValue: z.string().max(1000).nullable(),
+  dateOutputMode: z.enum(["NATIVE","STRING"]).default("NATIVE"),
+  dateCalendar: z.enum(["GREGORIAN","ROC"]).default("GREGORIAN"),
+  dateFormat: z.string().max(100).nullable().default(null),
   displayOrder: z.coerce.number().int().min(0).max(10000),
   placeholder: z.string().max(200).nullable(),
   helpText: z.string().max(500).nullable(),
@@ -99,19 +103,35 @@ function validateParameterOptions(parameters: z.infer<typeof parameterSchema>[])
       }
 
       if (parameter.dataType === "DATE") {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(defaultValue) || Number.isNaN(new Date(`${defaultValue}T00:00:00Z`).getTime())) {
-          return `${parameter.name} 的日期預設值必須使用 YYYY-MM-DD。`;
+        const dynamic = isDynamicDateExpression(defaultValue);
+        if (!dynamic && (!/^\d{4}-\d{2}-\d{2}$/.test(defaultValue) || Number.isNaN(new Date(`${defaultValue}T00:00:00Z`).getTime()))) {
+          return `${parameter.name} 的日期預設值必須使用 YYYY-MM-DD 或動態日期。`;
+        }
+        if (dynamic && ["$NOW", "$TODAY_START", "$TODAY_END"].includes(defaultValue)) {
+          return `${parameter.name} 為 DATE，請使用 $TODAY 或 $TODAY±N。`;
         }
       }
 
-      if (parameter.dataType === "DATETIME" && Number.isNaN(new Date(defaultValue).getTime())) {
-        return `${parameter.name} 的日期時間預設值格式不正確。`;
+      if (parameter.dataType === "DATETIME") {
+        const dynamic = isDynamicDateExpression(defaultValue);
+        if (!dynamic && Number.isNaN(new Date(defaultValue).getTime())) {
+          return `${parameter.name} 的日期時間預設值格式不正確。`;
+        }
       }
 
       if (parameter.dataType === "BOOLEAN" && !["true","false","1","0","yes","no","y","n"].includes(defaultValue.toLowerCase())) {
         return `${parameter.name} 的布林預設值必須為 true/false 或 1/0。`;
       }
     }
+    if (["DATE","DATETIME"].includes(parameter.dataType)) {
+      if (parameter.dateOutputMode === "STRING" && !(parameter.dateFormat?.trim())) {
+        return `${parameter.name} 選擇格式化字串時必須設定日期格式。`;
+      }
+      if (parameter.dateFormat && !/^[yMdHhms/:. _-]+$/.test(parameter.dateFormat)) {
+        return `${parameter.name} 的日期格式包含不支援的字元。`;
+      }
+    }
+
     if (parameter.optionMode === "FIXED") {
       if (!parameter.fixedOptionsJson) return `${parameter.name} 缺少固定選項。`;
       try {
