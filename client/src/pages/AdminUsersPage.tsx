@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { ManagementListToolbar } from "../components/ManagementListToolbar";
 import "./AdminUsersPage.css";
 
 type UserRow = {
@@ -39,6 +40,12 @@ export function AdminUsersPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
+  const [userSearch, setUserSearch] = useState("");
+  const [userStatus, setUserStatus] = useState<"ACTIVE" | "INACTIVE" | "ALL">("ACTIVE");
+  const [userPage, setUserPage] = useState(1);
+  const [userPageSize, setUserPageSize] = useState(20);
+  const [userTotal, setUserTotal] = useState(0);
+  const [userTotalPages, setUserTotalPages] = useState(1);
 
   const [newUser, setNewUser] = useState({
     username: "",
@@ -58,12 +65,25 @@ export function AdminUsersPage() {
     setLoading(true);
     setError("");
     try {
+      const params = new URLSearchParams({
+        page: String(userPage),
+        pageSize: String(userPageSize),
+        status: userStatus,
+      });
+      if (userSearch) params.set("search", userSearch);
+
       const [userResult, roleResult, permissionResult] = await Promise.all([
-        apiRequest<{ users: UserRow[] }>("/admin/users", {}, accessToken),
+        apiRequest<{
+          users: UserRow[];
+          total: number;
+          totalPages: number;
+        }>(`/admin/users?${params.toString()}`, {}, accessToken),
         apiRequest<{ roles: RoleRow[] }>("/admin/roles", {}, accessToken),
         apiRequest<{ permissions: PermissionRow[] }>("/admin/permissions", {}, accessToken),
       ]);
       setUsers(userResult.users);
+      setUserTotal(userResult.total);
+      setUserTotalPages(userResult.totalPages);
       setRoles(roleResult.roles);
       setPermissions(permissionResult.permissions);
     } catch (e) {
@@ -71,7 +91,7 @@ export function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, userPage, userPageSize, userSearch, userStatus]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -276,6 +296,32 @@ export function AdminUsersPage() {
 
           <section className="admin-section">
             <h2>使用者</h2>
+            <ManagementListToolbar
+              search={userSearch}
+              onSearch={(value) => { setUserSearch(value); setUserPage(1); }}
+              page={userPage}
+              pageSize={userPageSize}
+              total={userTotal}
+              totalPages={userTotalPages}
+              onPageChange={setUserPage}
+              onPageSizeChange={(value) => { setUserPageSize(value); setUserPage(1); }}
+              filters={
+                <label>
+                  <span>狀態</span>
+                  <select
+                    value={userStatus}
+                    onChange={(event) => {
+                      setUserStatus(event.target.value as "ACTIVE" | "INACTIVE" | "ALL");
+                      setUserPage(1);
+                    }}
+                  >
+                    <option value="ACTIVE">啟用</option>
+                    <option value="INACTIVE">停用</option>
+                    <option value="ALL">全部</option>
+                  </select>
+                </label>
+              }
+            />
             <div className="table-card">
               <table>
                 <thead>
@@ -337,7 +383,7 @@ export function AdminUsersPage() {
                   ))}
                 </tbody>
               </table>
-              {users.length === 0 && <div className="empty-state">目前沒有使用者。</div>}
+              {users.length === 0 && <div className="empty-state">目前沒有符合條件的使用者。</div>}
             </div>
           </section>
 
