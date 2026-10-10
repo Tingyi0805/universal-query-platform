@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -34,7 +34,7 @@ type PreviewResult = {
 type LayoutWidget = {
   id: number;
   profileId: number;
-  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE";
+  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
   title: string | null;
   sourceKey: string | null;
   staticText: string | null;
@@ -56,6 +56,7 @@ type LayoutProfile = {
   canvasHeight: number;
   isDefault: boolean;
   sortOrder: number;
+  config: Record<string, unknown>;
   widgets: LayoutWidget[];
 };
 
@@ -93,6 +94,41 @@ function maskText(value: unknown, mode: unknown): string {
 
   if (text.length <= 2) return "○".repeat(text.length);
   return `${text.slice(0, 1)}${"○".repeat(text.length - 2)}${text.slice(-1)}`;
+}
+
+
+function configNumber(config: Record<string, unknown>, key: string, fallback: number) {
+  const value = Number(config[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function configText(config: Record<string, unknown>, key: string, fallback: string) {
+  const value = config[key];
+  return typeof value === "string" && value ? value : fallback;
+}
+
+function widgetStyle(widget: LayoutWidget): CSSProperties {
+  const opacity = Math.max(0, Math.min(100, configNumber(widget.config, "backgroundOpacity", 100))) / 100;
+  const bg = configText(widget.config, "backgroundColor", "#ffffff");
+  const hex = bg.replace("#", "");
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  const backgroundColor = /^#[0-9a-fA-F]{6}$/.test(bg)
+    ? `rgba(${r}, ${g}, ${b}, ${opacity})`
+    : bg;
+
+  return {
+    color: configText(widget.config, "textColor", "#172033"),
+    backgroundColor,
+    fontFamily: configText(widget.config, "fontFamily", "system-ui"),
+    fontWeight: configNumber(widget.config, "fontWeight", 700),
+    borderColor: configText(widget.config, "borderColor", "transparent"),
+    borderWidth: configNumber(widget.config, "borderWidth", 0),
+    borderStyle: "solid",
+    borderRadius: configNumber(widget.config, "borderRadius", 0),
+    padding: configNumber(widget.config, "padding", 0),
+  };
 }
 
 function tableColumnMask(widget: LayoutWidget, columnName: string): MaskMode {
@@ -266,9 +302,22 @@ export function DashboardDisplayPage() {
     const firstRow = pageRows[0] ?? preview?.result.rows[0] ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
+    if (widget.widgetType === "CONTAINER") {
+      return <div className="dashboard-play-container">{widget.title ?? ""}</div>;
+    }
+
     if (widget.widgetType === "TABLE") {
       return (
-        <div className="dashboard-play-table">
+        <div
+          className="dashboard-play-table"
+          style={{
+            "--table-header-bg": configText(widget.config, "tableHeaderBackground", "#f1f4f8"),
+            "--table-header-text": configText(widget.config, "tableHeaderTextColor", "#172033"),
+            "--table-row-bg": configText(widget.config, "tableRowBackground", "#ffffff"),
+            "--table-alt-row-bg": configText(widget.config, "tableAltRowBackground", "#f8fafc"),
+            "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
+          } as CSSProperties}
+        >
           <table>
             <thead>
               <tr>
@@ -368,6 +417,7 @@ export function DashboardDisplayPage() {
             width: activeProfile.canvasWidth,
             height: activeProfile.canvasHeight,
             transform: `scale(${scale})`,
+            backgroundColor: configText(activeProfile.config ?? {}, "canvasBackgroundColor", "#ffffff"),
           }}
         >
           {activeProfile.widgets
@@ -384,6 +434,8 @@ export function DashboardDisplayPage() {
                   height: widget.height,
                   fontSize: widget.fontSize,
                   textAlign: widget.alignment.toLowerCase() as "left" | "center" | "right",
+                  ...widgetStyle(widget),
+                  zIndex: widget.widgetType === "CONTAINER" ? 0 : 1,
                 }}
               >
                 {renderWidget(widget)}
