@@ -509,6 +509,12 @@ export function DashboardDesignerPage() {
                         </button>
                         <Link
                           className="secondary-button link-button"
+                          to={`/designer/dashboards/${item.id}/layout`}
+                        >
+                          版面設計
+                        </Link>
+                        <Link
+                          className="secondary-button link-button"
                           to={`/designer/dashboards/${item.id}/display`}
                           target="_blank"
                         >
