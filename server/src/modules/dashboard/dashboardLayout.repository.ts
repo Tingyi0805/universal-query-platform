@@ -138,8 +138,7 @@ export async function replaceDashboardLayout(
       `);
 
     let defaultUsed = false;
-    for (let profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
-      const profile = profiles[profileIndex];
+    for (const profile of profiles) {
       const isDefault = profile.isDefault && !defaultUsed;
       if (isDefault) defaultUsed = true;
 

@@ -82,10 +82,54 @@ function clientKey(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+type MaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC";
+
+const maskModeLabels: Record<MaskMode, string> = {
+  NONE: "不遮蔽",
+  NAME: "姓名遮蔽（王○佑）",
+  MRN: "病歷號遮蔽",
+  PHONE: "電話遮蔽",
+  GENERIC: "一般遮蔽",
+};
+
 function textValue(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function maskText(value: unknown, mode: unknown): string {
+  const text = textValue(value);
+  const maskMode = String(mode ?? "NONE") as MaskMode;
+  if (!text || maskMode === "NONE") return text;
+
+  if (maskMode === "NAME") {
+    const chars = Array.from(text);
+    if (chars.length <= 1) return "○";
+    if (chars.length === 2) return `${chars[0]}○`;
+    return `${chars[0]}${"○".repeat(chars.length - 2)}${chars[chars.length - 1]}`;
+  }
+
+  if (maskMode === "MRN") {
+    if (text.length <= 4) return "○".repeat(text.length);
+    const head = text.slice(0, Math.min(4, text.length - 2));
+    const tail = text.slice(-2);
+    return `${head}${"○".repeat(Math.max(1, text.length - head.length - tail.length))}${tail}`;
+  }
+
+  if (maskMode === "PHONE") {
+    if (text.length <= 5) return "○".repeat(text.length);
+    return `${text.slice(0, 4)}${"○".repeat(Math.max(1, text.length - 7))}${text.slice(-3)}`;
+  }
+
+  if (text.length <= 2) return "○".repeat(text.length);
+  return `${text.slice(0, 1)}${"○".repeat(text.length - 2)}${text.slice(-1)}`;
+}
+
+function getColumnMask(widget: LayoutWidget, columnName: string): MaskMode {
+  const masks = widget.config?.columnMasks;
+  if (!masks || typeof masks !== "object" || Array.isArray(masks)) return "NONE";
+  return String((masks as Record<string, unknown>)[columnName] ?? "NONE") as MaskMode;
 }
 
 function withClientKeys(profile: Omit<LayoutProfile, "clientKey" | "widgets"> & {
@@ -378,7 +422,7 @@ export function DashboardLayoutDesignerPage() {
               {rows.map((row, index) => (
                 <tr key={index}>
                   {visibleColumns.map((column) => (
-                    <td key={column.columnName}>{textValue(row[column.columnName])}</td>
+                    <td key={column.columnName}>{maskText(row[column.columnName], getColumnMask(widget, column.columnName))}</td>
                   ))}
                 </tr>
               ))}
@@ -397,7 +441,9 @@ export function DashboardLayoutDesignerPage() {
         value = widget.sourceKey ? textValue(parameters[widget.sourceKey]) : "選擇參數";
         break;
       case "FIELD":
-        value = widget.sourceKey ? textValue(firstRow[widget.sourceKey]) : "選擇資料欄位";
+        value = widget.sourceKey
+          ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode)
+          : "選擇資料欄位";
         break;
       case "CLOCK":
         value = new Date().toLocaleString("zh-TW", { hour12: false });
@@ -619,16 +665,67 @@ export function DashboardLayoutDesignerPage() {
               )}
 
               {selectedWidget.widgetType === "FIELD" && (
-                <label>
-                  資料欄位
-                  <select value={selectedWidget.sourceKey ?? ""}
-                    onChange={(e) => updateSelectedWidget({ sourceKey: e.target.value || null })}>
-                    <option value="">請選擇</option>
-                    {(preview?.result.columns ?? []).map((column) => (
-                      <option key={column.name} value={column.name}>{column.name}</option>
-                    ))}
-                  </select>
-                </label>
+                <>
+                  <label>
+                    資料欄位
+                    <select value={selectedWidget.sourceKey ?? ""}
+                      onChange={(e) => updateSelectedWidget({ sourceKey: e.target.value || null })}>
+                      <option value="">請選擇</option>
+                      {(preview?.result.columns ?? []).map((column) => (
+                        <option key={column.name} value={column.name}>{column.name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    敏感資料遮蔽
+                    <select
+                      value={String(selectedWidget.config?.maskMode ?? "NONE")}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, maskMode: e.target.value },
+                      })}
+                    >
+                      {(Object.keys(maskModeLabels) as MaskMode[]).map((mode) => (
+                        <option key={mode} value={mode}>{maskModeLabels[mode]}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
+
+              {selectedWidget.widgetType === "TABLE" && (
+                <div className="layout-mask-settings">
+                  <strong>表格欄位遮蔽</strong>
+                  <p className="layout-hint">可個別設定姓名、病歷號、電話等欄位的顯示方式。</p>
+                  {visibleColumns.map((column) => (
+                    <label key={column.columnName}>
+                      {column.displayLabel}
+                      <select
+                        value={getColumnMask(selectedWidget, column.columnName)}
+                        onChange={(e) => {
+                          const currentMasks =
+                            selectedWidget.config?.columnMasks &&
+                            typeof selectedWidget.config.columnMasks === "object" &&
+                            !Array.isArray(selectedWidget.config.columnMasks)
+                              ? selectedWidget.config.columnMasks as Record<string, unknown>
+                              : {};
+                          updateSelectedWidget({
+                            config: {
+                              ...selectedWidget.config,
+                              columnMasks: {
+                                ...currentMasks,
+                                [column.columnName]: e.target.value,
+                              },
+                            },
+                          });
+                        }}
+                      >
+                        {(Object.keys(maskModeLabels) as MaskMode[]).map((mode) => (
+                          <option key={mode} value={mode}>{maskModeLabels[mode]}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
               )}
 
               <div className="layout-inspector-grid">
