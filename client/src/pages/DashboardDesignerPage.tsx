@@ -42,6 +42,17 @@ type ReportColumn = {
   alignment: "LEFT" | "CENTER" | "RIGHT";
 };
 
+type DisplayDevice = {
+  id: number;
+  dashboardId: number;
+  deviceName: string;
+  isActive: boolean;
+  expiresAtUtc: string | null;
+  lastUsedAtUtc: string | null;
+  createdAtUtc: string | null;
+  revokedAtUtc: string | null;
+};
+
 type PreviewResult = {
   dashboard: DashboardRow;
   query: { id: number; code: string; name: string };
@@ -136,6 +147,9 @@ export function DashboardDesignerPage() {
   const [listPageSize, setListPageSize] = useState(20);
   const [listTotal, setListTotal] = useState(0);
   const [listTotalPages, setListTotalPages] = useState(1);
+  const [deviceDashboard, setDeviceDashboard] = useState<DashboardRow | null>(null);
+  const [displayDevices, setDisplayDevices] = useState<DisplayDevice[]>([]);
+  const [deviceLoading, setDeviceLoading] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -314,6 +328,76 @@ export function DashboardDesignerPage() {
   async function startPreview(item: DashboardRow) {
     setPreviewDashboardId(item.id);
     await loadPreview(item.id);
+  }
+
+
+  async function loadDevices(item: DashboardRow) {
+    setDeviceDashboard(item);
+    setDeviceLoading(true);
+    setError("");
+    try {
+      const result = await apiRequest<{ devices: DisplayDevice[] }>(
+        `/dashboards/${item.id}/devices`,
+        {},
+        accessToken,
+      );
+      setDisplayDevices(result.devices);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "載入固定播放裝置失敗。");
+    } finally {
+      setDeviceLoading(false);
+    }
+  }
+
+  async function createFixedPlayback(item: DashboardRow) {
+    const deviceName = window.prompt("請輸入顯示裝置名稱，例如：3F 手術室大螢幕");
+    if (!deviceName?.trim()) return;
+
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      setError("瀏覽器封鎖了播放視窗，請允許此網站開啟新視窗後再試一次。");
+      return;
+    }
+
+    try {
+      const result = await apiRequest<{ device: DisplayDevice; token: string }>(
+        `/dashboards/${item.id}/devices`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            deviceName: deviceName.trim(),
+            expiresDays: 365,
+          }),
+        },
+        accessToken,
+      );
+
+      popup.localStorage.setItem(`uqp.dashboard.device.${item.id}`, result.token);
+      popup.location.replace(`/display/dashboards/${item.id}`);
+      setNotice(`已建立固定播放裝置「${result.device.deviceName}」，有效期 365 天。`);
+      if (deviceDashboard?.id === item.id) await loadDevices(item);
+    } catch (e) {
+      popup.close();
+      setError(e instanceof Error ? e.message : "建立固定播放裝置失敗。");
+    }
+  }
+
+  async function revokeDevice(device: DisplayDevice) {
+    if (!deviceDashboard) return;
+    if (!window.confirm(`確定停用顯示裝置「${device.deviceName}」？停用後該螢幕下次更新資料時會停止播放。`)) return;
+
+    setError("");
+    try {
+      await apiRequest(
+        `/dashboards/${deviceDashboard.id}/devices/${device.id}`,
+        { method: "DELETE" },
+        accessToken,
+      );
+      setNotice(`顯示裝置「${device.deviceName}」已停用。`);
+      await loadDevices(deviceDashboard);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "停用顯示裝置失敗。");
+    }
   }
 
   const previewColumns = useMemo(() => {
@@ -603,6 +687,21 @@ export function DashboardDesignerPage() {
                         >
                           播放
                         </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={!item.isActive}
+                          onClick={() => void createFixedPlayback(item)}
+                        >
+                          固定播放
+                        </button>
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => void loadDevices(item)}
+                        >
+                          裝置管理
+                        </button>
                         <button className="danger-button" type="button" onClick={() => void remove(item)}>刪除</button>
                       </td>
                     </tr>
@@ -612,6 +711,71 @@ export function DashboardDesignerPage() {
             </div>
             {dashboards.length === 0 && <div className="empty-state">尚未建立 Dashboard。</div>}
           </section>
+
+          {deviceDashboard && (
+            <section className="dashboard-device-card">
+              <div className="dashboard-preview-heading">
+                <div>
+                  <p className="eyebrow">Display Devices</p>
+                  <h2>{deviceDashboard.name}－固定播放裝置</h2>
+                  <p>固定播放使用獨立裝置憑證，不受一般 8 小時登入 JWT 影響。</p>
+                </div>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => {
+                    setDeviceDashboard(null);
+                    setDisplayDevices([]);
+                  }}
+                >
+                  關閉
+                </button>
+              </div>
+
+              {deviceLoading ? (
+                <div className="notice">載入裝置中…</div>
+              ) : displayDevices.length === 0 ? (
+                <div className="empty-state">尚未建立固定播放裝置。</div>
+              ) : (
+                <div className="dashboard-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>裝置名稱</th>
+                        <th>狀態</th>
+                        <th>最後使用</th>
+                        <th>到期時間</th>
+                        <th>建立時間</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {displayDevices.map((device) => (
+                        <tr key={device.id}>
+                          <td>{device.deviceName}</td>
+                          <td>{device.isActive ? "啟用" : "已停用"}</td>
+                          <td>{device.lastUsedAtUtc ? new Date(device.lastUsedAtUtc).toLocaleString() : "尚未使用"}</td>
+                          <td>{device.expiresAtUtc ? new Date(device.expiresAtUtc).toLocaleString() : "不過期"}</td>
+                          <td>{device.createdAtUtc ? new Date(device.createdAtUtc).toLocaleString() : ""}</td>
+                          <td>
+                            {device.isActive && (
+                              <button
+                                className="danger-button"
+                                type="button"
+                                onClick={() => void revokeDevice(device)}
+                              >
+                                停用
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )}
 
           {previewDashboardId && (
             <section className="dashboard-preview-card">
