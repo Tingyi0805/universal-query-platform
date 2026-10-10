@@ -3,12 +3,7 @@ import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
-import {
-  completeAuditFailure,
-  completeAuditSuccess,
-  startAudit,
-  tryWriteAuditEvent,
-} from "../audit/audit.repository.js";
+import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import { getQueryDefinition } from "../queryDefinition/queryDefinition.repository.js";
 import { listReportColumns } from "../queryDefinition/reportColumn.repository.js";
 import {
@@ -27,6 +22,13 @@ const dashboardSchema = z.object({
   description: z.string().trim().max(1000).nullable().optional().default(null),
   queryDefinitionId: z.coerce.number().int().positive(),
   refreshSeconds: z.coerce.number().int().min(5).max(3600).default(10),
+  displayMode: z.enum(["TABLE","BIG_SCREEN"]).default("BIG_SCREEN"),
+  displayTitle: z.string().trim().max(200).nullable().optional().default(null),
+  pageSize: z.coerce.number().int().min(1).max(50).default(5),
+  pageSeconds: z.coerce.number().int().min(5).max(3600).default(20),
+  showClock: z.boolean().default(true),
+  showPageNumber: z.boolean().default(true),
+  showCountdown: z.boolean().default(true),
   parameters: z.record(z.unknown()).default({}),
   isActive: z.boolean().default(true),
 });
@@ -62,6 +64,9 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
         code: parsed.data.code,
         name: parsed.data.name,
         refreshSeconds: parsed.data.refreshSeconds,
+        displayMode: parsed.data.displayMode,
+        pageSize: parsed.data.pageSize,
+        pageSeconds: parsed.data.pageSeconds,
         isActive: parsed.data.isActive,
       },
       ...auditRequestContext(req),
@@ -110,6 +115,9 @@ dashboardRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req, res, 
         code: parsed.data.code,
         name: parsed.data.name,
         refreshSeconds: parsed.data.refreshSeconds,
+        displayMode: parsed.data.displayMode,
+        pageSize: parsed.data.pageSize,
+        pageSeconds: parsed.data.pageSeconds,
         isActive: parsed.data.isActive,
       },
       ...auditRequestContext(req),
@@ -181,9 +189,6 @@ dashboardRouter.delete("/:id", requirePermission("DESIGN_QUERY"), async (req, re
 });
 
 dashboardRouter.post("/:id/preview", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
-  let auditId: number | null = null;
-  let started = Date.now();
-
   try {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success || !req.authUser) {
@@ -212,26 +217,8 @@ dashboardRouter.post("/:id/preview", requirePermission("DESIGN_QUERY"), async (r
       return;
     }
 
-    started = Date.now();
-    auditId = await startAudit({
-      eventType: "DASHBOARD_PREVIEW",
-      userId: req.authUser.id,
-      queryDefinitionId: query.id,
-      datasetId: query.datasetId,
-      parameters: {
-        dashboardId: dashboard.id,
-        values: dashboard.parameters,
-      },
-      ...auditRequestContext(req),
-    });
-
     const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
     const reportColumns = await listReportColumns(query.id);
-
-    await completeAuditSuccess(auditId, {
-      rowCount: result.rowCount,
-      durationMs: Date.now() - started,
-    }).catch(() => undefined);
 
     res.json({
       dashboard,
@@ -244,13 +231,6 @@ dashboardRouter.post("/:id/preview", requirePermission("DESIGN_QUERY"), async (r
       result,
     });
   } catch (error) {
-    if (auditId) {
-      await completeAuditFailure(auditId, {
-        errorCode: error instanceof Error ? error.message : "UNKNOWN_ERROR",
-        durationMs: Date.now() - started,
-      }).catch(() => undefined);
-    }
-
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
       res.status(400).json({
         error: {
