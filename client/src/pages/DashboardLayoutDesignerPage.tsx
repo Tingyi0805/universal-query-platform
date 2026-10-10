@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -30,7 +30,7 @@ type PreviewResult = {
   };
 };
 
-type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE";
+type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
 
 type LayoutWidget = {
   id?: number | null;
@@ -57,6 +57,7 @@ type LayoutProfile = {
   canvasHeight: number;
   isDefault: boolean;
   sortOrder: number;
+  config: Record<string, unknown>;
   widgets: LayoutWidget[];
 };
 
@@ -76,7 +77,60 @@ const widgetLabels: Record<WidgetType, string> = {
   PAGE_INFO: "頁碼",
   COUNTDOWN: "換頁倒數",
   TABLE: "資料表格",
+  CONTAINER: "區塊容器",
 };
+
+const fontOptions = [
+  { value: "system-ui", label: "系統預設" },
+  { value: '"Microsoft JhengHei", sans-serif', label: "Microsoft JhengHei" },
+  { value: '"Noto Sans TC", sans-serif', label: "Noto Sans TC" },
+  { value: "Arial, sans-serif", label: "Arial" },
+  { value: "Verdana, sans-serif", label: "Verdana" },
+  { value: "Tahoma, sans-serif", label: "Tahoma" },
+  { value: 'Consolas, "Courier New", monospace', label: "Consolas" },
+];
+
+const themePresets = {
+  LIGHT: { canvasBackgroundColor: "#ffffff" },
+  DARK: { canvasBackgroundColor: "#111827" },
+  MEDICAL_BLUE: { canvasBackgroundColor: "#eef6ff" },
+  HIGH_CONTRAST: { canvasBackgroundColor: "#000000" },
+  CUSTOM: {},
+} as const;
+
+function configNumber(config: Record<string, unknown>, key: string, fallback: number) {
+  const value = Number(config[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function configText(config: Record<string, unknown>, key: string, fallback: string) {
+  const value = config[key];
+  return typeof value === "string" && value ? value : fallback;
+}
+
+function widgetStyle(widget: LayoutWidget): CSSProperties {
+  const opacity = Math.max(0, Math.min(100, configNumber(widget.config, "backgroundOpacity", 100))) / 100;
+  const bg = configText(widget.config, "backgroundColor", "#ffffff");
+  const hex = bg.replace("#", "");
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  const backgroundColor = /^#[0-9a-fA-F]{6}$/.test(bg)
+    ? `rgba(${r}, ${g}, ${b}, ${opacity})`
+    : bg;
+
+  return {
+    color: configText(widget.config, "textColor", "#172033"),
+    backgroundColor,
+    fontFamily: configText(widget.config, "fontFamily", "system-ui"),
+    fontWeight: configNumber(widget.config, "fontWeight", 700),
+    borderColor: configText(widget.config, "borderColor", "transparent"),
+    borderWidth: configNumber(widget.config, "borderWidth", 0),
+    borderStyle: "solid",
+    borderRadius: configNumber(widget.config, "borderRadius", 0),
+    padding: configNumber(widget.config, "padding", 0),
+  };
+}
 
 function clientKey(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -138,6 +192,7 @@ function withClientKeys(profile: Omit<LayoutProfile, "clientKey" | "widgets"> & 
   return {
     ...profile,
     clientKey: clientKey("profile"),
+    config: profile.config ?? {},
     widgets: profile.widgets.map((widget) => ({
       ...widget,
       clientKey: clientKey("widget"),
@@ -362,6 +417,7 @@ export function DashboardLayoutDesignerPage() {
       canvasHeight,
       isDefault: profiles.length === 0,
       sortOrder: profiles.length * 10,
+      config: { theme: "LIGHT", canvasBackgroundColor: "#ffffff" },
       widgets: [],
     };
 
@@ -395,6 +451,7 @@ export function DashboardLayoutDesignerPage() {
       PAGE_INFO: { width: 360, height: 70, fontSize: 28, title: "頁數", staticText: null },
       COUNTDOWN: { width: 420, height: 70, fontSize: 28, title: "換頁倒數", staticText: null },
       TABLE: { width: 1000, height: 520, fontSize: 36, title: null, staticText: null },
+      CONTAINER: { width: 700, height: 260, fontSize: 24, title: "區塊", staticText: null },
     };
 
     const preset = defaults[widgetType];
@@ -413,7 +470,22 @@ export function DashboardLayoutDesignerPage() {
       height,
       fontSize: preset.fontSize,
       alignment: "CENTER",
-      config: {},
+      config: {
+        fontFamily: "system-ui",
+        fontWeight: 700,
+        textColor: "#172033",
+        backgroundColor: widgetType === "CONTAINER" ? "#eef4fb" : "#ffffff",
+        backgroundOpacity: widgetType === "CONTAINER" ? 85 : 100,
+        borderColor: widgetType === "CONTAINER" ? "#cbd6e5" : "transparent",
+        borderWidth: widgetType === "CONTAINER" ? 2 : 0,
+        borderRadius: widgetType === "CONTAINER" ? 16 : 0,
+        padding: widgetType === "CONTAINER" ? 16 : 0,
+        tableHeaderBackground: "#e9eef5",
+        tableHeaderTextColor: "#172033",
+        tableRowBackground: "#ffffff",
+        tableAltRowBackground: "#f8fafc",
+        tableGridColor: "#dde5f0",
+      },
       sortOrder: activeProfile.widgets.length * 10,
     };
 
@@ -474,10 +546,23 @@ export function DashboardLayoutDesignerPage() {
     const firstRow = preview?.result.rows[0] ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
+    if (widget.widgetType === "CONTAINER") {
+      return <div className="layout-widget-container-preview">{widget.title || "區塊"}</div>;
+    }
+
     if (widget.widgetType === "TABLE") {
       const rows = (preview?.result.rows ?? []).slice(0, preview?.dashboard.pageSize ?? 5);
       return (
-        <div className="layout-widget-table">
+        <div
+          className="layout-widget-table"
+          style={{
+            "--table-header-bg": configText(widget.config, "tableHeaderBackground", "#f1f4f8"),
+            "--table-header-text": configText(widget.config, "tableHeaderTextColor", "#172033"),
+            "--table-row-bg": configText(widget.config, "tableRowBackground", "#ffffff"),
+            "--table-alt-row-bg": configText(widget.config, "tableAltRowBackground", "#f8fafc"),
+            "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
+          } as CSSProperties}
+        >
           <table>
             <thead>
               <tr>
@@ -692,6 +777,7 @@ export function DashboardLayoutDesignerPage() {
                 style={{
                   width: activeProfile.canvasWidth * scale,
                   height: activeProfile.canvasHeight * scale,
+                  backgroundColor: configText(activeProfile.config, "canvasBackgroundColor", "#ffffff"),
                 }}
               >
                 <div
@@ -713,6 +799,8 @@ export function DashboardLayoutDesignerPage() {
                         height: widget.height,
                         fontSize: widget.fontSize,
                         textAlign: widget.alignment.toLowerCase() as "left" | "center" | "right",
+                        ...widgetStyle(widget),
+                        zIndex: widget.widgetType === "CONTAINER" ? 0 : 1,
                       }}
                       onPointerDown={(event) => startDrag(event, widget)}
                     >
