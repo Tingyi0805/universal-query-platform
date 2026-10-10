@@ -74,6 +74,11 @@ type FixedPlaybackSetup = {
   expiresDays: string;
   screens: ManagedScreen[];
   selectedScreenIndex: number;
+  screenMode: "auto" | "manual" | "script";
+  windowX: string;
+  windowY: string;
+  windowWidth: string;
+  windowHeight: string;
 };
 
 type PreviewResult = {
@@ -421,7 +426,43 @@ export function DashboardDesignerPage() {
       expiresDays: "365",
       screens,
       selectedScreenIndex: 0,
+      screenMode: "auto",
+      windowX: "1920",
+      windowY: "0",
+      windowWidth: "1920",
+      windowHeight: "1080",
     });
+  }
+
+  function downloadWindowsLauncher() {
+    const setup = fixedPlaybackSetup;
+    if (!setup) return;
+    const coords = [setup.windowX, setup.windowY, setup.windowWidth, setup.windowHeight].map(Number);
+    if (coords.some((value) => !Number.isSafeInteger(value)) || coords[2] < 200 || coords[3] < 200) {
+      setError("請輸入有效的整數座標，視窗寬度與高度至少 200。");
+      return;
+    }
+    const [x, y, width, height] = coords;
+    const url = new URL(`/display/dashboards/${setup.dashboard.id}`, window.location.origin).href;
+    const script = [
+      "@echo off",
+      "rem Dashboard fixed playback launcher - no Device Token stored in this file",
+      "rem First provision the Device Token in this browser profile on the playback PC.",
+      "rem Edge may reuse an existing window and ignore position hints.",
+      'start "" msedge.exe --new-window --window-position=' + x + ',' + y
+        + ' --window-size=' + width + ',' + height + ' "' + url + '"',
+      "",
+    ].join("\r\n");
+    const blob = new Blob([script], { type: "text/plain;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = `dashboard-${setup.dashboard.id}-windows-launcher.bat`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    setNotice("已產生 Windows 啟動腳本；請先在播放電腦同一瀏覽器設定 Device Token。");
   }
 
   async function createFixedPlaybackFromSetup() {
@@ -456,7 +497,7 @@ export function DashboardDesignerPage() {
     setError("");
 
     try {
-      const selectedScreen = setup.screens[setup.selectedScreenIndex] ?? null;
+      const selectedScreen = setup.screenMode === "auto" ? setup.screens[setup.selectedScreenIndex] ?? null : null;
       if (selectedScreen) {
         popup.moveTo(selectedScreen.availLeft, selectedScreen.availTop);
         popup.resizeTo(selectedScreen.availWidth, selectedScreen.availHeight);
@@ -1001,6 +1042,39 @@ export function DashboardDesignerPage() {
                   </label>
 
                   <label>
+                    <span>螢幕定位方式</span>
+                    <select
+                      value={fixedPlaybackSetup.screenMode}
+                      onChange={(e) => setFixedPlaybackSetup({
+                        ...fixedPlaybackSetup,
+                        screenMode: e.target.value as FixedPlaybackSetup["screenMode"],
+                      })}
+                    >
+                      <option value="auto">瀏覽器自動偵測</option>
+                      <option value="manual">手動開啟（不指定螢幕）</option>
+                      <option value="script">Windows 啟動腳本（指定座標）</option>
+                    </select>
+                  </label>
+
+                  {fixedPlaybackSetup.screenMode === "script" && (
+                    <>
+                      {(["windowX", "windowY", "windowWidth", "windowHeight"] as const).map((field) => (
+                        <label key={field}>
+                          <span>{({ windowX: "X 座標", windowY: "Y 座標", windowWidth: "寬度", windowHeight: "高度" })[field]}</span>
+                          <input
+                            type="number"
+                            value={fixedPlaybackSetup[field]}
+                            onChange={(e) => setFixedPlaybackSetup({ ...fixedPlaybackSetup, [field]: e.target.value })}
+                          />
+                        </label>
+                      ))}
+                      <p className="fixed-playback-hint">
+                        下載的 .bat 不包含 Token。請先在播放電腦的同一 Edge 使用者設定檔啟用 Device Token，
+                        再執行腳本。視窗定位是 Edge 啟動提示，不保證每次生效。
+                      </p>
+                    </>
+                  )}
+                  {fixedPlaybackSetup.screenMode === "auto" && <label>
                     <span>播放螢幕</span>
                     <select
                       value={fixedPlaybackSetup.selectedScreenIndex}
@@ -1019,7 +1093,7 @@ export function DashboardDesignerPage() {
                         </option>
                       ))}
                     </select>
-                  </label>
+                  </label>}
 
                   <label>
                     <span>有效期限（天）</span>
@@ -1066,6 +1140,11 @@ export function DashboardDesignerPage() {
                 </div>
 
                 <div className="fixed-playback-modal-actions">
+                  {fixedPlaybackSetup.screenMode === "script" && (
+                    <button className="secondary-button" type="button" onClick={downloadWindowsLauncher}>
+                      下載 Windows 啟動腳本
+                    </button>
+                  )}
                   <button
                     className="secondary-button"
                     type="button"
