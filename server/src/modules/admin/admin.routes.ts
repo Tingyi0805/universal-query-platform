@@ -16,6 +16,7 @@ import {
   listRoles,
   listUsers,
   resetUserPassword,
+  revokeUserSessions,
   updateRole,
   updateUser,
 } from "./admin.repository.js";
@@ -263,6 +264,45 @@ adminRouter.post("/users/:id/reset-password", async (req, res, next) => {
   } catch (error) {
     if (error instanceof Error && error.message === "USER_NOT_FOUND_OR_NOT_LOCAL") {
       res.status(404).json({ error: { code: error.message, message: "找不到本機帳號，或此帳號不使用本機密碼。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+adminRouter.post("/users/:id/force-logout", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "使用者 ID 不正確。" } });
+      return;
+    }
+
+    if (id.data === req.authUser.id) {
+      res.status(409).json({
+        error: {
+          code: "CANNOT_FORCE_LOGOUT_SELF",
+          message: "不可從此功能強制登出目前登入中的自己。",
+        },
+      });
+      return;
+    }
+
+    const tokenVersion = await revokeUserSessions(id.data);
+    await tryWriteAuditEvent({
+      eventType: "USER_FORCED_LOGOUT",
+      userId: req.authUser.id,
+      parameters: {
+        targetUserId: id.data,
+        tokenVersion,
+      },
+      ...auditRequestContext(req),
+    });
+
+    res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "USER_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到使用者。" } });
       return;
     }
     next(error);
