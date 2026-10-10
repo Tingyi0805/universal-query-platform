@@ -1,4 +1,4 @@
-import { createContext, useContext, useMemo, useState, type PropsWithChildren } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 import { apiRequest } from "../api/client";
 
 export type AuthUser = {
@@ -36,6 +36,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
   const initial = readStoredAuth();
   const [user, setUser] = useState<AuthUser | null>(initial?.user ?? null);
   const [accessToken, setAccessToken] = useState<string | null>(initial?.accessToken ?? null);
+
+  useEffect(() => {
+    const handleAuthInvalid = () => {
+      setUser(null);
+      setAccessToken(null);
+      sessionStorage.removeItem(STORAGE_KEY);
+    };
+
+    window.addEventListener("uqp-auth-invalid", handleAuthInvalid);
+    return () => window.removeEventListener("uqp-auth-invalid", handleAuthInvalid);
+  }, []);
 
   const value = useMemo<AuthState>(() => ({
     user,
