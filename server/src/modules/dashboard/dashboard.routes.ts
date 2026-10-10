@@ -14,6 +14,7 @@ import {
   updateDashboard,
 } from "./dashboard.repository.js";
 import {
+  ensureDefaultDashboardLayout,
   getDashboardLayout,
   replaceDashboardLayout,
 } from "./dashboardLayout.repository.js";
@@ -89,6 +90,7 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
     }
 
     const id = await createDashboard(parsed.data, req.authUser.id);
+    await ensureDefaultDashboardLayout(id, parsed.data.displayTitle ?? parsed.data.name);
     await tryWriteAuditEvent({
       eventType: "DASHBOARD_CREATED",
       userId: req.authUser.id,
