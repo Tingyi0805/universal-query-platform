@@ -359,7 +359,52 @@ export function DashboardDesignerPage() {
       return;
     }
 
+    type ManagedScreen = {
+      label?: string;
+      availLeft: number;
+      availTop: number;
+      availWidth: number;
+      availHeight: number;
+      isPrimary?: boolean;
+    };
+
+    let selectedScreen: ManagedScreen | null = null;
+    let selectedScreenIndex: number | null = null;
+
     try {
+      const windowWithScreens = window as typeof window & {
+        getScreenDetails?: () => Promise<{ screens: ManagedScreen[] }>;
+      };
+
+      if (windowWithScreens.getScreenDetails) {
+        const details = await windowWithScreens.getScreenDetails();
+        if (details.screens.length > 0) {
+          const options = details.screens.map((screen, index) =>
+            `${index + 1}. ${screen.label || `螢幕 ${index + 1}`} ${screen.availWidth}×${screen.availHeight}${screen.isPrimary ? "（主螢幕）" : ""}`
+          ).join("\n");
+
+          const choice = details.screens.length === 1
+            ? "1"
+            : window.prompt(
+                `偵測到 ${details.screens.length} 顆螢幕，請輸入固定播放螢幕編號：\n\n${options}`,
+                "1",
+              );
+
+          const index = Math.max(0, Math.min(details.screens.length - 1, Number(choice || 1) - 1));
+          selectedScreen = details.screens[index] ?? details.screens[0] ?? null;
+          selectedScreenIndex = index;
+
+          if (selectedScreen) {
+            popup.moveTo(selectedScreen.availLeft, selectedScreen.availTop);
+            popup.resizeTo(selectedScreen.availWidth, selectedScreen.availHeight);
+          }
+        }
+      }
+
+      const autoFullscreen = window.confirm(
+        "是否設定為「全螢幕優先」？\n\n瀏覽器安全限制下，第一次可能仍需要在播放畫面點一下「進入全螢幕」。",
+      );
+
       const result = await apiRequest<{ device: DisplayDevice; token: string }>(
         `/dashboards/${item.id}/devices`,
         {
@@ -373,12 +418,36 @@ export function DashboardDesignerPage() {
       );
 
       popup.localStorage.setItem(`uqp.dashboard.device.${item.id}`, result.token);
-      popup.location.replace(`/display/dashboards/${item.id}`);
-      setNotice(`已建立固定播放裝置「${result.device.deviceName}」，有效期 365 天。`);
+      popup.localStorage.setItem(
+        `uqp.dashboard.display-settings.${item.id}`,
+        JSON.stringify({
+          autoFullscreen,
+          screenIndex: selectedScreenIndex,
+          screenLabel: selectedScreen?.label ?? null,
+          screenBounds: selectedScreen
+            ? {
+                left: selectedScreen.availLeft,
+                top: selectedScreen.availTop,
+                width: selectedScreen.availWidth,
+                height: selectedScreen.availHeight,
+              }
+            : null,
+        }),
+      );
+      popup.location.replace(
+        `/display/dashboards/${item.id}${autoFullscreen ? "?autoFullscreen=1" : ""}`,
+      );
+      setNotice(
+        `已建立固定播放裝置「${result.device.deviceName}」，有效期 365 天。${selectedScreen ? " 已指定播放螢幕。" : ""}`,
+      );
       if (deviceDashboard?.id === item.id) await loadDevices(item);
     } catch (e) {
       popup.close();
-      setError(e instanceof Error ? e.message : "建立固定播放裝置失敗。");
+      setError(
+        e instanceof Error
+          ? e.message
+          : "建立固定播放裝置失敗。若瀏覽器不支援多螢幕管理，仍可使用目前螢幕播放。",
+      );
     }
   }
 
