@@ -4,12 +4,13 @@ import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
-import { getQueryDefinition } from "../queryDefinition/queryDefinition.repository.js";
+import { getEffectiveQueryAccess, getQueryDefinition } from "../queryDefinition/queryDefinition.repository.js";
 import { listReportColumns } from "../queryDefinition/reportColumn.repository.js";
 import {
   createDashboard,
   deleteDashboard,
   getDashboard,
+  listAccessibleDashboards,
   listDashboards,
   listDashboardsPaged,
   updateDashboard,
@@ -71,6 +72,18 @@ const dashboardSchema = z.object({
 
 export const dashboardRouter = Router();
 dashboardRouter.use(authenticateJwt);
+
+dashboardRouter.get("/available", requirePermission("VIEW_QUERY"), async (req, res, next) => {
+  try {
+    if (!req.authUser) {
+      res.status(401).json({ error: { code: "UNAUTHORIZED", message: "需要登入。" } });
+      return;
+    }
+    res.json({ dashboards: await listAccessibleDashboards(req.authUser.id) });
+  } catch (error) {
+    next(error);
+  }
+});
 
 dashboardRouter.get("/", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
@@ -249,10 +262,10 @@ dashboardRouter.delete("/:id", requirePermission("DESIGN_QUERY"), async (req, re
   }
 });
 
-dashboardRouter.get("/:id/layout", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+dashboardRouter.get("/:id/layout", async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
-    if (!id.success) {
+    if (!id.success || !req.authUser) {
       res.status(400).json({
         error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" },
       });
@@ -265,6 +278,19 @@ dashboardRouter.get("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
         error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" },
       });
       return;
+    }
+
+    const canDesign = req.authUser.permissions.includes("DESIGN_QUERY");
+    if (!canDesign) {
+      if (!req.authUser.permissions.includes("VIEW_QUERY") || !dashboard.isActive) {
+        res.status(403).json({ error: { code: "FORBIDDEN", message: "沒有查看此 Dashboard 的權限。" } });
+        return;
+      }
+      const access = await getEffectiveQueryAccess(req.authUser.id, dashboard.queryDefinitionId);
+      if (!access?.canView) {
+        res.status(403).json({ error: { code: "DASHBOARD_VIEW_FORBIDDEN", message: "沒有查看此 Dashboard 的權限。" } });
+        return;
+      }
     }
 
     res.json(await getDashboardLayout(id.data));
@@ -339,7 +365,7 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
   }
 });
 
-dashboardRouter.post("/:id/preview", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+dashboardRouter.post("/:id/preview", async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success || !req.authUser) {
@@ -355,6 +381,19 @@ dashboardRouter.post("/:id/preview", requirePermission("DESIGN_QUERY"), async (r
         error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" },
       });
       return;
+    }
+
+    const canDesign = req.authUser.permissions.includes("DESIGN_QUERY");
+    if (!canDesign) {
+      if (!req.authUser.permissions.includes("EXECUTE_QUERY") || !dashboard.isActive) {
+        res.status(403).json({ error: { code: "FORBIDDEN", message: "沒有播放此 Dashboard 的權限。" } });
+        return;
+      }
+      const access = await getEffectiveQueryAccess(req.authUser.id, dashboard.queryDefinitionId);
+      if (!access?.canExecute) {
+        res.status(403).json({ error: { code: "DASHBOARD_EXECUTE_FORBIDDEN", message: "沒有播放此 Dashboard 的權限。" } });
+        return;
+      }
     }
 
     const query = await getQueryDefinition(dashboard.queryDefinitionId);

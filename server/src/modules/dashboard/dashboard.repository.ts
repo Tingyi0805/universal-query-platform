@@ -287,3 +287,64 @@ export async function listDashboardsPaged(input: {
     total: Number(recordsets[1]?.[0]?.Total ?? 0),
   };
 }
+
+
+export async function listAccessibleDashboards(userId: number) {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("userId", sql.BigInt, userId)
+    .query(`
+      WITH RoleAccess AS (
+        SELECT rqa.QueryDefinitionId,
+               MAX(CAST(rqa.CanView AS INT)) AS CanView,
+               MAX(CAST(rqa.CanExecute AS INT)) AS CanExecute
+        FROM uqp.UserRole ur
+        INNER JOIN uqp.Role r ON r.Id=ur.RoleId AND r.IsActive=1
+        INNER JOIN uqp.RoleQueryAccess rqa ON rqa.RoleId=r.Id
+        WHERE ur.UserId=@userId
+        GROUP BY rqa.QueryDefinitionId
+      ),
+      UserAccess AS (
+        SELECT QueryDefinitionId,
+               CAST(CanView AS INT) AS CanView,
+               CAST(CanExecute AS INT) AS CanExecute
+        FROM uqp.UserQueryAccess
+        WHERE UserId=@userId
+      )
+      SELECT d.Id, d.Code, d.Name, d.Description, d.QueryDefinitionId,
+             d.RefreshSeconds, d.DisplayMode, d.DisplayTitle, d.PageSize, d.PageSeconds,
+             d.ShowClock, d.ShowPageNumber, d.ShowCountdown,
+             d.ParametersJson, d.IsActive,
+             d.CreatedAtUtc, d.UpdatedAtUtc,
+             q.Code AS QueryCode, q.Name AS QueryName
+      FROM uqp.Dashboard d
+      INNER JOIN uqp.QueryDefinition q
+        ON q.Id=d.QueryDefinitionId
+       AND q.IsPublished=1
+       AND q.IsActive=1
+       AND q.IsArchived=0
+      INNER JOIN uqp.Dataset ds
+        ON ds.Id=q.DatasetId
+       AND ds.IsActive=1
+       AND ds.IsArchived=0
+      INNER JOIN uqp.DataSource src
+        ON src.Id=ds.DataSourceId
+       AND src.IsActive=1
+      LEFT JOIN RoleAccess ra ON ra.QueryDefinitionId=q.Id
+      LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
+      WHERE d.IsActive=1
+        AND (ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1)
+        AND (ISNULL(ra.CanExecute,0)=1 OR ISNULL(ua.CanExecute,0)=1)
+        AND NOT EXISTS (
+          SELECT 1
+          FROM uqp.DatasetParameter dp
+          INNER JOIN uqp.Dataset lookupDataset
+            ON lookupDataset.Id=dp.LookupDatasetId
+          WHERE dp.DatasetId=ds.Id
+            AND lookupDataset.IsArchived=1
+        )
+      ORDER BY d.Name, d.Code
+    `);
+
+  return result.recordset.map(mapRow);
+}

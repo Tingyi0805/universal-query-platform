@@ -9,6 +9,7 @@ import { AuditLogPage } from "./pages/AuditLogPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
 import { DashboardDesignerPage } from "./pages/DashboardDesignerPage";
+import { DashboardPortalPage } from "./pages/DashboardPortalPage";
 import { DashboardDisplayPage } from "./pages/DashboardDisplayPage";
 import { DashboardLayoutDesignerPage } from "./pages/DashboardLayoutDesignerPage";
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
@@ -21,6 +22,7 @@ import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 
 const modules = [
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
+  { title: "儀表板", description: "播放目前帳號可使用的即時 Dashboard。", icon: LayoutDashboard, permission: "VIEW_QUERY", path: "/dashboards" },
   { title: "查詢設計", description: "建立 Dataset、SQL 與安全查詢參數。", icon: PanelsTopLeft, permission: "DESIGN_QUERY", path: "/designer/datasets" },
   { title: "查詢發佈", description: "建立查詢圖示、權限並發佈給使用者。", icon: FileCheck2, permission: "DESIGN_QUERY", path: "/designer/queries" },
   { title: "儀表板設計", description: "建立資料顯示 Dashboard、預設參數與自動更新。", icon: LayoutDashboard, permission: "DESIGN_QUERY", path: "/designer/dashboards" },
@@ -101,6 +103,13 @@ function PermissionRoute({ permission, children }: { permission: string; childre
   return hasPermission(permission) ? children : <Navigate to="/" replace />;
 }
 
+function AnyPermissionRoute({ permissions, children }: { permissions: string[]; children: ReactNode }) {
+  const { hasPermission } = useAuth();
+  return permissions.some((permission) => hasPermission(permission))
+    ? children
+    : <Navigate to="/" replace />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -116,6 +125,18 @@ export default function App() {
         <Route
           path="/queries/:id"
           element={<PermissionRoute permission="VIEW_QUERY"><QueryRuntimePage /></PermissionRoute>}
+        />
+        <Route
+          path="/dashboards"
+          element={<PermissionRoute permission="VIEW_QUERY"><DashboardPortalPage /></PermissionRoute>}
+        />
+        <Route
+          path="/dashboards/:id/display"
+          element={
+            <AnyPermissionRoute permissions={["VIEW_QUERY","DESIGN_QUERY"]}>
+              <DashboardDisplayPage />
+            </AnyPermissionRoute>
+          }
         />
         <Route
           path="/designer/datasets"
@@ -135,7 +156,11 @@ export default function App() {
         />
         <Route
           path="/designer/dashboards/:id/display"
-          element={<PermissionRoute permission="DESIGN_QUERY"><DashboardDisplayPage /></PermissionRoute>}
+          element={
+            <AnyPermissionRoute permissions={["DESIGN_QUERY","VIEW_QUERY"]}>
+              <DashboardDisplayPage />
+            </AnyPermissionRoute>
+          }
         />
         <Route
           path="/admin/users"
