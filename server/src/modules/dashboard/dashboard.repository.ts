@@ -7,6 +7,13 @@ export type DashboardInput = {
   description: string | null;
   queryDefinitionId: number;
   refreshSeconds: number;
+  displayMode: "TABLE" | "BIG_SCREEN";
+  displayTitle: string | null;
+  pageSize: number;
+  pageSeconds: number;
+  showClock: boolean;
+  showPageNumber: boolean;
+  showCountdown: boolean;
   parameters: Record<string, unknown>;
   isActive: boolean;
 };
@@ -35,6 +42,13 @@ function mapRow(row: any) {
     queryCode: String(row.QueryCode),
     queryName: String(row.QueryName),
     refreshSeconds: Number(row.RefreshSeconds),
+    displayMode: String(row.DisplayMode ?? "BIG_SCREEN") as "TABLE" | "BIG_SCREEN",
+    displayTitle: row.DisplayTitle == null ? null : String(row.DisplayTitle),
+    pageSize: Number(row.PageSize ?? 5),
+    pageSeconds: Number(row.PageSeconds ?? 20),
+    showClock: Boolean(row.ShowClock ?? true),
+    showPageNumber: Boolean(row.ShowPageNumber ?? true),
+    showCountdown: Boolean(row.ShowCountdown ?? true),
     parameters,
     isActive: Boolean(row.IsActive),
     createdAtUtc: row.CreatedAtUtc ? new Date(row.CreatedAtUtc).toISOString() : null,
@@ -73,7 +87,9 @@ export async function listDashboards() {
   const pool = await requirePool();
   const result = await pool.request().query(`
     SELECT d.Id, d.Code, d.Name, d.Description, d.QueryDefinitionId,
-           d.RefreshSeconds, d.ParametersJson, d.IsActive,
+           d.RefreshSeconds, d.DisplayMode, d.DisplayTitle, d.PageSize, d.PageSeconds,
+           d.ShowClock, d.ShowPageNumber, d.ShowCountdown,
+           d.ParametersJson, d.IsActive,
            d.CreatedAtUtc, d.UpdatedAtUtc,
            q.Code AS QueryCode, q.Name AS QueryName
     FROM uqp.Dashboard d
@@ -89,7 +105,9 @@ export async function getDashboard(id: number) {
     .input("id", sql.BigInt, id)
     .query(`
       SELECT d.Id, d.Code, d.Name, d.Description, d.QueryDefinitionId,
-             d.RefreshSeconds, d.ParametersJson, d.IsActive,
+             d.RefreshSeconds, d.DisplayMode, d.DisplayTitle, d.PageSize, d.PageSeconds,
+           d.ShowClock, d.ShowPageNumber, d.ShowCountdown,
+           d.ParametersJson, d.IsActive,
              d.CreatedAtUtc, d.UpdatedAtUtc,
              q.Code AS QueryCode, q.Name AS QueryName
       FROM uqp.Dashboard d
@@ -109,20 +127,29 @@ export async function createDashboard(input: DashboardInput, userId: number): Pr
     .input("description", sql.NVarChar(1000), input.description)
     .input("queryDefinitionId", sql.BigInt, input.queryDefinitionId)
     .input("refreshSeconds", sql.Int, input.refreshSeconds)
+    .input("displayMode", sql.NVarChar(20), input.displayMode)
+    .input("displayTitle", sql.NVarChar(200), input.displayTitle)
+    .input("pageSize", sql.Int, input.pageSize)
+    .input("pageSeconds", sql.Int, input.pageSeconds)
+    .input("showClock", sql.Bit, input.showClock)
+    .input("showPageNumber", sql.Bit, input.showPageNumber)
+    .input("showCountdown", sql.Bit, input.showCountdown)
     .input("parametersJson", sql.NVarChar(sql.MAX), JSON.stringify(input.parameters))
     .input("isActive", sql.Bit, input.isActive)
     .input("userId", sql.BigInt, userId)
     .query(`
       INSERT INTO uqp.Dashboard (
         Code, Name, Description, QueryDefinitionId,
-        RefreshSeconds, ParametersJson, IsActive,
-        CreatedByUserId, UpdatedByUserId
+        RefreshSeconds, DisplayMode, DisplayTitle, PageSize, PageSeconds,
+        ShowClock, ShowPageNumber, ShowCountdown,
+        ParametersJson, IsActive, CreatedByUserId, UpdatedByUserId
       )
       OUTPUT INSERTED.Id
       VALUES (
         @code,@name,@description,@queryDefinitionId,
-        @refreshSeconds,@parametersJson,@isActive,
-        @userId,@userId
+        @refreshSeconds,@displayMode,@displayTitle,@pageSize,@pageSeconds,
+        @showClock,@showPageNumber,@showCountdown,
+        @parametersJson,@isActive,@userId,@userId
       )
     `);
 
@@ -140,6 +167,13 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
     .input("description", sql.NVarChar(1000), input.description)
     .input("queryDefinitionId", sql.BigInt, input.queryDefinitionId)
     .input("refreshSeconds", sql.Int, input.refreshSeconds)
+    .input("displayMode", sql.NVarChar(20), input.displayMode)
+    .input("displayTitle", sql.NVarChar(200), input.displayTitle)
+    .input("pageSize", sql.Int, input.pageSize)
+    .input("pageSeconds", sql.Int, input.pageSeconds)
+    .input("showClock", sql.Bit, input.showClock)
+    .input("showPageNumber", sql.Bit, input.showPageNumber)
+    .input("showCountdown", sql.Bit, input.showCountdown)
     .input("parametersJson", sql.NVarChar(sql.MAX), JSON.stringify(input.parameters))
     .input("isActive", sql.Bit, input.isActive)
     .input("userId", sql.BigInt, userId)
@@ -150,6 +184,13 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
           Description=@description,
           QueryDefinitionId=@queryDefinitionId,
           RefreshSeconds=@refreshSeconds,
+          DisplayMode=@displayMode,
+          DisplayTitle=@displayTitle,
+          PageSize=@pageSize,
+          PageSeconds=@pageSeconds,
+          ShowClock=@showClock,
+          ShowPageNumber=@showPageNumber,
+          ShowCountdown=@showCountdown,
           ParametersJson=@parametersJson,
           IsActive=@isActive,
           UpdatedByUserId=@userId,
