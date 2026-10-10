@@ -109,6 +109,7 @@ export function AuditLogPage() {
               <option value="USER_PASSWORD_RESET">USER_PASSWORD_RESET</option>
               <option value="USER_PASSWORD_CHANGED">USER_PASSWORD_CHANGED</option>
               <option value="USER_PASSWORD_CHANGE_FAILED">USER_PASSWORD_CHANGE_FAILED</option>
+              <option value="USER_FORCED_LOGOUT">USER_FORCED_LOGOUT</option>
               <option value="ROLE_CREATED">ROLE_CREATED</option>
               <option value="ROLE_UPDATED">ROLE_UPDATED</option>
             </optgroup>
