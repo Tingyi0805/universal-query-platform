@@ -9,6 +9,7 @@ import { useAuth } from "../auth/AuthContext";
 import { QueryAccessEditor } from "../components/QueryAccessEditor";
 import { ReportColumnsEditor } from "../components/ReportColumnsEditor";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
+import { ManagementListToolbar } from "../components/ManagementListToolbar";
 import "./QueryPublisherPage.css";
 
 type Dataset = { id: number; code: string; name: string; isActive: boolean; isArchived: boolean };
@@ -102,28 +103,40 @@ export function QueryPublisherPage() {
   const [loading, setLoading] = useState(true);
   const [versionRefreshKey, setVersionRefreshKey] = useState(0);
   const [queryFilter, setQueryFilter] = useState<"PUBLISHED" | "DRAFT" | "ARCHIVED">("PUBLISHED");
+  const [listSearch, setListSearch] = useState("");
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(20);
+  const [listTotal, setListTotal] = useState(0);
+  const [listTotalPages, setListTotalPages] = useState(1);
+  const [listCategoryId, setListCategoryId] = useState<number | "">("");
   const canPublish = hasPermission("PUBLISH_QUERY");
   const canManageAccess = hasPermission("MANAGE_USERS");
   const selectedIcon = iconOptions.find((item) => item.key === form.icon) ?? iconOptions[0];
   const selectedQuery = form.id ? queries.find((query) => query.id === form.id) ?? null : null;
-  const filteredQueries = queries.filter((query) =>
-    queryFilter === "ARCHIVED"
-      ? query.isArchived
-      : queryFilter === "PUBLISHED"
-        ? !query.isArchived && query.isPublished
-        : !query.isArchived && !query.isPublished
-  );
-
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      const params = new URLSearchParams({
+        page: String(listPage),
+        pageSize: String(listPageSize),
+        status: queryFilter,
+      });
+      if (listSearch) params.set("search", listSearch);
+      if (listCategoryId !== "") params.set("categoryId", String(listCategoryId));
+
       const [queryResult, datasetResult, categoryResult] = await Promise.all([
-        apiRequest<{ queryDefinitions: QueryDefinition[] }>("/query-definitions", {}, accessToken),
+        apiRequest<{
+          queryDefinitions: QueryDefinition[];
+          total: number;
+          totalPages: number;
+        }>(`/query-definitions?${params.toString()}`, {}, accessToken),
         apiRequest<{ datasets: Dataset[] }>("/datasets", {}, accessToken),
         apiRequest<{ categories: QueryCategory[] }>("/query-categories", {}, accessToken),
       ]);
       setQueries(queryResult.queryDefinitions);
+      setListTotal(queryResult.total);
+      setListTotalPages(queryResult.totalPages);
       setDatasets(datasetResult.datasets);
       setCategories(categoryResult.categories);
     } catch (e) {
@@ -131,7 +144,7 @@ export function QueryPublisherPage() {
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, listCategoryId, listPage, listPageSize, listSearch, queryFilter]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -499,20 +512,48 @@ export function QueryPublisherPage() {
 
           <div className="query-status-filter" role="tablist" aria-label="Query 狀態">
             <button type="button" className={queryFilter === "PUBLISHED" ? "active" : ""}
-              onClick={() => { setQueryFilter("PUBLISHED"); reset(); }}>
-              已發佈 <span>{queries.filter((q) => !q.isArchived && q.isPublished).length}</span>
+              onClick={() => { setQueryFilter("PUBLISHED"); setListPage(1); reset(); }}>
+              已發佈
             </button>
             <button type="button" className={queryFilter === "DRAFT" ? "active" : ""}
-              onClick={() => { setQueryFilter("DRAFT"); reset(); }}>
-              草稿 <span>{queries.filter((q) => !q.isArchived && !q.isPublished).length}</span>
+              onClick={() => { setQueryFilter("DRAFT"); setListPage(1); reset(); }}>
+              草稿
             </button>
             <button type="button" className={queryFilter === "ARCHIVED" ? "active" : ""}
-              onClick={() => { setQueryFilter("ARCHIVED"); reset(); }}>
-              已封存 <span>{queries.filter((q) => q.isArchived).length}</span>
+              onClick={() => { setQueryFilter("ARCHIVED"); setListPage(1); reset(); }}>
+              已封存
             </button>
           </div>
 
-          {loading ? <div className="notice">載入中…</div> : filteredQueries.map((query) => (
+          <ManagementListToolbar
+            search={listSearch}
+            onSearch={(value) => { setListSearch(value); setListPage(1); }}
+            page={listPage}
+            pageSize={listPageSize}
+            total={listTotal}
+            totalPages={listTotalPages}
+            onPageChange={setListPage}
+            onPageSizeChange={(value) => { setListPageSize(value); setListPage(1); }}
+            filters={
+              <label>
+                <span>分類</span>
+                <select
+                  value={listCategoryId}
+                  onChange={(event) => {
+                    setListCategoryId(event.target.value ? Number(event.target.value) : "");
+                    setListPage(1);
+                  }}
+                >
+                  <option value="">全部</option>
+                  {categories.map((category) => (
+                    <option key={category.id} value={category.id}>{category.name}</option>
+                  ))}
+                </select>
+              </label>
+            }
+          />
+
+          {loading ? <div className="notice">載入中…</div> : queries.map((query) => (
             <button className={`query-list-item ${form.id === query.id ? "selected" : ""}`}
               type="button" key={query.id} onClick={() => selectQuery(query)}>
               <strong>{query.name}</strong>
