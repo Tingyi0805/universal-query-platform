@@ -1,4 +1,4 @@
-import { BarChart3, ClipboardList, Database, FileCheck2, FileSpreadsheet, LogOut, PanelsTopLeft, Settings, ShieldCheck } from "lucide-react";
+import { BarChart3, ClipboardList, Database, FileCheck2, FileSpreadsheet, LayoutDashboard, LogOut, PanelsTopLeft, Settings, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { ProtectedRoute } from "./auth/ProtectedRoute";
@@ -8,6 +8,7 @@ import { AdminUsersPage } from "./pages/AdminUsersPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
+import { DashboardDesignerPage } from "./pages/DashboardDesignerPage";
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
 import { QueryPortalPage } from "./pages/QueryPortalPage";
@@ -20,6 +21,7 @@ const modules = [
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
   { title: "查詢設計", description: "建立 Dataset、SQL 與安全查詢參數。", icon: PanelsTopLeft, permission: "DESIGN_QUERY", path: "/designer/datasets" },
   { title: "查詢發佈", description: "建立查詢圖示、權限並發佈給使用者。", icon: FileCheck2, permission: "DESIGN_QUERY", path: "/designer/queries" },
+  { title: "儀表板設計", description: "建立資料顯示 Dashboard、預設參數與自動更新。", icon: LayoutDashboard, permission: "DESIGN_QUERY", path: "/designer/dashboards" },
   { title: "資料來源", description: "管理 SQL Server、Oracle 等資料庫連線。", icon: Database, permission: "MANAGE_DATASOURCE", path: "/admin/datasources" },
   { title: "Excel 報表", description: "已授權查詢可匯出 Excel。", icon: FileSpreadsheet, permission: "EXPORT_QUERY", path: "/queries" },
   { title: "權限管理", description: "使用角色與使用者權限控制功能。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/users" },
@@ -120,6 +122,10 @@ export default function App() {
         <Route
           path="/designer/queries"
           element={<PermissionRoute permission="DESIGN_QUERY"><QueryPublisherPage /></PermissionRoute>}
+        />
+        <Route
+          path="/designer/dashboards"
+          element={<PermissionRoute permission="DESIGN_QUERY"><DashboardDesignerPage /></PermissionRoute>}
         />
         <Route
           path="/admin/users"
