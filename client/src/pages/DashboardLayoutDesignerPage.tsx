@@ -466,10 +466,10 @@ export function DashboardLayoutDesignerPage() {
         </div>
         <div className="dashboard-layout-toolbar-actions">
           <Link className="secondary-button link-button" to="/designer/dashboards">返回 Dashboard</Link>
-          {activeProfile && (
+          {activeProfile?.id && (
             <Link
               className="secondary-button link-button"
-              to={`/designer/dashboards/${dashboardId}/display?profileId=${activeProfile.id ?? ""}`}
+              to={`/designer/dashboards/${dashboardId}/display?profileId=${activeProfile.id}`}
               target="_blank"
             >
               播放此版型
