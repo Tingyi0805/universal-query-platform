@@ -139,6 +139,7 @@ export function AuditLogPage() {
             <optgroup label="Dashboard">
               <option value="DASHBOARD_CREATED">DASHBOARD_CREATED</option>
               <option value="DASHBOARD_UPDATED">DASHBOARD_UPDATED</option>
+              <option value="DASHBOARD_LAYOUT_UPDATED">DASHBOARD_LAYOUT_UPDATED</option>
               <option value="DASHBOARD_DELETED">DASHBOARD_DELETED</option>
               <option value="DASHBOARD_PREVIEW">DASHBOARD_PREVIEW</option>
             </optgroup>
