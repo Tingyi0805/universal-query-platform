@@ -11,6 +11,7 @@ export function ManagementListToolbar({
   totalPages,
   onPageChange,
   onPageSizeChange,
+  compact = false,
 }: {
   search: string;
   onSearch: (value: string) => void;
@@ -21,6 +22,7 @@ export function ManagementListToolbar({
   totalPages: number;
   onPageChange: (page: number) => void;
   onPageSizeChange: (pageSize: number) => void;
+  compact?: boolean;
 }) {
   const [draft, setDraft] = useState(search);
 
@@ -34,7 +36,7 @@ export function ManagementListToolbar({
   const safeTotalPages = Math.max(1, totalPages);
 
   return (
-    <div className="management-list-tools">
+    <div className={`management-list-tools${compact ? " compact" : ""}`}>
       <form className="management-list-search" onSubmit={submit}>
         <input
           value={draft}
