@@ -17,7 +17,7 @@ function zonedParts(now: Date): { year: number; month: number; day: number; hour
     hourCycle: "h23",
   }).formatToParts(now);
 
-  const value = (type: Intl.DateTimeFormatPartTypes) =>
+  const value = (type: string) =>
     Number(parts.find((part) => part.type === type)?.value ?? 0);
 
   return {
