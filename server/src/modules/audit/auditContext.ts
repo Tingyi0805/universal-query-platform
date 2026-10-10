@@ -1,8 +1,9 @@
 import type { Request } from "express";
+import { getClientIp } from "../../utils/clientIp.js";
 
 export function auditRequestContext(req: Request) {
   return {
-    ipAddress: req.ip || req.socket.remoteAddress || null,
+    ipAddress: getClientIp(req),
     userAgent: req.get("user-agent") || null,
   };
 }
