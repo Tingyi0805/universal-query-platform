@@ -166,6 +166,24 @@ export async function updateUser(userId: number, input: { displayName: string; i
     `);
     if (!current.recordset[0]) throw new Error("USER_NOT_FOUND");
 
+    const currentRolesResult = await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .query(`
+        SELECT r.Code
+        FROM uqp.UserRole ur
+        INNER JOIN uqp.Role r ON r.Id=ur.RoleId
+        WHERE ur.UserId=@userId
+        ORDER BY r.Code
+      `);
+
+    const currentRoleCodes = currentRolesResult.recordset.map((row) => String(row.Code)).sort();
+    const nextRoleCodes = [...new Set(input.roleCodes)].sort();
+    const rolesChanged =
+      currentRoleCodes.length !== nextRoleCodes.length ||
+      currentRoleCodes.some((code, index) => code !== nextRoleCodes[index]);
+    const activeChanged = Boolean(current.recordset[0].IsActive) !== input.isActive;
+    const securityChanged = rolesChanged || activeChanged;
+
     const willBeAdmin = input.roleCodes.includes("SYSTEM_ADMIN");
     if (Boolean(current.recordset[0].IsSystemAdmin) && (!input.isActive || !willBeAdmin)) {
       const admins = await new sql.Request(tx).query(`
@@ -181,17 +199,18 @@ export async function updateUser(userId: number, input: { displayName: string; i
     await new sql.Request(tx).input("userId", sql.BigInt, userId)
       .input("displayName", sql.NVarChar(200), input.displayName)
       .input("isActive", sql.Bit, input.isActive)
+      .input("securityChanged", sql.Bit, securityChanged)
       .query(`
         UPDATE uqp.AppUser
         SET DisplayName=@displayName,
             IsActive=@isActive,
-            TokenVersion=TokenVersion+1,
+            TokenVersion=TokenVersion + CASE WHEN @securityChanged=1 THEN 1 ELSE 0 END,
             UpdatedAtUtc=SYSUTCDATETIME()
         WHERE Id=@userId
       `);
 
     await new sql.Request(tx).input("userId", sql.BigInt, userId).query("DELETE FROM uqp.UserRole WHERE UserId=@userId");
-    for (const code of [...new Set(input.roleCodes)]) {
+    for (const code of nextRoleCodes) {
       await new sql.Request(tx).input("userId", sql.BigInt, userId).input("code", sql.NVarChar(100), code)
         .query("INSERT INTO uqp.UserRole (UserId, RoleId) SELECT @userId, Id FROM uqp.Role WHERE Code=@code AND IsActive=1");
     }
@@ -240,8 +259,11 @@ export async function updateRole(roleId: number, input: { name: string; descript
   const tx = new sql.Transaction(pool);
   await tx.begin();
   try {
-    const role = await new sql.Request(tx).input("roleId", sql.BigInt, roleId).query("SELECT Code, IsSystem FROM uqp.Role WHERE Id=@roleId");
+    const role = await new sql.Request(tx)
+      .input("roleId", sql.BigInt, roleId)
+      .query("SELECT Code, IsSystem, IsActive FROM uqp.Role WHERE Id=@roleId");
     if (!role.recordset[0]) throw new Error("ROLE_NOT_FOUND");
+
     if (Boolean(role.recordset[0].IsSystem) && String(role.recordset[0].Code) === "SYSTEM_ADMIN") {
       if (!input.isActive) throw new Error("SYSTEM_ROLE_PROTECTED");
 
@@ -250,6 +272,24 @@ export async function updateRole(roleId: number, input: { name: string; descript
       input.permissionCodes = allPermissions.recordset.map((row) => String(row.Code));
     }
 
+    const currentPermissionsResult = await new sql.Request(tx)
+      .input("roleId", sql.BigInt, roleId)
+      .query(`
+        SELECT p.Code
+        FROM uqp.RolePermission rp
+        INNER JOIN uqp.Permission p ON p.Id=rp.PermissionId
+        WHERE rp.RoleId=@roleId
+        ORDER BY p.Code
+      `);
+
+    const currentPermissionCodes = currentPermissionsResult.recordset.map((row) => String(row.Code)).sort();
+    const nextPermissionCodes = [...new Set(input.permissionCodes)].sort();
+    const permissionsChanged =
+      currentPermissionCodes.length !== nextPermissionCodes.length ||
+      currentPermissionCodes.some((code, index) => code !== nextPermissionCodes[index]);
+    const activeChanged = Boolean(role.recordset[0].IsActive) !== input.isActive;
+    const securityChanged = permissionsChanged || activeChanged;
+
     await new sql.Request(tx).input("roleId", sql.BigInt, roleId)
       .input("name", sql.NVarChar(200), input.name)
       .input("description", sql.NVarChar(500), input.description ?? null)
@@ -257,21 +297,23 @@ export async function updateRole(roleId: number, input: { name: string; descript
       .query("UPDATE uqp.Role SET Name=@name, Description=@description, IsActive=@isActive WHERE Id=@roleId");
 
     await new sql.Request(tx).input("roleId", sql.BigInt, roleId).query("DELETE FROM uqp.RolePermission WHERE RoleId=@roleId");
-    for (const code of [...new Set(input.permissionCodes)]) {
+    for (const code of nextPermissionCodes) {
       await new sql.Request(tx).input("roleId", sql.BigInt, roleId).input("code", sql.NVarChar(100), code)
         .query("INSERT INTO uqp.RolePermission (RoleId, PermissionId) SELECT @roleId, Id FROM uqp.Permission WHERE Code=@code");
     }
 
-    await new sql.Request(tx)
-      .input("roleId", sql.BigInt, roleId)
-      .query(`
-        UPDATE u
-        SET TokenVersion=TokenVersion+1,
-            UpdatedAtUtc=SYSUTCDATETIME()
-        FROM uqp.AppUser u
-        INNER JOIN uqp.UserRole ur ON ur.UserId=u.Id
-        WHERE ur.RoleId=@roleId
-      `);
+    if (securityChanged) {
+      await new sql.Request(tx)
+        .input("roleId", sql.BigInt, roleId)
+        .query(`
+          UPDATE u
+          SET TokenVersion=TokenVersion+1,
+              UpdatedAtUtc=SYSUTCDATETIME()
+          FROM uqp.AppUser u
+          INNER JOIN uqp.UserRole ur ON ur.UserId=u.Id
+          WHERE ur.RoleId=@roleId
+        `);
+    }
 
     await tx.commit();
   } catch (error) { await tx.rollback(); throw error; }
