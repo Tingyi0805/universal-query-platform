@@ -10,6 +10,7 @@ type UserRow = {
   displayName: string;
   authProvider: string;
   isActive: boolean;
+  tokenVersion: number;
   roles: string[];
 };
 
@@ -147,6 +148,23 @@ export function AdminUsersPage() {
       setNotice(`${user.username} 密碼已重設。`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "重設密碼失敗。");
+    }
+  }
+
+  async function forceLogout(user: UserRow) {
+    if (currentUser?.id === user.id) return;
+    if (!window.confirm(`確定強制登出使用者「${user.username}」？該使用者目前所有登入憑證都會立即失效。`)) return;
+
+    setError("");
+    setNotice("");
+    try {
+      await apiRequest(`/admin/users/${user.id}/force-logout`, {
+        method: "POST",
+      }, accessToken);
+      setNotice(`${user.username} 已強制登出。`);
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "強制登出失敗。");
     }
   }
 
@@ -296,6 +314,15 @@ export function AdminUsersPage() {
                         {user.authProvider === "LOCAL" && (
                           <button className="secondary-button" type="button" onClick={() => void resetPassword(user)}>重設密碼</button>
                         )}
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={currentUser?.id === user.id}
+                          title={currentUser?.id === user.id ? "不可從此功能強制登出自己" : "立即讓此使用者目前所有 JWT 失效"}
+                          onClick={() => void forceLogout(user)}
+                        >
+                          強制登出
+                        </button>
                         <button
                           className="danger-button"
                           type="button"
