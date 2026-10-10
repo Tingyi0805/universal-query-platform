@@ -12,6 +12,7 @@ import {
   getDataset,
   getDatasetDeleteImpact,
   listDatasets,
+  listDatasetsPaged,
   listDesignerDataSources,
   restoreDataset,
   updateDataset,
@@ -226,9 +227,34 @@ datasetRouter.get("/datasource-options", async (_req, res, next) => {
   catch (error) { next(error); }
 });
 
-datasetRouter.get("/", async (_req, res, next) => {
-  try { res.json({ datasets: await listDatasets() }); }
-  catch (error) { next(error); }
+datasetRouter.get("/", async (req, res, next) => {
+  try {
+    if (Object.keys(req.query).length === 0) {
+      res.json({ datasets: await listDatasets() });
+      return;
+    }
+
+    const parsed = z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      search: z.string().trim().max(200).optional(),
+      status: z.enum(["ACTIVE","INACTIVE","ARCHIVED","ALL"]).default("ACTIVE"),
+      dataSourceId: z.coerce.number().int().positive().optional(),
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset 清單查詢條件不正確。" } });
+      return;
+    }
+
+    const result = await listDatasetsPaged(parsed.data);
+    res.json({
+      datasets: result.items,
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      total: result.total,
+      totalPages: Math.max(1, Math.ceil(result.total / parsed.data.pageSize)),
+    });
+  } catch (error) { next(error); }
 });
 
 datasetRouter.post("/preview/run", async (req, res, next) => {

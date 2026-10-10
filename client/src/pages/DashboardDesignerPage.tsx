@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { ManagementListToolbar } from "../components/ManagementListToolbar";
 import "./DashboardDesignerPage.css";
 
 type DashboardRow = {
@@ -128,23 +129,44 @@ export function DashboardDesignerPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [listSearch, setListSearch] = useState("");
+  const [listStatus, setListStatus] = useState<"ACTIVE" | "INACTIVE" | "ALL">("ACTIVE");
+  const [listDisplayMode, setListDisplayMode] = useState<"" | "TABLE" | "BIG_SCREEN">("");
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(20);
+  const [listTotal, setListTotal] = useState(0);
+  const [listTotalPages, setListTotalPages] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
+      const params = new URLSearchParams({
+        page: String(listPage),
+        pageSize: String(listPageSize),
+        status: listStatus,
+      });
+      if (listSearch) params.set("search", listSearch);
+      if (listDisplayMode) params.set("displayMode", listDisplayMode);
+
       const [dashboardResult, queryResult] = await Promise.all([
-        apiRequest<{ dashboards: DashboardRow[] }>("/dashboards", {}, accessToken),
+        apiRequest<{
+          dashboards: DashboardRow[];
+          total: number;
+          totalPages: number;
+        }>(`/dashboards?${params.toString()}`, {}, accessToken),
         apiRequest<{ queryDefinitions: QueryDefinitionRow[] }>("/query-definitions", {}, accessToken),
       ]);
       setDashboards(dashboardResult.dashboards);
+      setListTotal(dashboardResult.total);
+      setListTotalPages(dashboardResult.totalPages);
       setQueries(queryResult.queryDefinitions);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入 Dashboard 設定失敗。");
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, listDisplayMode, listPage, listPageSize, listSearch, listStatus]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -497,6 +519,48 @@ export function DashboardDesignerPage() {
 
           <section className="dashboard-list-card">
             <h2>Dashboard 清單</h2>
+            <ManagementListToolbar
+              search={listSearch}
+              onSearch={(value) => { setListSearch(value); setListPage(1); }}
+              page={listPage}
+              pageSize={listPageSize}
+              total={listTotal}
+              totalPages={listTotalPages}
+              onPageChange={setListPage}
+              onPageSizeChange={(value) => { setListPageSize(value); setListPage(1); }}
+              filters={
+                <>
+                  <label>
+                    <span>狀態</span>
+                    <select
+                      value={listStatus}
+                      onChange={(event) => {
+                        setListStatus(event.target.value as "ACTIVE" | "INACTIVE" | "ALL");
+                        setListPage(1);
+                      }}
+                    >
+                      <option value="ACTIVE">啟用</option>
+                      <option value="INACTIVE">停用</option>
+                      <option value="ALL">全部</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>模式</span>
+                    <select
+                      value={listDisplayMode}
+                      onChange={(event) => {
+                        setListDisplayMode(event.target.value as "" | "TABLE" | "BIG_SCREEN");
+                        setListPage(1);
+                      }}
+                    >
+                      <option value="">全部</option>
+                      <option value="BIG_SCREEN">大螢幕</option>
+                      <option value="TABLE">一般表格</option>
+                    </select>
+                  </label>
+                </>
+              }
+            />
             <div className="dashboard-table-wrap">
               <table>
                 <thead>

@@ -15,6 +15,7 @@ import {
   listPermissions,
   listRoles,
   listUsers,
+  listUsersPaged,
   resetUserPassword,
   revokeUserSessions,
   updateRole,
@@ -111,14 +112,42 @@ adminRouter.post("/bootstrap", async (req, res, next) => {
 
 adminRouter.use(authenticateJwt, requirePermission("MANAGE_USERS"));
 
-adminRouter.get("/users", async (_req, res, next) => {
+adminRouter.get("/users", async (req, res, next) => {
   try {
-    const users = await listUsers();
-    if (!users) {
+    if (Object.keys(req.query).length === 0) {
+      const users = await listUsers();
+      if (!users) {
+        res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED", message: "平台資料庫尚未設定。" } });
+        return;
+      }
+      res.json({ users });
+      return;
+    }
+
+    const parsed = z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      search: z.string().trim().max(200).optional(),
+      status: z.enum(["ACTIVE","INACTIVE","ALL"]).default("ACTIVE"),
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "使用者清單查詢條件不正確。" } });
+      return;
+    }
+
+    const result = await listUsersPaged(parsed.data);
+    if (!result) {
       res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED", message: "平台資料庫尚未設定。" } });
       return;
     }
-    res.json({ users });
+
+    res.json({
+      users: result.items,
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      total: result.total,
+      totalPages: Math.max(1, Math.ceil(result.total / parsed.data.pageSize)),
+    });
   } catch (error) { next(error); }
 });
 

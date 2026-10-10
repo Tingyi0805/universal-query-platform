@@ -217,3 +217,73 @@ export async function deleteDashboard(id: number): Promise<void> {
     throw new Error("DASHBOARD_NOT_FOUND");
   }
 }
+
+export async function listDashboardsPaged(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status: "ACTIVE" | "INACTIVE" | "ALL";
+  displayMode?: "TABLE" | "BIG_SCREEN";
+}) {
+  const pool = await requirePool();
+  const offset = (input.page - 1) * input.pageSize;
+  const search = input.search?.trim() || null;
+  const displayMode = input.displayMode ?? null;
+
+  const result = await pool.request()
+    .input("offset", sql.Int, offset)
+    .input("pageSize", sql.Int, input.pageSize)
+    .input("search", sql.NVarChar(200), search)
+    .input("status", sql.NVarChar(20), input.status)
+    .input("displayMode", sql.NVarChar(20), displayMode)
+    .query(`
+      SELECT d.Id, d.Code, d.Name, d.Description, d.QueryDefinitionId,
+             d.RefreshSeconds, d.DisplayMode, d.DisplayTitle, d.PageSize, d.PageSeconds,
+             d.ShowClock, d.ShowPageNumber, d.ShowCountdown,
+             d.ParametersJson, d.IsActive,
+             d.CreatedAtUtc, d.UpdatedAtUtc,
+             q.Code AS QueryCode, q.Name AS QueryName
+      FROM uqp.Dashboard d
+      INNER JOIN uqp.QueryDefinition q ON q.Id=d.QueryDefinitionId
+      WHERE (
+        @search IS NULL OR
+        d.Code LIKE '%' + @search + '%' OR
+        d.Name LIKE '%' + @search + '%' OR
+        ISNULL(d.Description, '') LIKE '%' + @search + '%' OR
+        q.Code LIKE '%' + @search + '%' OR
+        q.Name LIKE '%' + @search + '%'
+      )
+      AND (@displayMode IS NULL OR d.DisplayMode=@displayMode)
+      AND (
+        @status='ALL' OR
+        (@status='ACTIVE' AND d.IsActive=1) OR
+        (@status='INACTIVE' AND d.IsActive=0)
+      )
+      ORDER BY d.Name, d.Code
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+
+      SELECT COUNT(1) AS Total
+      FROM uqp.Dashboard d
+      INNER JOIN uqp.QueryDefinition q ON q.Id=d.QueryDefinitionId
+      WHERE (
+        @search IS NULL OR
+        d.Code LIKE '%' + @search + '%' OR
+        d.Name LIKE '%' + @search + '%' OR
+        ISNULL(d.Description, '') LIKE '%' + @search + '%' OR
+        q.Code LIKE '%' + @search + '%' OR
+        q.Name LIKE '%' + @search + '%'
+      )
+      AND (@displayMode IS NULL OR d.DisplayMode=@displayMode)
+      AND (
+        @status='ALL' OR
+        (@status='ACTIVE' AND d.IsActive=1) OR
+        (@status='INACTIVE' AND d.IsActive=0)
+      );
+    `);
+
+  const recordsets = result.recordsets as any[];
+  return {
+    items: (recordsets[0] ?? []).map(mapRow),
+    total: Number(recordsets[1]?.[0]?.Total ?? 0),
+  };
+}

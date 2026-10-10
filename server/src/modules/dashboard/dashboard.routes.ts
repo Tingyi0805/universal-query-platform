@@ -11,6 +11,7 @@ import {
   deleteDashboard,
   getDashboard,
   listDashboards,
+  listDashboardsPaged,
   updateDashboard,
 } from "./dashboard.repository.js";
 import {
@@ -71,9 +72,33 @@ const dashboardSchema = z.object({
 export const dashboardRouter = Router();
 dashboardRouter.use(authenticateJwt);
 
-dashboardRouter.get("/", requirePermission("DESIGN_QUERY"), async (_req, res, next) => {
+dashboardRouter.get("/", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
-    res.json({ dashboards: await listDashboards() });
+    if (Object.keys(req.query).length === 0) {
+      res.json({ dashboards: await listDashboards() });
+      return;
+    }
+
+    const parsed = z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      search: z.string().trim().max(200).optional(),
+      status: z.enum(["ACTIVE","INACTIVE","ALL"]).default("ACTIVE"),
+      displayMode: z.enum(["TABLE","BIG_SCREEN"]).optional(),
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard 清單查詢條件不正確。" } });
+      return;
+    }
+
+    const result = await listDashboardsPaged(parsed.data);
+    res.json({
+      dashboards: result.items,
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      total: result.total,
+      totalPages: Math.max(1, Math.ceil(result.total / parsed.data.pageSize)),
+    });
   } catch (error) {
     next(error);
   }

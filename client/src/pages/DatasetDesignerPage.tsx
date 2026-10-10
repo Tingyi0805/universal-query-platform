@@ -4,6 +4,7 @@ import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { DatasetParametersEditor } from "../components/DatasetParametersEditor";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
+import { ManagementListToolbar } from "../components/ManagementListToolbar";
 import "./DatasetDesignerPage.css";
 
 type DataSourceOption = {
@@ -97,14 +98,11 @@ export function DatasetDesignerPage() {
   const [notice, setNotice] = useState("");
   const [versionRefreshKey, setVersionRefreshKey] = useState(0);
   const [datasetFilter, setDatasetFilter] = useState<"ACTIVE" | "INACTIVE" | "ARCHIVED">("ACTIVE");
-
-  const filteredDatasets = datasets.filter((dataset) =>
-    datasetFilter === "ARCHIVED"
-      ? dataset.isArchived
-      : datasetFilter === "ACTIVE"
-        ? !dataset.isArchived && dataset.isActive
-        : !dataset.isArchived && !dataset.isActive
-  );
+  const [listSearch, setListSearch] = useState("");
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(20);
+  const [listTotal, setListTotal] = useState(0);
+  const [listTotalPages, setListTotalPages] = useState(1);
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
 
@@ -112,18 +110,31 @@ export function DatasetDesignerPage() {
     setLoading(true);
     setError("");
     try {
+      const params = new URLSearchParams({
+        page: String(listPage),
+        pageSize: String(listPageSize),
+        status: datasetFilter,
+      });
+      if (listSearch) params.set("search", listSearch);
+
       const [datasetResult, dataSourceResult] = await Promise.all([
-        apiRequest<{ datasets: DatasetRow[] }>("/datasets", {}, accessToken),
+        apiRequest<{
+          datasets: DatasetRow[];
+          total: number;
+          totalPages: number;
+        }>(`/datasets?${params.toString()}`, {}, accessToken),
         apiRequest<{ dataSources: DataSourceOption[] }>("/datasets/datasource-options", {}, accessToken),
       ]);
       setDatasets(datasetResult.datasets);
+      setListTotal(datasetResult.total);
+      setListTotalPages(datasetResult.totalPages);
       setDataSources(dataSourceResult.dataSources);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入 Dataset 失敗。");
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, datasetFilter, listPage, listPageSize, listSearch]);
 
   useEffect(() => { void load(); }, [load]);
   const loadPreviewParameterDefinitions = useCallback(async (datasetId?: number) => {
@@ -483,20 +494,31 @@ export function DatasetDesignerPage() {
 
           <div className="dataset-status-filter" role="tablist" aria-label="Dataset 狀態">
             <button type="button" className={datasetFilter === "ACTIVE" ? "active" : ""}
-              onClick={() => { setDatasetFilter("ACTIVE"); resetForm(); }}>
-              啟用 <span>{datasets.filter((d) => !d.isArchived && d.isActive).length}</span>
+              onClick={() => { setDatasetFilter("ACTIVE"); setListPage(1); resetForm(); }}>
+              啟用
             </button>
             <button type="button" className={datasetFilter === "INACTIVE" ? "active" : ""}
-              onClick={() => { setDatasetFilter("INACTIVE"); resetForm(); }}>
-              停用 <span>{datasets.filter((d) => !d.isArchived && !d.isActive).length}</span>
+              onClick={() => { setDatasetFilter("INACTIVE"); setListPage(1); resetForm(); }}>
+              停用
             </button>
             <button type="button" className={datasetFilter === "ARCHIVED" ? "active" : ""}
-              onClick={() => { setDatasetFilter("ARCHIVED"); resetForm(); }}>
-              已封存 <span>{datasets.filter((d) => d.isArchived).length}</span>
+              onClick={() => { setDatasetFilter("ARCHIVED"); setListPage(1); resetForm(); }}>
+              已封存
             </button>
           </div>
 
-          {loading ? <div className="notice">載入中…</div> : filteredDatasets.map((dataset) => (
+          <ManagementListToolbar
+            search={listSearch}
+            onSearch={(value) => { setListSearch(value); setListPage(1); }}
+            page={listPage}
+            pageSize={listPageSize}
+            total={listTotal}
+            totalPages={listTotalPages}
+            onPageChange={setListPage}
+            onPageSizeChange={(value) => { setListPageSize(value); setListPage(1); }}
+          />
+
+          {loading ? <div className="notice">載入中…</div> : datasets.map((dataset) => (
             <button
               type="button"
               className={`dataset-item ${form.id === dataset.id ? "selected" : ""}`}
@@ -511,7 +533,7 @@ export function DatasetDesignerPage() {
             </button>
           ))}
 
-          {!loading && filteredDatasets.length === 0 && <div className="empty-state">此狀態目前沒有 Dataset。</div>}
+          {!loading && datasets.length === 0 && <div className="empty-state">目前沒有符合條件的 Dataset。</div>}
         </aside>
 
         <section className="designer-editor">

@@ -432,3 +432,92 @@ export async function revokeUserSessions(userId: number): Promise<number> {
   if (!result.recordset[0]) throw new Error("USER_NOT_FOUND");
   return Number(result.recordset[0].TokenVersion);
 }
+
+export async function listUsersPaged(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status: "ACTIVE" | "INACTIVE" | "ALL";
+}) {
+  const pool = await getPlatformDbPool();
+  if (!pool) return undefined;
+
+  const offset = (input.page - 1) * input.pageSize;
+  const search = input.search?.trim() || null;
+
+  const usersResult = await pool.request()
+    .input("offset", sql.Int, offset)
+    .input("pageSize", sql.Int, input.pageSize)
+    .input("search", sql.NVarChar(200), search)
+    .input("status", sql.NVarChar(20), input.status)
+    .query(`
+      SELECT Id, Username, DisplayName, AuthProvider, IsActive, TokenVersion
+      FROM uqp.AppUser
+      WHERE (
+        @search IS NULL OR
+        Username LIKE '%' + @search + '%' OR
+        DisplayName LIKE '%' + @search + '%'
+      )
+      AND (
+        @status='ALL' OR
+        (@status='ACTIVE' AND IsActive=1) OR
+        (@status='INACTIVE' AND IsActive=0)
+      )
+      ORDER BY Username
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+
+      SELECT COUNT(1) AS Total
+      FROM uqp.AppUser
+      WHERE (
+        @search IS NULL OR
+        Username LIKE '%' + @search + '%' OR
+        DisplayName LIKE '%' + @search + '%'
+      )
+      AND (
+        @status='ALL' OR
+        (@status='ACTIVE' AND IsActive=1) OR
+        (@status='INACTIVE' AND IsActive=0)
+      );
+    `);
+
+  const recordsets = usersResult.recordsets as any[];
+  const userRows = recordsets[0] ?? [];
+  const userIds = userRows.map((row: any) => Number(row.Id));
+
+  let roleRows: any[] = [];
+  if (userIds.length > 0) {
+    const request = pool.request();
+    const placeholders = userIds.map((id: number, index: number) => {
+      const key = `id${index}`;
+      request.input(key, sql.BigInt, id);
+      return `@${key}`;
+    });
+    const rolesResult = await request.query(`
+      SELECT ur.UserId, r.Code
+      FROM uqp.UserRole ur
+      INNER JOIN uqp.Role r ON r.Id=ur.RoleId
+      WHERE ur.UserId IN (${placeholders.join(",")})
+      ORDER BY ur.UserId, r.Code
+    `);
+    roleRows = rolesResult.recordset;
+  }
+
+  const rolesByUser = new Map<number, string[]>();
+  for (const row of roleRows) {
+    const userId = Number(row.UserId);
+    rolesByUser.set(userId, [...(rolesByUser.get(userId) ?? []), String(row.Code)]);
+  }
+
+  return {
+    items: userRows.map((row: any) => ({
+      id: Number(row.Id),
+      username: String(row.Username),
+      displayName: String(row.DisplayName),
+      authProvider: String(row.AuthProvider),
+      isActive: Boolean(row.IsActive),
+      tokenVersion: Number(row.TokenVersion ?? 1),
+      roles: rolesByUser.get(Number(row.Id)) ?? [],
+    })),
+    total: Number(recordsets[1]?.[0]?.Total ?? 0),
+  };
+}

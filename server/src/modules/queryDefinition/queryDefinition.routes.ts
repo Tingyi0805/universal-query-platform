@@ -10,6 +10,7 @@ import {
   getQueryDefinition,
   getQueryDefinitionDeleteImpact,
   listQueryDefinitions,
+  listQueryDefinitionsPaged,
   publishQueryDefinition,
   restoreQueryDefinition,
   unpublishQueryDefinition,
@@ -73,9 +74,34 @@ const accessSchema = z.object({
 export const queryDefinitionRouter = Router();
 queryDefinitionRouter.use(authenticateJwt);
 
-queryDefinitionRouter.get("/", requirePermission("DESIGN_QUERY"), async (_req, res, next) => {
-  try { res.json({ queryDefinitions: await listQueryDefinitions() }); }
-  catch (error) { next(error); }
+queryDefinitionRouter.get("/", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    if (Object.keys(req.query).length === 0) {
+      res.json({ queryDefinitions: await listQueryDefinitions() });
+      return;
+    }
+
+    const parsed = z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      search: z.string().trim().max(200).optional(),
+      status: z.enum(["PUBLISHED","DRAFT","ARCHIVED","ALL"]).default("PUBLISHED"),
+      categoryId: z.coerce.number().int().positive().optional(),
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query 清單查詢條件不正確。" } });
+      return;
+    }
+
+    const result = await listQueryDefinitionsPaged(parsed.data);
+    res.json({
+      queryDefinitions: result.items,
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      total: result.total,
+      totalPages: Math.max(1, Math.ceil(result.total / parsed.data.pageSize)),
+    });
+  } catch (error) { next(error); }
 });
 
 queryDefinitionRouter.get("/:id", requirePermission("DESIGN_QUERY"), async (req, res, next) => {

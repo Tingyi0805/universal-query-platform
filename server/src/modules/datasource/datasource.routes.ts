@@ -8,6 +8,7 @@ import {
   deleteDataSource,
   getDataSourceDeleteImpact,
   listDataSources,
+  listDataSourcesPaged,
   updateDataSource,
 } from "./datasource.repository.js";
 import { testDataSourceConfig, testSavedDataSource } from "./datasource.service.js";
@@ -87,9 +88,33 @@ const updateSchema = baseSchema.extend({
 export const dataSourceRouter = Router();
 dataSourceRouter.use(authenticateJwt, requirePermission("MANAGE_DATASOURCE"));
 
-dataSourceRouter.get("/", async (_req, res, next) => {
+dataSourceRouter.get("/", async (req, res, next) => {
   try {
-    res.json({ dataSources: await listDataSources() });
+    if (Object.keys(req.query).length === 0) {
+      res.json({ dataSources: await listDataSources() });
+      return;
+    }
+
+    const parsed = z.object({
+      page: z.coerce.number().int().min(1).default(1),
+      pageSize: z.coerce.number().int().min(1).max(100).default(20),
+      search: z.string().trim().max(255).optional(),
+      status: z.enum(["ACTIVE","INACTIVE","ALL"]).default("ACTIVE"),
+      type: z.enum(["SQLSERVER","ORACLE","MYSQL","POSTGRESQL","ODBC"]).optional(),
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "資料來源清單查詢條件不正確。" } });
+      return;
+    }
+
+    const result = await listDataSourcesPaged(parsed.data);
+    res.json({
+      dataSources: result.items,
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      total: result.total,
+      totalPages: Math.max(1, Math.ceil(result.total / parsed.data.pageSize)),
+    });
   } catch (error) { next(error); }
 });
 

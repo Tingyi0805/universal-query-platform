@@ -193,3 +193,72 @@ export async function getDataSourceDeleteImpact(id: number) {
   const datasetCount = Number(row.DatasetCount ?? 0);
   return { canDelete: datasetCount === 0, datasetCount };
 }
+
+export async function listDataSourcesPaged(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status: "ACTIVE" | "INACTIVE" | "ALL";
+  type?: "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL" | "ODBC";
+}) {
+  const pool = await requirePool();
+  const offset = (input.page - 1) * input.pageSize;
+  const search = input.search?.trim() || null;
+  const type = input.type ?? null;
+
+  const result = await pool.request()
+    .input("offset", sql.Int, offset)
+    .input("pageSize", sql.Int, input.pageSize)
+    .input("search", sql.NVarChar(255), search)
+    .input("status", sql.NVarChar(20), input.status)
+    .input("type", sql.NVarChar(20), type)
+    .query(`
+      SELECT Id, Code, Name, Type, Host, Port, DatabaseName, OracleServiceName,
+             OracleConnectionMode, OdbcConnectionMode, OdbcDsn,
+             EncryptedOdbcConnectionString, Username, EncryptedPassword,
+             ConnectionTimeoutSec, QueryTimeoutSec, EncryptConnection,
+             TrustServerCertificate, IsActive
+      FROM uqp.DataSource
+      WHERE (
+        @search IS NULL OR
+        Code LIKE '%' + @search + '%' OR
+        Name LIKE '%' + @search + '%' OR
+        Host LIKE '%' + @search + '%' OR
+        ISNULL(DatabaseName, '') LIKE '%' + @search + '%' OR
+        ISNULL(OracleServiceName, '') LIKE '%' + @search + '%' OR
+        ISNULL(OdbcDsn, '') LIKE '%' + @search + '%'
+      )
+      AND (@type IS NULL OR Type=@type)
+      AND (
+        @status='ALL' OR
+        (@status='ACTIVE' AND IsActive=1) OR
+        (@status='INACTIVE' AND IsActive=0)
+      )
+      ORDER BY Name, Code
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+
+      SELECT COUNT(1) AS Total
+      FROM uqp.DataSource
+      WHERE (
+        @search IS NULL OR
+        Code LIKE '%' + @search + '%' OR
+        Name LIKE '%' + @search + '%' OR
+        Host LIKE '%' + @search + '%' OR
+        ISNULL(DatabaseName, '') LIKE '%' + @search + '%' OR
+        ISNULL(OracleServiceName, '') LIKE '%' + @search + '%' OR
+        ISNULL(OdbcDsn, '') LIKE '%' + @search + '%'
+      )
+      AND (@type IS NULL OR Type=@type)
+      AND (
+        @status='ALL' OR
+        (@status='ACTIVE' AND IsActive=1) OR
+        (@status='INACTIVE' AND IsActive=0)
+      );
+    `);
+
+  const recordsets = result.recordsets as any[];
+  return {
+    items: (recordsets[0] ?? []).map(mapRow),
+    total: Number(recordsets[1]?.[0]?.Total ?? 0),
+  };
+}

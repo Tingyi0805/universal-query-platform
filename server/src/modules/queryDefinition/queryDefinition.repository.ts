@@ -398,3 +398,75 @@ export async function getQueryDefinitionDeleteImpact(id: number) {
   const auditCount = Number(row.AuditCount ?? 0);
   return { canDelete: auditCount === 0, auditCount };
 }
+
+export async function listQueryDefinitionsPaged(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status: "PUBLISHED" | "DRAFT" | "ARCHIVED" | "ALL";
+  categoryId?: number;
+}) {
+  const pool = await requirePool();
+  const offset = (input.page - 1) * input.pageSize;
+  const search = input.search?.trim() || null;
+  const categoryId = input.categoryId ?? null;
+
+  const result = await pool.request()
+    .input("offset", sql.Int, offset)
+    .input("pageSize", sql.Int, input.pageSize)
+    .input("search", sql.NVarChar(200), search)
+    .input("status", sql.NVarChar(20), input.status)
+    .input("categoryId", sql.BigInt, categoryId)
+    .query(`
+      SELECT q.*, d.Name AS DatasetName,
+             (SELECT COUNT(1) FROM uqp.AuditLog a WHERE a.QueryDefinitionId=q.Id) AS AuditCount,
+             c.Name AS CategoryName,
+             ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder
+      FROM uqp.QueryDefinition q
+      INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
+      LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
+      WHERE (
+        @search IS NULL OR
+        q.Code LIKE '%' + @search + '%' OR
+        q.Name LIKE '%' + @search + '%' OR
+        ISNULL(q.Description, '') LIKE '%' + @search + '%' OR
+        d.Code LIKE '%' + @search + '%' OR
+        d.Name LIKE '%' + @search + '%'
+      )
+      AND (@categoryId IS NULL OR q.CategoryId=@categoryId)
+      AND (
+        @status='ALL' OR
+        (@status='ARCHIVED' AND q.IsArchived=1) OR
+        (@status='PUBLISHED' AND q.IsArchived=0 AND q.IsPublished=1) OR
+        (@status='DRAFT' AND q.IsArchived=0 AND q.IsPublished=0)
+      )
+      ORDER BY ISNULL(c.SortOrder, 2147483647), c.Name, q.SortOrder, q.Name
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+
+      SELECT COUNT(1) AS Total
+      FROM uqp.QueryDefinition q
+      INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
+      LEFT JOIN uqp.QueryCategory c ON c.Id=q.CategoryId
+      WHERE (
+        @search IS NULL OR
+        q.Code LIKE '%' + @search + '%' OR
+        q.Name LIKE '%' + @search + '%' OR
+        ISNULL(q.Description, '') LIKE '%' + @search + '%' OR
+        d.Code LIKE '%' + @search + '%' OR
+        d.Name LIKE '%' + @search + '%'
+      )
+      AND (@categoryId IS NULL OR q.CategoryId=@categoryId)
+      AND (
+        @status='ALL' OR
+        (@status='ARCHIVED' AND q.IsArchived=1) OR
+        (@status='PUBLISHED' AND q.IsArchived=0 AND q.IsPublished=1) OR
+        (@status='DRAFT' AND q.IsArchived=0 AND q.IsPublished=0)
+      );
+    `);
+
+  const recordsets = result.recordsets as any[];
+  return {
+    items: (recordsets[0] ?? []).map(mapRow),
+    total: Number(recordsets[1]?.[0]?.Total ?? 0),
+  };
+}

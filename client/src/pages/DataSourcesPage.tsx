@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { ManagementListToolbar } from "../components/ManagementListToolbar";
 import "./DataSourcesPage.css";
 
 type DataSourceType = "SQLSERVER" | "ORACLE" | "MYSQL" | "POSTGRESQL" | "ODBC";
@@ -91,19 +92,40 @@ export function DataSourcesPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [connectionTest, setConnectionTest] = useState<ConnectionTestResult | null>(null);
+  const [listSearch, setListSearch] = useState("");
+  const [listStatus, setListStatus] = useState<"ACTIVE" | "INACTIVE" | "ALL">("ACTIVE");
+  const [listType, setListType] = useState<"" | DataSourceType>("");
+  const [listPage, setListPage] = useState(1);
+  const [listPageSize, setListPageSize] = useState(20);
+  const [listTotal, setListTotal] = useState(0);
+  const [listTotalPages, setListTotalPages] = useState(1);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const result = await apiRequest<{ dataSources: DataSourceRow[] }>("/datasources", {}, accessToken);
+      const params = new URLSearchParams({
+        page: String(listPage),
+        pageSize: String(listPageSize),
+        status: listStatus,
+      });
+      if (listSearch) params.set("search", listSearch);
+      if (listType) params.set("type", listType);
+
+      const result = await apiRequest<{
+        dataSources: DataSourceRow[];
+        total: number;
+        totalPages: number;
+      }>(`/datasources?${params.toString()}`, {}, accessToken);
       setRows(result.dataSources);
+      setListTotal(result.total);
+      setListTotalPages(result.totalPages);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入資料來源失敗。");
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, listPage, listPageSize, listSearch, listStatus, listType]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -291,6 +313,52 @@ export function DataSourcesPage() {
             <button className="secondary-button" type="button" onClick={() => resetForm()}>＋新增</button>
           </div>
 
+          <ManagementListToolbar
+            search={listSearch}
+            onSearch={(value) => { setListSearch(value); setListPage(1); }}
+            page={listPage}
+            pageSize={listPageSize}
+            total={listTotal}
+            totalPages={listTotalPages}
+            onPageChange={setListPage}
+            onPageSizeChange={(value) => { setListPageSize(value); setListPage(1); }}
+            filters={
+              <>
+                <label>
+                  <span>狀態</span>
+                  <select
+                    value={listStatus}
+                    onChange={(event) => {
+                      setListStatus(event.target.value as "ACTIVE" | "INACTIVE" | "ALL");
+                      setListPage(1);
+                    }}
+                  >
+                    <option value="ACTIVE">啟用</option>
+                    <option value="INACTIVE">停用</option>
+                    <option value="ALL">全部</option>
+                  </select>
+                </label>
+                <label>
+                  <span>類型</span>
+                  <select
+                    value={listType}
+                    onChange={(event) => {
+                      setListType(event.target.value as "" | DataSourceType);
+                      setListPage(1);
+                    }}
+                  >
+                    <option value="">全部</option>
+                    <option value="SQLSERVER">SQL Server</option>
+                    <option value="ORACLE">Oracle</option>
+                    <option value="MYSQL">MySQL</option>
+                    <option value="POSTGRESQL">PostgreSQL</option>
+                    <option value="ODBC">ODBC</option>
+                  </select>
+                </label>
+              </>
+            }
+          />
+
           {loading ? <div className="notice">載入中…</div> : rows.map((row) => (
             <article
               className={`datasource-item ${form.id === row.id ? "selected" : ""}`}
@@ -310,7 +378,7 @@ export function DataSourcesPage() {
             </article>
           ))}
 
-          {!loading && rows.length === 0 && <div className="empty-state">尚未建立資料來源。</div>}
+          {!loading && rows.length === 0 && <div className="empty-state">目前沒有符合條件的資料來源。</div>}
         </section>
 
         <section className="datasource-editor">
