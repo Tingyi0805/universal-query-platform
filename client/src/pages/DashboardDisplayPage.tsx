@@ -59,10 +59,47 @@ type LayoutProfile = {
   widgets: LayoutWidget[];
 };
 
+type MaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC";
+
 function textValue(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
+}
+
+function maskText(value: unknown, mode: unknown): string {
+  const text = textValue(value);
+  const maskMode = String(mode ?? "NONE") as MaskMode;
+  if (!text || maskMode === "NONE") return text;
+
+  if (maskMode === "NAME") {
+    const chars = Array.from(text);
+    if (chars.length <= 1) return "○";
+    if (chars.length === 2) return `${chars[0]}○`;
+    return `${chars[0]}${"○".repeat(chars.length - 2)}${chars[chars.length - 1]}`;
+  }
+
+  if (maskMode === "MRN") {
+    if (text.length <= 4) return "○".repeat(text.length);
+    const head = text.slice(0, Math.min(4, text.length - 2));
+    const tail = text.slice(-2);
+    return `${head}${"○".repeat(Math.max(1, text.length - head.length - tail.length))}${tail}`;
+  }
+
+  if (maskMode === "PHONE") {
+    if (text.length <= 5) return "○".repeat(text.length);
+    return `${text.slice(0, 4)}${"○".repeat(Math.max(1, text.length - 7))}${text.slice(-3)}`;
+  }
+
+  if (text.length <= 2) return "○".repeat(text.length);
+  return `${text.slice(0, 1)}${"○".repeat(text.length - 2)}${text.slice(-1)}`;
+}
+
+function tableColumnMask(widget: LayoutWidget, columnName: string): MaskMode {
+  const masks = widget.config?.columnMasks;
+  if (!masks || typeof masks !== "object" || Array.isArray(masks)) return "NONE";
+  const value = (masks as Record<string, unknown>)[columnName];
+  return String(value ?? "NONE") as MaskMode;
 }
 
 export function DashboardDisplayPage() {
@@ -135,8 +172,28 @@ export function DashboardDisplayPage() {
       const requested = profiles.find((profile) => profile.id === requestedProfileId);
       if (requested) return requested;
     }
-    return profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null;
-  }, [profiles, requestedProfileId]);
+
+    if (profiles.length === 0) return null;
+
+    const viewportRatio = viewport.width / Math.max(1, viewport.height);
+    const ranked = profiles
+      .map((profile) => {
+        const profileRatio = profile.canvasWidth / Math.max(1, profile.canvasHeight);
+        const ratioPenalty = Math.abs(Math.log(profileRatio / viewportRatio));
+        const scale = Math.min(
+          viewport.width / profile.canvasWidth,
+          viewport.height / profile.canvasHeight,
+        );
+        const scalePenalty = Math.abs(Math.log(Math.max(scale, 0.01)));
+        const defaultBonus = profile.isDefault ? -0.02 : 0;
+        return { profile, score: ratioPenalty * 4 + scalePenalty + defaultBonus };
+      })
+      .sort((a, b) => a.score - b.score);
+
+    return ranked[0]?.profile
+      ?? profiles.find((profile) => profile.isDefault)
+      ?? profiles[0];
+  }, [profiles, requestedProfileId, viewport]);
 
   const pageSize = Math.max(1, preview?.dashboard.pageSize ?? 5);
   const pageSeconds = Math.max(5, preview?.dashboard.pageSeconds ?? 20);
@@ -228,7 +285,7 @@ export function DashboardDisplayPage() {
                       key={column.columnName}
                       style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}
                     >
-                      {textValue(row[column.columnName])}
+                      {maskText(row[column.columnName], tableColumnMask(widget, column.columnName))}
                     </td>
                   ))}
                 </tr>
@@ -249,7 +306,9 @@ export function DashboardDisplayPage() {
         value = widget.sourceKey ? textValue(parameters[widget.sourceKey]) : "";
         break;
       case "FIELD":
-        value = widget.sourceKey ? textValue(firstRow[widget.sourceKey]) : "";
+        value = widget.sourceKey
+          ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode)
+          : "";
         break;
       case "CLOCK":
         value = now.toLocaleString("zh-TW", { hour12: false });
