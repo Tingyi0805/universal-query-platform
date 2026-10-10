@@ -89,3 +89,64 @@
 @media (max-width: 860px) {
   .parameter-form-grid { grid-template-columns: 1fr; }
 }
+
+
+.parameter-date-note {
+  margin: 10px 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #d9e3f0;
+  border-radius: 10px;
+  background: #f7f9fc;
+  color: #53637a;
+  font-size: 13px;
+}
+
+.date-parameter-config {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d9e3f0;
+  border-radius: 12px;
+  background: #f6f9fd;
+}
+
+.date-format-grid {
+  padding-top: 4px;
+}
+
+.date-preview {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid #dbe5f2;
+}
+
+.date-preview > span {
+  font-size: 12px;
+  font-weight: 800;
+  color: #53637a;
+}
+
+.date-preview > div {
+  display: grid;
+  gap: 3px;
+}
+
+.date-preview small {
+  color: #7b8798;
+  font-weight: 600;
+}
+
+.date-preview strong {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 15px;
+  word-break: break-all;
+}
+
+@media (max-width: 860px) {
+  .date-preview { grid-template-columns: 1fr; }
+}

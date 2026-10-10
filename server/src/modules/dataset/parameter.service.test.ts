@@ -12,6 +12,9 @@ function parameter(
     label: patch.name,
     isRequired: false,
     defaultValue: null,
+    dateOutputMode: "NATIVE",
+    dateCalendar: "GREGORIAN",
+    dateFormat: null,
     displayOrder: 0,
     placeholder: null,
     helpText: null,
@@ -72,4 +75,51 @@ test("coerces multi-select values", () => {
   );
 
   assert.deepEqual(result.CODES, ["A", "B"]);
+});
+
+
+test("resolves dynamic TODAY default", () => {
+  const result = coerceRuntimeParameters(
+    [parameter({
+      name: "D",
+      dataType: "DATE",
+      controlType: "DATE",
+      defaultValue: "$TODAY",
+    })],
+    {},
+  );
+
+  assert.ok(result.D instanceof Date);
+});
+
+test("formats date parameter as Gregorian string", () => {
+  const result = coerceRuntimeParameters(
+    [parameter({
+      name: "D",
+      dataType: "DATE",
+      controlType: "DATE",
+      dateOutputMode: "STRING",
+      dateCalendar: "GREGORIAN",
+      dateFormat: "yyyyMMdd",
+    })],
+    { D: "2026-10-10" },
+  );
+
+  assert.equal(result.D, "20261010");
+});
+
+test("formats date parameter as ROC string", () => {
+  const result = coerceRuntimeParameters(
+    [parameter({
+      name: "D",
+      dataType: "DATE",
+      controlType: "DATE",
+      dateOutputMode: "STRING",
+      dateCalendar: "ROC",
+      dateFormat: "yyyMMdd",
+    })],
+    { D: "2026-10-10" },
+  );
+
+  assert.equal(result.D, "1151010");
 });

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset, getParameterOptions } from "../dataset/dataset.service.js";
 import { listDatasetParameters } from "../dataset/parameter.repository.js";
+import { resolveDateForRuntimeInput } from "../dataset/dateParameter.js";
 import {
   getEffectiveQueryAccess,
   listAccessibleQueries,
@@ -153,6 +154,15 @@ queryRuntimeRouter.get("/:id", requirePermission("VIEW_QUERY"), async (req, res,
         controlType: parameter.controlType,
         isRequired: parameter.isRequired,
         defaultValue: parameter.defaultValue,
+        runtimeDefaultValue: ["DATE","DATETIME"].includes(parameter.dataType)
+          ? resolveDateForRuntimeInput(
+              parameter.defaultValue,
+              parameter.dataType as "DATE" | "DATETIME",
+            )
+          : parameter.defaultValue,
+        dateOutputMode: parameter.dateOutputMode,
+        dateCalendar: parameter.dateCalendar,
+        dateFormat: parameter.dateFormat,
         displayOrder: parameter.displayOrder,
         placeholder: parameter.placeholder,
         helpText: parameter.helpText,

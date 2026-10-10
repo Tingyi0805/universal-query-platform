@@ -11,6 +11,9 @@ export type DatasetParameterRecord = {
   controlType: "TEXT" | "NUMBER" | "DATE" | "DATETIME" | "SELECT" | "MULTISELECT" | "CHECKBOX";
   isRequired: boolean;
   defaultValue: string | null;
+  dateOutputMode: "NATIVE" | "STRING";
+  dateCalendar: "GREGORIAN" | "ROC";
+  dateFormat: string | null;
   displayOrder: number;
   placeholder: string | null;
   helpText: string | null;
@@ -37,6 +40,9 @@ function mapParameter(row: any): DatasetParameterRecord {
     controlType: row.ControlType,
     isRequired: Boolean(row.IsRequired),
     defaultValue: row.DefaultValue == null ? null : String(row.DefaultValue),
+    dateOutputMode: String(row.DateOutputMode ?? "NATIVE") as "NATIVE" | "STRING",
+    dateCalendar: String(row.DateCalendar ?? "GREGORIAN") as "GREGORIAN" | "ROC",
+    dateFormat: row.DateFormat == null ? null : String(row.DateFormat),
     displayOrder: Number(row.DisplayOrder),
     placeholder: row.Placeholder == null ? null : String(row.Placeholder),
     helpText: row.HelpText == null ? null : String(row.HelpText),
@@ -175,6 +181,9 @@ export async function replaceDatasetParameters(
         .input("controlType", sql.NVarChar(30), parameter.controlType)
         .input("isRequired", sql.Bit, parameter.isRequired)
         .input("defaultValue", sql.NVarChar(1000), parameter.defaultValue)
+        .input("dateOutputMode", sql.NVarChar(20), parameter.dateOutputMode)
+        .input("dateCalendar", sql.NVarChar(20), parameter.dateCalendar)
+        .input("dateFormat", sql.NVarChar(100), parameter.dateFormat)
         .input("displayOrder", sql.Int, parameter.displayOrder)
         .input("placeholder", sql.NVarChar(200), parameter.placeholder)
         .input("helpText", sql.NVarChar(500), parameter.helpText)
@@ -186,12 +195,14 @@ export async function replaceDatasetParameters(
         .query(`
           INSERT INTO uqp.DatasetParameter (
             DatasetId, Name, Label, DataType, ControlType, IsRequired,
-            DefaultValue, DisplayOrder, Placeholder, HelpText, OptionMode,
+            DefaultValue, DateOutputMode, DateCalendar, DateFormat,
+            DisplayOrder, Placeholder, HelpText, OptionMode,
             FixedOptionsJson, LookupDatasetId, LookupValueField, LookupLabelField
           )
           VALUES (
             @datasetId,@name,@label,@dataType,@controlType,@isRequired,
-            @defaultValue,@displayOrder,@placeholder,@helpText,@optionMode,
+            @defaultValue,@dateOutputMode,@dateCalendar,@dateFormat,
+            @displayOrder,@placeholder,@helpText,@optionMode,
             @fixedOptionsJson,@lookupDatasetId,@lookupValueField,@lookupLabelField
           )
         `);

@@ -1,4 +1,10 @@
 import type { DatasetParameterRecord } from "./parameter.repository.js";
+import {
+  defaultDateFormat,
+  formatParameterDate,
+  isDynamicDateExpression,
+  parseCanonicalDate,
+} from "./dateParameter.js";
 
 function isBlank(value: unknown): boolean {
   return value === undefined || value === null || value === "";
@@ -13,11 +19,52 @@ function parseBoolean(value: unknown): boolean {
   throw new Error("PARAMETER_BOOLEAN_INVALID");
 }
 
+function parseDateValue(parameter: DatasetParameterRecord, value: unknown): unknown {
+  const includeTime = parameter.dataType === "DATETIME";
+  const text = String(value);
+
+  // Existing dashboards may already contain DB-formatted string values.
+  // Preserve those values in STRING mode, while canonical UI values and
+  // dynamic expressions are resolved and formatted consistently.
+  if (
+    parameter.dateOutputMode === "STRING" &&
+    !isDynamicDateExpression(text) &&
+    !(includeTime ? /^\d{4}-\d{2}-\d{2}T/.test(text) : /^\d{4}-\d{2}-\d{2}$/.test(text))
+  ) {
+    return text;
+  }
+
+  let date: Date;
+  try {
+    date = parseCanonicalDate(value, includeTime);
+  } catch (error) {
+    const code = includeTime ? "PARAMETER_DATETIME_INVALID" : "PARAMETER_DATE_INVALID";
+    void error;
+    throw new Error(`${code}:${parameter.name}`);
+  }
+
+  if (parameter.dateOutputMode === "STRING") {
+    return formatParameterDate(
+      date,
+      parameter.dateCalendar,
+      parameter.dateFormat || defaultDateFormat(
+        parameter.dataType as "DATE" | "DATETIME",
+        parameter.dateCalendar,
+      ),
+    );
+  }
+
+  return date;
+}
+
 function parseScalar(parameter: DatasetParameterRecord, value: unknown): unknown {
   if (isBlank(value)) {
-    if (parameter.isRequired) throw new Error(`PARAMETER_REQUIRED:${parameter.name}`);
-    if (parameter.defaultValue == null || parameter.defaultValue === "") return null;
-    value = parameter.defaultValue;
+    if (parameter.defaultValue != null && parameter.defaultValue !== "") {
+      value = parameter.defaultValue;
+    } else {
+      if (parameter.isRequired) throw new Error(`PARAMETER_REQUIRED:${parameter.name}`);
+      return null;
+    }
   }
 
   switch (parameter.dataType) {
@@ -30,18 +77,9 @@ function parseScalar(parameter: DatasetParameterRecord, value: unknown): unknown
     }
     case "BOOLEAN":
       return parseBoolean(value);
-    case "DATE": {
-      const text = String(value);
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error(`PARAMETER_DATE_INVALID:${parameter.name}`);
-      const date = new Date(`${text}T00:00:00.000Z`);
-      if (Number.isNaN(date.getTime())) throw new Error(`PARAMETER_DATE_INVALID:${parameter.name}`);
-      return date;
-    }
-    case "DATETIME": {
-      const date = new Date(String(value));
-      if (Number.isNaN(date.getTime())) throw new Error(`PARAMETER_DATETIME_INVALID:${parameter.name}`);
-      return date;
-    }
+    case "DATE":
+    case "DATETIME":
+      return parseDateValue(parameter, value);
   }
 }
 
@@ -61,11 +99,17 @@ export function coerceRuntimeParameters(
           ? []
           : String(raw).split(",").map((value) => value.trim()).filter(Boolean);
 
-      if (parameter.isRequired && values.length === 0) {
+      if (parameter.isRequired && values.length === 0 && !parameter.defaultValue) {
         throw new Error(`PARAMETER_REQUIRED:${parameter.name}`);
       }
 
-      result[parameter.name] = values.map((value) => parseScalar(
+      const sourceValues = values.length > 0
+        ? values
+        : parameter.defaultValue
+          ? [parameter.defaultValue]
+          : [];
+
+      result[parameter.name] = sourceValues.map((value) => parseScalar(
         { ...parameter, isRequired: false },
         value,
       ));
