@@ -54,7 +54,7 @@ export async function listUsers() {
 
   const [usersResult, rolesResult] = await Promise.all([
     pool.request().query(`
-      SELECT Id, Username, DisplayName, AuthProvider, IsActive
+      SELECT Id, Username, DisplayName, AuthProvider, IsActive, TokenVersion
       FROM uqp.AppUser
       ORDER BY Username
     `),
@@ -78,6 +78,7 @@ export async function listUsers() {
     displayName: String(row.DisplayName),
     authProvider: String(row.AuthProvider),
     isActive: Boolean(row.IsActive),
+    tokenVersion: Number(row.TokenVersion ?? 1),
     roles: rolesByUser.get(Number(row.Id)) ?? [],
   }));
 }
@@ -180,7 +181,14 @@ export async function updateUser(userId: number, input: { displayName: string; i
     await new sql.Request(tx).input("userId", sql.BigInt, userId)
       .input("displayName", sql.NVarChar(200), input.displayName)
       .input("isActive", sql.Bit, input.isActive)
-      .query("UPDATE uqp.AppUser SET DisplayName=@displayName, IsActive=@isActive, UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@userId");
+      .query(`
+        UPDATE uqp.AppUser
+        SET DisplayName=@displayName,
+            IsActive=@isActive,
+            TokenVersion=TokenVersion+1,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE Id=@userId
+      `);
 
     await new sql.Request(tx).input("userId", sql.BigInt, userId).query("DELETE FROM uqp.UserRole WHERE UserId=@userId");
     for (const code of [...new Set(input.roleCodes)]) {
@@ -194,8 +202,14 @@ export async function updateUser(userId: number, input: { displayName: string; i
 export async function resetUserPassword(userId: number, passwordHash: string) {
   const pool = await requirePool();
   const result = await pool.request().input("userId", sql.BigInt, userId).input("passwordHash", sql.NVarChar(255), passwordHash)
-    .query(`UPDATE uqp.AppUser SET PasswordHash=@passwordHash, UpdatedAtUtc=SYSUTCDATETIME()
-            WHERE Id=@userId AND AuthProvider='LOCAL'; SELECT @@ROWCOUNT AS Affected;`);
+    .query(`
+      UPDATE uqp.AppUser
+      SET PasswordHash=@passwordHash,
+          TokenVersion=TokenVersion+1,
+          UpdatedAtUtc=SYSUTCDATETIME()
+      WHERE Id=@userId AND AuthProvider='LOCAL';
+      SELECT @@ROWCOUNT AS Affected;
+    `);
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("USER_NOT_FOUND_OR_NOT_LOCAL");
 }
 
@@ -215,6 +229,18 @@ export async function createRole(input: { code: string; name: string; descriptio
       await new sql.Request(tx).input("roleId", sql.BigInt, roleId).input("code", sql.NVarChar(100), code)
         .query("INSERT INTO uqp.RolePermission (RoleId, PermissionId) SELECT @roleId, Id FROM uqp.Permission WHERE Code=@code");
     }
+
+    await new sql.Request(tx)
+      .input("roleId", sql.BigInt, roleId)
+      .query(`
+        UPDATE u
+        SET TokenVersion=TokenVersion+1,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        FROM uqp.AppUser u
+        INNER JOIN uqp.UserRole ur ON ur.UserId=u.Id
+        WHERE ur.RoleId=@roleId
+      `);
+
     await tx.commit();
     return Number(roleId);
   } catch (error) { await tx.rollback(); throw error; }
@@ -345,4 +371,21 @@ export async function deleteUser(userId: number): Promise<void> {
     await tx.rollback();
     throw error;
   }
+}
+
+
+export async function revokeUserSessions(userId: number): Promise<number> {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("userId", sql.BigInt, userId)
+    .query(`
+      UPDATE uqp.AppUser
+      SET TokenVersion=TokenVersion+1,
+          UpdatedAtUtc=SYSUTCDATETIME()
+      OUTPUT INSERTED.TokenVersion
+      WHERE Id=@userId;
+    `);
+
+  if (!result.recordset[0]) throw new Error("USER_NOT_FOUND");
+  return Number(result.recordset[0].TokenVersion);
 }
