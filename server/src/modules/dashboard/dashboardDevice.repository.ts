@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
+import { matchesIpRestriction, normalizeClientIp } from "./dashboardDeviceIp.js";
 
 async function requirePool() {
   const pool = await getPlatformDbPool();
@@ -18,6 +19,9 @@ function mapRow(row: any) {
     dashboardId: Number(row.DashboardId),
     deviceName: String(row.DeviceName),
     isActive: Boolean(row.IsActive),
+    enforceIpRestriction: Boolean(row.EnforceIpRestriction),
+    allowedIp: row.AllowedIp == null ? null : String(row.AllowedIp),
+    allowedCidr: row.AllowedCidr == null ? null : String(row.AllowedCidr),
     expiresAtUtc: row.ExpiresAtUtc ? new Date(row.ExpiresAtUtc).toISOString() : null,
     lastUsedAtUtc: row.LastUsedAtUtc ? new Date(row.LastUsedAtUtc).toISOString() : null,
     createdByUserId: Number(row.CreatedByUserId),
@@ -31,6 +35,9 @@ export async function createDashboardDisplayDevice(input: {
   deviceName: string;
   createdByUserId: number;
   expiresDays?: number | null;
+  enforceIpRestriction?: boolean;
+  allowedIp?: string | null;
+  allowedCidr?: string | null;
 }) {
   const pool = await requirePool();
   const token = crypto.randomBytes(32).toString("base64url");
@@ -46,13 +53,18 @@ export async function createDashboardDisplayDevice(input: {
     .input("tokenHash", sql.Char(64), tokenHash)
     .input("expiresAtUtc", sql.DateTime2, expiresAtUtc)
     .input("createdByUserId", sql.BigInt, input.createdByUserId)
+    .input("enforceIpRestriction", sql.Bit, Boolean(input.enforceIpRestriction))
+    .input("allowedIp", sql.NVarChar(64), input.allowedIp?.trim() || null)
+    .input("allowedCidr", sql.NVarChar(64), input.allowedCidr?.trim() || null)
     .query(`
       INSERT INTO uqp.DashboardDisplayDevice (
-        DashboardId, DeviceName, TokenHash, ExpiresAtUtc, CreatedByUserId
+        DashboardId, DeviceName, TokenHash, ExpiresAtUtc, CreatedByUserId,
+        EnforceIpRestriction, AllowedIp, AllowedCidr
       )
       OUTPUT INSERTED.*
       VALUES (
-        @dashboardId,@deviceName,@tokenHash,@expiresAtUtc,@createdByUserId
+        @dashboardId,@deviceName,@tokenHash,@expiresAtUtc,@createdByUserId,
+        @enforceIpRestriction,@allowedIp,@allowedCidr
       )
     `);
 
@@ -90,7 +102,11 @@ export async function revokeDashboardDisplayDevice(dashboardId: number, deviceId
   }
 }
 
-export async function validateDashboardDisplayDevice(dashboardId: number, token: string) {
+export async function validateDashboardDisplayDevice(
+  dashboardId: number,
+  token: string,
+  clientIp: string,
+) {
   const pool = await requirePool();
   const tokenHash = hashToken(token);
   const result = await pool.request()
@@ -107,6 +123,18 @@ export async function validateDashboardDisplayDevice(dashboardId: number, token:
 
   const row = result.recordset[0];
   if (!row) return null;
+
+  const normalizedClientIp = normalizeClientIp(clientIp);
+  if (
+    Boolean(row.EnforceIpRestriction) &&
+    !matchesIpRestriction(
+      normalizedClientIp,
+      row.AllowedIp == null ? null : String(row.AllowedIp),
+      row.AllowedCidr == null ? null : String(row.AllowedCidr),
+    )
+  ) {
+    return null;
+  }
 
   await pool.request()
     .input("id", sql.BigInt, row.Id)

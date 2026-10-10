@@ -47,6 +47,9 @@ type DisplayDevice = {
   dashboardId: number;
   deviceName: string;
   isActive: boolean;
+  enforceIpRestriction: boolean;
+  allowedIp: string | null;
+  allowedCidr: string | null;
   expiresAtUtc: string | null;
   lastUsedAtUtc: string | null;
   createdAtUtc: string | null;
@@ -405,6 +408,30 @@ export function DashboardDesignerPage() {
         "是否設定為「全螢幕優先」？\n\n瀏覽器安全限制下，第一次可能仍需要在播放畫面點一下「進入全螢幕」。",
       );
 
+      const enforceIpRestriction = window.confirm(
+        "是否限制此固定播放裝置的來源 IP？\n\n建議固定看板電腦使用固定 IP 或 DHCP Reservation。",
+      );
+
+      let allowedIp: string | null = null;
+      let allowedCidr: string | null = null;
+      if (enforceIpRestriction) {
+        const restriction = window.prompt(
+          "請輸入允許的來源 IP 或 IPv4 CIDR。\n\n單一 IP 範例：10.145.143.50\n網段範例：10.145.143.0/24",
+          "",
+        );
+        if (!restriction?.trim()) {
+          popup.close();
+          setError("已取消建立：啟用來源 IP 限制時必須輸入允許的 IP 或 CIDR。");
+          return;
+        }
+
+        if (restriction.includes("/")) {
+          allowedCidr = restriction.trim();
+        } else {
+          allowedIp = restriction.trim();
+        }
+      }
+
       const result = await apiRequest<{ device: DisplayDevice; token: string }>(
         `/dashboards/${item.id}/devices`,
         {
@@ -412,6 +439,9 @@ export function DashboardDesignerPage() {
           body: JSON.stringify({
             deviceName: deviceName.trim(),
             expiresDays: 365,
+            enforceIpRestriction,
+            allowedIp,
+            allowedCidr,
           }),
         },
         accessToken,
@@ -438,7 +468,7 @@ export function DashboardDesignerPage() {
         `/display/dashboards/${item.id}${autoFullscreen ? "?autoFullscreen=1" : ""}`,
       );
       setNotice(
-        `已建立固定播放裝置「${result.device.deviceName}」，有效期 365 天。${selectedScreen ? " 已指定播放螢幕。" : ""}`,
+        `已建立固定播放裝置「${result.device.deviceName}」，有效期 365 天。${selectedScreen ? " 已指定播放螢幕。" : ""}${result.device.enforceIpRestriction ? ` 已限制來源 ${result.device.allowedIp ?? result.device.allowedCidr}。` : ""}`,
       );
       if (deviceDashboard?.id === item.id) await loadDevices(item);
     } catch (e) {
@@ -812,6 +842,7 @@ export function DashboardDesignerPage() {
                       <tr>
                         <th>裝置名稱</th>
                         <th>狀態</th>
+                        <th>來源限制</th>
                         <th>最後使用</th>
                         <th>到期時間</th>
                         <th>建立時間</th>
@@ -823,6 +854,11 @@ export function DashboardDesignerPage() {
                         <tr key={device.id}>
                           <td>{device.deviceName}</td>
                           <td>{device.isActive ? "啟用" : "已停用"}</td>
+                          <td>
+                            {device.enforceIpRestriction
+                              ? device.allowedIp ?? device.allowedCidr ?? "已啟用"
+                              : "不限"}
+                          </td>
                           <td>{device.lastUsedAtUtc ? new Date(device.lastUsedAtUtc).toLocaleString() : "尚未使用"}</td>
                           <td>{device.expiresAtUtc ? new Date(device.expiresAtUtc).toLocaleString() : "不過期"}</td>
                           <td>{device.createdAtUtc ? new Date(device.createdAtUtc).toLocaleString() : ""}</td>
