@@ -20,6 +20,12 @@ import {
   getDashboardLayout,
   replaceDashboardLayout,
 } from "./dashboardLayout.repository.js";
+import {
+  createDashboardDisplayDevice,
+  listDashboardDisplayDevices,
+  revokeDashboardDisplayDevice,
+  validateDashboardDisplayDevice,
+} from "./dashboardDevice.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
 
@@ -54,6 +60,16 @@ const layoutSchema = z.object({
   profiles: z.array(profileSchema).min(1).max(20),
 });
 
+const deviceSchema = z.object({
+  deviceName: z.string().trim().min(1).max(200),
+  expiresDays: z.coerce.number().int().min(1).max(3650).nullable().optional().default(365),
+});
+
+function getDeviceToken(req: Parameters<typeof dashboardRouter.get>[1] extends never ? never : any): string {
+  const value = req.headers["x-dashboard-device-token"];
+  return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+}
+
 const dashboardSchema = z.object({
   code: z.string().trim().min(2).max(100).regex(/^[A-Z0-9_]+$/),
   name: z.string().trim().min(1).max(200),
@@ -72,7 +88,163 @@ const dashboardSchema = z.object({
 });
 
 export const dashboardRouter = Router();
+
+dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" } });
+      return;
+    }
+
+    const token = getDeviceToken(req);
+    if (!token || !(await validateDashboardDisplayDevice(id.data, token))) {
+      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_INVALID", message: "Dashboard 顯示裝置憑證無效或已停用。" } });
+      return;
+    }
+
+    const dashboard = await getDashboard(id.data);
+    if (!dashboard || !dashboard.isActive) {
+      res.status(409).json({ error: { code: "DASHBOARD_NOT_AVAILABLE", message: "Dashboard 目前不可播放。" } });
+      return;
+    }
+
+    res.json(await getDashboardLayout(id.data));
+  } catch (error) {
+    next(error);
+  }
+});
+
+dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" } });
+      return;
+    }
+
+    const token = getDeviceToken(req);
+    if (!token || !(await validateDashboardDisplayDevice(id.data, token))) {
+      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_INVALID", message: "Dashboard 顯示裝置憑證無效或已停用。" } });
+      return;
+    }
+
+    const dashboard = await getDashboard(id.data);
+    if (!dashboard || !dashboard.isActive) {
+      res.status(409).json({ error: { code: "DASHBOARD_NOT_AVAILABLE", message: "Dashboard 目前不可播放。" } });
+      return;
+    }
+
+    const query = await getQueryDefinition(dashboard.queryDefinitionId);
+    if (!query || !query.isPublished || !query.isActive || query.isArchived) {
+      res.status(409).json({ error: { code: "DASHBOARD_QUERY_NOT_AVAILABLE", message: "Dashboard 使用的 Query 目前不可執行。" } });
+      return;
+    }
+
+    const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
+    const reportColumns = await listReportColumns(query.id);
+
+    res.json({
+      dashboard,
+      query: { id: query.id, code: query.code, name: query.name },
+      reportColumns,
+      result,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
+      res.status(400).json({
+        error: {
+          code: error.message.split(":")[0],
+          message: "Dashboard 預設參數不完整或格式不正確，請檢查設定。",
+        },
+      });
+      return;
+    }
+    next(error);
+  }
+});
+
 dashboardRouter.use(authenticateJwt);
+
+dashboardRouter.get("/:id/devices", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" } });
+      return;
+    }
+    res.json({ devices: await listDashboardDisplayDevices(id.data) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+dashboardRouter.post("/:id/devices", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const parsed = deviceSchema.safeParse(req.body);
+    if (!id.success || !parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "顯示裝置設定不正確。" } });
+      return;
+    }
+
+    const dashboard = await getDashboard(id.data);
+    if (!dashboard) {
+      res.status(404).json({ error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" } });
+      return;
+    }
+
+    const created = await createDashboardDisplayDevice({
+      dashboardId: id.data,
+      deviceName: parsed.data.deviceName,
+      expiresDays: parsed.data.expiresDays,
+      createdByUserId: req.authUser.id,
+    });
+
+    await tryWriteAuditEvent({
+      eventType: "DASHBOARD_DEVICE_CREATED",
+      userId: req.authUser.id,
+      queryDefinitionId: dashboard.queryDefinitionId,
+      parameters: {
+        dashboardId: id.data,
+        deviceId: created.device.id,
+        deviceName: created.device.deviceName,
+        expiresAtUtc: created.device.expiresAtUtc,
+      },
+      ...auditRequestContext(req),
+    });
+
+    res.status(201).json(created);
+  } catch (error) {
+    next(error);
+  }
+});
+
+dashboardRouter.delete("/:id/devices/:deviceId", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const deviceId = idSchema.safeParse(req.params.deviceId);
+    if (!id.success || !deviceId.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "顯示裝置 ID 不正確。" } });
+      return;
+    }
+
+    await revokeDashboardDisplayDevice(id.data, deviceId.data);
+    await tryWriteAuditEvent({
+      eventType: "DASHBOARD_DEVICE_REVOKED",
+      userId: req.authUser.id,
+      parameters: { dashboardId: id.data, deviceId: deviceId.data },
+      ...auditRequestContext(req),
+    });
+    res.json({ status: "OK" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DASHBOARD_DEVICE_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到可停用的顯示裝置。" } });
+      return;
+    }
+    next(error);
+  }
+});
 
 dashboardRouter.get("/available", requirePermission("VIEW_QUERY"), async (req, res, next) => {
   try {
