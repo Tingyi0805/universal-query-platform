@@ -337,7 +337,7 @@ export function DashboardDisplayPage() {
         <div className="dashboard-display-error">
           <h1>Dashboard 無法顯示</h1>
           <p>{error}</p>
-          <Link to="/designer/dashboards">返回 Dashboard 設計</Link>
+          <Link to="/dashboards">返回 Dashboard</Link>
         </div>
       </main>
     );
