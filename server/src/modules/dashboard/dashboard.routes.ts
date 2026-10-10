@@ -25,6 +25,8 @@ import {
 import {
   createDashboardDisplayDevice,
   listDashboardDisplayDevices,
+  listExpiringDashboardDisplayDevices,
+  renewDashboardDisplayDevice,
   revokeDashboardDisplayDevice,
   validateDashboardDisplayDevice,
 } from "./dashboardDevice.repository.js";
@@ -205,6 +207,25 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
 
 dashboardRouter.use(authenticateJwt);
 
+dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const parsed = z.object({
+      days: z.coerce.number().int().min(1).max(365).default(30),
+    }).safeParse(req.query);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "提醒天數不正確。" } });
+      return;
+    }
+
+    res.json({
+      days: parsed.data.days,
+      devices: await listExpiringDashboardDisplayDevices(parsed.data.days),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 dashboardRouter.get("/:id/devices", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
@@ -261,6 +282,42 @@ dashboardRouter.post("/:id/devices", requirePermission("DESIGN_QUERY"), async (r
 
     res.status(201).json(created);
   } catch (error) {
+    next(error);
+  }
+});
+
+dashboardRouter.patch("/:id/devices/:deviceId/renew", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const deviceId = idSchema.safeParse(req.params.deviceId);
+    const parsed = z.object({
+      days: z.coerce.number().int().min(1).max(3650).default(365),
+    }).safeParse(req.body ?? {});
+
+    if (!id.success || !deviceId.success || !parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "延長顯示裝置期限的設定不正確。" } });
+      return;
+    }
+
+    const device = await renewDashboardDisplayDevice(id.data, deviceId.data, parsed.data.days);
+    await tryWriteAuditEvent({
+      eventType: "DASHBOARD_DEVICE_RENEWED",
+      userId: req.authUser.id,
+      parameters: {
+        dashboardId: id.data,
+        deviceId: deviceId.data,
+        extendDays: parsed.data.days,
+        expiresAtUtc: device.expiresAtUtc,
+      },
+      ...auditRequestContext(req),
+    });
+
+    res.json({ status: "OK", device });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DASHBOARD_DEVICE_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到可延長的顯示裝置。" } });
+      return;
+    }
     next(error);
   }
 });
