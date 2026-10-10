@@ -27,6 +27,7 @@ import {
   listDashboardDisplayDevices,
   listExpiringDashboardDisplayDevices,
   renewDashboardDisplayDevice,
+  updateDashboardDisplayDeviceSettings,
   revokeDashboardDisplayDevice,
   validateDashboardDisplayDevice,
 } from "./dashboardDevice.repository.js";
@@ -68,6 +69,42 @@ const layoutSchema = z.object({
 const deviceSchema = z.object({
   deviceName: z.string().trim().min(1).max(200),
   expiresDays: z.coerce.number().int().min(1).max(3650).nullable().optional().default(365),
+  enforceIpRestriction: z.boolean().default(false),
+  allowedIp: z.string().trim().max(64).nullable().optional().default(null),
+  allowedCidr: z.string().trim().max(64).nullable().optional().default(null),
+}).superRefine((value, ctx) => {
+  if (!value.enforceIpRestriction) return;
+
+  const allowedIp = value.allowedIp?.trim() || null;
+  const allowedCidr = value.allowedCidr?.trim() || null;
+  if (!allowedIp && !allowedCidr) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "啟用來源 IP 限制時，必須設定允許 IP 或 CIDR。",
+      path: ["allowedIp"],
+    });
+    return;
+  }
+
+  if (allowedIp && isIP(allowedIp) === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "允許 IP 格式不正確。",
+      path: ["allowedIp"],
+    });
+  }
+
+  if (allowedCidr && (!isValidIpOrCidr(allowedCidr) || !allowedCidr.includes("/"))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "允許 CIDR 格式不正確，目前支援 IPv4 CIDR。",
+      path: ["allowedCidr"],
+    });
+  }
+});
+
+const deviceSettingsSchema = z.object({
+  deviceName: z.string().trim().min(1).max(200),
   enforceIpRestriction: z.boolean().default(false),
   allowedIp: z.string().trim().max(64).nullable().optional().default(null),
   allowedCidr: z.string().trim().max(64).nullable().optional().default(null),
@@ -282,6 +319,50 @@ dashboardRouter.post("/:id/devices", requirePermission("DESIGN_QUERY"), async (r
 
     res.status(201).json(created);
   } catch (error) {
+    next(error);
+  }
+});
+
+dashboardRouter.patch("/:id/devices/:deviceId/settings", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const deviceId = idSchema.safeParse(req.params.deviceId);
+    const parsed = deviceSettingsSchema.safeParse(req.body);
+
+    if (!id.success || !deviceId.success || !parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "顯示裝置設定不正確。" } });
+      return;
+    }
+
+    const device = await updateDashboardDisplayDeviceSettings({
+      dashboardId: id.data,
+      deviceId: deviceId.data,
+      deviceName: parsed.data.deviceName,
+      enforceIpRestriction: parsed.data.enforceIpRestriction,
+      allowedIp: parsed.data.enforceIpRestriction ? parsed.data.allowedIp : null,
+      allowedCidr: parsed.data.enforceIpRestriction ? parsed.data.allowedCidr : null,
+    });
+
+    await tryWriteAuditEvent({
+      eventType: "DASHBOARD_DEVICE_UPDATED",
+      userId: req.authUser.id,
+      parameters: {
+        dashboardId: id.data,
+        deviceId: deviceId.data,
+        deviceName: device.deviceName,
+        enforceIpRestriction: device.enforceIpRestriction,
+        allowedIp: device.allowedIp,
+        allowedCidr: device.allowedCidr,
+      },
+      ...auditRequestContext(req),
+    });
+
+    res.json({ status: "OK", device });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DASHBOARD_DEVICE_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到可編輯的顯示裝置。" } });
+      return;
+    }
     next(error);
   }
 });

@@ -115,6 +115,41 @@ export async function listExpiringDashboardDisplayDevices(days = 30) {
   });
 }
 
+export async function updateDashboardDisplayDeviceSettings(input: {
+  dashboardId: number;
+  deviceId: number;
+  deviceName: string;
+  enforceIpRestriction: boolean;
+  allowedIp?: string | null;
+  allowedCidr?: string | null;
+}) {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("dashboardId", sql.BigInt, input.dashboardId)
+    .input("deviceId", sql.BigInt, input.deviceId)
+    .input("deviceName", sql.NVarChar(200), input.deviceName)
+    .input("enforceIpRestriction", sql.Bit, input.enforceIpRestriction)
+    .input("allowedIp", sql.NVarChar(64), input.enforceIpRestriction ? input.allowedIp?.trim() || null : null)
+    .input("allowedCidr", sql.NVarChar(64), input.enforceIpRestriction ? input.allowedCidr?.trim() || null : null)
+    .query(`
+      UPDATE uqp.DashboardDisplayDevice
+      SET DeviceName=@deviceName,
+          EnforceIpRestriction=@enforceIpRestriction,
+          AllowedIp=@allowedIp,
+          AllowedCidr=@allowedCidr
+      OUTPUT INSERTED.*
+      WHERE Id=@deviceId
+        AND DashboardId=@dashboardId
+        AND IsActive=1
+    `);
+
+  if (!result.recordset[0]) {
+    throw new Error("DASHBOARD_DEVICE_NOT_FOUND");
+  }
+
+  return mapRow(result.recordset[0]);
+}
+
 export async function renewDashboardDisplayDevice(
   dashboardId: number,
   deviceId: number,
