@@ -144,6 +144,10 @@ export function DashboardDisplayPage() {
   const dashboardId = Number(id);
   const requestedProfileId = Number(searchParams.get("profileId"));
   const previewKey = searchParams.get("previewKey");
+  const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
+  const deviceToken = deviceMode
+    ? localStorage.getItem(`uqp.dashboard.device.${dashboardId}`)
+    : null;
   const { accessToken } = useAuth();
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -160,17 +164,29 @@ export function DashboardDisplayPage() {
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
     try {
+      if (deviceMode && !deviceToken) {
+        setError("此顯示裝置尚未啟用，請由管理者重新建立固定播放。");
+        return;
+      }
+
       const result = await apiRequest<PreviewResult>(
-        `/dashboards/${dashboardId}/preview`,
-        { method: "POST" },
-        accessToken,
+        deviceMode
+          ? `/dashboards/device/${dashboardId}/preview`
+          : `/dashboards/${dashboardId}/preview`,
+        {
+          method: "POST",
+          headers: deviceMode
+            ? { "X-Dashboard-Device-Token": deviceToken ?? "" }
+            : undefined,
+        },
+        deviceMode ? null : accessToken,
       );
       setPreview(result);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Dashboard 載入失敗。");
     }
-  }, [accessToken, dashboardId]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -192,16 +208,27 @@ export function DashboardDisplayPage() {
     }
 
     try {
+      if (deviceMode && !deviceToken) {
+        setError("此顯示裝置尚未啟用，請由管理者重新建立固定播放。");
+        return;
+      }
+
       const result = await apiRequest<{ profiles: LayoutProfile[] }>(
-        `/dashboards/${dashboardId}/layout`,
-        {},
-        accessToken,
+        deviceMode
+          ? `/dashboards/device/${dashboardId}/layout`
+          : `/dashboards/${dashboardId}/layout`,
+        {
+          headers: deviceMode
+            ? { "X-Dashboard-Device-Token": deviceToken ?? "" }
+            : undefined,
+        },
+        deviceMode ? null : accessToken,
       );
       setProfiles(result.profiles);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
     }
-  }, [accessToken, dashboardId, previewKey]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
 
   useEffect(() => {
     void Promise.all([loadData(), loadLayout()]);
@@ -406,7 +433,7 @@ export function DashboardDisplayPage() {
         <div className="dashboard-display-error">
           <h1>Dashboard 無法顯示</h1>
           <p>{error}</p>
-          <Link to="/dashboards">返回 Dashboard</Link>
+          {!deviceMode && <Link to="/dashboards">返回 Dashboard</Link>}
         </div>
       </main>
     );
