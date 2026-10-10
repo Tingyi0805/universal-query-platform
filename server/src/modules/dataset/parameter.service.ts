@@ -47,7 +47,10 @@ function parseDateValue(parameter: DatasetParameterRecord, value: unknown): unkn
     return formatParameterDate(
       date,
       parameter.dateCalendar,
-      parameter.dateFormat || defaultDateFormat(parameter.dataType, parameter.dateCalendar),
+      parameter.dateFormat || defaultDateFormat(
+        parameter.dataType as "DATE" | "DATETIME",
+        parameter.dateCalendar,
+      ),
     );
   }
 
