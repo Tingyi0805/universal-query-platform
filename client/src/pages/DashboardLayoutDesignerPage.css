@@ -88,15 +88,18 @@
 }
 
 .layout-canvas-stage {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   width: 100%;
+  height: min(760px, calc(100vh - 190px));
+  min-height: 480px;
   box-sizing: border-box;
   padding: 12px;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid #dce4ef;
   border-radius: 14px;
   background: #eef2f7;
-  overscroll-behavior: contain;
 }
 
 .layout-canvas-info {
@@ -137,11 +140,21 @@
   font-weight: 700;
 }
 
+.layout-canvas-scroll {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable both-edges;
+}
+
 .layout-canvas {
   position: relative;
-  max-width: 100%;
   margin: 0 auto;
   overflow: hidden;
+  flex: 0 0 auto;
   border: 2px solid #9aa9bd;
   background:
     linear-gradient(to right, rgba(80, 105, 140, .08) 1px, transparent 1px),
@@ -264,6 +277,10 @@
     grid-template-columns: 200px minmax(0, 1fr);
   }
 
+  .layout-canvas-stage {
+    height: min(700px, calc(100vh - 180px));
+  }
+
   .layout-inspector {
     position: static;
     grid-column: 1 / -1;
@@ -274,6 +291,11 @@
 @media (max-width: 720px) {
   .dashboard-layout-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .layout-canvas-stage {
+    height: 65vh;
+    min-height: 420px;
   }
 
   .layout-sidebar,
