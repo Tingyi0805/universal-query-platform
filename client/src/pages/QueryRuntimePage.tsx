@@ -22,6 +22,10 @@ type Parameter = {
   controlType: "TEXT" | "NUMBER" | "DATE" | "DATETIME" | "SELECT" | "MULTISELECT" | "CHECKBOX";
   isRequired: boolean;
   defaultValue: string | null;
+  runtimeDefaultValue: string | null;
+  dateOutputMode: "NATIVE" | "STRING";
+  dateCalendar: "GREGORIAN" | "ROC";
+  dateFormat: string | null;
   displayOrder: number;
   placeholder: string | null;
   helpText: string | null;
@@ -259,7 +263,7 @@ export function QueryRuntimePage() {
       for (const parameter of detail.parameters) {
         if (parameter.controlType === "MULTISELECT") initialValues[parameter.name] = [];
         else if (parameter.controlType === "CHECKBOX") initialValues[parameter.name] = parameter.defaultValue === "true";
-        else initialValues[parameter.name] = parameter.defaultValue ?? "";
+        else initialValues[parameter.name] = parameter.runtimeDefaultValue ?? parameter.defaultValue ?? "";
       }
       setValues(initialValues);
 
@@ -594,7 +598,7 @@ export function QueryRuntimePage() {
               parameter.name,
               parameter.controlType === "MULTISELECT" ? [] :
               parameter.controlType === "CHECKBOX" ? false :
-              parameter.defaultValue ?? "",
+              parameter.runtimeDefaultValue ?? parameter.defaultValue ?? "",
             ])));
             setResult(null);
             clearResultView();
