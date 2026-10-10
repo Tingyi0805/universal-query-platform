@@ -8,6 +8,7 @@ export type AuthUserRecord = {
   passwordHash: string | null;
   isActive: boolean;
   authProvider: "LOCAL" | "AD" | "ORACLE";
+  tokenVersion: number;
   permissions: string[];
 };
 
@@ -20,7 +21,7 @@ export async function findUserByUsername(username: string): Promise<AuthUserReco
     .input("username", sql.NVarChar(100), username)
     .query(`
       SELECT TOP (1)
-        Id, Username, DisplayName, PasswordHash, IsActive, AuthProvider
+        Id, Username, DisplayName, PasswordHash, IsActive, AuthProvider, TokenVersion
       FROM uqp.AppUser
       WHERE Username = @username
     `);
@@ -48,6 +49,7 @@ export async function findUserByUsername(username: string): Promise<AuthUserReco
     passwordHash: row.PasswordHash,
     isActive: Boolean(row.IsActive),
     authProvider: row.AuthProvider,
+    tokenVersion: Number(row.TokenVersion ?? 1),
     permissions: permissionResult.recordset.map((x) => String(x.Code)),
   };
 }
@@ -62,7 +64,7 @@ export async function findUserById(userId: number): Promise<AuthUserRecord | nul
     .input("userId", sql.BigInt, userId)
     .query(`
       SELECT TOP (1)
-        Id, Username, DisplayName, PasswordHash, IsActive, AuthProvider
+        Id, Username, DisplayName, PasswordHash, IsActive, AuthProvider, TokenVersion
       FROM uqp.AppUser
       WHERE Id = @userId
     `);
@@ -90,6 +92,7 @@ export async function findUserById(userId: number): Promise<AuthUserRecord | nul
     passwordHash: row.PasswordHash,
     isActive: Boolean(row.IsActive),
     authProvider: row.AuthProvider,
+    tokenVersion: Number(row.TokenVersion ?? 1),
     permissions: permissionResult.recordset.map((x) => String(x.Code)),
   };
 }
@@ -104,7 +107,9 @@ export async function updateOwnLocalPassword(userId: number, passwordHash: strin
     .input("passwordHash", sql.NVarChar(255), passwordHash)
     .query(`
       UPDATE uqp.AppUser
-      SET PasswordHash=@passwordHash, UpdatedAtUtc=SYSUTCDATETIME()
+      SET PasswordHash=@passwordHash,
+          TokenVersion=TokenVersion+1,
+          UpdatedAtUtc=SYSUTCDATETIME()
       WHERE Id=@userId AND IsActive=1 AND AuthProvider='LOCAL';
       SELECT @@ROWCOUNT AS Affected;
     `);
@@ -112,4 +117,29 @@ export async function updateOwnLocalPassword(userId: number, passwordHash: strin
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
     throw new Error("USER_NOT_FOUND_OR_NOT_LOCAL");
   }
+}
+
+
+export async function getTokenSessionState(userId: number): Promise<{
+  isActive: boolean;
+  tokenVersion: number;
+} | null | undefined> {
+  const pool = await getPlatformDbPool();
+  if (!pool) return undefined;
+
+  const result = await pool.request()
+    .input("userId", sql.BigInt, userId)
+    .query(`
+      SELECT TOP (1) IsActive, TokenVersion
+      FROM uqp.AppUser
+      WHERE Id=@userId
+    `);
+
+  const row = result.recordset[0];
+  if (!row) return null;
+
+  return {
+    isActive: Boolean(row.IsActive),
+    tokenVersion: Number(row.TokenVersion ?? 1),
+  };
 }
