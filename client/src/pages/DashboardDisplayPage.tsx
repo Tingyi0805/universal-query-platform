@@ -144,6 +144,11 @@ export function DashboardDisplayPage() {
   const dashboardId = Number(id);
   const requestedProfileId = Number(searchParams.get("profileId"));
   const previewKey = searchParams.get("previewKey");
+  const autoFullscreenRequested = searchParams.get("autoFullscreen") === "1";
+  const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
+  const deviceToken = deviceMode
+    ? localStorage.getItem(`uqp.dashboard.device.${dashboardId}`)
+    : null;
   const { accessToken } = useAuth();
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -156,21 +161,34 @@ export function DashboardDisplayPage() {
     width: window.innerWidth,
     height: window.innerHeight,
   });
+  const [fullscreenNeedsClick, setFullscreenNeedsClick] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
     try {
+      if (deviceMode && !deviceToken) {
+        setError("此顯示裝置尚未啟用，請由管理者重新建立固定播放。");
+        return;
+      }
+
       const result = await apiRequest<PreviewResult>(
-        `/dashboards/${dashboardId}/preview`,
-        { method: "POST" },
-        accessToken,
+        deviceMode
+          ? `/dashboards/device/${dashboardId}/preview`
+          : `/dashboards/${dashboardId}/preview`,
+        {
+          method: "POST",
+          headers: deviceMode
+            ? { "X-Dashboard-Device-Token": deviceToken ?? "" }
+            : undefined,
+        },
+        deviceMode ? null : accessToken,
       );
       setPreview(result);
       setError("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Dashboard 載入失敗。");
     }
-  }, [accessToken, dashboardId]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -192,20 +210,108 @@ export function DashboardDisplayPage() {
     }
 
     try {
+      if (deviceMode && !deviceToken) {
+        setError("此顯示裝置尚未啟用，請由管理者重新建立固定播放。");
+        return;
+      }
+
       const result = await apiRequest<{ profiles: LayoutProfile[] }>(
-        `/dashboards/${dashboardId}/layout`,
-        {},
-        accessToken,
+        deviceMode
+          ? `/dashboards/device/${dashboardId}/layout`
+          : `/dashboards/${dashboardId}/layout`,
+        {
+          headers: deviceMode
+            ? { "X-Dashboard-Device-Token": deviceToken ?? "" }
+            : undefined,
+        },
+        deviceMode ? null : accessToken,
       );
       setProfiles(result.profiles);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
     }
-  }, [accessToken, dashboardId, previewKey]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
 
   useEffect(() => {
     void Promise.all([loadData(), loadLayout()]);
   }, [loadData, loadLayout]);
+
+
+  useEffect(() => {
+    if (!deviceMode) return;
+
+    type ManagedScreen = {
+      label?: string;
+      availLeft: number;
+      availTop: number;
+      availWidth: number;
+      availHeight: number;
+    };
+
+    type DisplaySettings = {
+      autoFullscreen?: boolean;
+      screenIndex?: number | null;
+      screenLabel?: string | null;
+      screenBounds?: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+      } | null;
+    };
+
+    let settings: DisplaySettings = {};
+    try {
+      const raw = localStorage.getItem(`uqp.dashboard.display-settings.${dashboardId}`);
+      if (raw) settings = JSON.parse(raw) as DisplaySettings;
+    } catch {
+      settings = {};
+    }
+
+    const applyScreen = async () => {
+      const windowWithScreens = window as typeof window & {
+        getScreenDetails?: () => Promise<{ screens: ManagedScreen[] }>;
+      };
+
+      try {
+        if (windowWithScreens.getScreenDetails) {
+          const details = await windowWithScreens.getScreenDetails();
+          const preferred =
+            details.screens.find((screen) => settings.screenLabel && screen.label === settings.screenLabel)
+            ?? (settings.screenIndex != null ? details.screens[settings.screenIndex] : undefined);
+
+          if (preferred) {
+            window.moveTo(preferred.availLeft, preferred.availTop);
+            window.resizeTo(preferred.availWidth, preferred.availHeight);
+          }
+        } else if (settings.screenBounds) {
+          window.moveTo(settings.screenBounds.left, settings.screenBounds.top);
+          window.resizeTo(settings.screenBounds.width, settings.screenBounds.height);
+        }
+      } catch {
+        // Browser may deny window-management permission. Playback remains usable on current screen.
+      }
+
+      if (settings.autoFullscreen || autoFullscreenRequested) {
+        try {
+          await document.documentElement.requestFullscreen?.();
+          setFullscreenNeedsClick(false);
+        } catch {
+          setFullscreenNeedsClick(true);
+        }
+      }
+    };
+
+    void applyScreen();
+  }, [autoFullscreenRequested, dashboardId, deviceMode]);
+
+  useEffect(() => {
+    const handleFullscreen = () => {
+      if (document.fullscreenElement) setFullscreenNeedsClick(false);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreen);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreen);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -406,7 +512,7 @@ export function DashboardDisplayPage() {
         <div className="dashboard-display-error">
           <h1>Dashboard 無法顯示</h1>
           <p>{error}</p>
-          <Link to="/dashboards">返回 Dashboard</Link>
+          {!deviceMode && <Link to="/dashboards">返回 Dashboard</Link>}
         </div>
       </main>
     );
@@ -464,13 +570,22 @@ export function DashboardDisplayPage() {
         </div>
       </div>
 
-      <button
-        className="dashboard-fullscreen-button"
-        type="button"
-        onClick={() => document.documentElement.requestFullscreen?.()}
-      >
-        全螢幕
-      </button>
+      {!document.fullscreenElement && (
+        <button
+          className={`dashboard-fullscreen-button${fullscreenNeedsClick ? " needs-click" : ""}`}
+          type="button"
+          onClick={async () => {
+            try {
+              await document.documentElement.requestFullscreen?.();
+              setFullscreenNeedsClick(false);
+            } catch {
+              setFullscreenNeedsClick(true);
+            }
+          }}
+        >
+          {fullscreenNeedsClick ? "點一下進入全螢幕" : "全螢幕"}
+        </button>
+      )}
     </main>
   );
 }

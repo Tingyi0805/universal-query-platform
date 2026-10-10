@@ -115,6 +115,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/setup" element={<SetupPage />} />
+      <Route path="/display/dashboards/:id" element={<DashboardDisplayPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/account/password" element={<ChangePasswordPage />} />

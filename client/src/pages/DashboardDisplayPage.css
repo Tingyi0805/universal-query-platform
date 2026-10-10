@@ -144,3 +144,11 @@
 :fullscreen .dashboard-fullscreen-button {
   display: none;
 }
+
+
+.dashboard-fullscreen-button.needs-click {
+  opacity: 1;
+  padding: 10px 14px;
+  background: rgba(20, 30, 42, .92);
+  font-weight: 700;
+}
