@@ -202,3 +202,38 @@
   background: #fff0f0;
   color: #b42318;
 }
+
+
+.device-token-once {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid #f0d59a;
+  border-radius: 12px;
+  background: #fffaf0;
+}
+
+.device-token-once p {
+  margin: 6px 0 0;
+  color: #78623b;
+  font-size: 13px;
+}
+
+.device-token-once code {
+  display: block;
+  overflow-wrap: anywhere;
+  padding: 11px 12px;
+  border: 1px solid #ead8ac;
+  border-radius: 9px;
+  background: #fff;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  user-select: all;
+}
+
+.device-token-once .actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
