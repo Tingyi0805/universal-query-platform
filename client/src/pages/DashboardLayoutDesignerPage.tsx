@@ -159,6 +159,26 @@ export function DashboardLayoutDesignerPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+
+  function openPlayback(profileId?: number) {
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      setError("瀏覽器封鎖了播放視窗，請允許此網站開啟新視窗後再試一次。");
+      return;
+    }
+
+    const storedAuth = sessionStorage.getItem("uqp.auth");
+    if (storedAuth) {
+      try {
+        popup.sessionStorage.setItem("uqp.auth", storedAuth);
+      } catch {
+        // If storage handoff fails, login will return to the requested playback path.
+      }
+    }
+
+    const query = profileId ? `?profileId=${profileId}` : "";
+    popup.location.replace(`/designer/dashboards/${dashboardId}/display${query}`);
+  }
   const canvasStageRef = useRef<HTMLElement | null>(null);
   const [canvasViewport, setCanvasViewport] = useState({ width: 960, height: 620 });
   const [zoomMode, setZoomMode] = useState<"FIT" | "CUSTOM">("FIT");
@@ -559,13 +579,13 @@ export function DashboardLayoutDesignerPage() {
         <div className="dashboard-layout-toolbar-actions">
           <Link className="secondary-button link-button" to="/designer/dashboards">返回 Dashboard</Link>
           {activeProfile?.id && (
-            <Link
-              className="secondary-button link-button"
-              to={`/designer/dashboards/${dashboardId}/display?profileId=${activeProfile.id}`}
-              target="_blank"
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={() => openPlayback(activeProfile.id ?? undefined)}
             >
               播放此版型
-            </Link>
+            </button>
           )}
           <button className="primary-button" type="button" disabled={saving} onClick={() => void saveLayout()}>
             {saving ? "儲存中…" : "儲存版面"}
