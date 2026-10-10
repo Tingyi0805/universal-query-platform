@@ -333,3 +333,11 @@
     flex-direction: column;
   }
 }
+
+.fixed-playback-hint {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.6;
+}
