@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -30,7 +30,7 @@ type PreviewResult = {
   };
 };
 
-type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE";
+type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
 
 type LayoutWidget = {
   id?: number | null;
@@ -57,6 +57,7 @@ type LayoutProfile = {
   canvasHeight: number;
   isDefault: boolean;
   sortOrder: number;
+  config: Record<string, unknown>;
   widgets: LayoutWidget[];
 };
 
@@ -76,7 +77,60 @@ const widgetLabels: Record<WidgetType, string> = {
   PAGE_INFO: "頁碼",
   COUNTDOWN: "換頁倒數",
   TABLE: "資料表格",
+  CONTAINER: "區塊容器",
 };
+
+const fontOptions = [
+  { value: "system-ui", label: "系統預設" },
+  { value: '"Microsoft JhengHei", sans-serif', label: "Microsoft JhengHei" },
+  { value: '"Noto Sans TC", sans-serif', label: "Noto Sans TC" },
+  { value: "Arial, sans-serif", label: "Arial" },
+  { value: "Verdana, sans-serif", label: "Verdana" },
+  { value: "Tahoma, sans-serif", label: "Tahoma" },
+  { value: 'Consolas, "Courier New", monospace', label: "Consolas" },
+];
+
+const themePresets = {
+  LIGHT: { canvasBackgroundColor: "#ffffff" },
+  DARK: { canvasBackgroundColor: "#111827" },
+  MEDICAL_BLUE: { canvasBackgroundColor: "#eef6ff" },
+  HIGH_CONTRAST: { canvasBackgroundColor: "#000000" },
+  CUSTOM: {},
+} as const;
+
+function configNumber(config: Record<string, unknown>, key: string, fallback: number) {
+  const value = Number(config[key]);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function configText(config: Record<string, unknown>, key: string, fallback: string) {
+  const value = config[key];
+  return typeof value === "string" && value ? value : fallback;
+}
+
+function widgetStyle(widget: LayoutWidget): CSSProperties {
+  const opacity = Math.max(0, Math.min(100, configNumber(widget.config, "backgroundOpacity", 100))) / 100;
+  const bg = configText(widget.config, "backgroundColor", "#ffffff");
+  const hex = bg.replace("#", "");
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  const backgroundColor = /^#[0-9a-fA-F]{6}$/.test(bg)
+    ? `rgba(${r}, ${g}, ${b}, ${opacity})`
+    : bg;
+
+  return {
+    color: configText(widget.config, "textColor", "#172033"),
+    backgroundColor,
+    fontFamily: configText(widget.config, "fontFamily", "system-ui"),
+    fontWeight: configNumber(widget.config, "fontWeight", 700),
+    borderColor: configText(widget.config, "borderColor", "transparent"),
+    borderWidth: configNumber(widget.config, "borderWidth", 0),
+    borderStyle: "solid",
+    borderRadius: configNumber(widget.config, "borderRadius", 0),
+    padding: configNumber(widget.config, "padding", 0),
+  };
+}
 
 function clientKey(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -138,6 +192,7 @@ function withClientKeys(profile: Omit<LayoutProfile, "clientKey" | "widgets"> & 
   return {
     ...profile,
     clientKey: clientKey("profile"),
+    config: profile.config ?? {},
     widgets: profile.widgets.map((widget) => ({
       ...widget,
       clientKey: clientKey("widget"),
@@ -362,6 +417,7 @@ export function DashboardLayoutDesignerPage() {
       canvasHeight,
       isDefault: profiles.length === 0,
       sortOrder: profiles.length * 10,
+      config: { theme: "LIGHT", canvasBackgroundColor: "#ffffff" },
       widgets: [],
     };
 
@@ -395,6 +451,7 @@ export function DashboardLayoutDesignerPage() {
       PAGE_INFO: { width: 360, height: 70, fontSize: 28, title: "頁數", staticText: null },
       COUNTDOWN: { width: 420, height: 70, fontSize: 28, title: "換頁倒數", staticText: null },
       TABLE: { width: 1000, height: 520, fontSize: 36, title: null, staticText: null },
+      CONTAINER: { width: 700, height: 260, fontSize: 24, title: "區塊", staticText: null },
     };
 
     const preset = defaults[widgetType];
@@ -413,7 +470,22 @@ export function DashboardLayoutDesignerPage() {
       height,
       fontSize: preset.fontSize,
       alignment: "CENTER",
-      config: {},
+      config: {
+        fontFamily: "system-ui",
+        fontWeight: 700,
+        textColor: "#172033",
+        backgroundColor: widgetType === "CONTAINER" ? "#eef4fb" : "#ffffff",
+        backgroundOpacity: widgetType === "CONTAINER" ? 85 : 100,
+        borderColor: widgetType === "CONTAINER" ? "#cbd6e5" : "transparent",
+        borderWidth: widgetType === "CONTAINER" ? 2 : 0,
+        borderRadius: widgetType === "CONTAINER" ? 16 : 0,
+        padding: widgetType === "CONTAINER" ? 16 : 0,
+        tableHeaderBackground: "#e9eef5",
+        tableHeaderTextColor: "#172033",
+        tableRowBackground: "#ffffff",
+        tableAltRowBackground: "#f8fafc",
+        tableGridColor: "#dde5f0",
+      },
       sortOrder: activeProfile.widgets.length * 10,
     };
 
@@ -474,10 +546,23 @@ export function DashboardLayoutDesignerPage() {
     const firstRow = preview?.result.rows[0] ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
+    if (widget.widgetType === "CONTAINER") {
+      return <div className="layout-widget-container-preview">{widget.title || "區塊"}</div>;
+    }
+
     if (widget.widgetType === "TABLE") {
       const rows = (preview?.result.rows ?? []).slice(0, preview?.dashboard.pageSize ?? 5);
       return (
-        <div className="layout-widget-table">
+        <div
+          className="layout-widget-table"
+          style={{
+            "--table-header-bg": configText(widget.config, "tableHeaderBackground", "#f1f4f8"),
+            "--table-header-text": configText(widget.config, "tableHeaderTextColor", "#172033"),
+            "--table-row-bg": configText(widget.config, "tableRowBackground", "#ffffff"),
+            "--table-alt-row-bg": configText(widget.config, "tableAltRowBackground", "#f8fafc"),
+            "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
+          } as CSSProperties}
+        >
           <table>
             <thead>
               <tr>
@@ -635,6 +720,42 @@ export function DashboardLayoutDesignerPage() {
                 <input type="number" min={240} max={4320} value={activeProfile.canvasHeight}
                   onChange={(e) => updateActiveProfile({ canvasHeight: Number(e.target.value) })} />
               </label>
+              <label>
+                主題
+                <select
+                  value={String(activeProfile.config?.theme ?? "LIGHT")}
+                  onChange={(e) => {
+                    const theme = e.target.value as keyof typeof themePresets;
+                    updateActiveProfile({
+                      config: {
+                        ...activeProfile.config,
+                        ...themePresets[theme],
+                        theme,
+                      },
+                    });
+                  }}
+                >
+                  <option value="LIGHT">淺色</option>
+                  <option value="DARK">深色</option>
+                  <option value="MEDICAL_BLUE">醫療藍</option>
+                  <option value="HIGH_CONTRAST">高對比</option>
+                  <option value="CUSTOM">自訂</option>
+                </select>
+              </label>
+              <label>
+                畫布背景色
+                <input
+                  type="color"
+                  value={configText(activeProfile.config, "canvasBackgroundColor", "#ffffff")}
+                  onChange={(e) => updateActiveProfile({
+                    config: {
+                      ...activeProfile.config,
+                      theme: "CUSTOM",
+                      canvasBackgroundColor: e.target.value,
+                    },
+                  })}
+                />
+              </label>
               <button type="button" disabled={activeProfile.isDefault} onClick={setDefaultProfile}>設為預設</button>
               <button type="button" disabled={profiles.length <= 1} onClick={deleteProfile}>刪除版型</button>
             </div>
@@ -692,6 +813,7 @@ export function DashboardLayoutDesignerPage() {
                 style={{
                   width: activeProfile.canvasWidth * scale,
                   height: activeProfile.canvasHeight * scale,
+                  backgroundColor: configText(activeProfile.config, "canvasBackgroundColor", "#ffffff"),
                 }}
               >
                 <div
@@ -713,6 +835,8 @@ export function DashboardLayoutDesignerPage() {
                         height: widget.height,
                         fontSize: widget.fontSize,
                         textAlign: widget.alignment.toLowerCase() as "left" | "center" | "right",
+                        ...widgetStyle(widget),
+                        zIndex: widget.widgetType === "CONTAINER" ? 0 : 1,
                       }}
                       onPointerDown={(event) => startDrag(event, widget)}
                     >
@@ -846,6 +970,182 @@ export function DashboardLayoutDesignerPage() {
                   <option value="RIGHT">靠右</option>
                 </select>
               </label>
+
+              <div className="layout-style-section">
+                <strong>視覺樣式</strong>
+
+                <label>
+                  字型
+                  <select
+                    value={configText(selectedWidget.config, "fontFamily", "system-ui")}
+                    onChange={(e) => updateSelectedWidget({
+                      config: { ...selectedWidget.config, fontFamily: e.target.value },
+                    })}
+                  >
+                    {fontOptions.map((font) => (
+                      <option key={font.value} value={font.value}>{font.label}</option>
+                    ))}
+                  </select>
+                </label>
+
+                <label>
+                  字重
+                  <select
+                    value={String(configNumber(selectedWidget.config, "fontWeight", 700))}
+                    onChange={(e) => updateSelectedWidget({
+                      config: { ...selectedWidget.config, fontWeight: Number(e.target.value) },
+                    })}
+                  >
+                    <option value="400">一般 400</option>
+                    <option value="500">中等 500</option>
+                    <option value="600">半粗 600</option>
+                    <option value="700">粗體 700</option>
+                    <option value="800">特粗 800</option>
+                  </select>
+                </label>
+
+                <div className="layout-color-grid">
+                  <label>
+                    文字顏色
+                    <input
+                      type="color"
+                      value={configText(selectedWidget.config, "textColor", "#172033")}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, textColor: e.target.value },
+                      })}
+                    />
+                  </label>
+                  <label>
+                    背景顏色
+                    <input
+                      type="color"
+                      value={configText(selectedWidget.config, "backgroundColor", "#ffffff")}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, backgroundColor: e.target.value },
+                      })}
+                    />
+                  </label>
+                  <label>
+                    邊框顏色
+                    <input
+                      type="color"
+                      value={configText(selectedWidget.config, "borderColor", "#cbd6e5")}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, borderColor: e.target.value },
+                      })}
+                    />
+                  </label>
+                </div>
+
+                <div className="layout-inspector-grid">
+                  <label>
+                    背景透明度 %
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={configNumber(selectedWidget.config, "backgroundOpacity", 100)}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, backgroundOpacity: Number(e.target.value) },
+                      })}
+                    />
+                  </label>
+                  <label>
+                    邊框粗細
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      value={configNumber(selectedWidget.config, "borderWidth", 0)}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, borderWidth: Number(e.target.value) },
+                      })}
+                    />
+                  </label>
+                  <label>
+                    圓角
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={configNumber(selectedWidget.config, "borderRadius", 0)}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, borderRadius: Number(e.target.value) },
+                      })}
+                    />
+                  </label>
+                  <label>
+                    內距
+                    <input
+                      type="number"
+                      min={0}
+                      max={100}
+                      value={configNumber(selectedWidget.config, "padding", 0)}
+                      onChange={(e) => updateSelectedWidget({
+                        config: { ...selectedWidget.config, padding: Number(e.target.value) },
+                      })}
+                    />
+                  </label>
+                </div>
+
+                {selectedWidget.widgetType === "TABLE" && (
+                  <div className="layout-table-style-settings">
+                    <strong>表格樣式</strong>
+                    <div className="layout-color-grid">
+                      <label>
+                        表頭背景
+                        <input
+                          type="color"
+                          value={configText(selectedWidget.config, "tableHeaderBackground", "#e9eef5")}
+                          onChange={(e) => updateSelectedWidget({
+                            config: { ...selectedWidget.config, tableHeaderBackground: e.target.value },
+                          })}
+                        />
+                      </label>
+                      <label>
+                        表頭文字
+                        <input
+                          type="color"
+                          value={configText(selectedWidget.config, "tableHeaderTextColor", "#172033")}
+                          onChange={(e) => updateSelectedWidget({
+                            config: { ...selectedWidget.config, tableHeaderTextColor: e.target.value },
+                          })}
+                        />
+                      </label>
+                      <label>
+                        資料列
+                        <input
+                          type="color"
+                          value={configText(selectedWidget.config, "tableRowBackground", "#ffffff")}
+                          onChange={(e) => updateSelectedWidget({
+                            config: { ...selectedWidget.config, tableRowBackground: e.target.value },
+                          })}
+                        />
+                      </label>
+                      <label>
+                        交錯列
+                        <input
+                          type="color"
+                          value={configText(selectedWidget.config, "tableAltRowBackground", "#f8fafc")}
+                          onChange={(e) => updateSelectedWidget({
+                            config: { ...selectedWidget.config, tableAltRowBackground: e.target.value },
+                          })}
+                        />
+                      </label>
+                      <label>
+                        格線
+                        <input
+                          type="color"
+                          value={configText(selectedWidget.config, "tableGridColor", "#dde5f0")}
+                          onChange={(e) => updateSelectedWidget({
+                            config: { ...selectedWidget.config, tableGridColor: e.target.value },
+                          })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
 
               <button className="danger-button" type="button" onClick={deleteSelectedWidget}>刪除 Widget</button>
             </div>

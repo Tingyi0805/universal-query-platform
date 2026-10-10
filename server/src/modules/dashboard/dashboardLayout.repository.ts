@@ -3,7 +3,7 @@ import { getPlatformDbPool } from "../../config/database.js";
 
 export type DashboardWidgetInput = {
   id?: number | null;
-  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE";
+  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
   title: string | null;
   sourceKey: string | null;
   staticText: string | null;
@@ -24,6 +24,7 @@ export type DashboardProfileInput = {
   canvasHeight: number;
   isDefault: boolean;
   sortOrder: number;
+  config: Record<string, unknown>;
   widgets: DashboardWidgetInput[];
 };
 
@@ -67,7 +68,7 @@ export async function getDashboardLayout(dashboardId: number) {
   const profileResult = await pool.request()
     .input("dashboardId", sql.BigInt, dashboardId)
     .query(`
-      SELECT Id, DashboardId, Name, CanvasWidth, CanvasHeight, IsDefault, SortOrder
+      SELECT Id, DashboardId, Name, CanvasWidth, CanvasHeight, IsDefault, SortOrder, ConfigJson
       FROM uqp.DashboardDisplayProfile
       WHERE DashboardId=@dashboardId
       ORDER BY IsDefault DESC, SortOrder, Id
@@ -106,6 +107,7 @@ export async function getDashboardLayout(dashboardId: number) {
       canvasHeight: Number(row.CanvasHeight),
       isDefault: Boolean(row.IsDefault),
       sortOrder: Number(row.SortOrder),
+      config: parseConfig(row.ConfigJson),
       widgets: widgetsByProfile.get(Number(row.Id)) ?? [],
     })),
   };
@@ -149,13 +151,14 @@ export async function replaceDashboardLayout(
         .input("canvasHeight", sql.Int, profile.canvasHeight)
         .input("isDefault", sql.Bit, isDefault)
         .input("sortOrder", sql.Int, profile.sortOrder)
+        .input("configJson", sql.NVarChar(sql.MAX), JSON.stringify(profile.config ?? {}))
         .query(`
           INSERT INTO uqp.DashboardDisplayProfile (
-            DashboardId, Name, CanvasWidth, CanvasHeight, IsDefault, SortOrder
+            DashboardId, Name, CanvasWidth, CanvasHeight, IsDefault, SortOrder, ConfigJson
           )
           OUTPUT INSERTED.Id
           VALUES (
-            @dashboardId,@name,@canvasWidth,@canvasHeight,@isDefault,@sortOrder
+            @dashboardId,@name,@canvasWidth,@canvasHeight,@isDefault,@sortOrder,@configJson
           )
         `);
 
