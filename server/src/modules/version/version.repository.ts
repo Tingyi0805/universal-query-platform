@@ -375,6 +375,9 @@ export async function restoreDatasetVersion(
         .input("controlType", sql.NVarChar(30), parameter.controlType)
         .input("isRequired", sql.Bit, parameter.isRequired)
         .input("defaultValue", sql.NVarChar(1000), parameter.defaultValue)
+        .input("dateOutputMode", sql.NVarChar(20), parameter.dateOutputMode ?? "NATIVE")
+        .input("dateCalendar", sql.NVarChar(20), parameter.dateCalendar ?? "GREGORIAN")
+        .input("dateFormat", sql.NVarChar(100), parameter.dateFormat ?? null)
         .input("displayOrder", sql.Int, parameter.displayOrder)
         .input("placeholder", sql.NVarChar(200), parameter.placeholder)
         .input("helpText", sql.NVarChar(500), parameter.helpText)
@@ -386,12 +389,14 @@ export async function restoreDatasetVersion(
         .query(`
           INSERT INTO uqp.DatasetParameter (
             DatasetId, Name, Label, DataType, ControlType, IsRequired,
-            DefaultValue, DisplayOrder, Placeholder, HelpText, OptionMode,
+            DefaultValue, DateOutputMode, DateCalendar, DateFormat,
+            DisplayOrder, Placeholder, HelpText, OptionMode,
             FixedOptionsJson, LookupDatasetId, LookupValueField, LookupLabelField
           )
           VALUES (
             @datasetId,@name,@label,@dataType,@controlType,@isRequired,
-            @defaultValue,@displayOrder,@placeholder,@helpText,@optionMode,
+            @defaultValue,@dateOutputMode,@dateCalendar,@dateFormat,
+            @displayOrder,@placeholder,@helpText,@optionMode,
             @fixedOptionsJson,@lookupDatasetId,@lookupValueField,@lookupLabelField
           )
         `);
