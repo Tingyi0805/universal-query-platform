@@ -13,6 +13,13 @@ type DashboardRow = {
   queryCode: string;
   queryName: string;
   refreshSeconds: number;
+  displayMode: "TABLE" | "BIG_SCREEN";
+  displayTitle: string | null;
+  pageSize: number;
+  pageSeconds: number;
+  showClock: boolean;
+  showPageNumber: boolean;
+  showCountdown: boolean;
   parameters: Record<string, unknown>;
   isActive: boolean;
 };
@@ -54,6 +61,13 @@ type FormState = {
   description: string;
   queryDefinitionId: string;
   refreshSeconds: string;
+  displayMode: "TABLE" | "BIG_SCREEN";
+  displayTitle: string;
+  pageSize: string;
+  pageSeconds: string;
+  showClock: boolean;
+  showPageNumber: boolean;
+  showCountdown: boolean;
   parametersJson: string;
   isActive: boolean;
 };
@@ -65,6 +79,13 @@ const emptyForm: FormState = {
   description: "",
   queryDefinitionId: "",
   refreshSeconds: "10",
+  displayMode: "BIG_SCREEN",
+  displayTitle: "",
+  pageSize: "5",
+  pageSeconds: "20",
+  showClock: true,
+  showPageNumber: true,
+  showCountdown: true,
   parametersJson: "{}",
   isActive: true,
 };
@@ -153,6 +174,13 @@ export function DashboardDesignerPage() {
       description: item.description ?? "",
       queryDefinitionId: String(item.queryDefinitionId),
       refreshSeconds: String(item.refreshSeconds),
+      displayMode: item.displayMode,
+      displayTitle: item.displayTitle ?? "",
+      pageSize: String(item.pageSize),
+      pageSeconds: String(item.pageSeconds),
+      showClock: item.showClock,
+      showPageNumber: item.showPageNumber,
+      showCountdown: item.showCountdown,
       parametersJson: JSON.stringify(item.parameters ?? {}, null, 2),
       isActive: item.isActive,
     });
@@ -191,6 +219,13 @@ export function DashboardDesignerPage() {
         description: form.description.trim() || null,
         queryDefinitionId: Number(form.queryDefinitionId),
         refreshSeconds: Number(form.refreshSeconds),
+        displayMode: form.displayMode,
+        displayTitle: form.displayTitle.trim() || null,
+        pageSize: Number(form.pageSize),
+        pageSeconds: Number(form.pageSeconds),
+        showClock: form.showClock,
+        showPageNumber: form.showPageNumber,
+        showCountdown: form.showCountdown,
         parameters,
         isActive: form.isActive,
       };
@@ -265,7 +300,7 @@ export function DashboardDesignerPage() {
         <div>
           <p className="eyebrow">Dashboard Designer</p>
           <h1>資料顯示儀表板</h1>
-          <p className="subtitle">第一階段：建立 Dashboard、綁定已發佈 Query、設定預設參數與自動更新秒數。</p>
+          <p className="subtitle">建立 Dashboard、設定預設參數、資料更新秒數與大螢幕自動換頁。</p>
         </div>
         <Link className="secondary-button link-button" to="/">返回首頁</Link>
       </div>
@@ -328,7 +363,7 @@ export function DashboardDesignerPage() {
               </label>
 
               <label>
-                <span>自動更新秒數</span>
+                <span>資料更新秒數</span>
                 <input
                   type="number"
                   min={5}
@@ -336,7 +371,78 @@ export function DashboardDesignerPage() {
                   value={form.refreshSeconds}
                   onChange={(e) => setForm({ ...form, refreshSeconds: e.target.value })}
                 />
+                <small>每個 Dashboard 可獨立設定，5～3600 秒。</small>
               </label>
+
+              <label>
+                <span>顯示模式</span>
+                <select
+                  value={form.displayMode}
+                  onChange={(e) => setForm({ ...form, displayMode: e.target.value as "TABLE" | "BIG_SCREEN" })}
+                >
+                  <option value="BIG_SCREEN">大螢幕看板</option>
+                  <option value="TABLE">一般表格</option>
+                </select>
+              </label>
+
+              <label className="wide">
+                <span>播放標題</span>
+                <input
+                  value={form.displayTitle}
+                  placeholder="例如 手術病患動態；留白則使用 Dashboard 名稱"
+                  onChange={(e) => setForm({ ...form, displayTitle: e.target.value })}
+                />
+              </label>
+
+              <label>
+                <span>每頁筆數</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={form.pageSize}
+                  onChange={(e) => setForm({ ...form, pageSize: e.target.value })}
+                />
+              </label>
+
+              <label>
+                <span>換頁秒數</span>
+                <input
+                  type="number"
+                  min={5}
+                  max={3600}
+                  value={form.pageSeconds}
+                  onChange={(e) => setForm({ ...form, pageSeconds: e.target.value })}
+                />
+                <small>每個 Dashboard 可獨立設定，與資料更新秒數分開。</small>
+              </label>
+
+              <div className="dashboard-display-options wide">
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={form.showClock}
+                    onChange={(e) => setForm({ ...form, showClock: e.target.checked })}
+                  />
+                  <span>顯示系統時間</span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={form.showPageNumber}
+                    onChange={(e) => setForm({ ...form, showPageNumber: e.target.checked })}
+                  />
+                  <span>顯示頁碼</span>
+                </label>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={form.showCountdown}
+                    onChange={(e) => setForm({ ...form, showCountdown: e.target.checked })}
+                  />
+                  <span>顯示換頁倒數</span>
+                </label>
+              </div>
 
               <label className="wide">
                 <span>預設參數 JSON</span>
@@ -379,7 +485,9 @@ export function DashboardDesignerPage() {
                     <th>代碼</th>
                     <th>名稱</th>
                     <th>Query</th>
-                    <th>更新</th>
+                    <th>資料更新</th>
+                    <th>換頁</th>
+                    <th>模式</th>
                     <th>狀態</th>
                     <th>操作</th>
                   </tr>
@@ -391,12 +499,21 @@ export function DashboardDesignerPage() {
                       <td>{item.name}</td>
                       <td>{item.queryName}<small>{item.queryCode}</small></td>
                       <td>{item.refreshSeconds} 秒</td>
+                      <td>{item.pageSeconds} 秒 / {item.pageSize} 筆</td>
+                      <td>{item.displayMode === "BIG_SCREEN" ? "大螢幕" : "表格"}</td>
                       <td>{item.isActive ? "啟用" : "停用"}</td>
                       <td className="actions">
                         <button className="secondary-button" type="button" onClick={() => editDashboard(item)}>編輯</button>
                         <button className="secondary-button" type="button" onClick={() => void startPreview(item)}>
                           預覽
                         </button>
+                        <Link
+                          className="secondary-button link-button"
+                          to={`/designer/dashboards/${item.id}/display`}
+                          target="_blank"
+                        >
+                          播放
+                        </Link>
                         <button className="danger-button" type="button" onClick={() => void remove(item)}>刪除</button>
                       </td>
                     </tr>
