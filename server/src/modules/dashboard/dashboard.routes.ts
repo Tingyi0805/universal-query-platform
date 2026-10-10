@@ -26,6 +26,7 @@ import {
   createDashboardDisplayDevice,
   listDashboardDisplayDevices,
   listExpiringDashboardDisplayDevices,
+  reissueDashboardDisplayDeviceToken,
   renewDashboardDisplayDevice,
   updateDashboardDisplayDeviceSettings,
   revokeDashboardDisplayDevice,
@@ -361,6 +362,39 @@ dashboardRouter.patch("/:id/devices/:deviceId/settings", requirePermission("DESI
   } catch (error) {
     if (error instanceof Error && error.message === "DASHBOARD_DEVICE_NOT_FOUND") {
       res.status(404).json({ error: { code: error.message, message: "找不到可編輯的顯示裝置。" } });
+      return;
+    }
+    next(error);
+  }
+});
+
+dashboardRouter.post("/:id/devices/:deviceId/reissue-token", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const deviceId = idSchema.safeParse(req.params.deviceId);
+
+    if (!id.success || !deviceId.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "顯示裝置 ID 不正確。" } });
+      return;
+    }
+
+    const result = await reissueDashboardDisplayDeviceToken(id.data, deviceId.data);
+
+    await tryWriteAuditEvent({
+      eventType: "DASHBOARD_DEVICE_TOKEN_REISSUED",
+      userId: req.authUser.id,
+      parameters: {
+        dashboardId: id.data,
+        deviceId: deviceId.data,
+        deviceName: result.device.deviceName,
+      },
+      ...auditRequestContext(req),
+    });
+
+    res.json(result);
+  } catch (error) {
+    if (error instanceof Error && error.message === "DASHBOARD_DEVICE_NOT_FOUND") {
+      res.status(404).json({ error: { code: error.message, message: "找不到可重新核發 Token 的顯示裝置。" } });
       return;
     }
     next(error);
