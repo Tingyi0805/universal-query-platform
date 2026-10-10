@@ -23,6 +23,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   CLIENT_ORIGIN: z.string().default("http://localhost:5173"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
+  PLATFORM_TIME_ZONE: z.string().default("Asia/Taipei"),
 
   PLATFORM_DB_SERVER: optionalString,
   PLATFORM_DB_PORT: z.coerce.number().int().min(1).max(65535).default(1433),
