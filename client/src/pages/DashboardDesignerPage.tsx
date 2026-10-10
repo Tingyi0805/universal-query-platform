@@ -56,6 +56,26 @@ type DisplayDevice = {
   revokedAtUtc: string | null;
 };
 
+type ManagedScreen = {
+  label?: string;
+  availLeft: number;
+  availTop: number;
+  availWidth: number;
+  availHeight: number;
+  isPrimary?: boolean;
+};
+
+type FixedPlaybackSetup = {
+  dashboard: DashboardRow;
+  deviceName: string;
+  autoFullscreen: boolean;
+  enforceIpRestriction: boolean;
+  restriction: string;
+  expiresDays: string;
+  screens: ManagedScreen[];
+  selectedScreenIndex: number;
+};
+
 type PreviewResult = {
   dashboard: DashboardRow;
   query: { id: number; code: string; name: string };
@@ -168,6 +188,8 @@ export function DashboardDesignerPage() {
   const [deviceDashboard, setDeviceDashboard] = useState<DashboardRow | null>(null);
   const [displayDevices, setDisplayDevices] = useState<DisplayDevice[]>([]);
   const [deviceLoading, setDeviceLoading] = useState(false);
+  const [fixedPlaybackSetup, setFixedPlaybackSetup] = useState<FixedPlaybackSetup | null>(null);
+  const [fixedPlaybackSaving, setFixedPlaybackSaving] = useState(false);
   const [issuedToken, setIssuedToken] = useState<{
     dashboardId: number;
     deviceId: number;
@@ -373,9 +395,56 @@ export function DashboardDesignerPage() {
     }
   }
 
-  async function createFixedPlayback(item: DashboardRow) {
-    const deviceName = window.prompt("請輸入顯示裝置名稱，例如：3F 手術室大螢幕");
-    if (!deviceName?.trim()) return;
+  async function openFixedPlaybackSetup(item: DashboardRow) {
+    setError("");
+    setNotice("");
+
+    let screens: ManagedScreen[] = [];
+    try {
+      const windowWithScreens = window as typeof window & {
+        getScreenDetails?: () => Promise<{ screens: ManagedScreen[] }>;
+      };
+      if (windowWithScreens.getScreenDetails) {
+        const details = await windowWithScreens.getScreenDetails();
+        screens = details.screens ?? [];
+      }
+    } catch {
+      screens = [];
+    }
+
+    setFixedPlaybackSetup({
+      dashboard: item,
+      deviceName: "",
+      autoFullscreen: true,
+      enforceIpRestriction: false,
+      restriction: "",
+      expiresDays: "365",
+      screens,
+      selectedScreenIndex: 0,
+    });
+  }
+
+  async function createFixedPlaybackFromSetup() {
+    const setup = fixedPlaybackSetup;
+    if (!setup) return;
+
+    const deviceName = setup.deviceName.trim();
+    if (!deviceName) {
+      setError("請輸入顯示裝置名稱。");
+      return;
+    }
+
+    const expiresDays = Number(setup.expiresDays);
+    if (!Number.isInteger(expiresDays) || expiresDays < 1 || expiresDays > 3650) {
+      setError("有效期限必須為 1～3650 天。");
+      return;
+    }
+
+    const restriction = setup.restriction.trim();
+    if (setup.enforceIpRestriction && !restriction) {
+      setError("啟用來源 IP 限制時，必須輸入允許 IP 或 IPv4 CIDR。");
+      return;
+    }
 
     const popup = window.open("about:blank", "_blank");
     if (!popup) {
@@ -383,84 +452,27 @@ export function DashboardDesignerPage() {
       return;
     }
 
-    type ManagedScreen = {
-      label?: string;
-      availLeft: number;
-      availTop: number;
-      availWidth: number;
-      availHeight: number;
-      isPrimary?: boolean;
-    };
-
-    let selectedScreen: ManagedScreen | null = null;
-    let selectedScreenIndex: number | null = null;
+    setFixedPlaybackSaving(true);
+    setError("");
 
     try {
-      const windowWithScreens = window as typeof window & {
-        getScreenDetails?: () => Promise<{ screens: ManagedScreen[] }>;
-      };
-
-      if (windowWithScreens.getScreenDetails) {
-        const details = await windowWithScreens.getScreenDetails();
-        if (details.screens.length > 0) {
-          const options = details.screens.map((screen, index) =>
-            `${index + 1}. ${screen.label || `螢幕 ${index + 1}`} ${screen.availWidth}×${screen.availHeight}${screen.isPrimary ? "（主螢幕）" : ""}`
-          ).join("\n");
-
-          const choice = details.screens.length === 1
-            ? "1"
-            : window.prompt(
-                `偵測到 ${details.screens.length} 顆螢幕，請輸入固定播放螢幕編號：\n\n${options}`,
-                "1",
-              );
-
-          const index = Math.max(0, Math.min(details.screens.length - 1, Number(choice || 1) - 1));
-          selectedScreen = details.screens[index] ?? details.screens[0] ?? null;
-          selectedScreenIndex = index;
-
-          if (selectedScreen) {
-            popup.moveTo(selectedScreen.availLeft, selectedScreen.availTop);
-            popup.resizeTo(selectedScreen.availWidth, selectedScreen.availHeight);
-          }
-        }
+      const selectedScreen = setup.screens[setup.selectedScreenIndex] ?? null;
+      if (selectedScreen) {
+        popup.moveTo(selectedScreen.availLeft, selectedScreen.availTop);
+        popup.resizeTo(selectedScreen.availWidth, selectedScreen.availHeight);
       }
 
-      const autoFullscreen = window.confirm(
-        "是否設定為「全螢幕優先」？\n\n瀏覽器安全限制下，第一次可能仍需要在播放畫面點一下「進入全螢幕」。",
-      );
-
-      const enforceIpRestriction = window.confirm(
-        "是否限制此固定播放裝置的來源 IP？\n\n建議固定看板電腦使用固定 IP 或 DHCP Reservation。",
-      );
-
-      let allowedIp: string | null = null;
-      let allowedCidr: string | null = null;
-      if (enforceIpRestriction) {
-        const restriction = window.prompt(
-          "請輸入允許的來源 IP 或 IPv4 CIDR。\n\n單一 IP 範例：10.145.143.50\n網段範例：10.145.143.0/24",
-          "",
-        );
-        if (!restriction?.trim()) {
-          popup.close();
-          setError("已取消建立：啟用來源 IP 限制時必須輸入允許的 IP 或 CIDR。");
-          return;
-        }
-
-        if (restriction.includes("/")) {
-          allowedCidr = restriction.trim();
-        } else {
-          allowedIp = restriction.trim();
-        }
-      }
+      const allowedCidr = setup.enforceIpRestriction && restriction.includes("/") ? restriction : null;
+      const allowedIp = setup.enforceIpRestriction && !restriction.includes("/") ? restriction : null;
 
       const result = await apiRequest<{ device: DisplayDevice; token: string }>(
-        `/dashboards/${item.id}/devices`,
+        `/dashboards/${setup.dashboard.id}/devices`,
         {
           method: "POST",
           body: JSON.stringify({
-            deviceName: deviceName.trim(),
-            expiresDays: 365,
-            enforceIpRestriction,
+            deviceName,
+            expiresDays,
+            enforceIpRestriction: setup.enforceIpRestriction,
             allowedIp,
             allowedCidr,
           }),
@@ -468,12 +480,12 @@ export function DashboardDesignerPage() {
         accessToken,
       );
 
-      popup.localStorage.setItem(`uqp.dashboard.device.${item.id}`, result.token);
+      popup.localStorage.setItem(`uqp.dashboard.device.${setup.dashboard.id}`, result.token);
       popup.localStorage.setItem(
-        `uqp.dashboard.display-settings.${item.id}`,
+        `uqp.dashboard.display-settings.${setup.dashboard.id}`,
         JSON.stringify({
-          autoFullscreen,
-          screenIndex: selectedScreenIndex,
+          autoFullscreen: setup.autoFullscreen,
+          screenIndex: selectedScreen ? setup.selectedScreenIndex : null,
           screenLabel: selectedScreen?.label ?? null,
           screenBounds: selectedScreen
             ? {
@@ -485,20 +497,21 @@ export function DashboardDesignerPage() {
             : null,
         }),
       );
+
       popup.location.replace(
-        `/display/dashboards/${item.id}${autoFullscreen ? "?autoFullscreen=1" : ""}`,
+        `/display/dashboards/${setup.dashboard.id}${setup.autoFullscreen ? "?autoFullscreen=1" : ""}`,
       );
-      setNotice(
-        `已建立固定播放裝置「${result.device.deviceName}」，有效期 365 天。${selectedScreen ? " 已指定播放螢幕。" : ""}${result.device.enforceIpRestriction ? ` 已限制來源 ${result.device.allowedIp ?? result.device.allowedCidr}。` : ""}`,
-      );
-      if (deviceDashboard?.id === item.id) await loadDevices(item);
+
+      setNotice(`已建立固定播放裝置「${result.device.deviceName}」。`);
+      setFixedPlaybackSetup(null);
+      if (deviceDashboard?.id === setup.dashboard.id) {
+        await loadDevices(setup.dashboard);
+      }
     } catch (e) {
       popup.close();
-      setError(
-        e instanceof Error
-          ? e.message
-          : "建立固定播放裝置失敗。若瀏覽器不支援多螢幕管理，仍可使用目前螢幕播放。",
-      );
+      setError(e instanceof Error ? e.message : "建立固定播放裝置失敗。");
+    } finally {
+      setFixedPlaybackSaving(false);
     }
   }
 
@@ -936,7 +949,7 @@ export function DashboardDesignerPage() {
                           className="secondary-button"
                           type="button"
                           disabled={!item.isActive}
-                          onClick={() => void createFixedPlayback(item)}
+                          onClick={() => void openFixedPlaybackSetup(item)}
                         >
                           固定播放
                         </button>
@@ -956,6 +969,123 @@ export function DashboardDesignerPage() {
             </div>
             {dashboards.length === 0 && <div className="empty-state">尚未建立 Dashboard。</div>}
           </section>
+
+          {fixedPlaybackSetup && (
+            <div className="fixed-playback-modal-backdrop" role="presentation">
+              <section className="fixed-playback-modal" role="dialog" aria-modal="true" aria-labelledby="fixed-playback-title">
+                <div className="fixed-playback-modal-heading">
+                  <div>
+                    <p className="eyebrow">Fixed Display Device</p>
+                    <h2 id="fixed-playback-title">建立固定播放裝置</h2>
+                    <p>{fixedPlaybackSetup.dashboard.name}</p>
+                  </div>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={fixedPlaybackSaving}
+                    onClick={() => setFixedPlaybackSetup(null)}
+                  >
+                    關閉
+                  </button>
+                </div>
+
+                <div className="fixed-playback-form">
+                  <label>
+                    <span>裝置名稱</span>
+                    <input
+                      autoFocus
+                      value={fixedPlaybackSetup.deviceName}
+                      placeholder="例如：3F 手術室大螢幕"
+                      onChange={(e) => setFixedPlaybackSetup({ ...fixedPlaybackSetup, deviceName: e.target.value })}
+                    />
+                  </label>
+
+                  <label>
+                    <span>播放螢幕</span>
+                    <select
+                      value={fixedPlaybackSetup.selectedScreenIndex}
+                      disabled={fixedPlaybackSetup.screens.length === 0}
+                      onChange={(e) => setFixedPlaybackSetup({
+                        ...fixedPlaybackSetup,
+                        selectedScreenIndex: Number(e.target.value),
+                      })}
+                    >
+                      {fixedPlaybackSetup.screens.length === 0 ? (
+                        <option value={0}>瀏覽器未提供多螢幕清單，使用目前螢幕</option>
+                      ) : fixedPlaybackSetup.screens.map((screen, index) => (
+                        <option key={index} value={index}>
+                          {screen.label || `螢幕 ${index + 1}`}－{screen.availWidth}×{screen.availHeight}
+                          {screen.isPrimary ? "（主螢幕）" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>有效期限（天）</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={3650}
+                      value={fixedPlaybackSetup.expiresDays}
+                      onChange={(e) => setFixedPlaybackSetup({ ...fixedPlaybackSetup, expiresDays: e.target.value })}
+                    />
+                  </label>
+
+                  <label className="fixed-playback-check">
+                    <input
+                      type="checkbox"
+                      checked={fixedPlaybackSetup.autoFullscreen}
+                      onChange={(e) => setFixedPlaybackSetup({ ...fixedPlaybackSetup, autoFullscreen: e.target.checked })}
+                    />
+                    <span>全螢幕優先</span>
+                  </label>
+
+                  <label className="fixed-playback-check">
+                    <input
+                      type="checkbox"
+                      checked={fixedPlaybackSetup.enforceIpRestriction}
+                      onChange={(e) => setFixedPlaybackSetup({
+                        ...fixedPlaybackSetup,
+                        enforceIpRestriction: e.target.checked,
+                      })}
+                    />
+                    <span>限制來源 IP</span>
+                  </label>
+
+                  {fixedPlaybackSetup.enforceIpRestriction && (
+                    <label>
+                      <span>允許 IP / IPv4 CIDR</span>
+                      <input
+                        value={fixedPlaybackSetup.restriction}
+                        placeholder="例如 10.145.143.29 或 10.145.143.0/24"
+                        onChange={(e) => setFixedPlaybackSetup({ ...fixedPlaybackSetup, restriction: e.target.value })}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div className="fixed-playback-modal-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={fixedPlaybackSaving}
+                    onClick={() => setFixedPlaybackSetup(null)}
+                  >
+                    取消
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    disabled={fixedPlaybackSaving}
+                    onClick={() => void createFixedPlaybackFromSetup()}
+                  >
+                    {fixedPlaybackSaving ? "建立中…" : "建立固定播放"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
 
           {deviceDashboard && (
             <section className="dashboard-device-card">
