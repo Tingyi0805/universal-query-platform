@@ -2,6 +2,7 @@ import type { RequestHandler } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../../config/env.js";
 import type { AuthUser } from "./auth.types.js";
+import { getTokenSessionState } from "./auth.repository.js";
 
 declare global {
   namespace Express {
@@ -11,7 +12,7 @@ declare global {
   }
 }
 
-export const authenticateJwt: RequestHandler = (req, res, next) => {
+export const authenticateJwt: RequestHandler = async (req, res, next) => {
   if (!env.JWT_SECRET) {
     res.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "登入服務尚未設定。" } });
     return;
@@ -25,15 +26,43 @@ export const authenticateJwt: RequestHandler = (req, res, next) => {
 
   try {
     const payload = jwt.verify(header.slice(7), env.JWT_SECRET) as jwt.JwtPayload;
+    const userId = Number(payload.sub);
+    const tokenVersion = Number(payload.tokenVersion);
+
+    if (!Number.isFinite(userId) || !Number.isInteger(tokenVersion)) {
+      res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
+      return;
+    }
+
+    const session = await getTokenSessionState(userId);
+    if (session === undefined) {
+      res.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "登入服務尚未設定。" } });
+      return;
+    }
+
+    if (!session || !session.isActive || session.tokenVersion !== tokenVersion) {
+      res.status(401).json({
+        error: {
+          code: "TOKEN_REVOKED",
+          message: "登入狀態已失效，請重新登入。",
+        },
+      });
+      return;
+    }
+
     req.authUser = {
-      id: Number(payload.sub),
+      id: userId,
       username: String(payload.username),
       displayName: String(payload.displayName),
       permissions: Array.isArray(payload.permissions) ? payload.permissions.map(String) : [],
     };
     next();
-  } catch {
-    res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
+  } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+      res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
+      return;
+    }
+    next(error);
   }
 };
 
