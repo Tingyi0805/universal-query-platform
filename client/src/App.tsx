@@ -20,6 +20,16 @@ import { QueryRuntimePage } from "./pages/QueryRuntimePage";
 import { SetupPage } from "./pages/SetupPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 
+type DashboardDeviceAlert = {
+  id: number;
+  dashboardId: number;
+  dashboardName: string;
+  dashboardCode: string;
+  deviceName: string;
+  expiresAtUtc: string | null;
+  daysRemaining: number | null;
+};
+
 const modules = [
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
   { title: "儀表板", description: "播放目前帳號可使用的即時 Dashboard。", icon: LayoutDashboard, permission: "VIEW_QUERY", path: "/dashboards" },
@@ -36,6 +46,7 @@ const modules = [
 function HomePage() {
   const { user, logout, hasPermission, accessToken } = useAuth();
   const visibleModules = modules.filter((item) => !item.permission || hasPermission(item.permission));
+  const [deviceAlerts, setDeviceAlerts] = useState<DashboardDeviceAlert[]>([]);
   const [branding, setBranding] = useState({
     organizationName: "",
     platformName: "Universal Query Platform",
@@ -48,6 +59,17 @@ function HomePage() {
       .then(setBranding)
       .catch(() => undefined);
   }, [accessToken]);
+
+  useEffect(() => {
+    if (!hasPermission("DESIGN_QUERY")) {
+      setDeviceAlerts([]);
+      return;
+    }
+
+    apiRequest<{ devices: DashboardDeviceAlert[] }>("/dashboards/device-alerts?days=30", {}, accessToken)
+      .then((result) => setDeviceAlerts(result.devices))
+      .catch(() => setDeviceAlerts([]));
+  }, [accessToken, hasPermission]);
 
   const eyebrow = [branding.organizationName.trim(), branding.platformName.trim()]
     .filter(Boolean)
@@ -71,6 +93,38 @@ function HomePage() {
           </button>
         </div>
       </header>
+
+      {deviceAlerts.length > 0 && (
+        <section className="device-expiry-alert" aria-label="Dashboard 固定播放裝置到期提醒">
+          <div className="device-expiry-alert-heading">
+            <div>
+              <strong>Dashboard 固定播放裝置到期提醒</strong>
+              <p>有 {deviceAlerts.length} 台裝置已到期或將於 30 天內到期。</p>
+            </div>
+            <Link className="secondary-button link-button" to="/designer/dashboards">前往裝置管理</Link>
+          </div>
+          <div className="device-expiry-alert-list">
+            {deviceAlerts.slice(0, 6).map((device) => (
+              <div className="device-expiry-alert-item" key={device.id}>
+                <span>{device.deviceName} · {device.dashboardName}</span>
+                <strong className={
+                  device.daysRemaining != null && device.daysRemaining <= 7
+                    ? "danger"
+                    : "warning"
+                }>
+                  {device.daysRemaining == null
+                    ? "未設定到期日"
+                    : device.daysRemaining < 0
+                      ? `已到期 ${Math.abs(device.daysRemaining)} 天`
+                      : device.daysRemaining === 0
+                        ? "今天到期"
+                        : `剩餘 ${device.daysRemaining} 天`}
+                </strong>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="module-grid" aria-label="平台模組">
         {visibleModules.map(({ title, description, icon: Icon, path }) => {
