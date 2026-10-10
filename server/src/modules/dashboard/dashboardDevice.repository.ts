@@ -84,6 +84,71 @@ export async function listDashboardDisplayDevices(dashboardId: number) {
   return result.recordset.map(mapRow);
 }
 
+export async function listExpiringDashboardDisplayDevices(days = 30) {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("days", sql.Int, days)
+    .query(`
+      SELECT ddd.*, d.Name AS DashboardName, d.Code AS DashboardCode
+      FROM uqp.DashboardDisplayDevice ddd
+      INNER JOIN uqp.Dashboard d ON d.Id=ddd.DashboardId
+      WHERE ddd.IsActive=1
+        AND ddd.ExpiresAtUtc IS NOT NULL
+        AND ddd.ExpiresAtUtc <= DATEADD(DAY, @days, SYSUTCDATETIME())
+      ORDER BY ddd.ExpiresAtUtc ASC, ddd.Id ASC
+    `);
+
+  const now = Date.now();
+  return result.recordset.map((row: any) => {
+    const mapped = mapRow(row);
+    const expiresAtMs = mapped.expiresAtUtc ? new Date(mapped.expiresAtUtc).getTime() : NaN;
+    const daysRemaining = Number.isFinite(expiresAtMs)
+      ? Math.ceil((expiresAtMs - now) / 86_400_000)
+      : null;
+
+    return {
+      ...mapped,
+      dashboardName: String(row.DashboardName),
+      dashboardCode: String(row.DashboardCode),
+      daysRemaining,
+    };
+  });
+}
+
+export async function renewDashboardDisplayDevice(
+  dashboardId: number,
+  deviceId: number,
+  extendDays = 365,
+) {
+  const pool = await requirePool();
+  const result = await pool.request()
+    .input("dashboardId", sql.BigInt, dashboardId)
+    .input("deviceId", sql.BigInt, deviceId)
+    .input("extendDays", sql.Int, extendDays)
+    .query(`
+      UPDATE uqp.DashboardDisplayDevice
+      SET ExpiresAtUtc=DATEADD(
+            DAY,
+            @extendDays,
+            CASE
+              WHEN ExpiresAtUtc IS NOT NULL AND ExpiresAtUtc > SYSUTCDATETIME()
+                THEN ExpiresAtUtc
+              ELSE SYSUTCDATETIME()
+            END
+          )
+      OUTPUT INSERTED.*
+      WHERE Id=@deviceId
+        AND DashboardId=@dashboardId
+        AND IsActive=1
+    `);
+
+  if (!result.recordset[0]) {
+    throw new Error("DASHBOARD_DEVICE_NOT_FOUND");
+  }
+
+  return mapRow(result.recordset[0]);
+}
+
 export async function revokeDashboardDisplayDevice(dashboardId: number, deviceId: number) {
   const pool = await requirePool();
   const result = await pool.request()

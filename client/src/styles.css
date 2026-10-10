@@ -264,3 +264,56 @@ h1 { margin: 0; font-size: clamp(30px, 4vw, 48px); line-height: 1.15; }
 @media (max-width: 640px) {
   .page-toolbar { flex-direction: column; }
 }
+
+
+.device-expiry-alert {
+  margin-bottom: 22px;
+  padding: 18px 20px;
+  border: 1px solid #f0d59a;
+  border-radius: 14px;
+  background: #fffaf0;
+}
+
+.device-expiry-alert-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.device-expiry-alert-heading p {
+  margin: 6px 0 0;
+  color: #78623b;
+}
+
+.device-expiry-alert-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.device-expiry-alert-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.72);
+}
+
+.device-expiry-alert-item strong.warning {
+  color: #956710;
+}
+
+.device-expiry-alert-item strong.danger {
+  color: #b42318;
+}
+
+@media (max-width: 640px) {
+  .device-expiry-alert-heading,
+  .device-expiry-alert-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
