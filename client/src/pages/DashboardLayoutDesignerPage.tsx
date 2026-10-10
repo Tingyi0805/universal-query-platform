@@ -215,10 +215,12 @@ export function DashboardLayoutDesignerPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  function openPlayback(profileId?: number) {
+  function openPreview() {
+    if (!activeProfile) return;
+
     const popup = window.open("about:blank", "_blank");
     if (!popup) {
-      setError("瀏覽器封鎖了播放視窗，請允許此網站開啟新視窗後再試一次。");
+      setError("瀏覽器封鎖了預覽視窗，請允許此網站開啟新視窗後再試一次。");
       return;
     }
 
@@ -227,12 +229,33 @@ export function DashboardLayoutDesignerPage() {
       try {
         popup.sessionStorage.setItem("uqp.auth", storedAuth);
       } catch {
-        // If storage handoff fails, login will return to the requested playback path.
+        // If storage handoff fails, login will return to the requested preview path.
       }
     }
 
-    const query = profileId ? `?profileId=${profileId}` : "";
-    popup.location.replace(`/designer/dashboards/${dashboardId}/display${query}`);
+    const previewKey = `dashboard-layout-preview-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const previewProfile = {
+      ...activeProfile,
+      id: activeProfile.id ?? -1,
+      dashboardId,
+      widgets: activeProfile.widgets.map((widget, index) => ({
+        ...widget,
+        id: widget.id ?? -(index + 1),
+        profileId: activeProfile.id ?? -1,
+      })),
+    };
+
+    try {
+      popup.sessionStorage.setItem(previewKey, JSON.stringify(previewProfile));
+    } catch {
+      popup.close();
+      setError("無法建立版型預覽資料，請重新整理後再試一次。");
+      return;
+    }
+
+    popup.location.replace(
+      `/designer/dashboards/${dashboardId}/display?previewKey=${encodeURIComponent(previewKey)}`,
+    );
   }
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const [canvasViewport, setCanvasViewport] = useState({ width: 960, height: 620 });
@@ -653,13 +676,13 @@ export function DashboardLayoutDesignerPage() {
         </div>
         <div className="dashboard-layout-toolbar-actions">
           <Link className="secondary-button link-button" to="/designer/dashboards">返回 Dashboard</Link>
-          {activeProfile?.id && (
+          {activeProfile && (
             <button
               className="secondary-button"
               type="button"
-              onClick={() => openPlayback(activeProfile.id ?? undefined)}
+              onClick={openPreview}
             >
-              播放此版型
+              預覽此版型
             </button>
           )}
           <button className="primary-button" type="button" disabled={saving} onClick={() => void saveLayout()}>
