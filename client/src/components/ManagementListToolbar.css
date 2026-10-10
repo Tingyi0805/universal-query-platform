@@ -61,3 +61,71 @@
     margin-right: 0;
   }
 }
+
+
+.management-list-tools.compact {
+  gap: 12px;
+  padding: 12px;
+}
+
+.management-list-tools.compact .management-list-search {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.management-list-tools.compact .management-list-search input {
+  grid-column: 1 / -1;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.management-list-tools.compact .management-list-search .secondary-button {
+  min-width: 0;
+}
+
+.management-list-tools.compact .management-list-filters {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.management-list-tools.compact .management-list-filters label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.management-list-tools.compact .management-list-filters select {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.management-list-tools.compact .management-list-pagination {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 8px;
+  align-items: center;
+}
+
+.management-list-tools.compact .management-list-pagination > span {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.management-list-tools.compact .management-list-pagination strong {
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.management-list-tools.compact .management-list-pagination button:first-of-type {
+  justify-self: stretch;
+}
+
+.management-list-tools.compact .management-list-pagination button:last-of-type {
+  justify-self: stretch;
+}
