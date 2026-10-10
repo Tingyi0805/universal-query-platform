@@ -211,3 +211,67 @@ export async function replaceDashboardLayout(
     throw error;
   }
 }
+
+
+export async function ensureDefaultDashboardLayout(
+  dashboardId: number,
+  title: string,
+): Promise<void> {
+  const pool = await requirePool();
+  const exists = await pool.request()
+    .input("dashboardId", sql.BigInt, dashboardId)
+    .query("SELECT TOP (1) Id FROM uqp.DashboardDisplayProfile WHERE DashboardId=@dashboardId");
+  if (exists.recordset[0]) return;
+
+  const tx = new sql.Transaction(pool);
+  await tx.begin();
+  try {
+    const profile = await new sql.Request(tx)
+      .input("dashboardId", sql.BigInt, dashboardId)
+      .query(`
+        INSERT INTO uqp.DashboardDisplayProfile (
+          DashboardId, Name, CanvasWidth, CanvasHeight, IsDefault, SortOrder
+        )
+        OUTPUT INSERTED.Id
+        VALUES (@dashboardId,N'預設 Full HD',1920,1080,1,0)
+      `);
+
+    const profileId = Number(profile.recordset[0].Id);
+    const starters = [
+      { type: "TEXT", text: title, x: 40, y: 25, w: 1840, h: 110, font: 64, align: "CENTER", order: 10 },
+      { type: "PAGE_INFO", text: null, x: 40, y: 145, w: 400, h: 55, font: 28, align: "LEFT", order: 20 },
+      { type: "CLOCK", text: null, x: 710, y: 145, w: 500, h: 55, font: 28, align: "CENTER", order: 30 },
+      { type: "COUNTDOWN", text: null, x: 1480, y: 145, w: 400, h: 55, font: 28, align: "RIGHT", order: 40 },
+      { type: "TABLE", text: null, x: 40, y: 220, w: 1840, h: 760, font: 42, align: "CENTER", order: 50 },
+    ] as const;
+
+    for (const starter of starters) {
+      await new sql.Request(tx)
+        .input("profileId", sql.BigInt, profileId)
+        .input("widgetType", sql.NVarChar(30), starter.type)
+        .input("staticText", sql.NVarChar(1000), starter.text)
+        .input("x", sql.Int, starter.x)
+        .input("y", sql.Int, starter.y)
+        .input("width", sql.Int, starter.w)
+        .input("height", sql.Int, starter.h)
+        .input("fontSize", sql.Int, starter.font)
+        .input("alignment", sql.NVarChar(10), starter.align)
+        .input("sortOrder", sql.Int, starter.order)
+        .query(`
+          INSERT INTO uqp.DashboardWidget (
+            ProfileId, WidgetType, StaticText,
+            X, Y, Width, Height, FontSize, Alignment, ConfigJson, SortOrder
+          )
+          VALUES (
+            @profileId,@widgetType,@staticText,
+            @x,@y,@width,@height,@fontSize,@alignment,'{}',@sortOrder
+          )
+        `);
+    }
+
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
