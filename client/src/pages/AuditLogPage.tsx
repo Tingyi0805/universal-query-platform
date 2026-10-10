@@ -136,6 +136,12 @@ export function AuditLogPage() {
               <option value="QUERY_ACCESS_UPDATED">QUERY_ACCESS_UPDATED</option>
               <option value="VERSION_QUERY_PIN_CHANGED">VERSION_QUERY_PIN_CHANGED</option>
             </optgroup>
+            <optgroup label="Dashboard">
+              <option value="DASHBOARD_CREATED">DASHBOARD_CREATED</option>
+              <option value="DASHBOARD_UPDATED">DASHBOARD_UPDATED</option>
+              <option value="DASHBOARD_DELETED">DASHBOARD_DELETED</option>
+              <option value="DASHBOARD_PREVIEW">DASHBOARD_PREVIEW</option>
+            </optgroup>
             <optgroup label="系統治理">
               <option value="SETTING_BRANDING_UPDATED">SETTING_BRANDING_UPDATED</option>
               <option value="SETTING_VERSION_RETENTION_UPDATED">SETTING_VERSION_RETENTION_UPDATED</option>
