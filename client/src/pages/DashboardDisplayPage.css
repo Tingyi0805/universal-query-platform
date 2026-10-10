@@ -30,7 +30,6 @@
   position: absolute;
   box-sizing: border-box;
   overflow: hidden;
-  background: white;
 }
 
 .dashboard-play-value {
@@ -69,16 +68,35 @@
 .dashboard-play-table td {
   padding: .24em .32em;
   overflow: hidden;
-  border-bottom: 1px solid #e1e1e1;
+  border-bottom: 1px solid var(--table-grid, #e1e1e1);
   vertical-align: middle;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .dashboard-play-table th {
-  background: #f6f7f9;
+  background: var(--table-header-bg, #f6f7f9);
+  color: var(--table-header-text, #172033);
   text-align: center;
   font-weight: 800;
+}
+
+.dashboard-play-table tbody tr:nth-child(odd) td {
+  background: var(--table-row-bg, #fff);
+}
+
+.dashboard-play-table tbody tr:nth-child(even) td {
+  background: var(--table-alt-row-bg, #f8fafc);
+}
+
+.dashboard-play-container {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  opacity: .7;
+  font-size: .55em;
 }
 
 .dashboard-play-empty {
