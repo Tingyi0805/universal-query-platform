@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./DashboardDisplayPage.css";
@@ -8,20 +8,10 @@ type DashboardRow = {
   id: number;
   code: string;
   name: string;
-  description: string | null;
-  queryDefinitionId: number;
-  queryCode: string;
-  queryName: string;
   refreshSeconds: number;
-  displayMode: "TABLE" | "BIG_SCREEN";
-  displayTitle: string | null;
   pageSize: number;
   pageSeconds: number;
-  showClock: boolean;
-  showPageNumber: boolean;
-  showCountdown: boolean;
   parameters: Record<string, unknown>;
-  isActive: boolean;
 };
 
 type ReportColumn = {
@@ -36,15 +26,40 @@ type PreviewResult = {
   dashboard: DashboardRow;
   reportColumns: ReportColumn[];
   result: {
-    columns: { name: string; dataType?: string }[];
+    columns: { name: string }[];
     rows: Record<string, unknown>[];
-    rowCount: number;
-    truncated: boolean;
-    elapsedMs: number;
   };
 };
 
-function formatValue(value: unknown): string {
+type LayoutWidget = {
+  id: number;
+  profileId: number;
+  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE";
+  title: string | null;
+  sourceKey: string | null;
+  staticText: string | null;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fontSize: number;
+  alignment: "LEFT" | "CENTER" | "RIGHT";
+  config: Record<string, unknown>;
+  sortOrder: number;
+};
+
+type LayoutProfile = {
+  id: number;
+  dashboardId: number;
+  name: string;
+  canvasWidth: number;
+  canvasHeight: number;
+  isDefault: boolean;
+  sortOrder: number;
+  widgets: LayoutWidget[];
+};
+
+function textValue(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
@@ -52,15 +67,23 @@ function formatValue(value: unknown): string {
 
 export function DashboardDisplayPage() {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const dashboardId = Number(id);
+  const requestedProfileId = Number(searchParams.get("profileId"));
   const { accessToken } = useAuth();
+
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   const [error, setError] = useState("");
   const [page, setPage] = useState(1);
   const [countdown, setCountdown] = useState(0);
   const [now, setNow] = useState(new Date());
+  const [viewport, setViewport] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
 
-  const load = useCallback(async () => {
+  const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
     try {
       const result = await apiRequest<PreviewResult>(
@@ -75,7 +98,23 @@ export function DashboardDisplayPage() {
     }
   }, [accessToken, dashboardId]);
 
-  useEffect(() => { void load(); }, [load]);
+  const loadLayout = useCallback(async () => {
+    if (!Number.isFinite(dashboardId)) return;
+    try {
+      const result = await apiRequest<{ profiles: LayoutProfile[] }>(
+        `/dashboards/${dashboardId}/layout`,
+        {},
+        accessToken,
+      );
+      setProfiles(result.profiles);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
+    }
+  }, [accessToken, dashboardId]);
+
+  useEffect(() => {
+    void Promise.all([loadData(), loadLayout()]);
+  }, [loadData, loadLayout]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -83,31 +122,21 @@ export function DashboardDisplayPage() {
   }, []);
 
   useEffect(() => {
-    if (!preview) return;
-    const timer = window.setInterval(
-      () => void load(),
-      refreshSeconds * 1000,
-    );
-    return () => window.clearInterval(timer);
-  }, [load, refreshSeconds, Boolean(preview)]);
+    const handleResize = () => setViewport({
+      width: window.innerWidth,
+      height: window.innerHeight,
+    });
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
-  const columns = useMemo(() => {
-    if (!preview) return [];
-    const names = new Set(preview.result.columns.map((column) => column.name));
-    const configured = preview.reportColumns
-      .filter((column) => column.isVisible && names.has(column.columnName))
-      .sort((a, b) => a.displayOrder - b.displayOrder);
-
-    if (preview.reportColumns.length > 0) return configured;
-
-    return preview.result.columns.map((column, index) => ({
-      columnName: column.name,
-      displayLabel: column.name,
-      displayOrder: index,
-      isVisible: true,
-      alignment: "CENTER" as const,
-    }));
-  }, [preview]);
+  const activeProfile = useMemo(() => {
+    if (Number.isFinite(requestedProfileId)) {
+      const requested = profiles.find((profile) => profile.id === requestedProfileId);
+      if (requested) return requested;
+    }
+    return profiles.find((profile) => profile.isDefault) ?? profiles[0] ?? null;
+  }, [profiles, requestedProfileId]);
 
   const pageSize = Math.max(1, preview?.dashboard.pageSize ?? 5);
   const pageSeconds = Math.max(5, preview?.dashboard.pageSeconds ?? 20);
@@ -121,6 +150,30 @@ export function DashboardDisplayPage() {
     return preview.result.rows.slice(start, start + pageSize);
   }, [pageSize, preview, safePage]);
 
+  const visibleColumns = useMemo(() => {
+    if (!preview) return [];
+    const resultNames = new Set(preview.result.columns.map((column) => column.name));
+    const configured = preview.reportColumns
+      .filter((column) => column.isVisible && resultNames.has(column.columnName))
+      .sort((a, b) => a.displayOrder - b.displayOrder);
+
+    if (preview.reportColumns.length > 0) return configured;
+
+    return preview.result.columns.map((column, index) => ({
+      columnName: column.name,
+      displayLabel: column.name,
+      displayOrder: index,
+      isVisible: true,
+      alignment: "LEFT" as const,
+    }));
+  }, [preview]);
+
+  useEffect(() => {
+    if (!preview) return;
+    const timer = window.setInterval(() => void loadData(), refreshSeconds * 1000);
+    return () => window.clearInterval(timer);
+  }, [loadData, refreshSeconds, Boolean(preview)]);
+
   useEffect(() => {
     setPage((current) => Math.min(Math.max(current, 1), totalPages));
   }, [totalPages]);
@@ -132,7 +185,6 @@ export function DashboardDisplayPage() {
 
   useEffect(() => {
     if (!preview) return;
-
     const timer = window.setInterval(() => {
       setCountdown((current) => {
         if (current <= 1) {
@@ -142,15 +194,85 @@ export function DashboardDisplayPage() {
         return current - 1;
       });
     }, 1000);
-
     return () => window.clearInterval(timer);
   }, [pageSeconds, totalPages, Boolean(preview)]);
 
-  if (!preview && !error) {
-    return <main className="dashboard-display-screen"><div className="dashboard-display-loading">載入中…</div></main>;
+  const scale = useMemo(() => {
+    if (!activeProfile) return 1;
+    return Math.min(
+      viewport.width / activeProfile.canvasWidth,
+      viewport.height / activeProfile.canvasHeight,
+    );
+  }, [activeProfile, viewport]);
+
+  function renderWidget(widget: LayoutWidget) {
+    const firstRow = pageRows[0] ?? preview?.result.rows[0] ?? {};
+    const parameters = preview?.dashboard.parameters ?? {};
+
+    if (widget.widgetType === "TABLE") {
+      return (
+        <div className="dashboard-play-table">
+          <table>
+            <thead>
+              <tr>
+                {visibleColumns.map((column) => (
+                  <th key={column.columnName}>{column.displayLabel}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {pageRows.map((row, rowIndex) => (
+                <tr key={rowIndex}>
+                  {visibleColumns.map((column) => (
+                    <td
+                      key={column.columnName}
+                      style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}
+                    >
+                      {textValue(row[column.columnName])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {pageRows.length === 0 && <div className="dashboard-play-empty">目前沒有資料</div>}
+        </div>
+      );
+    }
+
+    let value = "";
+    switch (widget.widgetType) {
+      case "TEXT":
+        value = widget.staticText ?? "";
+        break;
+      case "PARAMETER":
+        value = widget.sourceKey ? textValue(parameters[widget.sourceKey]) : "";
+        break;
+      case "FIELD":
+        value = widget.sourceKey ? textValue(firstRow[widget.sourceKey]) : "";
+        break;
+      case "CLOCK":
+        value = now.toLocaleString("zh-TW", { hour12: false });
+        break;
+      case "PAGE_INFO":
+        value = `目前頁數：${safePage} / ${totalPages}`;
+        break;
+      case "COUNTDOWN":
+        value = `換頁倒數：${countdown} 秒`;
+        break;
+    }
+
+    return (
+      <div className="dashboard-play-value">
+        {widget.title && widget.widgetType !== "TEXT" && (
+          <span className="dashboard-play-label">{widget.title}</span>
+        )}
+        <strong>{value}</strong>
+      </div>
+    );
   }
 
-  if (error) {
+  if (error && !preview) {
     return (
       <main className="dashboard-display-screen">
         <div className="dashboard-display-error">
@@ -162,66 +284,62 @@ export function DashboardDisplayPage() {
     );
   }
 
-  const dashboard = preview!.dashboard;
-  const bigScreen = dashboard.displayMode === "BIG_SCREEN";
+  if (!preview || !activeProfile) {
+    return (
+      <main className="dashboard-display-screen">
+        <div className="dashboard-display-loading">
+          {profiles.length === 0 && preview ? "尚未建立螢幕版型。" : "載入中…"}
+        </div>
+      </main>
+    );
+  }
 
   return (
-    <main className={`dashboard-display-screen ${bigScreen ? "big-screen" : "table-screen"}`}>
-      <header className="dashboard-display-header">
-        <h1>{dashboard.displayTitle || dashboard.name}</h1>
-
-        <div className="dashboard-display-meta">
-          {dashboard.showPageNumber && (
-            <span>目前頁數：{safePage} / {totalPages}</span>
-          )}
-          {dashboard.showClock && (
-            <span>{now.toLocaleString("zh-TW", { hour12: false })}</span>
-          )}
-          {dashboard.showCountdown && (
-            <span className="dashboard-display-countdown">換頁倒數：{countdown} 秒</span>
-          )}
-        </div>
-      </header>
-
-      <section className="dashboard-display-content">
-        <table>
-          <thead>
-            <tr>
-              {columns.map((column) => (
-                <th key={column.columnName}>{column.displayLabel}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {pageRows.map((row, rowIndex) => (
-              <tr key={rowIndex}>
-                {columns.map((column) => (
-                  <td
-                    key={column.columnName}
-                    style={{
-                      textAlign: column.alignment.toLowerCase() as "left" | "center" | "right",
-                    }}
-                  >
-                    {formatValue(row[column.columnName])}
-                  </td>
-                ))}
-              </tr>
+    <main className="dashboard-display-screen">
+      <div
+        className="dashboard-display-profile-shell"
+        style={{
+          width: activeProfile.canvasWidth * scale,
+          height: activeProfile.canvasHeight * scale,
+        }}
+      >
+        <div
+          className="dashboard-display-profile-canvas"
+          style={{
+            width: activeProfile.canvasWidth,
+            height: activeProfile.canvasHeight,
+            transform: `scale(${scale})`,
+          }}
+        >
+          {activeProfile.widgets
+            .slice()
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .map((widget) => (
+              <div
+                className="dashboard-play-widget"
+                key={widget.id}
+                style={{
+                  left: widget.x,
+                  top: widget.y,
+                  width: widget.width,
+                  height: widget.height,
+                  fontSize: widget.fontSize,
+                  textAlign: widget.alignment.toLowerCase() as "left" | "center" | "right",
+                }}
+              >
+                {renderWidget(widget)}
+              </div>
             ))}
-          </tbody>
-        </table>
+        </div>
+      </div>
 
-        {pageRows.length === 0 && (
-          <div className="dashboard-display-empty">目前沒有資料</div>
-        )}
-      </section>
-
-      <footer className="dashboard-display-footer">
-        <span>資料更新：每 {refreshSeconds} 秒</span>
-        <span>換頁：每 {pageSeconds} 秒</span>
-        <button type="button" onClick={() => document.documentElement.requestFullscreen?.()}>
-          全螢幕
-        </button>
-      </footer>
+      <button
+        className="dashboard-fullscreen-button"
+        type="button"
+        onClick={() => document.documentElement.requestFullscreen?.()}
+      >
+        全螢幕
+      </button>
     </main>
   );
 }
