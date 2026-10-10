@@ -1060,7 +1060,7 @@ export function DashboardDesignerPage() {
                     <>
                       {(["windowX", "windowY", "windowWidth", "windowHeight"] as const).map((field) => (
                         <label key={field}>
-                          <span>{{ windowX: "X 座標", windowY: "Y 座標", windowWidth: "寬度", windowHeight: "高度" }[field]}</span>
+                          <span>{({ windowX: "X 座標", windowY: "Y 座標", windowWidth: "寬度", windowHeight: "高度" })[field]}</span>
                           <input
                             type="number"
                             value={fixedPlaybackSetup[field]}
