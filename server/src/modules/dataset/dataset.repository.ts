@@ -262,3 +262,73 @@ export async function getDatasetDeleteImpact(id: number) {
     lookupReferenceCount,
   };
 }
+
+export async function listDatasetsPaged(input: {
+  page: number;
+  pageSize: number;
+  search?: string;
+  status: "ACTIVE" | "INACTIVE" | "ARCHIVED" | "ALL";
+  dataSourceId?: number;
+}) {
+  const pool = await requirePool();
+  const offset = (input.page - 1) * input.pageSize;
+  const search = input.search?.trim() || null;
+  const dataSourceId = input.dataSourceId ?? null;
+
+  const result = await pool.request()
+    .input("offset", sql.Int, offset)
+    .input("pageSize", sql.Int, input.pageSize)
+    .input("search", sql.NVarChar(200), search)
+    .input("status", sql.NVarChar(20), input.status)
+    .input("dataSourceId", sql.BigInt, dataSourceId)
+    .query(`
+      SELECT d.Id, d.Code, d.Name, d.Description, d.DataSourceId, d.SqlText,
+             d.MaxRows, d.QueryTimeoutSec, d.IsActive,
+             d.IsArchived, d.ArchivedAtUtc, d.ArchivedByUserId,
+             s.Name AS DataSourceName, s.Type AS DataSourceType
+      FROM uqp.Dataset d
+      INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
+      WHERE (
+        @search IS NULL OR
+        d.Code LIKE '%' + @search + '%' OR
+        d.Name LIKE '%' + @search + '%' OR
+        ISNULL(d.Description, '') LIKE '%' + @search + '%' OR
+        s.Code LIKE '%' + @search + '%' OR
+        s.Name LIKE '%' + @search + '%'
+      )
+      AND (@dataSourceId IS NULL OR d.DataSourceId=@dataSourceId)
+      AND (
+        @status='ALL' OR
+        (@status='ARCHIVED' AND d.IsArchived=1) OR
+        (@status='ACTIVE' AND d.IsArchived=0 AND d.IsActive=1) OR
+        (@status='INACTIVE' AND d.IsArchived=0 AND d.IsActive=0)
+      )
+      ORDER BY d.Name, d.Code
+      OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+
+      SELECT COUNT(1) AS Total
+      FROM uqp.Dataset d
+      INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
+      WHERE (
+        @search IS NULL OR
+        d.Code LIKE '%' + @search + '%' OR
+        d.Name LIKE '%' + @search + '%' OR
+        ISNULL(d.Description, '') LIKE '%' + @search + '%' OR
+        s.Code LIKE '%' + @search + '%' OR
+        s.Name LIKE '%' + @search + '%'
+      )
+      AND (@dataSourceId IS NULL OR d.DataSourceId=@dataSourceId)
+      AND (
+        @status='ALL' OR
+        (@status='ARCHIVED' AND d.IsArchived=1) OR
+        (@status='ACTIVE' AND d.IsArchived=0 AND d.IsActive=1) OR
+        (@status='INACTIVE' AND d.IsArchived=0 AND d.IsActive=0)
+      );
+    `);
+
+  const recordsets = result.recordsets as any[];
+  return {
+    items: (recordsets[0] ?? []).map(mapDataset),
+    total: Number(recordsets[1]?.[0]?.Total ?? 0),
+  };
+}
