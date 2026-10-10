@@ -10,6 +10,7 @@ import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
 import { DashboardDesignerPage } from "./pages/DashboardDesignerPage";
 import { DashboardDisplayPage } from "./pages/DashboardDisplayPage";
+import { DashboardLayoutDesignerPage } from "./pages/DashboardLayoutDesignerPage";
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
 import { QueryPortalPage } from "./pages/QueryPortalPage";
@@ -127,6 +128,10 @@ export default function App() {
         <Route
           path="/designer/dashboards"
           element={<PermissionRoute permission="DESIGN_QUERY"><DashboardDesignerPage /></PermissionRoute>}
+        />
+        <Route
+          path="/designer/dashboards/:id/layout"
+          element={<PermissionRoute permission="DESIGN_QUERY"><DashboardLayoutDesignerPage /></PermissionRoute>}
         />
         <Route
           path="/designer/dashboards/:id/display"
