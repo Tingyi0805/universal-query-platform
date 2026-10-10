@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -159,6 +159,10 @@ export function DashboardLayoutDesignerPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const canvasStageRef = useRef<HTMLElement | null>(null);
+  const [canvasViewport, setCanvasViewport] = useState({ width: 960, height: 620 });
+  const [zoomMode, setZoomMode] = useState<"FIT" | "CUSTOM">("FIT");
+  const [customScale, setCustomScale] = useState(0.5);
 
   const load = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -204,10 +208,52 @@ export function DashboardLayoutDesignerPage() {
     [activeProfile, selectedWidgetKey],
   );
 
+  useEffect(() => {
+    const element = canvasStageRef.current;
+    if (!element) return;
+
+    const updateSize = () => {
+      const styles = window.getComputedStyle(element);
+      const horizontalPadding =
+        Number.parseFloat(styles.paddingLeft || "0") +
+        Number.parseFloat(styles.paddingRight || "0");
+      const verticalPadding =
+        Number.parseFloat(styles.paddingTop || "0") +
+        Number.parseFloat(styles.paddingBottom || "0");
+      const infoReserve = 48;
+
+      setCanvasViewport({
+        width: Math.max(240, element.clientWidth - horizontalPadding - 8),
+        height: Math.max(240, element.clientHeight - verticalPadding - infoReserve),
+      });
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(element);
+    window.addEventListener("resize", updateSize);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, []);
+
+  const fitScale = useMemo(() => {
+    if (!activeProfile) return 1;
+    return Math.min(
+      1,
+      canvasViewport.width / activeProfile.canvasWidth,
+      canvasViewport.height / activeProfile.canvasHeight,
+    );
+  }, [activeProfile, canvasViewport]);
+
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
-    return Math.min(1, 960 / activeProfile.canvasWidth, 620 / activeProfile.canvasHeight);
-  }, [activeProfile]);
+    const requested = zoomMode === "FIT" ? fitScale : customScale;
+    const widthSafeScale = canvasViewport.width / activeProfile.canvasWidth;
+    return Math.max(0.1, Math.min(1.5, requested, widthSafeScale));
+  }, [activeProfile, canvasViewport.width, customScale, fitScale, zoomMode]);
 
   const visibleColumns = useMemo(() => {
     if (!preview) return [];
@@ -584,12 +630,42 @@ export function DashboardLayoutDesignerPage() {
           </div>
         </aside>
 
-        <section className="layout-canvas-stage">
+        <section className="layout-canvas-stage" ref={canvasStageRef}>
           {activeProfile && (
             <>
               <div className="layout-canvas-info">
-                實際畫布 {activeProfile.canvasWidth} × {activeProfile.canvasHeight}　
-                設計縮放 {Math.round(scale * 100)}%
+                <div>
+                  實際畫布 {activeProfile.canvasWidth} × {activeProfile.canvasHeight}　
+                  設計縮放 {Math.round(scale * 100)}%
+                </div>
+                <div className="layout-canvas-zoom">
+                  <button
+                    type="button"
+                    className={zoomMode === "FIT" ? "active" : ""}
+                    onClick={() => setZoomMode("FIT")}
+                  >
+                    適合視窗
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setZoomMode("CUSTOM");
+                      setCustomScale((current) => Math.max(0.1, current - 0.1));
+                    }}
+                  >
+                    －
+                  </button>
+                  <span>{Math.round(scale * 100)}%</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setZoomMode("CUSTOM");
+                      setCustomScale((current) => Math.min(1.5, current + 0.1));
+                    }}
+                  >
+                    ＋
+                  </button>
+                </div>
               </div>
               <div
                 className="layout-canvas"
