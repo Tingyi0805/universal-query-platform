@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
@@ -26,6 +27,7 @@ import {
   revokeDashboardDisplayDevice,
   validateDashboardDisplayDevice,
 } from "./dashboardDevice.repository.js";
+import { isValidIpOrCidr, normalizeClientIp } from "./dashboardDeviceIp.js";
 
 const idSchema = z.coerce.number().int().positive();
 
@@ -63,11 +65,47 @@ const layoutSchema = z.object({
 const deviceSchema = z.object({
   deviceName: z.string().trim().min(1).max(200),
   expiresDays: z.coerce.number().int().min(1).max(3650).nullable().optional().default(365),
+  enforceIpRestriction: z.boolean().default(false),
+  allowedIp: z.string().trim().max(64).nullable().optional().default(null),
+  allowedCidr: z.string().trim().max(64).nullable().optional().default(null),
+}).superRefine((value, ctx) => {
+  if (!value.enforceIpRestriction) return;
+
+  const allowedIp = value.allowedIp?.trim() || null;
+  const allowedCidr = value.allowedCidr?.trim() || null;
+  if (!allowedIp && !allowedCidr) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "啟用來源 IP 限制時，必須設定允許 IP 或 CIDR。",
+      path: ["allowedIp"],
+    });
+    return;
+  }
+
+  if (allowedIp && isIP(allowedIp) === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "允許 IP 格式不正確。",
+      path: ["allowedIp"],
+    });
+  }
+
+  if (allowedCidr && (!isValidIpOrCidr(allowedCidr) || !allowedCidr.includes("/"))) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "允許 CIDR 格式不正確，目前支援 IPv4 CIDR。",
+      path: ["allowedCidr"],
+    });
+  }
 });
 
 function getDeviceToken(req: Request): string {
   const value = req.headers["x-dashboard-device-token"];
   return Array.isArray(value) ? String(value[0] ?? "") : String(value ?? "");
+}
+
+function getRequestSourceIp(req: Request): string {
+  return normalizeClientIp(req.socket.remoteAddress);
 }
 
 const dashboardSchema = z.object({
@@ -98,7 +136,7 @@ dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
     }
 
     const token = getDeviceToken(req);
-    if (!token || !(await validateDashboardDisplayDevice(id.data, token))) {
+    if (!token || !(await validateDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)))) {
       res.status(401).json({ error: { code: "DASHBOARD_DEVICE_INVALID", message: "Dashboard 顯示裝置憑證無效或已停用。" } });
       return;
     }
@@ -124,7 +162,7 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
     }
 
     const token = getDeviceToken(req);
-    if (!token || !(await validateDashboardDisplayDevice(id.data, token))) {
+    if (!token || !(await validateDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)))) {
       res.status(401).json({ error: { code: "DASHBOARD_DEVICE_INVALID", message: "Dashboard 顯示裝置憑證無效或已停用。" } });
       return;
     }
@@ -198,6 +236,9 @@ dashboardRouter.post("/:id/devices", requirePermission("DESIGN_QUERY"), async (r
       dashboardId: id.data,
       deviceName: parsed.data.deviceName,
       expiresDays: parsed.data.expiresDays,
+      enforceIpRestriction: parsed.data.enforceIpRestriction,
+      allowedIp: parsed.data.enforceIpRestriction ? parsed.data.allowedIp : null,
+      allowedCidr: parsed.data.enforceIpRestriction ? parsed.data.allowedCidr : null,
       createdByUserId: req.authUser.id,
     });
 
@@ -210,6 +251,9 @@ dashboardRouter.post("/:id/devices", requirePermission("DESIGN_QUERY"), async (r
         deviceId: created.device.id,
         deviceName: created.device.deviceName,
         expiresAtUtc: created.device.expiresAtUtc,
+        enforceIpRestriction: created.device.enforceIpRestriction,
+        allowedIp: created.device.allowedIp,
+        allowedCidr: created.device.allowedCidr,
       },
       ...auditRequestContext(req),
     });
