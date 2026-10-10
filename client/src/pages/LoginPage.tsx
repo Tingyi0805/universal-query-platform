@@ -42,7 +42,16 @@ export function LoginPage() {
       });
   }, []);
 
-  if (user) return <Navigate to="/" replace />;
+  const requestedPath =
+    typeof location.state === "object" &&
+    location.state !== null &&
+    "from" in location.state &&
+    typeof (location.state as { from?: unknown }).from === "string" &&
+    String((location.state as { from?: unknown }).from).startsWith("/")
+      ? String((location.state as { from?: unknown }).from)
+      : "/";
+
+  if (user) return <Navigate to={requestedPath} replace />;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
