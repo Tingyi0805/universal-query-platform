@@ -144,6 +144,7 @@ export function DashboardDisplayPage() {
   const dashboardId = Number(id);
   const requestedProfileId = Number(searchParams.get("profileId"));
   const previewKey = searchParams.get("previewKey");
+  const autoFullscreenRequested = searchParams.get("autoFullscreen") === "1";
   const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
   const deviceToken = deviceMode
     ? localStorage.getItem(`uqp.dashboard.device.${dashboardId}`)
@@ -160,6 +161,7 @@ export function DashboardDisplayPage() {
     width: window.innerWidth,
     height: window.innerHeight,
   });
+  const [fullscreenNeedsClick, setFullscreenNeedsClick] = useState(false);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -233,6 +235,83 @@ export function DashboardDisplayPage() {
   useEffect(() => {
     void Promise.all([loadData(), loadLayout()]);
   }, [loadData, loadLayout]);
+
+
+  useEffect(() => {
+    if (!deviceMode) return;
+
+    type ManagedScreen = {
+      label?: string;
+      availLeft: number;
+      availTop: number;
+      availWidth: number;
+      availHeight: number;
+    };
+
+    type DisplaySettings = {
+      autoFullscreen?: boolean;
+      screenIndex?: number | null;
+      screenLabel?: string | null;
+      screenBounds?: {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+      } | null;
+    };
+
+    let settings: DisplaySettings = {};
+    try {
+      const raw = localStorage.getItem(`uqp.dashboard.display-settings.${dashboardId}`);
+      if (raw) settings = JSON.parse(raw) as DisplaySettings;
+    } catch {
+      settings = {};
+    }
+
+    const applyScreen = async () => {
+      const windowWithScreens = window as typeof window & {
+        getScreenDetails?: () => Promise<{ screens: ManagedScreen[] }>;
+      };
+
+      try {
+        if (windowWithScreens.getScreenDetails) {
+          const details = await windowWithScreens.getScreenDetails();
+          const preferred =
+            details.screens.find((screen) => settings.screenLabel && screen.label === settings.screenLabel)
+            ?? (settings.screenIndex != null ? details.screens[settings.screenIndex] : undefined);
+
+          if (preferred) {
+            window.moveTo(preferred.availLeft, preferred.availTop);
+            window.resizeTo(preferred.availWidth, preferred.availHeight);
+          }
+        } else if (settings.screenBounds) {
+          window.moveTo(settings.screenBounds.left, settings.screenBounds.top);
+          window.resizeTo(settings.screenBounds.width, settings.screenBounds.height);
+        }
+      } catch {
+        // Browser may deny window-management permission. Playback remains usable on current screen.
+      }
+
+      if (settings.autoFullscreen || autoFullscreenRequested) {
+        try {
+          await document.documentElement.requestFullscreen?.();
+          setFullscreenNeedsClick(false);
+        } catch {
+          setFullscreenNeedsClick(true);
+        }
+      }
+    };
+
+    void applyScreen();
+  }, [autoFullscreenRequested, dashboardId, deviceMode]);
+
+  useEffect(() => {
+    const handleFullscreen = () => {
+      if (document.fullscreenElement) setFullscreenNeedsClick(false);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreen);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreen);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 1000);
@@ -491,13 +570,22 @@ export function DashboardDisplayPage() {
         </div>
       </div>
 
-      <button
-        className="dashboard-fullscreen-button"
-        type="button"
-        onClick={() => document.documentElement.requestFullscreen?.()}
-      >
-        全螢幕
-      </button>
+      {!document.fullscreenElement && (
+        <button
+          className={`dashboard-fullscreen-button${fullscreenNeedsClick ? " needs-click" : ""}`}
+          type="button"
+          onClick={async () => {
+            try {
+              await document.documentElement.requestFullscreen?.();
+              setFullscreenNeedsClick(false);
+            } catch {
+              setFullscreenNeedsClick(true);
+            }
+          }}
+        >
+          {fullscreenNeedsClick ? "點一下進入全螢幕" : "全螢幕"}
+        </button>
+      )}
     </main>
   );
 }
