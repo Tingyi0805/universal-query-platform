@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { Router, type Request } from "express";
+import { getClientIp } from "../../utils/clientIp.js";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
@@ -27,7 +28,7 @@ import {
   revokeDashboardDisplayDevice,
   validateDashboardDisplayDevice,
 } from "./dashboardDevice.repository.js";
-import { isValidIpOrCidr, normalizeClientIp } from "./dashboardDeviceIp.js";
+import { isValidIpOrCidr } from "./dashboardDeviceIp.js";
 
 const idSchema = z.coerce.number().int().positive();
 
@@ -105,7 +106,7 @@ function getDeviceToken(req: Request): string {
 }
 
 function getRequestSourceIp(req: Request): string {
-  return normalizeClientIp(req.socket.remoteAddress);
+  return getClientIp(req) ?? "";
 }
 
 const dashboardSchema = z.object({
