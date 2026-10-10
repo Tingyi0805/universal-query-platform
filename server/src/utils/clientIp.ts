@@ -1,5 +1,6 @@
 import type { Request } from "express";
 import { env } from "../config/env.js";
+import { logger } from "../config/logger.js";
 
 export function normalizeIp(value: string | null | undefined): string {
   const raw = String(value ?? "").trim();
@@ -15,20 +16,50 @@ function firstForwardedIp(req: Request): string {
 }
 
 export function getClientIp(req: Request): string | null {
-  const socketIp = normalizeIp(req.socket.remoteAddress);
-  if (!socketIp) return null;
+  const rawSocketIp = req.socket.remoteAddress ?? null;
+  const socketIp = normalizeIp(rawSocketIp);
+  const forwardedFor = req.headers["x-forwarded-for"];
+  const xRealIp = req.headers["x-real-ip"];
+  const firstForwarded = firstForwardedIp(req);
 
-  if (!env.TRUST_PROXY_ENABLED) {
-    return socketIp;
+  if (!socketIp) {
+    if (env.CLIENT_IP_DIAGNOSTICS) {
+      logger.info({
+        rawSocketIp,
+        socketIp: null,
+        xForwardedFor: forwardedFor ?? null,
+        xRealIp: xRealIp ?? null,
+        trustProxyEnabled: env.TRUST_PROXY_ENABLED,
+        trustedProxyAddresses: env.TRUSTED_PROXY_ADDRESSES,
+        trustedProxy: false,
+        firstForwardedIp: firstForwarded || null,
+        resolvedClientIp: null,
+      }, "Client IP diagnostics");
+    }
+    return null;
   }
 
-  const trusted = env.TRUSTED_PROXY_ADDRESSES
+  const trusted = env.TRUST_PROXY_ENABLED && env.TRUSTED_PROXY_ADDRESSES
     .map(normalizeIp)
     .includes(socketIp);
 
-  if (!trusted) {
-    return socketIp;
+  const resolvedClientIp = trusted && firstForwarded
+    ? firstForwarded
+    : socketIp;
+
+  if (env.CLIENT_IP_DIAGNOSTICS) {
+    logger.info({
+      rawSocketIp,
+      socketIp,
+      xForwardedFor: forwardedFor ?? null,
+      xRealIp: xRealIp ?? null,
+      trustProxyEnabled: env.TRUST_PROXY_ENABLED,
+      trustedProxyAddresses: env.TRUSTED_PROXY_ADDRESSES,
+      trustedProxy: trusted,
+      firstForwardedIp: firstForwarded || null,
+      resolvedClientIp,
+    }, "Client IP diagnostics");
   }
 
-  return firstForwardedIp(req) || socketIp;
+  return resolvedClientIp;
 }
