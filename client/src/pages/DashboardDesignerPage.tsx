@@ -168,6 +168,12 @@ export function DashboardDesignerPage() {
   const [deviceDashboard, setDeviceDashboard] = useState<DashboardRow | null>(null);
   const [displayDevices, setDisplayDevices] = useState<DisplayDevice[]>([]);
   const [deviceLoading, setDeviceLoading] = useState(false);
+  const [issuedToken, setIssuedToken] = useState<{
+    dashboardId: number;
+    deviceId: number;
+    deviceName: string;
+    token: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -552,6 +558,54 @@ export function DashboardDesignerPage() {
     }
   }
 
+  async function reissueDeviceToken(device: DisplayDevice) {
+    if (!deviceDashboard) return;
+    if (!window.confirm(
+      `確定重新核發顯示裝置「${device.deviceName}」的 Token？\n\n舊 Token 會立即失效。若原看板仍在使用舊 Token，將停止播放，直到套用新 Token。`,
+    )) return;
+
+    setError("");
+    try {
+      const result = await apiRequest<{ device: DisplayDevice; token: string }>(
+        `/dashboards/${deviceDashboard.id}/devices/${device.id}/reissue-token`,
+        { method: "POST" },
+        accessToken,
+      );
+
+      setIssuedToken({
+        dashboardId: deviceDashboard.id,
+        deviceId: device.id,
+        deviceName: result.device.deviceName,
+        token: result.token,
+      });
+      setNotice(`已重新核發「${result.device.deviceName}」的 Device Token。新 Token 只會在此畫面顯示一次。`);
+      await loadDevices(deviceDashboard);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "重新核發 Device Token 失敗。");
+    }
+  }
+
+  async function copyIssuedToken() {
+    if (!issuedToken) return;
+    try {
+      await navigator.clipboard.writeText(issuedToken.token);
+      setNotice("Device Token 已複製到剪貼簿。");
+    } catch {
+      setError("瀏覽器無法使用剪貼簿，請手動選取 Token 複製。");
+    }
+  }
+
+  function applyIssuedTokenToThisBrowser() {
+    if (!issuedToken) return;
+    localStorage.setItem(
+      `uqp.dashboard.device.${issuedToken.dashboardId}`,
+      issuedToken.token,
+    );
+    setNotice(
+      `已將「${issuedToken.deviceName}」的新 Token 套用到目前瀏覽器。此電腦可使用該 Dashboard 的固定播放模式。`,
+    );
+  }
+
   async function renewDevice(device: DisplayDevice) {
     if (!deviceDashboard) return;
     if (!window.confirm(`確定將顯示裝置「${device.deviceName}」延長 365 天？\n\n原本 Device Token 不會更換，看板端不需要重新設定。`)) return;
@@ -917,11 +971,47 @@ export function DashboardDesignerPage() {
                   onClick={() => {
                     setDeviceDashboard(null);
                     setDisplayDevices([]);
+                    setIssuedToken(null);
                   }}
                 >
                   關閉
                 </button>
               </div>
+
+              {issuedToken && issuedToken.dashboardId === deviceDashboard.id && (
+                <div className="device-token-once">
+                  <div>
+                    <strong>新 Device Token（只顯示一次）</strong>
+                    <p>
+                      重新離開此頁後無法從 Server 查回原始 Token。若尚未套用到播放電腦，請先複製保存。
+                    </p>
+                  </div>
+                  <code>{issuedToken.token}</code>
+                  <div className="actions">
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => void copyIssuedToken()}
+                    >
+                      複製 Token
+                    </button>
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={applyIssuedTokenToThisBrowser}
+                    >
+                      在此電腦啟用
+                    </button>
+                    <button
+                      className="secondary-button"
+                      type="button"
+                      onClick={() => setIssuedToken(null)}
+                    >
+                      關閉
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {deviceLoading ? (
                 <div className="notice">載入裝置中…</div>
@@ -977,6 +1067,13 @@ export function DashboardDesignerPage() {
                                   onClick={() => void editDevice(device)}
                                 >
                                   編輯
+                                </button>
+                                <button
+                                  className="secondary-button"
+                                  type="button"
+                                  onClick={() => void reissueDeviceToken(device)}
+                                >
+                                  重新核發 Token
                                 </button>
                                 <button
                                   className="secondary-button"
