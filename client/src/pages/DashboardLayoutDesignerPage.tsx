@@ -234,7 +234,7 @@ export function DashboardLayoutDesignerPage() {
     const query = profileId ? `?profileId=${profileId}` : "";
     popup.location.replace(`/designer/dashboards/${dashboardId}/display${query}`);
   }
-  const canvasStageRef = useRef<HTMLElement | null>(null);
+  const canvasViewportRef = useRef<HTMLDivElement | null>(null);
   const [canvasViewport, setCanvasViewport] = useState({ width: 960, height: 620 });
   const [zoomMode, setZoomMode] = useState<"FIT" | "CUSTOM">("FIT");
   const [customScale, setCustomScale] = useState(0.5);
@@ -284,22 +284,13 @@ export function DashboardLayoutDesignerPage() {
   );
 
   useEffect(() => {
-    const element = canvasStageRef.current;
+    const element = canvasViewportRef.current;
     if (!element) return;
 
     const updateSize = () => {
-      const styles = window.getComputedStyle(element);
-      const horizontalPadding =
-        Number.parseFloat(styles.paddingLeft || "0") +
-        Number.parseFloat(styles.paddingRight || "0");
-      const verticalPadding =
-        Number.parseFloat(styles.paddingTop || "0") +
-        Number.parseFloat(styles.paddingBottom || "0");
-      const infoReserve = 48;
-
       setCanvasViewport({
-        width: Math.max(240, element.clientWidth - horizontalPadding - 8),
-        height: Math.max(240, element.clientHeight - verticalPadding - infoReserve),
+        width: Math.max(240, element.clientWidth - 8),
+        height: Math.max(240, element.clientHeight - 8),
       });
     };
 
@@ -326,9 +317,8 @@ export function DashboardLayoutDesignerPage() {
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
     const requested = zoomMode === "FIT" ? fitScale : customScale;
-    const widthSafeScale = canvasViewport.width / activeProfile.canvasWidth;
-    return Math.max(0.1, Math.min(1.5, requested, widthSafeScale));
-  }, [activeProfile, canvasViewport.width, customScale, fitScale, zoomMode]);
+    return Math.max(0.1, Math.min(1.5, requested));
+  }, [activeProfile, customScale, fitScale, zoomMode]);
 
   const visibleColumns = useMemo(() => {
     if (!preview) return [];
@@ -771,7 +761,7 @@ export function DashboardLayoutDesignerPage() {
           </div>
         </aside>
 
-        <section className="layout-canvas-stage" ref={canvasStageRef}>
+        <section className="layout-canvas-stage">
           {activeProfile && (
             <>
               <div className="layout-canvas-info">
@@ -808,42 +798,44 @@ export function DashboardLayoutDesignerPage() {
                   </button>
                 </div>
               </div>
-              <div
-                className="layout-canvas"
-                style={{
-                  width: activeProfile.canvasWidth * scale,
-                  height: activeProfile.canvasHeight * scale,
-                  backgroundColor: configText(activeProfile.config, "canvasBackgroundColor", "#ffffff"),
-                }}
-              >
+              <div className="layout-canvas-scroll" ref={canvasViewportRef}>
                 <div
-                  className="layout-canvas-inner"
+                  className="layout-canvas"
                   style={{
-                    width: activeProfile.canvasWidth,
-                    height: activeProfile.canvasHeight,
-                    transform: `scale(${scale})`,
+                    width: activeProfile.canvasWidth * scale,
+                    height: activeProfile.canvasHeight * scale,
+                    backgroundColor: configText(activeProfile.config, "canvasBackgroundColor", "#ffffff"),
                   }}
                 >
-                  {activeProfile.widgets.map((widget) => (
-                    <div
-                      key={widget.clientKey}
-                      className={`layout-widget ${selectedWidgetKey === widget.clientKey ? "selected" : ""}`}
-                      style={{
-                        left: widget.x,
-                        top: widget.y,
-                        width: widget.width,
-                        height: widget.height,
-                        fontSize: widget.fontSize,
-                        textAlign: widget.alignment.toLowerCase() as "left" | "center" | "right",
-                        ...widgetStyle(widget),
-                        zIndex: widget.widgetType === "CONTAINER" ? 0 : 1,
-                      }}
-                      onPointerDown={(event) => startDrag(event, widget)}
-                    >
-                      <span className="layout-widget-type">{widgetLabels[widget.widgetType]}</span>
-                      {renderWidget(widget)}
-                    </div>
-                  ))}
+                  <div
+                    className="layout-canvas-inner"
+                    style={{
+                      width: activeProfile.canvasWidth,
+                      height: activeProfile.canvasHeight,
+                      transform: `scale(${scale})`,
+                    }}
+                  >
+                    {activeProfile.widgets.map((widget) => (
+                      <div
+                        key={widget.clientKey}
+                        className={`layout-widget ${selectedWidgetKey === widget.clientKey ? "selected" : ""}`}
+                        style={{
+                          left: widget.x,
+                          top: widget.y,
+                          width: widget.width,
+                          height: widget.height,
+                          fontSize: widget.fontSize,
+                          textAlign: widget.alignment.toLowerCase() as "left" | "center" | "right",
+                          ...widgetStyle(widget),
+                          zIndex: widget.widgetType === "CONTAINER" ? 0 : 1,
+                        }}
+                        onPointerDown={(event) => startDrag(event, widget)}
+                      >
+                        <span className="layout-widget-type">{widgetLabels[widget.widgetType]}</span>
+                        {renderWidget(widget)}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </>
