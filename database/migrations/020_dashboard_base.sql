@@ -24,9 +24,9 @@ BEGIN
         CONSTRAINT FK_Dashboard_QueryDefinition
             FOREIGN KEY (QueryDefinitionId) REFERENCES uqp.QueryDefinition(Id),
         CONSTRAINT FK_Dashboard_CreatedByUser
-            FOREIGN KEY (CreatedByUserId) REFERENCES uqp.AppUser(Id) ON DELETE SET NULL,
+            FOREIGN KEY (CreatedByUserId) REFERENCES uqp.AppUser(Id),
         CONSTRAINT FK_Dashboard_UpdatedByUser
-            FOREIGN KEY (UpdatedByUserId) REFERENCES uqp.AppUser(Id) ON DELETE SET NULL,
+            FOREIGN KEY (UpdatedByUserId) REFERENCES uqp.AppUser(Id),
         CONSTRAINT CK_Dashboard_RefreshSeconds
             CHECK (RefreshSeconds BETWEEN 5 AND 3600),
         CONSTRAINT CK_Dashboard_ParametersJson
