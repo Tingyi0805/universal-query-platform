@@ -99,6 +99,25 @@ function displayValue(value: unknown): string {
 
 export function DashboardDesignerPage() {
   const { accessToken } = useAuth();
+
+  function openPlayback(dashboardId: number) {
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      setError("瀏覽器封鎖了播放視窗，請允許此網站開啟新視窗後再試一次。");
+      return;
+    }
+
+    const storedAuth = sessionStorage.getItem("uqp.auth");
+    if (storedAuth) {
+      try {
+        popup.sessionStorage.setItem("uqp.auth", storedAuth);
+      } catch {
+        // If storage handoff fails, the login route will return to the requested playback path.
+      }
+    }
+
+    popup.location.replace(`/designer/dashboards/${dashboardId}/display`);
+  }
   const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
   const [queries, setQueries] = useState<QueryDefinitionRow[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
@@ -513,13 +532,13 @@ export function DashboardDesignerPage() {
                         >
                           版面設計
                         </Link>
-                        <Link
-                          className="secondary-button link-button"
-                          to={`/designer/dashboards/${item.id}/display`}
-                          target="_blank"
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          onClick={() => openPlayback(item.id)}
                         >
                           播放
-                        </Link>
+                        </button>
                         <button className="danger-button" type="button" onClick={() => void remove(item)}>刪除</button>
                       </td>
                     </tr>
