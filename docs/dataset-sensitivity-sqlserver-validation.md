@@ -21,7 +21,7 @@
 | 同時首次建立 | 新 Dataset 兩個工作階段同時以 version 0 PUT | 最多一筆成功；另一筆應衝突或需重試；無重複版本列 |
 | 啟用中 Dashboard 清空規則 | Dataset 有啟用中的 Dashboard 時 PUT columns=[] | HTTP 409 SENSITIVITY_ACTIVE_DASHBOARD；原有規則與版本不變 |
 | 更新 Dashboard 重新啟用 | 曾設定敏感規則但已清空時，對既有 Dashboard PUT isActive=true | HTTP 409 DASHBOARD_SENSITIVITY_REVIEW_REQUIRED；不得藉由更新繞過檢查 |
-| 啟用與清空併發 | A 啟用 Dashboard，同時 B 清空同 Dataset 的規則 | 不得產生已啟用且敏感規則清空的狀態；此項需在 SQL Server 併發整合測試確認，現行啟用檢查尚非與寫入同一交易 |
+| 啟用與清空併發 | A 啟用 Dashboard，同時 B 清空同 Dataset 的規則 | 不得產生已啟用且敏感規則清空的狀態；此項需在 SQL Server 併發整合測試確認，啟用檢查與寫入已在同一 SERIALIZABLE 交易，仍需 SQL Server 實測鎖定及死結行為 |
 | 清空後重新啟用 | 曾有敏感規則的 Dataset 清空規則後，嘗試啟用 Dashboard | HTTP 409 DASHBOARD_SENSITIVITY_REVIEW_REQUIRED；重新設定規則後才允許啟用 |
 | 停用後調整規則 | 停用所有相關 Dashboard，再調整 Dataset 規則 | 可依版本檢查正常儲存，完成 SQL 與規則設定後才重新啟用 Dashboard |
 | 直接修改受保護 SQL | Dataset 有敏感欄位規則時直接 PUT 修改 sqlText 或 dataSourceId | HTTP 409 DATASET_SENSITIVITY_REVIEW_REQUIRED；舊 SQL 與規則保持不變 |
