@@ -1,7 +1,9 @@
-export type DeviceMaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC";
-const allowedModes = new Set<DeviceMaskMode>(["NONE", "NAME", "MRN", "PHONE", "GENERIC"]);
+export type DeviceMaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC" | "FULL" | "OMIT";
+const allowedModes = new Set<DeviceMaskMode>(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"]);
 export function maskDeviceValue(value: unknown, mode: DeviceMaskMode): unknown {
   if (mode === "NONE" || value == null) return value;
+  if (mode === "OMIT") return undefined;
+  if (mode === "FULL") return "○○○○";
   const text = typeof value === "object" ? JSON.stringify(value) : String(value);
   if (!text) return text;
   if (mode === "NAME") {
@@ -43,5 +45,5 @@ export function resolveDeviceColumnMasks(profiles: Array<{ isDefault: boolean; w
 }
 
 export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DeviceMaskMode>): Record<string, unknown>[] {
-  return rows.map((row) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, maskDeviceValue(value, masks[key] ?? "NONE")])));
+  return rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => masks[key] !== undefined && masks[key] !== "OMIT").map(([key, value]) => [key, maskDeviceValue(value, masks[key])] )));
 }
