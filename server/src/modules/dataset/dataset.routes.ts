@@ -664,7 +664,7 @@ datasetRouter.delete("/:id", async (req, res, next) => {
       res.status(409).json({
         error: {
           code: error.message,
-          message: "此 Dataset 已被 Query 或參數選項來源使用，不能永久刪除，請改用「封存」。",
+          message: "此 Dataset 仍有 Query、參數選項來源或稽核紀錄關聯，不能永久刪除，請改用「封存」。",
         },
       });
       return;
@@ -673,7 +673,7 @@ datasetRouter.delete("/:id", async (req, res, next) => {
       res.status(409).json({
         error: {
           code: "DATASET_IN_USE",
-          message: "此 Dataset 已被其他設定使用，請先移除相關關聯。",
+          message: "此 Dataset 仍有資料或稽核紀錄關聯，不能永久刪除，請改用「封存」。",
         },
       });
       return;
