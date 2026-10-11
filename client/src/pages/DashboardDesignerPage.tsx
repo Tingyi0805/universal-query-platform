@@ -1271,7 +1271,14 @@ export function DashboardDesignerPage() {
                   placeholder={'{\n  "ROOM_CODE": "OR01"\n}'}
                   onChange={(e) => setForm({ ...form, parametersJson: e.target.value })}
                 />
-                <small>第一階段先使用 JSON；後續會改為參數預設表單並支援 Display Profile 覆寫。</small>
+                <small>設定 Dashboard 執行查詢時使用的預設參數。左邊是查詢定義的參數名稱，右邊是參數值；例如依手術室代碼 ROOM_CODE 篩選。請勿在此填入密碼、Token 或其他機密資訊。</small>
+                <details>
+                  <summary>查看預設參數 JSON 說明與範例</summary>
+                  <p>單一參數：{'{ "ROOM_CODE": "OR01" }'}。多個參數範例：</p>
+                  <pre>{'{\\n  "ROOM_CODE": "OR01",\\n  "DEPARTMENT": "SURGERY",\\n  "IS_ACTIVE": true,\\n  "LIMIT": 20\\n}'}</pre>
+                  <p>文字值要加英文雙引號；數字及 true/false 不加引號。參數名稱須與查詢定義一致；最後一項不可加逗號。沒有預設參數時請填 {'{}'}。</p>
+                  <button type="button" onClick={() => setForm((current) => ({ ...current, parametersJson: JSON.stringify({ ROOM_CODE: "OR01", DEPARTMENT: "SURGERY", IS_ACTIVE: true, LIMIT: 20 }, null, 2) }))}>填入預設參數範例（會取代目前 JSON）</button>
+                </details>
               </label>
 
               <label className="dashboard-active-field">
