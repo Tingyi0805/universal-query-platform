@@ -429,9 +429,9 @@ adminRouter.get("/quick-pin-policy", async (_req, res, next) => {
 
 adminRouter.put("/quick-pin-policy", async (req, res, next) => {
   try {
-    const parsed = z.object({ pinLength: z.number().int().min(6).max(8) }).safeParse(req.body);
+    const parsed = z.object({ pinLength: z.number().int().min(4).max(12) }).safeParse(req.body);
     if (!parsed.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "PIN 長度必須為 6、7 或 8 位數。" } });
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "PIN 長度必須為 4 至 12 位數。" } });
       return;
     }
     const updated = await updateQuickPinPolicy(parsed.data.pinLength);
