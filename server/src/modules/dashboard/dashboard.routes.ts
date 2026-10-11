@@ -249,7 +249,6 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
       datasetId: query.datasetId,
       queryDefinitionId: query.id,
       userId: null,
-      workstationId: verification.device.id,
       sourceScope: `datasource:${dataset.dataSourceId}`,
       deliveryType: "DASHBOARD",
       masked: false,
