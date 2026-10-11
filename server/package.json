@@ -11,7 +11,7 @@
     "db:migrate": "tsx src/scripts/migrate.ts",
     "db:migrate:status": "tsx src/scripts/migrate.ts status",
     "db:migrate:adopt": "tsx src/scripts/migrate.ts adopt",
-    "test": "node --import tsx --test src/query/selectOnlySql.test.ts src/query/queryCompiler.test.ts src/modules/dataset/parameter.service.test.ts src/modules/auth/quickPin.service.test.ts src/modules/auth/workstationCredential.service.test.ts src/modules/audit/patientIdentityHmac.test.ts"
+    "test": "node --import tsx --test src/query/selectOnlySql.test.ts src/query/queryCompiler.test.ts src/modules/dataset/parameter.service.test.ts src/modules/auth/quickPin.service.test.ts src/modules/auth/workstationCredential.service.test.ts src/modules/audit/patientIdentityHmac.test.ts src/modules/audit/patientAuditKeyring.test.ts"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
