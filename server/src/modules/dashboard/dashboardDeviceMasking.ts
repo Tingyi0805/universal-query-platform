@@ -90,7 +90,8 @@ export function enforceDatasetDeviceMasks(
     if (rule.deviceMaskMode === "OMIT" || (rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
       result[rule.columnName] = "OMIT";
     } else if (rule.sensitivityType !== "OTHER") {
-      if (result[rule.columnName] !== "OMIT") result[rule.columnName] = rule.deviceMaskMode;
+      // Dataset policy restricts existing dashboard approvals; it does not grant new fields.
+      if (result[rule.columnName] !== undefined && result[rule.columnName] !== "OMIT") result[rule.columnName] = rule.deviceMaskMode;
     }
   }
   return result;
