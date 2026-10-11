@@ -1,0 +1,50 @@
+import sql from "mssql";
+import { getPlatformDbPool } from "../../config/database.js";
+
+export type Workstation = {
+  id: number; workstationCode: string; displayName: string;
+  isActive: boolean; pinLoginEnabled: boolean; credentialVersion: number;
+};
+
+export async function listSharedWorkstations(): Promise<Workstation[] | null> {
+  const pool = await getPlatformDbPool();
+  if (!pool) return null;
+  const result = await pool.request().query(`
+    SELECT Id AS id, WorkstationCode AS workstationCode, DisplayName AS displayName,
+      IsActive AS isActive, PinLoginEnabled AS pinLoginEnabled,
+      CredentialVersion AS credentialVersion
+    FROM uqp.SharedWorkstation ORDER BY DisplayName, Id
+  `);
+  return result.recordset as Workstation[];
+}
+
+export async function createSharedWorkstation(code: string, name: string): Promise<number | null> {
+  const pool = await getPlatformDbPool();
+  if (!pool) return null;
+  const result = await pool.request().input("code", sql.NVarChar(100), code)
+    .input("name", sql.NVarChar(200), name).query(`
+      INSERT INTO uqp.SharedWorkstation (WorkstationCode, DisplayName, IsActive, PinLoginEnabled)
+      OUTPUT INSERTED.Id AS id VALUES (@code, @name, 0, 0)
+    `);
+  return Number(result.recordset[0].id);
+}
+
+export async function updateSharedWorkstation(id: number, name: string, active: boolean): Promise<"OK" | "NOT_FOUND" | "NOT_CONFIGURED"> {
+  const pool = await getPlatformDbPool();
+  if (!pool) return "NOT_CONFIGURED";
+  const result = await pool.request().input("id", sql.BigInt, id)
+    .input("name", sql.NVarChar(200), name).input("active", sql.Bit, active).query(`
+      SET XACT_ABORT ON;
+      BEGIN TRANSACTION;
+      UPDATE uqp.SharedWorkstation SET DisplayName=@name, IsActive=@active,
+        PinLoginEnabled=0, CredentialVersion=CredentialVersion+1,
+        UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@id;
+      DECLARE @updated INT = @@ROWCOUNT;
+      IF @updated=1
+        UPDATE uqp.SharedWorkstationSession SET RevokedAtUtc=SYSUTCDATETIME()
+          WHERE WorkstationId=@id AND RevokedAtUtc IS NULL;
+      COMMIT TRANSACTION;
+      SELECT @updated AS updated;
+    `);
+  return Number(result.recordset[0]?.updated) === 1 ? "OK" : "NOT_FOUND";
+}
