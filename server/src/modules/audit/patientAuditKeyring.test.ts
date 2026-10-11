@@ -13,7 +13,7 @@ test("new records use active version; historical lookups include retained versio
   assert.equal(current.keyVersion, 2);
   assert.equal(history.length, 2);
   assert.deepEqual(history.find(item => item.keyVersion === 2)?.patientKeyHash, current.patientKeyHash);
-  assert.notDeepEqual(history[0].patientKeyHash, current.patientKeyHash);
+  assert.notDeepEqual(history[0]!.patientKeyHash, current.patientKeyHash);
 });
 test("missing active version or weak key is rejected", () => {
   assert.throws(() => parsePatientAuditKeyring("3", JSON.stringify({ "1": a })), /ACTIVE_KEY_NOT_FOUND/);
