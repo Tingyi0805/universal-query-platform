@@ -122,6 +122,8 @@ type FormState = {
   showPageNumber: boolean;
   showCountdown: boolean;
   parametersJson: string;
+  snapshotKind: "SURGERY" | "OUTPATIENT" | "EXAM" | "STATISTICS" | "OTHER";
+  snapshotSeconds: string;
   isActive: boolean;
 };
 
@@ -140,6 +142,8 @@ const emptyForm: FormState = {
   showPageNumber: true,
   showCountdown: true,
   parametersJson: "{}",
+  snapshotKind: "OTHER",
+  snapshotSeconds: "",
   isActive: true,
 };
 
@@ -311,7 +315,9 @@ export function DashboardDesignerPage() {
       showClock: item.showClock,
       showPageNumber: item.showPageNumber,
       showCountdown: item.showCountdown,
-      parametersJson: JSON.stringify(item.parameters ?? {}, null, 2),
+      parametersJson: JSON.stringify(Object.fromEntries(Object.entries(item.parameters ?? {}).filter(([key]) => key !== "snapshotKind" && key !== "snapshotSeconds")), null, 2),
+      snapshotKind: (["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS"].includes(String(item.parameters?.snapshotKind)) ? item.parameters.snapshotKind : "OTHER") as FormState["snapshotKind"],
+      snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
       isActive: item.isActive,
     });
     setNotice("");
@@ -342,6 +348,13 @@ export function DashboardDesignerPage() {
         setError("預設參數必須是 JSON Object，例如 { \"ROOM_CODE\": \"OR01\" }。");
         return;
       }
+
+      if (form.snapshotSeconds.trim() !== "" && (!Number.isInteger(Number(form.snapshotSeconds)) || Number(form.snapshotSeconds) < 10 || Number(form.snapshotSeconds) > 3600)) {
+        setError("快照秒數必須為 10～3600 的整數，或留白使用建議值。");
+        return;
+      }
+      parameters.snapshotKind = form.snapshotKind;
+      if (form.snapshotSeconds.trim() !== "") parameters.snapshotSeconds = Number(form.snapshotSeconds);
 
       const payload = {
         code: form.code.trim().toUpperCase(),
@@ -1094,6 +1107,24 @@ export function DashboardDesignerPage() {
                   onChange={(e) => setForm({ ...form, pageSeconds: e.target.value })}
                 />
                 <small>每個 Dashboard 可獨立設定，與資料更新秒數分開。</small>
+              </label>
+
+              <label>
+                <span>Dashboard 用途（快照預設）</span>
+                <select value={form.snapshotKind} onChange={(e) => setForm({ ...form, snapshotKind: e.target.value as FormState["snapshotKind"] })}>
+                  <option value="SURGERY">手術狀態（20 秒）</option>
+                  <option value="OUTPATIENT">診間候診（60 秒）</option>
+                  <option value="EXAM">檢查進度（60 秒）</option>
+                  <option value="STATISTICS">統計報表（180 秒）</option>
+                  <option value="OTHER">其他（60 秒）</option>
+                </select>
+              </label>
+              <label>
+                <span>快照秒數（選填）</span>
+                <input type="number" min={10} max={3600} step={1} value={form.snapshotSeconds}
+                  placeholder="留白採用用途建議值"
+                  onChange={(e) => setForm({ ...form, snapshotSeconds: e.target.value })} />
+                <small>留白使用上方建議值；與換頁秒數、資料更新秒數分開。</small>
               </label>
 
               <div className="dashboard-display-options wide">
