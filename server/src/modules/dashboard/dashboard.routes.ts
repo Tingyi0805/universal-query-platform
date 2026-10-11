@@ -4,6 +4,8 @@ import { getClientIp } from "../../utils/clientIp.js";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
+import { getDataset } from "../dataset/dataset.repository.js";
+import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import { getEffectiveQueryAccess, getQueryDefinition } from "../queryDefinition/queryDefinition.repository.js";
@@ -240,13 +242,27 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
     }
 
     const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Every preview/refresh request is a new disclosure; persist before returning rows.
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: query.datasetId,
+      queryDefinitionId: query.id,
+      userId: null,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "DASHBOARD",
+      masked: false,
+      rows: result.rows,
+    });
     const reportColumns = await listReportColumns(query.id);
 
+    res.setHeader("Cache-Control", "no-store");
     res.json({
       dashboard,
       query: { id: query.id, code: query.code, name: query.name },
       reportColumns,
       result,
+      disclosureId,
     });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
@@ -889,8 +905,21 @@ dashboardRouter.post("/:id/preview", async (req, res, next) => {
     }
 
     const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Every preview/refresh request is a new disclosure; persist before returning rows.
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: query.datasetId,
+      queryDefinitionId: query.id,
+      userId: req.authUser!.id,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "DASHBOARD",
+      masked: false,
+      rows: result.rows,
+    });
     const reportColumns = await listReportColumns(query.id);
 
+    res.setHeader("Cache-Control", "no-store");
     res.json({
       dashboard,
       query: {
@@ -900,6 +929,7 @@ dashboardRouter.post("/:id/preview", async (req, res, next) => {
       },
       reportColumns,
       result,
+      disclosureId,
     });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
