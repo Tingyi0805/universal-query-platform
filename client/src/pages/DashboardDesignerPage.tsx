@@ -636,7 +636,7 @@ export function DashboardDesignerPage() {
         setNotice(`已建立固定播放裝置「${result.device.deviceName}」。`);
       }
       setFixedPlaybackSetup(null);
-      if (deviceDashboard?.id === setup.dashboard.id) {
+      if (!popup || deviceDashboard?.id === setup.dashboard.id) {
         await loadDevices(setup.dashboard);
       }
     } catch (e) {
