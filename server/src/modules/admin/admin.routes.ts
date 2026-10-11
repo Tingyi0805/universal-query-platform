@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { listDeviceCredentials, issueDeviceCredential, revokeDeviceCredential } from "./workstationCredential.repository.js";
 import { listSharedWorkstations, createSharedWorkstation, updateSharedWorkstation, listWorkstationUsers, setWorkstationUsers } from "./sharedWorkstation.repository.js";
 import { readQuickPinPolicy, updateQuickPinPolicy } from "./quickPinPolicy.repository.js";
 import { Router } from "express";
@@ -515,5 +516,46 @@ adminRouter.put("/shared-workstations/:id/users", async (req, res, next) => {
     await tryWriteAuditEvent({ eventType: "SHARED_WORKSTATION_USERS_UPDATED", userId: req.authUser?.id ?? null,
       parameters: { workstationId: id.data, userIds: body.data.userIds }, ...auditRequestContext(req) });
     res.json({ status: "OK", pinLoginEnabled: false });
+  } catch (error) { next(error); }
+});
+
+const credentialIdSchema = z.string().uuid();
+adminRouter.get("/shared-workstations/:id/credentials", async (req, res, next) => {
+  try {
+    const id = z.coerce.number().int().positive().safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    const credentials = await listDeviceCredentials(id.data);
+    if (!credentials) { res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED" } }); return; }
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ credentials });
+  } catch (error) { next(error); }
+});
+adminRouter.post("/shared-workstations/:id/credentials", async (req, res, next) => {
+  try {
+    const id = z.coerce.number().int().positive().safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    const issued = await issueDeviceCredential(id.data);
+    if (typeof issued === "string") {
+      res.status(issued === "NOT_FOUND" ? 404 : 503).json({ error: { code: issued } }); return;
+    }
+    await tryWriteAuditEvent({ eventType: "WORKSTATION_CREDENTIAL_ISSUED", userId: req.authUser?.id ?? null,
+      parameters: { workstationId: id.data, credentialId: issued.id }, ...auditRequestContext(req) });
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("Pragma", "no-cache");
+    res.status(201).json({ credentialId: issued.id, secret: issued.secret, warning: "ONE_TIME_SECRET_STORE_SECURELY" });
+  } catch (error) { next(error); }
+});
+adminRouter.delete("/shared-workstations/:id/credentials/:credentialId", async (req, res, next) => {
+  try {
+    const id = z.coerce.number().int().positive().safeParse(req.params.id);
+    const credentialId = credentialIdSchema.safeParse(req.params.credentialId);
+    if (!id.success || !credentialId.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    const status = await revokeDeviceCredential(id.data, credentialId.data);
+    if (status !== "OK") {
+      res.status(status === "NOT_FOUND" ? 404 : 503).json({ error: { code: status } }); return;
+    }
+    await tryWriteAuditEvent({ eventType: "WORKSTATION_CREDENTIAL_REVOKED", userId: req.authUser?.id ?? null,
+      parameters: { workstationId: id.data, credentialId: credentialId.data }, ...auditRequestContext(req) });
+    res.json({ status: "OK" });
   } catch (error) { next(error); }
 });
