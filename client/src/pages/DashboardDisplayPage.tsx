@@ -552,7 +552,8 @@ export function DashboardDisplayPage() {
     if (deviceMode && page === 1) pageSnapshotId.current = null;
   }, [deviceMode, dashboardId, page]);
 
-  const canAdvancePage = Boolean(preview) &&
+  // Do not run a page-advance timer for empty results or a single-page view.
+  const canAdvancePage = Boolean(preview && preview.result.rows.length > 0 && totalPages > 1) &&
     (!deviceMode || (!activationRequired && Boolean(deviceToken) && online &&
       !dataWarning && preview?.page === safePage));
 
