@@ -357,7 +357,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     res.json({ dashboard, query: { id: query.id, code: query.code, name: query.name },
       reportColumns: await listReportColumns(query.id),
       result: { columns: snapshot.columns, rows },
-      page: pageInput.data.page, totalPages, totalRows: result.rows.length, disclosureId });
+      page: pageInput.data.page, totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, disclosureId });
   } catch (error) {
     next(error);
   }
