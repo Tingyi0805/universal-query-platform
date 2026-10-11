@@ -21,3 +21,13 @@ END;
 
 IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_DatasetSensitiveColumn_Type' AND object_id = OBJECT_ID(N'uqp.DatasetSensitiveColumn'))
     CREATE INDEX IX_DatasetSensitiveColumn_Type ON uqp.DatasetSensitiveColumn(SensitivityType, DatasetId);
+
+-- Independent version row also represents an intentionally empty sensitivity policy.
+IF OBJECT_ID(N'uqp.DatasetSensitivePolicyVersion', N'U') IS NULL
+BEGIN
+    CREATE TABLE uqp.DatasetSensitivePolicyVersion (
+        DatasetId BIGINT NOT NULL PRIMARY KEY,
+        VersionNumber BIGINT NOT NULL CONSTRAINT DF_DatasetSensitivePolicyVersion_Number DEFAULT (0),
+        CONSTRAINT FK_DatasetSensitivePolicyVersion_Dataset FOREIGN KEY (DatasetId) REFERENCES uqp.Dataset(Id)
+    );
+END;
