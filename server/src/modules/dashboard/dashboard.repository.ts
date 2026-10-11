@@ -119,15 +119,24 @@ export async function getDashboard(id: number) {
 
 /** A previously classified Dataset must not be activated after its rules were cleared. */
 async function assertSensitivityReadyForActivation(tx: sql.Transaction, queryDefinitionId: number): Promise<void> {
-  const result = await new sql.Request(tx).input("queryDefinitionId", sql.BigInt, queryDefinitionId).query(`
-    SELECT TOP (1) d.Id
-    FROM uqp.QueryDefinition q
-    INNER JOIN uqp.Dataset d WITH (UPDLOCK, HOLDLOCK) ON d.Id=q.DatasetId
-    INNER JOIN uqp.DatasetSensitivePolicyVersion v ON v.DatasetId=d.Id
-    WHERE q.Id=@queryDefinitionId AND v.VersionNumber > 0
-      AND NOT EXISTS (SELECT 1 FROM uqp.DatasetSensitiveColumn c WHERE c.DatasetId=d.Id)
+  // First resolve the Dataset, then lock its parent row. Sensitivity writes use
+  // the same Dataset lock before reading or replacing any policy records.
+  const query = await new sql.Request(tx).input("queryDefinitionId", sql.BigInt, queryDefinitionId)
+    .query("SELECT DatasetId FROM uqp.QueryDefinition WHERE Id=@queryDefinitionId");
+  if (!query.recordset.length) throw new Error("DASHBOARD_QUERY_NOT_AVAILABLE");
+  const datasetId = Number(query.recordset[0].DatasetId);
+  const dataset = await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId)
+    .query("SELECT Id FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
+  if (!dataset.recordset.length) throw new Error("DASHBOARD_QUERY_NOT_AVAILABLE");
+  const policy = await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId).query(`
+    SELECT v.VersionNumber,
+      (SELECT COUNT_BIG(*) FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@datasetId) AS RuleCount
+    FROM uqp.DatasetSensitivePolicyVersion v WITH (HOLDLOCK)
+    WHERE v.DatasetId=@datasetId
   `);
-  if (result.recordset.length) throw new Error("DASHBOARD_SENSITIVITY_REVIEW_REQUIRED");
+  if (policy.recordset.some((row) => Number(row.VersionNumber) > 0 && Number(row.RuleCount) === 0)) {
+    throw new Error("DASHBOARD_SENSITIVITY_REVIEW_REQUIRED");
+  }
 }
 
 export async function createDashboard(input: DashboardInput, userId: number): Promise<number> {
