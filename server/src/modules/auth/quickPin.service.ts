@@ -10,7 +10,7 @@ export function validateQuickPin(pin: string): boolean {
   return /^\d{6,8}$/.test(pin) && !blocked.has(pin) &&
     !/^(\d)\1+$/.test(pin) &&
     !("0123456789".includes(pin) || "9876543210".includes(pin)) &&
-    !/^(\\d{2})\\1{2,3}$/.test(pin);
+    !/^(\d{2})\1{2,3}$/.test(pin);
 }
 
 export async function enrollQuickPin(userId: number, password: string, pin: string): Promise<"OK" | "INVALID_CREDENTIALS" | "PIN_WEAK" | "NOT_CONFIGURED"> {
