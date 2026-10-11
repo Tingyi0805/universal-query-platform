@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt } from "./auth.middleware.js";
 import { changeOwnPassword, login } from "./auth.service.js";
-import { enrollQuickPin, revokeQuickPin } from "./quickPin.service.js";
+import { enrollQuickPin, revokeQuickPin, getConfiguredPinLength } from "./quickPin.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 
@@ -150,5 +150,11 @@ authRouter.post("/quick-pin/revoke", authenticateJwt, async (req, res, next) => 
     }
     await tryWriteAuditEvent({ eventType: "QUICK_PIN_REVOKED", userId: req.authUser.id, ...auditRequestContext(req) });
     res.json({ status: "OK" });
+  } catch (error) { next(error); }
+});
+
+authRouter.get("/quick-pin/policy", authenticateJwt, async (_req, res, next) => {
+  try {
+    res.json({ pinLength: await getConfiguredPinLength() });
   } catch (error) { next(error); }
 });
