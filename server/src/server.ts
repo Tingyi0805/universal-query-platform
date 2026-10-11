@@ -3,6 +3,7 @@ import { app } from "./app.js";
 import { closePlatformDbPool } from "./config/database.js";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
+import { autoArchiveDashboardDevices } from "./modules/dashboard/dashboardDevice.repository.js";
 
 const server = createServer(app);
 
@@ -10,11 +11,26 @@ server.listen(env.PORT, () => {
   logger.info({ port: env.PORT }, "Server started");
 });
 
+// Hourly, idempotent, database-backed sweep. Never deletes device or audit records.
+let archiveSweepRunning = false;
+const archiveTimer = setInterval(async () => {
+  if (archiveSweepRunning || shuttingDown) return;
+  archiveSweepRunning = true;
+  try {
+    const archivedCount = await autoArchiveDashboardDevices();
+    if (archivedCount > 0) logger.info({ archivedCount }, "Dashboard devices auto-archived");
+  } catch (error) {
+    logger.warn({ err: error }, "Dashboard device archive sweep skipped (check migrations/database)");
+  } finally { archiveSweepRunning = false; }
+}, 60 * 60 * 1000);
+archiveTimer.unref();
+
 let shuttingDown = false;
 
 const shutdown = async (signal: string) => {
   if (shuttingDown) return;
   shuttingDown = true;
+  clearInterval(archiveTimer);
 
   logger.info({ signal }, "Shutdown requested");
 

@@ -24,6 +24,9 @@ import {
 } from "./dashboardLayout.repository.js";
 import {
   createDashboardDisplayDevice,
+  getDashboardDeviceArchivePolicy,
+  setDashboardDeviceArchivePolicy,
+  archiveDashboardDevices,
   listDashboardDisplayDevices,
   listExpiringDashboardDisplayDevices,
   reissueDashboardDisplayDeviceToken,
@@ -275,6 +278,39 @@ dashboardRouter.get("/:id/devices", requirePermission("DESIGN_QUERY"), async (re
   } catch (error) {
     next(error);
   }
+});
+
+dashboardRouter.get("/:id/devices/archive-policy", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" } }); return; }
+    res.json(await getDashboardDeviceArchivePolicy(id.data));
+  } catch (error) { next(error); }
+});
+
+dashboardRouter.put("/:id/devices/archive-policy", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const body = z.object({ enabled: z.boolean(), retentionDays: z.number().int().min(1).max(3650) }).safeParse(req.body);
+    if (!id.success || !body.success || !req.authUser) { res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "封存政策設定不正確。" } }); return; }
+    if (!(await getDashboard(id.data))) { res.status(404).json({ error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" } }); return; }
+    const policy = await setDashboardDeviceArchivePolicy(id.data, body.data.enabled, body.data.retentionDays, req.authUser.id);
+    await tryWriteAuditEvent({ eventType: "DASHBOARD_DEVICE_ARCHIVE_POLICY_UPDATED", userId: req.authUser.id,
+      parameters: { dashboardId: id.data, ...policy }, ...auditRequestContext(req) });
+    res.json(policy);
+  } catch (error) { next(error); }
+});
+
+dashboardRouter.post("/:id/devices/archive", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const body = z.object({ deviceIds: z.array(z.number().int().positive()).min(1).max(100) }).safeParse(req.body);
+    if (!id.success || !body.success || !req.authUser) { res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "請選擇 1～100 筆已停用裝置。" } }); return; }
+    const count = await archiveDashboardDevices(id.data, body.data.deviceIds, req.authUser.id);
+    await tryWriteAuditEvent({ eventType: "DASHBOARD_DEVICES_ARCHIVED", userId: req.authUser.id,
+      parameters: { dashboardId: id.data, deviceIds: body.data.deviceIds, archivedCount: count }, ...auditRequestContext(req) });
+    res.json({ archivedCount: count });
+  } catch (error) { next(error); }
 });
 
 dashboardRouter.post("/:id/devices", requirePermission("DESIGN_QUERY"), async (req, res, next) => {

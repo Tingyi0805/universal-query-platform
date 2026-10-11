@@ -27,6 +27,7 @@ function mapRow(row: any) {
     createdByUserId: Number(row.CreatedByUserId),
     createdAtUtc: row.CreatedAtUtc ? new Date(row.CreatedAtUtc).toISOString() : null,
     revokedAtUtc: row.RevokedAtUtc ? new Date(row.RevokedAtUtc).toISOString() : null,
+    archivedAtUtc: row.ArchivedAtUtc ? new Date(row.ArchivedAtUtc).toISOString() : null,
   };
 }
 
@@ -79,7 +80,7 @@ export async function listDashboardDisplayDevices(dashboardId: number) {
       SELECT *
       FROM uqp.DashboardDisplayDevice
       WHERE DashboardId=@dashboardId
-      ORDER BY IsActive DESC, CreatedAtUtc DESC, Id DESC
+      ORDER BY CASE WHEN ArchivedAtUtc IS NULL THEN 0 ELSE 1 END, IsActive DESC, CreatedAtUtc DESC, Id DESC
     `);
   return result.recordset.map(mapRow);
 }
@@ -92,7 +93,7 @@ export async function listExpiringDashboardDisplayDevices(days = 30) {
       SELECT ddd.*, d.Name AS DashboardName, d.Code AS DashboardCode
       FROM uqp.DashboardDisplayDevice ddd
       INNER JOIN uqp.Dashboard d ON d.Id=ddd.DashboardId
-      WHERE ddd.IsActive=1
+      WHERE ddd.IsActive=1 AND ddd.ArchivedAtUtc IS NULL
         AND ddd.ExpiresAtUtc IS NOT NULL
         AND ddd.ExpiresAtUtc <= DATEADD(DAY, @days, SYSUTCDATETIME())
       ORDER BY ddd.ExpiresAtUtc ASC, ddd.Id ASC
@@ -141,6 +142,7 @@ export async function updateDashboardDisplayDeviceSettings(input: {
       WHERE Id=@deviceId
         AND DashboardId=@dashboardId
         AND IsActive=1
+        AND ArchivedAtUtc IS NULL
     `);
 
   if (!result.recordset[0]) {
@@ -277,4 +279,79 @@ export async function validateDashboardDisplayDevice(
     `);
 
   return mapRow(row);
+}
+
+export async function getDashboardDeviceArchivePolicy(dashboardId: number) {
+  const pool = await requirePool();
+  const result = await pool.request().input("dashboardId", sql.BigInt, dashboardId).query(`
+    SELECT AutoArchiveEnabled, RetentionDays
+    FROM uqp.DashboardDeviceArchivePolicy WHERE DashboardId=@dashboardId
+  `);
+  return {
+    enabled: result.recordset[0] ? Boolean(result.recordset[0].AutoArchiveEnabled) : true,
+    retentionDays: result.recordset[0] ? Number(result.recordset[0].RetentionDays) : 90,
+  };
+}
+
+export async function setDashboardDeviceArchivePolicy(
+  dashboardId: number, enabled: boolean, retentionDays: number, userId: number,
+) {
+  const pool = await requirePool();
+  await pool.request()
+    .input("dashboardId", sql.BigInt, dashboardId)
+    .input("enabled", sql.Bit, enabled)
+    .input("retentionDays", sql.Int, retentionDays)
+    .input("userId", sql.BigInt, userId)
+    .query(`
+      UPDATE uqp.DashboardDeviceArchivePolicy
+      SET AutoArchiveEnabled=@enabled, RetentionDays=@retentionDays,
+          UpdatedByUserId=@userId, UpdatedAtUtc=SYSUTCDATETIME()
+      WHERE DashboardId=@dashboardId;
+      IF @@ROWCOUNT=0
+        INSERT INTO uqp.DashboardDeviceArchivePolicy
+          (DashboardId,AutoArchiveEnabled,RetentionDays,UpdatedByUserId)
+        VALUES (@dashboardId,@enabled,@retentionDays,@userId);
+    `);
+  return { enabled, retentionDays };
+}
+
+export async function archiveDashboardDevices(dashboardId: number, deviceIds: number[], userId: number) {
+  const pool = await requirePool();
+  const request = pool.request()
+    .input("dashboardId", sql.BigInt, dashboardId)
+    .input("userId", sql.BigInt, userId);
+  const ids = [...new Set(deviceIds)];
+  ids.forEach((id, index) => request.input("device" + index, sql.BigInt, id));
+  const result = await request.query(`
+    UPDATE uqp.DashboardDisplayDevice
+    SET ArchivedAtUtc=SYSUTCDATETIME()
+    OUTPUT INSERTED.DashboardId, INSERTED.Id, 'MANUAL', @userId, INSERTED.ArchivedAtUtc
+    INTO uqp.DashboardDeviceArchiveHistory
+      (DashboardId, DeviceId, ArchiveMode, ArchivedByUserId, ArchivedAtUtc)
+    WHERE DashboardId=@dashboardId AND Id IN (${ids.map((_, index) => "@device" + index).join(",")})
+      AND IsActive=0 AND ArchivedAtUtc IS NULL;
+    SELECT @@ROWCOUNT AS Archived;
+  `);
+  return Number(result.recordset[0]?.Archived ?? 0);
+}
+
+export async function autoArchiveDashboardDevices(): Promise<number> {
+  const pool = await requirePool();
+  const result = await pool.request().query(`
+    ;WITH Candidates AS (
+      SELECT TOP (200) ddd.Id, ddd.DashboardId, ddd.ArchivedAtUtc
+      FROM uqp.DashboardDisplayDevice ddd
+      LEFT JOIN uqp.DashboardDeviceArchivePolicy p ON p.DashboardId=ddd.DashboardId
+      WHERE ddd.IsActive=0 AND ddd.ArchivedAtUtc IS NULL
+        AND ddd.RevokedAtUtc IS NOT NULL
+        AND COALESCE(p.AutoArchiveEnabled, CONVERT(BIT,1))=1
+        AND ddd.RevokedAtUtc <= DATEADD(DAY, -COALESCE(p.RetentionDays,90), SYSUTCDATETIME())
+    )
+    UPDATE Candidates SET ArchivedAtUtc=SYSUTCDATETIME()
+    OUTPUT INSERTED.DashboardId, INSERTED.Id, 'AUTO', NULL, INSERTED.ArchivedAtUtc
+    INTO uqp.DashboardDeviceArchiveHistory
+      (DashboardId, DeviceId, ArchiveMode, ArchivedByUserId, ArchivedAtUtc);
+    SELECT @@ROWCOUNT AS Archived;
+  `);
+  return Number(result.recordset[0]?.Archived ?? 0);
 }

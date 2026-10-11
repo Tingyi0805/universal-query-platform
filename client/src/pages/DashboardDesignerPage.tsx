@@ -54,6 +54,7 @@ type DisplayDevice = {
   lastUsedAtUtc: string | null;
   createdAtUtc: string | null;
   revokedAtUtc: string | null;
+  archivedAtUtc: string | null;
 };
 
 type ManagedScreen = {
@@ -194,8 +195,11 @@ export function DashboardDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
   const [deviceDashboard, setDeviceDashboard] = useState<DashboardRow | null>(null);
   const [displayDevices, setDisplayDevices] = useState<DisplayDevice[]>([]);
-  const [deviceStatusFilter, setDeviceStatusFilter] = useState<"current" | "active" | "expired" | "disabled" | "all">("current");
+  const [deviceStatusFilter, setDeviceStatusFilter] = useState<"current" | "active" | "expired" | "disabled" | "archived" | "all">("current");
   const [deviceLoading, setDeviceLoading] = useState(false);
+  const [selectedArchiveIds, setSelectedArchiveIds] = useState<number[]>([]);
+  const [archivePolicy, setArchivePolicy] = useState({ enabled: true, retentionDays: 90 });
+  const [archiveBusy, setArchiveBusy] = useState(false);
   const [deviceSearch, setDeviceSearch] = useState("");
   const [devicePage, setDevicePage] = useState(1);
   const [devicePageSize, setDevicePageSize] = useState(20);
@@ -390,6 +394,8 @@ export function DashboardDesignerPage() {
 
   const filteredDisplayDevices = displayDevices.filter((device) => {
     if (!device.deviceName.toLocaleLowerCase().includes(deviceSearch.trim().toLocaleLowerCase())) return false;
+    if (deviceStatusFilter === "archived") return Boolean(device.archivedAtUtc);
+    if (deviceStatusFilter !== "all" && device.archivedAtUtc) return false;
     const expired = device.expiresAtUtc ? new Date(device.expiresAtUtc).getTime() <= Date.now() : false;
     switch (deviceStatusFilter) {
       case "current": return device.isActive;
@@ -406,6 +412,7 @@ export function DashboardDesignerPage() {
   async function loadDevices(item: DashboardRow) {
     setDeviceDashboard(item);
     setDevicePage(1);
+    setSelectedArchiveIds([]);
     setDeviceLoading(true);
     setError("");
     try {
@@ -415,6 +422,8 @@ export function DashboardDesignerPage() {
         accessToken,
       );
       setDisplayDevices(result.devices);
+      const policy = await apiRequest<{ enabled: boolean; retentionDays: number }>(`/dashboards/${item.id}/devices/archive-policy`, {}, accessToken);
+      setArchivePolicy(policy);
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入固定播放裝置失敗。");
     } finally {
@@ -770,6 +779,32 @@ export function DashboardDesignerPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "延長顯示裝置期限失敗。");
     }
+  }
+
+  async function saveArchivePolicy() {
+    if (!deviceDashboard) return;
+    setArchiveBusy(true);
+    try {
+      await apiRequest(`/dashboards/${deviceDashboard.id}/devices/archive-policy`, {
+        method: "PUT", body: JSON.stringify(archivePolicy),
+      }, accessToken);
+      setNotice("自動封存政策已儲存。背景排程每小時檢查一次，僅封存停用超過設定天數的裝置。");
+    } catch (e) { setError(e instanceof Error ? e.message : "儲存封存政策失敗。"); }
+    finally { setArchiveBusy(false); }
+  }
+
+  async function archiveSelectedDevices() {
+    if (!deviceDashboard || selectedArchiveIds.length === 0) return;
+    if (!window.confirm(`確定封存 ${selectedArchiveIds.length} 筆已停用裝置？紀錄將保留，並可於「已封存」查詢。`)) return;
+    setArchiveBusy(true);
+    try {
+      const result = await apiRequest<{ archivedCount: number }>(`/dashboards/${deviceDashboard.id}/devices/archive`, {
+        method: "POST", body: JSON.stringify({ deviceIds: selectedArchiveIds }),
+      }, accessToken);
+      setNotice(`已封存 ${result.archivedCount} 筆裝置。`);
+      await loadDevices(deviceDashboard);
+    } catch (e) { setError(e instanceof Error ? e.message : "批次封存失敗。"); }
+    finally { setArchiveBusy(false); }
   }
 
   async function revokeDevice(device: DisplayDevice) {
@@ -1347,12 +1382,25 @@ export function DashboardDesignerPage() {
                   <option value="active">使用中（未到期）</option>
                   <option value="expired">已到期（未停用）</option>
                   <option value="disabled">已停用</option>
+                  <option value="archived">已封存</option>
                   <option value="all">全部裝置</option>
                 </select>
                 <input aria-label="搜尋播放裝置名稱" placeholder="搜尋裝置名稱" value={deviceSearch} onChange={(event) => { setDeviceSearch(event.target.value); setDevicePage(1); }} />
                 <label htmlFor="dashboard-device-page-size">每頁</label>
                 <select id="dashboard-device-page-size" value={devicePageSize} onChange={(event) => { setDevicePageSize(Number(event.target.value)); setDevicePage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option></select>
                 <span>符合 {filteredDisplayDevices.length} / {displayDevices.length} 筆</span>
+              </div>
+
+              <div className="dashboard-device-filter">
+                <label><input type="checkbox" checked={archivePolicy.enabled} onChange={(event) => setArchivePolicy({ ...archivePolicy, enabled: event.target.checked })} /> 自動封存已停用裝置</label>
+                <label htmlFor="dashboard-archive-days">停用超過（天）</label>
+                <input id="dashboard-archive-days" type="number" min={1} max={3650} value={archivePolicy.retentionDays} onChange={(event) => setArchivePolicy({ ...archivePolicy, retentionDays: Number(event.target.value) })} />
+                <button type="button" className="secondary-button" disabled={archiveBusy || archivePolicy.retentionDays < 1 || archivePolicy.retentionDays > 3650 || !Number.isInteger(archivePolicy.retentionDays)} onClick={() => void saveArchivePolicy()}>儲存封存設定</button>
+                <span>預設 90 天；封存不刪除資料，僅針對已停用裝置。</span>
+              </div>
+              <div className="dashboard-device-filter">
+                <button type="button" className="secondary-button" disabled={archiveBusy || selectedArchiveIds.length === 0} onClick={() => void archiveSelectedDevices()}>批次封存已選 {selectedArchiveIds.length} 筆</button>
+                <span>可於「已停用」或「全部裝置」勾選最多 100 筆未封存裝置。</span>
               </div>
 
               {!deviceLoading && filteredDisplayDevices.length > 0 && (
@@ -1371,6 +1419,7 @@ export function DashboardDesignerPage() {
                   <table>
                     <thead>
                       <tr>
+                        <th>封存</th>
                         <th>裝置名稱</th>
                         <th>狀態</th>
                         <th>來源限制</th>
@@ -1384,8 +1433,9 @@ export function DashboardDesignerPage() {
                     <tbody>
                       {visibleDisplayDevices.map((device) => (
                         <tr key={device.id}>
+                          <td><input type="checkbox" aria-label={`選擇封存 ${device.deviceName}`} disabled={device.isActive || Boolean(device.archivedAtUtc) || archiveBusy} checked={selectedArchiveIds.includes(device.id)} onChange={(event) => setSelectedArchiveIds((current) => event.target.checked ? [...current, device.id].slice(0, 100) : current.filter((id) => id !== device.id))} /></td>
                           <td>{device.deviceName}</td>
-                          <td>{device.isActive ? "啟用" : "已停用"}</td>
+                          <td>{device.archivedAtUtc ? "已封存" : device.isActive ? "啟用" : "已停用"}</td>
                           <td>
                             {device.enforceIpRestriction
                               ? device.allowedIp ?? device.allowedCidr ?? "已啟用"
