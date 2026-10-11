@@ -55,7 +55,7 @@ export async function listWorkstationUsers(workstationId: number): Promise<{ use
   const result = await pool.request().input("workstationId", sql.BigInt, workstationId).query(`
     SELECT u.Id AS userId, u.Username AS username, u.DisplayName AS displayName
     FROM uqp.SharedWorkstationUser wu
-    INNER JOIN uqp.[User] u ON u.Id=wu.UserId
+    INNER JOIN uqp.AppUser u ON u.Id=wu.UserId
     WHERE wu.WorkstationId=@workstationId AND wu.IsAllowed=1
     ORDER BY u.DisplayName
   `);
@@ -72,7 +72,7 @@ export async function setWorkstationUsers(workstationId: number, userIds: number
       .query("SELECT Id FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
     if (lock.recordset.length === 0) { await transaction.rollback(); return "NOT_FOUND"; }
     const users = await new sql.Request(transaction).query(
-      "SELECT Id FROM uqp.[User] WHERE IsActive=1"
+      "SELECT Id FROM uqp.AppUser WHERE IsActive=1"
     );
     const allowed = new Set<number>(users.recordset.map((row: { Id: number }) => Number(row.Id)));
     if (userIds.some(id => !allowed.has(id))) { await transaction.rollback(); return "INVALID_USER"; }
