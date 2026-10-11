@@ -39,10 +39,10 @@ export function QuickPinPolicyPage() {
       {loading ? <p>載入中…</p> : <form className="admin-form" onSubmit={save}>
         <label>PIN 長度
           <select value={length} onChange={e => setLength(Number(e.target.value))}>
-            {[6,7,8].map(n => <option key={n} value={n}>{n} 位數</option>)}
+            {Array.from({ length: 9 }, (_, i) => i + 4).map(n => <option key={n} value={n}>{n} 位數</option>)}
           </select>
         </label>
-        <p>修改長度會使現有 PIN 失效；員工必須使用正式密碼重新註冊。PIN 快速登入尚未啟用。</p>
+        <p>建議至少 6 位數；4～5 位數安全性較低。修改長度會使現有 PIN 失效；員工必須使用正式密碼重新註冊。PIN 快速登入尚未啟用。</p>
         <button className="primary-button" type="submit" disabled={saving}>{saving ? "儲存中…" : "儲存 PIN 長度"}</button>
       </form>}
     </section>
