@@ -39,6 +39,7 @@
 | 規則衝突 | Dashboard 設 NAME、Dataset 設 MRN | 播放 API 採 FULL |
 | 永久刪除稽核保護 | Dataset 有 AuditLog 記錄時嘗試永久刪除 | delete-impact 回傳 auditCount 大於 0；API 拒絕刪除，建議封存；稽核紀錄保留 |
 | 永久刪除併發 | 測試 Dataset 無引用，另一工作階段同時建立關聯或稽核紀錄 | 刪除與關聯建立不能同時成功；資料庫外鍵與交易必須維持一致 |
+| 遮蔽規則變更後舊快照 | 先取得 snapshotId，再修改 Dataset 敏感規則版本，使用舊 snapshotId 請求下一頁 | HTTP 409 DASHBOARD_SNAPSHOT_EXPIRED；不得回傳舊快照頁面，裝置重新取得快照 |
 | 播放與規則更新併發 | A 持續請求 Dashboard 分頁，同時 B 修改 Dataset 遮蔽規則 | 每次回應的資料列與欄位中繼資料須使用同一份規則；不可傳送未核准欄位；檢查遮蔽前後差異及稽核 |
 | 規則更新後播放 | 播放中修改 Dataset 規則，再取得下一頁 | 依目前伺服器實作重新套用最新規則；檢查回傳值及欄位中繼資料 |
 
