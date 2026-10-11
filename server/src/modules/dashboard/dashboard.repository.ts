@@ -173,6 +173,7 @@ export async function createDashboard(input: DashboardInput, userId: number): Pr
 export async function updateDashboard(id: number, input: DashboardInput, userId: number): Promise<void> {
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
+  if (input.isActive) await assertSensitivityReadyForActivation(pool, input.queryDefinitionId);
 
   const result = await pool.request()
     .input("id", sql.BigInt, id)
