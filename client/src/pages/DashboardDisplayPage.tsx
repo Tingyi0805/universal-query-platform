@@ -146,9 +146,12 @@ export function DashboardDisplayPage() {
   const previewKey = searchParams.get("previewKey");
   const autoFullscreenRequested = searchParams.get("autoFullscreen") === "1";
   const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
-  const deviceToken = deviceMode
-    ? localStorage.getItem(`uqp.dashboard.device.${dashboardId}`)
-    : null;
+  const deviceStorageKey = `uqp.dashboard.device.${dashboardId}`;
+  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode ? localStorage.getItem(deviceStorageKey) : null);
+  const [activationInput, setActivationInput] = useState("");
+  const [activationBusy, setActivationBusy] = useState(false);
+  const [activationError, setActivationError] = useState("");
+  const [activationRequired, setActivationRequired] = useState(() => deviceMode && !localStorage.getItem(deviceStorageKey));
   const { accessToken } = useAuth();
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -167,7 +170,8 @@ export function DashboardDisplayPage() {
     if (!Number.isFinite(dashboardId)) return;
     try {
       if (deviceMode && !deviceToken) {
-        setError("此顯示裝置尚未啟用，請由管理者重新建立固定播放。");
+        setActivationRequired(true);
+        setError("");
         return;
       }
 
@@ -185,8 +189,14 @@ export function DashboardDisplayPage() {
       );
       setPreview(result);
       setError("");
+      if (deviceMode) { setActivationRequired(false); setActivationError(""); }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dashboard 載入失敗。");
+      if (deviceMode && (e as { status?: number }).status === 401) {
+        setActivationRequired(true);
+        setPreview(null);
+        setError("");
+        setActivationError("裝置憑證已失效、停用或不符合來源 IP 限制。請向管理員取得新 Token，或確認裝置狀態。");
+      } else setError(e instanceof Error ? e.message : "Dashboard 載入失敗。");
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken]);
 
@@ -211,7 +221,8 @@ export function DashboardDisplayPage() {
 
     try {
       if (deviceMode && !deviceToken) {
-        setError("此顯示裝置尚未啟用，請由管理者重新建立固定播放。");
+        setActivationRequired(true);
+        setError("");
         return;
       }
 
@@ -228,7 +239,12 @@ export function DashboardDisplayPage() {
       );
       setProfiles(result.profiles);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
+      if (deviceMode && (e as { status?: number }).status === 401) {
+        setActivationRequired(true);
+        setProfiles([]);
+        setError("");
+        setActivationError("裝置憑證驗證失敗，請確認裝置是否啟用、過期或限制來源 IP。");
+      } else setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
 
@@ -503,6 +519,60 @@ export function DashboardDisplayPage() {
         )}
         <strong>{value}</strong>
       </div>
+    );
+  }
+
+  async function activateDevice(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const token = activationInput.trim();
+    if (!token || !Number.isInteger(dashboardId) || dashboardId <= 0) {
+      setActivationError("請輸入有效的裝置 Token。");
+      return;
+    }
+    setActivationBusy(true);
+    setActivationError("");
+    try {
+      // Verify with the server BEFORE persisting; this endpoint enforces dashboard,
+      // revocation, expiry and source-IP restrictions.
+      await apiRequest<{ profiles: LayoutProfile[] }>(
+        `/dashboards/device/${dashboardId}/layout`,
+        { headers: { "X-Dashboard-Device-Token": token } },
+        null,
+      );
+      localStorage.setItem(deviceStorageKey, token);
+      setDeviceToken(token);
+      setActivationInput("");
+      setActivationRequired(false);
+      setPreview(null);
+      setProfiles([]);
+      setError("");
+    } catch (e) {
+      setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請確認 Token。");
+    } finally {
+      setActivationBusy(false);
+    }
+  }
+
+  if (deviceMode && activationRequired) {
+    return (
+      <main className="dashboard-display-screen">
+        <div className="dashboard-display-error" style={{ maxWidth: 620 }}>
+          <h1>啟用 Dashboard 播放裝置</h1>
+          <p>Dashboard #{dashboardId} 尚未在目前瀏覽器設定檔完成驗證，或原有憑證已失效。</p>
+          <p>請由管理員在「固定播放裝置」重新核發 Token，並在這台播放電腦的 Chrome／Edge 輸入。啟用成功後會自動播放，不需要登入管理後台。</p>
+          <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
+            <label htmlFor="dashboard-device-activation-token">Device Token</label>
+            <input id="dashboard-device-activation-token" type="password" autoComplete="off" spellCheck={false} required
+              value={activationInput} onChange={(event) => setActivationInput(event.target.value)}
+              placeholder="貼上管理員提供的 Device Token" style={{ width: "100%", padding: 12, fontSize: 16 }} />
+            {activationError && <p role="alert" style={{ color: "#b42318" }}>{activationError}</p>}
+            <button type="submit" disabled={activationBusy} style={{ padding: 12 }}>
+              {activationBusy ? "驗證中…" : "驗證並啟用播放"}
+            </button>
+          </form>
+          <p style={{ fontSize: 14, marginTop: 16 }}>Token 只儲存在這個瀏覽器設定檔；更換瀏覽器、網址來源或清除網站資料後需重新啟用。到期或停用的 Token 不會自動恢復。</p>
+        </div>
+      </main>
     );
   }
 
