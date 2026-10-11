@@ -344,12 +344,15 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       deliveryType: "PAGE",
       pageNumber: pageInput.data.page,
       masked,
-      rows,
+      rows: rawRows,
     });
     res.setHeader("Cache-Control", "no-store");
-    res.json({ dashboard, query: { id: query.id, code: query.code, name: query.name },
-      reportColumns: await listReportColumns(query.id),
-      result: { columns: snapshot.columns, rows },
+    const reportColumns = (await listReportColumns(query.id)).filter((column) => masks[column.columnName] !== undefined && masks[column.columnName] !== "OMIT");
+    const columns = snapshot.columns.filter((column) => masks[column.name] !== undefined && masks[column.name] !== "OMIT");
+    const { parameters: _privateParameters, ...safeDashboard } = dashboard;
+    res.json({ dashboard: safeDashboard, query: { id: query.id, code: query.code, name: query.name },
+      reportColumns,
+      result: { columns, rows },
       page: pageInput.data.page, totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, disclosureId });
   } catch (error) {
     next(error);
