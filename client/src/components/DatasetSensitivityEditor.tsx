@@ -17,6 +17,8 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   const [version, setVersion] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState("");
+  const [conflict, setConflict] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     let active = true;
     setRules([]);
@@ -24,11 +26,16 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     setVersion(null);
     setDirty(false);
     setMessage("");
+    setConflict(false);
     void apiRequest<{ columns: Rule[]; version: number }>(`/datasets/${datasetId}/sensitive-columns`, {}, accessToken)
       .then((result) => { if (active) { setRules(result.columns); setVersion(result.version); setLoaded(true); } })
       .catch((error: unknown) => { if (active) setMessage(error instanceof Error ? error.message : "無法載入敏感欄位設定"); });
     return () => { active = false; };
-  }, [datasetId, accessToken]);
+  }, [datasetId, accessToken, reloadKey]);
+  const reload = () => {
+    if (dirty && !window.confirm("重新載入將捨棄目前尚未儲存的變更，確定繼續？")) return;
+    setReloadKey((current) => current + 1);
+  };
   const add = () => {
     if (!column || (category !== "OTHER" && mode === "NONE")) {
       setMessage("敏感資料不可設定為原樣顯示。"); return;
@@ -44,12 +51,19 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     if (!loaded || version === null) { setMessage("尚未成功載入原有規則，為避免覆蓋設定，請先重新載入頁面。"); return; }
     setBusy(true); setMessage("");
     try {
-      const result = await apiRequest<{ columns: Rule[] }>(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: rules, expectedVersion: version }) }, accessToken);
+      const result = await apiRequest<{ columns: Rule[]; version: number }>(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: rules, expectedVersion: version }) }, accessToken);
       setRules(result.columns);
       setVersion(result.version);
       setDirty(false);
+      setConflict(false);
       setMessage("敏感欄位規則已儲存，並記錄異動稽核。");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "儲存失敗"); }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "儲存失敗";
+      if (/SENSITIVITY_VERSION_CONFLICT|409|其他管理者已更新/.test(detail)) {
+        setConflict(true);
+        setMessage("規則已由其他管理者更新。為避免覆蓋，已停止儲存；請重新載入並確認差異。");
+      } else setMessage(detail);
+    }
     finally { setBusy(false); }
   };
   return <section className="preview-panel">
@@ -68,10 +82,12 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     <button type="button" disabled={!column || busy} onClick={add}>加入／更新</button>
     <table className="preview-table"><thead><tr><th>欄位</th><th>分類</th><th>遮蔽</th><th>操作</th></tr></thead>
       <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td><td>{rule.sensitivityType}</td><td>{rule.deviceMaskMode}</td>
-        <td><button type="button" disabled={busy} onClick={() => setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName))}>移除</button></td></tr>)}</tbody></table>
-    <button type="button" disabled={busy || !dirty || !loaded || version === null} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
+        <td><button type="button" disabled={busy} onClick={() => { setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName)); setDirty(true); }}>移除</button></td></tr>)}</tbody></table>
+    <button type="button" disabled={busy || !dirty || !loaded || version === null || conflict} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
     {!loaded && <p role="status">原有規則尚未載入完成，暫停儲存以避免誤覆蓋。</p>}
     {dirty && <p role="status">尚有未儲存的敏感欄位規則變更。</p>}
+    <button type="button" disabled={busy} onClick={reload}>重新載入伺服器規則</button>
+    {conflict && <p role="alert">版本衝突：請重新載入規則後再次檢查。重新載入前不允許儲存。</p>}
     {message && <p role="status">{message}</p>}
   </section>;
 }
