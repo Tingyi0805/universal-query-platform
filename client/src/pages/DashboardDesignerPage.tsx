@@ -125,6 +125,7 @@ type FormState = {
   snapshotKind: "SURGERY" | "OUTPATIENT" | "EXAM" | "STATISTICS" | "OTHER";
   snapshotSeconds: string;
   estimatedRows: string;
+  deviceColumnMasksJson: string;
   isActive: boolean;
 };
 
@@ -146,6 +147,7 @@ const emptyForm: FormState = {
   snapshotKind: "OTHER",
   snapshotSeconds: "",
   estimatedRows: "25",
+  deviceColumnMasksJson: "{}",
   isActive: true,
 };
 
@@ -329,6 +331,7 @@ export function DashboardDesignerPage() {
       snapshotKind: (["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS"].includes(String(item.parameters?.snapshotKind)) ? item.parameters.snapshotKind : "OTHER") as FormState["snapshotKind"],
       snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
       estimatedRows: "25",
+      deviceColumnMasksJson: JSON.stringify(item.parameters?.deviceColumnMasks ?? {}, null, 2),
       isActive: item.isActive,
     });
     setNotice("");
@@ -364,6 +367,18 @@ export function DashboardDesignerPage() {
         setError("快照秒數必須為 10～3600 的整數，或留白使用建議值。");
         return;
       }
+      let deviceColumnMasks: Record<string, string>;
+      try {
+        const parsed = JSON.parse(form.deviceColumnMasksJson || "{}");
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("INVALID");
+        const modes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"];
+        if (Object.entries(parsed).some(([column, mode]) => !column || column.length > 256 || !modes.includes(String(mode)))) throw new Error("INVALID");
+        deviceColumnMasks = parsed as Record<string, string>;
+      } catch {
+        setError("敏感欄位規則須為 JSON 物件，欄位值限 NONE、NAME、MRN、PHONE、GENERIC、FULL、OMIT。");
+        return;
+      }
+      parameters.deviceColumnMasks = deviceColumnMasks;
       parameters.snapshotKind = form.snapshotKind;
       if (form.snapshotSeconds.trim() !== "") parameters.snapshotSeconds = Number(form.snapshotSeconds);
 
@@ -1157,6 +1172,14 @@ export function DashboardDesignerPage() {
                 )}
                 {effectiveSnapshotSeconds < estimatedCycleSeconds && <p role="alert">目前快照時間短於一輪播放時間，可能中途過期。</p>}
               </div>
+
+              <label className="wide">
+                <span>固定播放裝置：自訂敏感欄位規則（JSON）</span>
+                <textarea rows={5} value={form.deviceColumnMasksJson}
+                  placeholder={'{"NationalId":"FULL","HealthStatus":"OMIT","Room":"NONE"}'}
+                  onChange={(e) => setForm({ ...form, deviceColumnMasksJson: e.target.value })} />
+                <small>未設定欄位不傳送；NONE 原樣顯示、NAME 姓名、MRN 病歷號、PHONE 電話、GENERIC 部分遮蔽、FULL 全部遮蔽、OMIT 不傳送。此規則只適用固定播放裝置。</small>
+              </label>
 
               <div className="dashboard-display-options wide">
                 <label>
