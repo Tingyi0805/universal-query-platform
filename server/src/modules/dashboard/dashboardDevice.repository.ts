@@ -236,7 +236,7 @@ export async function revokeDashboardDisplayDevice(dashboardId: number, deviceId
   }
 }
 
-export async function validateDashboardDisplayDevice(
+export async function checkDashboardDisplayDevice(
   dashboardId: number,
   token: string,
   clientIp: string,
@@ -251,12 +251,13 @@ export async function validateDashboardDisplayDevice(
       FROM uqp.DashboardDisplayDevice
       WHERE DashboardId=@dashboardId
         AND TokenHash=@tokenHash
-        AND IsActive=1
-        AND (ExpiresAtUtc IS NULL OR ExpiresAtUtc > SYSUTCDATETIME())
+
     `);
 
   const row = result.recordset[0];
-  if (!row) return null;
+  if (!row) return { status: "INVALID_TOKEN" as const };
+  if (!Boolean(row.IsActive) || row.RevokedAtUtc != null) return { status: "DISABLED" as const };
+  if (row.ExpiresAtUtc != null && new Date(row.ExpiresAtUtc).getTime() <= Date.now()) return { status: "EXPIRED" as const };
 
   const normalizedClientIp = normalizeClientIp(clientIp);
   if (
@@ -267,7 +268,7 @@ export async function validateDashboardDisplayDevice(
       row.AllowedCidr == null ? null : String(row.AllowedCidr),
     )
   ) {
-    return null;
+    return { status: "IP_RESTRICTED" as const };
   }
 
   await pool.request()
@@ -278,7 +279,12 @@ export async function validateDashboardDisplayDevice(
       WHERE Id=@id
     `);
 
-  return mapRow(row);
+  return { status: "VALID" as const, device: mapRow(row) };
+}
+
+export async function validateDashboardDisplayDevice(dashboardId: number, token: string, clientIp: string) {
+  const result = await checkDashboardDisplayDevice(dashboardId, token, clientIp);
+  return result.status === "VALID" ? result.device : null;
 }
 
 export async function getDashboardDeviceArchivePolicy(dashboardId: number) {

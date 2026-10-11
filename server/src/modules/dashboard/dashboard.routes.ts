@@ -35,7 +35,7 @@ import {
   renewDashboardDisplayDevice,
   updateDashboardDisplayDeviceSettings,
   revokeDashboardDisplayDevice,
-  validateDashboardDisplayDevice,
+  checkDashboardDisplayDevice,
 } from "./dashboardDevice.repository.js";
 import { isValidIpOrCidr } from "./dashboardDeviceIp.js";
 
@@ -182,8 +182,15 @@ dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
     }
 
     const token = getDeviceToken(req);
-    if (!token || !(await validateDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)))) {
-      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_INVALID", message: "Dashboard 顯示裝置憑證無效或已停用。" } });
+    const verification = token ? await checkDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)) : { status: "INVALID_TOKEN" as const };
+    if (verification.status !== "VALID") {
+      const reasons = {
+        INVALID_TOKEN: { code: "DASHBOARD_DEVICE_INVALID_TOKEN", message: "Token 無效或已被重新核發，請確認輸入或向管理員取得新 Token。" },
+        EXPIRED: { code: "DASHBOARD_DEVICE_TOKEN_EXPIRED", message: "Token 已到期，請聯絡管理員延長裝置有效期限。" },
+        DISABLED: { code: "DASHBOARD_DEVICE_DISABLED", message: "播放裝置已停用，請聯絡管理員確認裝置狀態。" },
+        IP_RESTRICTED: { code: "DASHBOARD_DEVICE_IP_RESTRICTED", message: "目前來源 IP 不在允許範圍，請聯絡管理員確認播放電腦 IP 限制。" },
+      };
+      res.status(401).json({ error: reasons[verification.status] });
       return;
     }
 
@@ -208,8 +215,15 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
     }
 
     const token = getDeviceToken(req);
-    if (!token || !(await validateDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)))) {
-      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_INVALID", message: "Dashboard 顯示裝置憑證無效或已停用。" } });
+    const verification = token ? await checkDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)) : { status: "INVALID_TOKEN" as const };
+    if (verification.status !== "VALID") {
+      const reasons = {
+        INVALID_TOKEN: { code: "DASHBOARD_DEVICE_INVALID_TOKEN", message: "Token 無效或已被重新核發，請確認輸入或向管理員取得新 Token。" },
+        EXPIRED: { code: "DASHBOARD_DEVICE_TOKEN_EXPIRED", message: "Token 已到期，請聯絡管理員延長裝置有效期限。" },
+        DISABLED: { code: "DASHBOARD_DEVICE_DISABLED", message: "播放裝置已停用，請聯絡管理員確認裝置狀態。" },
+        IP_RESTRICTED: { code: "DASHBOARD_DEVICE_IP_RESTRICTED", message: "目前來源 IP 不在允許範圍，請聯絡管理員確認播放電腦 IP 限制。" },
+      };
+      res.status(401).json({ error: reasons[verification.status] });
       return;
     }
 
