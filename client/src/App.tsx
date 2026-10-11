@@ -19,6 +19,7 @@ import { QuickPinPolicyPage } from "./pages/QuickPinPolicyPage";
 import { QueryPortalPage } from "./pages/QueryPortalPage";
 import { QueryPublisherPage } from "./pages/QueryPublisherPage";
 import { QueryRuntimePage } from "./pages/QueryRuntimePage";
+import { SharedWorkstationsPage } from "./pages/SharedWorkstationsPage";
 import { SetupPage } from "./pages/SetupPage";
 import { SystemSettingsPage } from "./pages/SystemSettingsPage";
 
@@ -40,6 +41,7 @@ const modules = [
   { title: "儀表板設計", description: "建立資料顯示 Dashboard、預設參數與自動更新。", icon: LayoutDashboard, permission: "DESIGN_QUERY", path: "/designer/dashboards" },
   { title: "資料來源", description: "管理 SQL Server、Oracle 等資料庫連線。", icon: Database, permission: "MANAGE_DATASOURCE", path: "/admin/datasources" },
   { title: "Excel 報表", description: "已授權查詢可匯出 Excel。", icon: FileSpreadsheet, permission: "EXPORT_QUERY", path: "/queries" },
+  { title: "共用工作站管理", description: "登記及停用護理站共用平板。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/shared-workstations" },
   { title: "PIN 安全設定", description: "設定共用工作站員工 PIN 長度。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/quick-pin-policy" },
   { title: "權限管理", description: "使用角色與使用者權限控制功能。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/users" },
   { title: "稽核紀錄", description: "查看查詢與匯出的稽核紀錄。", icon: ClipboardList, permission: "VIEW_AUDIT", path: "/admin/audit" },
@@ -177,6 +179,7 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/account/password" element={<ChangePasswordPage />} />
+        <Route path="/admin/shared-workstations" element={<PermissionRoute permission="MANAGE_USERS"><SharedWorkstationsPage /></PermissionRoute>} />
         <Route path="/account/quick-pin" element={<QuickPinEnrollmentPage />} />
         <Route path="/admin/quick-pin-policy" element={<PermissionRoute permission="MANAGE_USERS"><QuickPinPolicyPage /></PermissionRoute>} />
         <Route

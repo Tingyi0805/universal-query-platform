@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { listSharedWorkstations, createSharedWorkstation, updateSharedWorkstation } from "./sharedWorkstation.repository.js";
 import { readQuickPinPolicy, updateQuickPinPolicy } from "./quickPinPolicy.repository.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -444,5 +445,47 @@ adminRouter.put("/quick-pin-policy", async (req, res, next) => {
       parameters: { pinLength: parsed.data.pinLength }, ...auditRequestContext(req),
     });
     res.json({ status: "OK", pinLength: parsed.data.pinLength, existingPinsMustBeReenrolled: true });
+  } catch (error) { next(error); }
+});
+
+const workstationSchema = z.object({
+  workstationCode: z.string().trim().min(2).max(100).regex(/^[A-Za-z0-9_-]+$/),
+  displayName: z.string().trim().min(1).max(200),
+});
+adminRouter.get("/shared-workstations", async (_req, res, next) => {
+  try {
+    const items = await listSharedWorkstations();
+    if (!items) { res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED" } }); return; }
+    res.json({ workstations: items });
+  } catch (error) { next(error); }
+});
+adminRouter.post("/shared-workstations", async (req, res, next) => {
+  try {
+    const parsed = workstationSchema.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "工作站代碼或名稱格式錯誤。" } }); return; }
+    const id = await createSharedWorkstation(parsed.data.workstationCode, parsed.data.displayName);
+    if (id === null) { res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED" } }); return; }
+    await tryWriteAuditEvent({ eventType: "SHARED_WORKSTATION_CREATED", userId: req.authUser?.id ?? null,
+      parameters: { workstationId: id, workstationCode: parsed.data.workstationCode }, ...auditRequestContext(req) });
+    res.status(201).json({ id, pinLoginEnabled: false });
+  } catch (error) {
+    if ([2601, 2627].includes((error as { number?: number }).number ?? 0)) {
+      res.status(409).json({ error: { code: "WORKSTATION_CODE_EXISTS", message: "工作站代碼已存在。" } }); return;
+    }
+    next(error);
+  }
+});
+adminRouter.put("/shared-workstations/:id", async (req, res, next) => {
+  try {
+    const id = z.coerce.number().int().positive().safeParse(req.params.id);
+    const body = z.object({ displayName: z.string().trim().min(1).max(200), isActive: z.boolean() }).safeParse(req.body);
+    if (!id.success || !body.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    const status = await updateSharedWorkstation(id.data, body.data.displayName, body.data.isActive);
+    if (status !== "OK") {
+      res.status(status === "NOT_CONFIGURED" ? 503 : 404).json({ error: { code: status } }); return;
+    }
+    await tryWriteAuditEvent({ eventType: "SHARED_WORKSTATION_UPDATED", userId: req.authUser?.id ?? null,
+      parameters: { workstationId: id.data, isActive: body.data.isActive }, ...auditRequestContext(req) });
+    res.json({ status: "OK", pinLoginEnabled: false });
   } catch (error) { next(error); }
 });
