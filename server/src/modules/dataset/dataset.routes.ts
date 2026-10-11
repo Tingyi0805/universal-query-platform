@@ -744,6 +744,10 @@ datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
     const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion);
     res.json({ status: "OK", version, columns: parsed.data.columns });
   } catch (error) {
+    if (error instanceof Error && error.message === "SENSITIVITY_COLUMN_NOT_FOUND") {
+      res.status(400).json({ error: { code: "SENSITIVITY_COLUMN_NOT_FOUND", message: "敏感欄位不在目前 Dataset 的已同步欄位清單中，請先執行查詢預覽同步欄位，再重新設定。" } });
+      return;
+    }
     if (error instanceof Error && error.message === "SENSITIVITY_AUDIT_TOO_LARGE") {
       res.status(400).json({ error: { code: "SENSITIVITY_AUDIT_TOO_LARGE", message: "敏感欄位規則異動內容超過稽核紀錄上限，請減少單次修改的欄位數量或縮短欄位名稱。" } });
       return;
