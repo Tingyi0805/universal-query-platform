@@ -19,6 +19,8 @@
 | 一般更新 | GET 取得 version 1；PUT 帶 expectedVersion 1 | HTTP 200、version 2；修改前後記錄完整 |
 | 雙人衝突 | A、B 同時 GET 相同版本；A 先 PUT；B 再以舊版本 PUT | A 成功；B HTTP 409；B 的規則不覆蓋 A |
 | 同時首次建立 | 新 Dataset 兩個工作階段同時以 version 0 PUT | 最多一筆成功；另一筆應衝突或需重試；無重複版本列 |
+| 欄位不存在 | PUT 使用 DatasetColumn 中不存在的 columnName | HTTP 400 SENSITIVITY_COLUMN_NOT_FOUND；規則、版本、稽核不變 |
+| 尚未同步欄位 | DatasetColumn 為空時 PUT 非空規則 | HTTP 400；先執行查詢預覽同步欄位 |
 | 不合法遮蔽 | sensitivityType=NATIONAL_ID、deviceMaskMode=NONE | HTTP 400；規則及版本不變 |
 | 重複欄位 | 同一請求重複 columnName | HTTP 400；規則及版本不變 |
 | 稽核內容過大 | 送出總異動內容超過 20,000 字元的合法規則 | HTTP 400 SENSITIVITY_AUDIT_TOO_LARGE；規則、版本、稽核均不變 |
