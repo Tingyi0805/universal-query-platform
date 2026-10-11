@@ -496,6 +496,18 @@ export function DashboardDisplayPage() {
   }, [preview]);
 
   // Continue retrying even when the first load fails; do not discard last successful data.
+  // Single-page device boards never advance pages, so refresh their snapshot
+  // explicitly. This also handles an empty result becoming non-empty later.
+  useEffect(() => {
+    if (!deviceMode || activationRequired || !deviceToken || !online || dataWarning ||
+        !preview || totalPages !== 1) return;
+    const timer = window.setTimeout(() => {
+      pageSnapshotId.current = null;
+      setSnapshotReloadKey((key) => key + 1);
+    }, refreshSeconds * 1000);
+    return () => window.clearTimeout(timer);
+  }, [deviceMode, activationRequired, deviceToken, online, dataWarning, preview, totalPages, refreshSeconds]);
+
   useEffect(() => {
     if (deviceMode && activationRequired) return;
     // Device playback retains the same snapshot within a page; periodic refresh only retries failures.
