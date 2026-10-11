@@ -246,32 +246,7 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
     // Legacy full-result device delivery must not bypass the page-scoped masking policy.
     res.status(410).json({ error: { code: "DASHBOARD_DEVICE_PAGE_REQUIRED", message: "此裝置須使用分頁安全播放介面。" } });
     return;
-    /*
-    const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    // Every preview/refresh request is a new disclosure; persist before returning rows.
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: null,
-      dashboardDeviceId: verification.device.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "DASHBOARD",
-      masked: false,
-      rows: result.rows,
-    });
-    const reportColumns = await listReportColumns(query.id);
 
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      dashboard,
-      query: { id: query.id, code: query.code, name: query.name },
-      reportColumns,
-      result,
-      disclosureId,
-    });
-    */
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
       res.status(400).json({
