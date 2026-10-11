@@ -13,7 +13,7 @@ export async function listDatasetSensitiveColumns(datasetId: number): Promise<Da
   return result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode }));
 }
 
-export async function replaceDatasetSensitiveColumns(datasetId: number, rules: DatasetSensitiveColumn[], userId: number): Promise<void> {
+export async function replaceDatasetSensitiveColumns(datasetId: number, rules: DatasetSensitiveColumn[], userId: number, auditContext: { ipAddress?: string | null; userAgent?: string | null }): Promise<void> {
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
   const transaction = new sql.Transaction(pool);
@@ -22,6 +22,8 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
     const exists = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT Id FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
     if (!exists.recordset.length) throw new Error("DATASET_NOT_FOUND");
+    const before = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+      .query("SELECT ColumnName AS columnName, SensitivityType AS sensitivityType, DeviceMaskMode AS deviceMaskMode FROM uqp.DatasetSensitiveColumn WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId ORDER BY ColumnName");
     await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("DELETE FROM uqp.DatasetSensitiveColumn WHERE DatasetId=@datasetId");
     for (const rule of rules) {
@@ -33,6 +35,14 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
         .input("userId", sql.BigInt, userId)
         .query("INSERT INTO uqp.DatasetSensitiveColumn (DatasetId, ColumnName, SensitivityType, DeviceMaskMode, UpdatedByUserId) VALUES (@datasetId,@columnName,@sensitivityType,@deviceMaskMode,@userId)");
     }
+    const details = JSON.stringify({ before: before.recordset, after: rules });
+    await new sql.Request(transaction)
+      .input("userId", sql.BigInt, userId)
+      .input("datasetId", sql.BigInt, datasetId)
+      .input("parametersJson", sql.NVarChar(sql.MAX), details)
+      .input("ipAddress", sql.NVarChar(100), auditContext.ipAddress ?? null)
+      .input("userAgent", sql.NVarChar(500), auditContext.userAgent?.slice(0, 500) ?? null)
+      .query("INSERT INTO uqp.AuditLog (EventType, EventCategory, IsImportant, UserId, DatasetId, Status, ParametersJson, IpAddress, UserAgent, CompletedAtUtc) VALUES ('DATASET_SENSITIVITY_UPDATED', 'CONFIG', 1, @userId, @datasetId, 'SUCCESS', @parametersJson, @ipAddress, @userAgent, SYSUTCDATETIME())");
     await transaction.commit();
   } catch (error) {
     await transaction.rollback();
