@@ -577,7 +577,7 @@ export function DashboardDesignerPage() {
       "setlocal",
       "rem Standalone Dashboard launcher. No separate PS1 or Device Token is embedded.",
       'set "UQP_LAUNCHER_PATH=%~f0"',
-      'powershell.exe -NoProfile -Command "$ErrorActionPreference=\'Stop\'; $source=[System.IO.File]::ReadAllText($env:UQP_LAUNCHER_PATH,[System.Text.Encoding]::UTF8); $marker=\'# UQP_EMBEDDED_POWERSHELL_START\'; $index=$source.IndexOf($marker,[StringComparison]::Ordinal); if($index -lt 0){throw \'Launcher payload missing\'}; Invoke-Expression $source.Substring($index+$marker.Length)"',
+      'powershell.exe -NoProfile -Command "$ErrorActionPreference=\'Stop\'; $source=[System.IO.File]::ReadAllText($env:UQP_LAUNCHER_PATH,[System.Text.Encoding]::UTF8); $marker=\'# UQP_EMBEDDED_POWERSHELL_START\'; $index=$source.LastIndexOf($marker,[StringComparison]::Ordinal); if($index -lt 0){throw \'Launcher payload missing\'}; Invoke-Expression $source.Substring($index+$marker.Length)"',
       "if errorlevel 1 pause",
       "exit /b %errorlevel%",
       marker,
