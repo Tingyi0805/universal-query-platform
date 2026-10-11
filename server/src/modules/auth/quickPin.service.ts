@@ -4,6 +4,23 @@ import { getPlatformDbPool } from "../../config/database.js";
 import { findUserById } from "./auth.repository.js";
 
 const PIN_COST = 12;
+export const DEFAULT_PIN_LENGTH = 6;
+
+export function isAllowedPinLength(value: number): boolean {
+  return Number.isInteger(value) && value >= 6 && value <= 8;
+}
+
+export function validateQuickPinLength(pin: string, length: number): boolean {
+  return isAllowedPinLength(length) && pin.length === length && validateQuickPin(pin);
+}
+
+export async function getConfiguredPinLength(): Promise<number> {
+  const pool = await getPlatformDbPool();
+  if (!pool) return DEFAULT_PIN_LENGTH;
+  const result = await pool.request().query("SELECT TOP (1) PinLength FROM uqp.QuickPinPolicy WHERE Id=1");
+  const length = Number(result.recordset[0]?.PinLength ?? DEFAULT_PIN_LENGTH);
+  return isAllowedPinLength(length) ? length : DEFAULT_PIN_LENGTH;
+}
 const blocked = new Set(["000000", "111111", "123456", "654321", "12345678", "87654321", "121212", "112233", "123123"]);
 
 export function validateQuickPin(pin: string): boolean {
@@ -14,7 +31,7 @@ export function validateQuickPin(pin: string): boolean {
 }
 
 export async function enrollQuickPin(userId: number, password: string, pin: string): Promise<"OK" | "INVALID_CREDENTIALS" | "PIN_WEAK" | "NOT_CONFIGURED"> {
-  if (!validateQuickPin(pin)) return "PIN_WEAK";
+  if (!validateQuickPinLength(pin, await getConfiguredPinLength())) return "PIN_WEAK";
   const user = await findUserById(userId);
   if (user === undefined) return "NOT_CONFIGURED";
   if (!user || !user.isActive || user.authProvider !== "LOCAL" || !user.passwordHash) return "INVALID_CREDENTIALS";
