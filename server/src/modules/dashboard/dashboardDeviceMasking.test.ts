@@ -53,3 +53,10 @@ test("dataset policy overrides weaker dashboard masks", () => {
   assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", DIAGNOSIS: "private", ROOM: "OR01" }], masks),
     [{ PAT_ID: "○○○○", ROOM: "OR01" }]);
 });
+
+test("dataset classification alone does not grant a field to device playback", () => {
+  const masks = enforceDatasetDeviceMasks({ ROOM: "NONE" }, [
+    { columnName: "PAT_ID", sensitivityType: "NATIONAL_ID", deviceMaskMode: "FULL" },
+  ]);
+  assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", ROOM: "OR01" }], masks), [{ ROOM: "OR01" }]);
+});
