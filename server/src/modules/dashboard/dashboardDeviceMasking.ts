@@ -79,3 +79,19 @@ export function enforceClassifiedDeviceMasks(masks: Record<string, DeviceMaskMod
   }
   return safe;
 }
+
+/** Dataset policy is authoritative; a dashboard cannot weaken it. */
+export function enforceDatasetDeviceMasks(
+  dashboardMasks: Record<string, DeviceMaskMode>,
+  datasetRules: Array<{ columnName: string; sensitivityType: string; deviceMaskMode: DeviceMaskMode }>,
+): Record<string, DeviceMaskMode> {
+  const result = { ...dashboardMasks };
+  for (const rule of datasetRules) {
+    if (rule.deviceMaskMode === "OMIT" || (rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
+      result[rule.columnName] = "OMIT";
+    } else if (rule.sensitivityType !== "OTHER") {
+      if (result[rule.columnName] === "NONE" || result[rule.columnName] === undefined) result[rule.columnName] = rule.deviceMaskMode;
+    }
+  }
+  return result;
+}
