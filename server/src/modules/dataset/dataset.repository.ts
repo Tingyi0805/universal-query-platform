@@ -86,9 +86,20 @@ export async function createDataset(input: DatasetInput): Promise<number> {
 export async function updateDataset(id: number, input: DatasetInput, userId?: number): Promise<void> {
   const pool = await requirePool();
   const tx = new sql.Transaction(pool);
-  await tx.begin();
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
   try {
+    // SQL or data-source changes may introduce new sensitive columns before
+    // preview metadata is refreshed. Require clearing/reviewing existing policy
+    // before allowing a query shape change; ordinary display edits remain allowed.
+    const existing = await new sql.Request(tx).input("id", sql.BigInt, id)
+      .query("SELECT SqlText, DataSourceId FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
+    if (existing.recordset.length &&
+        (String(existing.recordset[0].SqlText) !== input.sqlText || Number(existing.recordset[0].DataSourceId) !== input.dataSourceId)) {
+      const protectedRules = await new sql.Request(tx).input("id", sql.BigInt, id)
+        .query("SELECT TOP (1) ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@id");
+      if (protectedRules.recordset.length) throw new Error("DATASET_SENSITIVITY_REVIEW_REQUIRED");
+    }
     if (userId) {
       await snapshotDatasetVersion(tx, id, userId, "DATASET_UPDATE");
     }
