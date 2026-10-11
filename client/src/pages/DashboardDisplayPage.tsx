@@ -194,7 +194,7 @@ export function DashboardDisplayPage() {
           : `/dashboards/${dashboardId}/preview`,
         {
           method: "POST",
-          body: deviceMode ? JSON.stringify({ page, ...(page > 1 && pageSnapshotId.current ? { snapshotId: pageSnapshotId.current } : {}) }) : undefined,
+          body: deviceMode ? JSON.stringify({ page, ...(pageSnapshotId.current ? { snapshotId: pageSnapshotId.current } : {}) }) : undefined,
           headers: deviceMode
             ? { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" }
             : undefined,
@@ -489,6 +489,10 @@ export function DashboardDisplayPage() {
   useEffect(() => {
     setPage((current) => Math.min(Math.max(current, 1), totalPages));
   }, [totalPages]);
+
+  useEffect(() => {
+    if (deviceMode && page === 1) pageSnapshotId.current = null;
+  }, [deviceMode, dashboardId, page]);
 
   useEffect(() => {
     if (!preview) return;
