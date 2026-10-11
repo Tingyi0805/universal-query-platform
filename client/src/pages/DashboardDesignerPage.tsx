@@ -126,6 +126,7 @@ type FormState = {
   snapshotSeconds: string;
   estimatedRows: string;
   deviceColumnMasksJson: string;
+  deviceColumnTypesJson: string;
   isActive: boolean;
 };
 
@@ -148,6 +149,7 @@ const emptyForm: FormState = {
   snapshotSeconds: "",
   estimatedRows: "25",
   deviceColumnMasksJson: "{}",
+  deviceColumnTypesJson: "{}",
   isActive: true,
 };
 
@@ -320,7 +322,8 @@ export function DashboardDesignerPage() {
     try {
       const existing = JSON.parse(form.deviceColumnMasksJson || "{}") as Record<string, string>;
       if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error("INVALID");
-      setForm((current) => ({ ...current, deviceColumnMasksJson: JSON.stringify({ ...existing, [sensitiveColumn]: sensitiveMode }, null, 2) }));
+      const existingTypes = JSON.parse(form.deviceColumnTypesJson || "{}") as Record<string, string>;
+      setForm((current) => ({ ...current, deviceColumnMasksJson: JSON.stringify({ ...existing, [sensitiveColumn]: sensitiveMode }, null, 2), deviceColumnTypesJson: JSON.stringify({ ...existingTypes, [sensitiveColumn]: sensitiveType }, null, 2) }));
       setNotice(`已設定欄位 ${sensitiveColumn}（${sensitiveType}），請儲存 Dashboard 以套用。`);
     } catch {
       setError("敏感欄位 JSON 格式不正確，請先修正。");
@@ -347,6 +350,7 @@ export function DashboardDesignerPage() {
       snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
       estimatedRows: "25",
       deviceColumnMasksJson: JSON.stringify(item.parameters?.deviceColumnMasks ?? {}, null, 2),
+      deviceColumnTypesJson: JSON.stringify(item.parameters?.deviceColumnTypes ?? {}, null, 2),
       isActive: item.isActive,
     });
     setNotice("");
@@ -394,6 +398,14 @@ export function DashboardDesignerPage() {
         return;
       }
       parameters.deviceColumnMasks = deviceColumnMasks;
+      try {
+        const types = JSON.parse(form.deviceColumnTypesJson || "{}");
+        if (!types || typeof types !== "object" || Array.isArray(types)) throw new Error("INVALID");
+        parameters.deviceColumnTypes = types;
+      } catch {
+        setError("敏感資料分類格式不正確。");
+        return;
+      }
       parameters.snapshotKind = form.snapshotKind;
       if (form.snapshotSeconds.trim() !== "") parameters.snapshotSeconds = Number(form.snapshotSeconds);
 
