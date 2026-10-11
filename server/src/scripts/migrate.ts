@@ -17,6 +17,49 @@ function splitBatches(script: string): string[] {
     .filter(Boolean);
 }
 
+
+const manuallyVerifiableMigrations: Record<string, string> = {
+  "900_dashboard_device_archive.sql": `
+    SELECT CASE WHEN
+      COL_LENGTH('uqp.DashboardDisplayDevice','ArchivedAtUtc') IS NOT NULL
+      AND OBJECT_ID('uqp.DashboardDeviceArchivePolicy','U') IS NOT NULL
+      AND OBJECT_ID('uqp.DashboardDeviceArchiveHistory','U') IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM sys.indexes
+        WHERE object_id=OBJECT_ID('uqp.DashboardDisplayDevice')
+          AND name='IX_DashboardDisplayDevice_ArchiveSweep'
+      )
+      AND EXISTS (
+        SELECT 1 FROM sys.indexes
+        WHERE object_id=OBJECT_ID('uqp.DashboardDeviceArchiveHistory')
+          AND name='IX_DashboardDeviceArchiveHistory_Dashboard'
+      )
+      AND EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE parent_object_id=OBJECT_ID('uqp.DashboardDeviceArchivePolicy')
+          AND name='CK_DashboardDeviceArchivePolicy_Days'
+      )
+      AND EXISTS (
+        SELECT 1 FROM sys.check_constraints
+        WHERE parent_object_id=OBJECT_ID('uqp.DashboardDeviceArchiveHistory')
+          AND name='CK_DashboardDeviceArchiveHistory_Mode'
+      )
+      AND EXISTS (
+        SELECT 1 FROM sys.foreign_keys
+        WHERE parent_object_id=OBJECT_ID('uqp.DashboardDeviceArchivePolicy')
+          AND referenced_object_id=OBJECT_ID('uqp.Dashboard')
+      )
+    THEN 1 ELSE 0 END AS IsComplete
+  `,
+};
+
+async function isManuallyComplete(pool: sql.ConnectionPool, file: string): Promise<boolean | null> {
+  const query = manuallyVerifiableMigrations[file];
+  if (!query) return null;
+  const result = await pool.request().query(query);
+  return result.recordset[0]?.IsComplete === 1;
+}
+
 async function main() {
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("Platform SQL Server is not configured.");
@@ -43,12 +86,36 @@ async function main() {
   );
   const applied = new Set(appliedResult.recordset.map((row) => String(row.FileName)));
 
+  const args = process.argv.slice(2);
+  const command = args[0] ?? "apply";
+  if (!["apply", "status", "adopt"].includes(command)) throw new Error("Usage: db:migrate [status | adopt <exact-migration-file>]");
+  if (command === "adopt" && (args.length !== 2 || !files.includes(args[1]!))) throw new Error("Specify an existing migration filename for adoption.");
+  if (command !== "adopt" && args.length > (command === "apply" ? 0 : 1)) throw new Error("Unexpected migration arguments.");
+
   for (const file of files) {
+    if (command === "adopt" && file !== args[1]) continue;
+    if (command === "status") {
+      const verified = applied.has(file) ? null : await isManuallyComplete(pool, file);
+      logger.info({ migration: file, state: applied.has(file) ? "RECORDED" : verified === true ? "MANUALLY_APPLIED_UNRECORDED" : verified === false ? "NOT_COMPLETE" : "UNRECORDED_REQUIRES_REVIEW" }, "Migration status");
+      continue;
+    }
     if (applied.has(file)) {
       logger.info({ migration: file }, "Migration already applied");
       continue;
     }
 
+    if (command === "adopt") {
+      const complete = await isManuallyComplete(pool, file);
+      if (complete !== true) throw new Error(`Cannot adopt ${file}: full schema verification is unavailable or incomplete.`);
+      await pool.request().input("fileName", sql.NVarChar(255), file).query("INSERT INTO uqp.SchemaMigration (FileName) VALUES (@fileName)");
+      logger.info({ migration: file }, "Verified manually applied migration recorded");
+      continue;
+    }
+    const complete = await isManuallyComplete(pool, file);
+    if (complete === true) throw new Error(`Migration ${file} appears manually applied but is not recorded. Run db:migrate:status, then db:migrate:adopt -- ${file} after reviewing the schema.`);
+    if (complete === false && file in manuallyVerifiableMigrations) {
+      logger.info({ migration: file }, "Schema not complete; normal migration will run (may require manual reconciliation if partially applied)");
+    }
     const script = await readFile(path.join(migrationsDir, file), "utf8");
     const transaction = new sql.Transaction(pool);
     await transaction.begin();

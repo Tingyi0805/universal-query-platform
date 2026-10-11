@@ -9,6 +9,8 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "db:migrate": "tsx src/scripts/migrate.ts",
+    "db:migrate:status": "tsx src/scripts/migrate.ts status",
+    "db:migrate:adopt": "tsx src/scripts/migrate.ts adopt",
     "test": "node --import tsx --test src/query/selectOnlySql.test.ts src/query/queryCompiler.test.ts src/modules/dataset/parameter.service.test.ts"
   },
   "dependencies": {
