@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { getDatasetPatientAuditConfig, saveDatasetPatientAuditConfig } from "./patientAuditConfig.repository.js";
 import { z } from "zod";
 import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
@@ -664,4 +665,37 @@ datasetRouter.delete("/:id", async (req, res, next) => {
     }
     next(error);
   }
+});
+
+const patientAuditConfigSchema = z.object({
+  isEnabled: z.boolean(),
+  patientKeyColumn: z.string().trim().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
+});
+
+datasetRouter.get("/:id/patient-audit-config", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    if (!await getDataset(id.data)) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
+    res.json({ config: await getDatasetPatientAuditConfig(id.data) });
+  } catch (error) { next(error); }
+});
+
+datasetRouter.put("/:id/patient-audit-config", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const parsed = patientAuditConfigSchema.safeParse(req.body);
+    if (!id.success || !parsed.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    const dataset = await getDataset(id.data);
+    if (!dataset) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
+    await saveDatasetPatientAuditConfig(id.data, parsed.data);
+    await tryWriteAuditEvent({
+      eventType: "DATASET_PATIENT_AUDIT_CONFIG_UPDATED",
+      userId: req.authUser?.id ?? null,
+      datasetId: id.data,
+      parameters: { isEnabled: parsed.data.isEnabled, patientKeyColumn: parsed.data.patientKeyColumn },
+      ...auditRequestContext(req),
+    });
+    res.json({ status: "OK", config: parsed.data });
+  } catch (error) { next(error); }
 });
