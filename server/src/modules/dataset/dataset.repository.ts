@@ -217,13 +217,29 @@ export async function restoreDataset(id: number): Promise<void> {
 
 export async function deleteDataset(id: number): Promise<void> {
   const pool = await requirePool();
-  const impact = await getDatasetDeleteImpact(id);
-  if (!impact.canDelete) throw new Error("DATASET_IN_USE");
-
-  const result = await pool.request().input("id", sql.BigInt, id)
-    .query("DELETE FROM uqp.Dataset WHERE Id=@id; SELECT @@ROWCOUNT AS Affected;");
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
-    throw new Error("DATASET_NOT_FOUND");
+  const transaction = new sql.Transaction(pool);
+  await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    // Lock the parent Dataset row before checking references; FK inserts must
+    // validate this parent and cannot race with a successful deletion.
+    const result = await new sql.Request(transaction).input("id", sql.BigInt, id).query(`
+      IF NOT EXISTS (SELECT 1 FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id)
+        THROW 51021, 'DATASET_NOT_FOUND', 1;
+      IF EXISTS (SELECT 1 FROM uqp.QueryDefinition WITH (HOLDLOCK) WHERE DatasetId=@id)
+         OR EXISTS (SELECT 1 FROM uqp.DatasetParameter WITH (HOLDLOCK) WHERE LookupDatasetId=@id)
+         OR EXISTS (SELECT 1 FROM uqp.AuditLog WITH (HOLDLOCK) WHERE DatasetId=@id)
+        THROW 51022, 'DATASET_IN_USE', 1;
+      DELETE FROM uqp.Dataset WHERE Id=@id;
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+    if (Number(result.recordset[0]?.Affected ?? 0) !== 1) throw new Error("DATASET_NOT_FOUND");
+    await transaction.commit();
+  } catch (error) {
+    await transaction.rollback();
+    const number = (error as { number?: number })?.number;
+    if (number === 51021) throw new Error("DATASET_NOT_FOUND");
+    if (number === 51022 || number === 547) throw new Error("DATASET_IN_USE");
+    throw error;
   }
 }
 
