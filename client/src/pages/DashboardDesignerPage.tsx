@@ -1224,7 +1224,15 @@ export function DashboardDesignerPage() {
                 <textarea rows={5} value={form.deviceColumnMasksJson}
                   placeholder={'{"NationalId":"FULL","HealthStatus":"OMIT","Room":"NONE"}'}
                   onChange={(e) => setForm({ ...form, deviceColumnMasksJson: e.target.value })} />
-                <small>未設定欄位不傳送；NONE 原樣顯示、NAME 姓名、MRN 病歷號、PHONE 電話、GENERIC 部分遮蔽、FULL 全部遮蔽、OMIT 不傳送。此規則只適用固定播放裝置。</small>
+                <small>這裡設定「固定播放裝置」允許收到哪些查詢結果欄位，以及各欄位的遮蔽方式。左邊必須填 Dataset 查詢結果的實際欄位名稱（含 SQL AS 別名），不是固定的 NationalId；右邊填處理方式。未列出的欄位預設不傳送。</small>
+                <details>
+                  <summary>查看 JSON 填寫說明與範例</summary>
+                  <p>範例：查詢結果有 PAT_ID、PAT_NAME、HEALTH_STATUS、ROOM_NO 四個欄位，可填入：</p>
+                  <pre>{'{\\n  "PAT_ID": "FULL",\\n  "PAT_NAME": "NAME",\\n  "HEALTH_STATUS": "OMIT",\\n  "ROOM_NO": "NONE"\\n}'}</pre>
+                  <p>FULL：全部遮蔽；NAME：姓名部分遮蔽；MRN：病歷號部分遮蔽；PHONE：電話部分遮蔽；GENERIC：一般部分遮蔽；OMIT：完全不傳送；NONE：原樣顯示（僅適用已核准的非敏感資料）。</p>
+                  <p>格式提醒：使用英文雙引號、每組規則以逗號分隔，最後一組後面不可加逗號；欄位名稱區分大小寫。可以先使用上方欄位選擇功能自動產生規則。</p>
+                  <button type="button" onClick={() => setForm((current) => ({ ...current, deviceColumnMasksJson: JSON.stringify({ PAT_ID: "FULL", PAT_NAME: "NAME", HEALTH_STATUS: "OMIT", ROOM_NO: "NONE" }, null, 2) }))}>填入範例（會取代目前 JSON）</button>
+                </details>
               </label>
 
               <div className="dashboard-display-options wide">
