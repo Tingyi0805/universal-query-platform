@@ -34,6 +34,9 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     setMessage("已加入編輯清單，請按儲存規則。");
   };
   const save = async () => {
+    if (rules.some((rule) => rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
+      setMessage("敏感資料不可設定為原樣顯示。"); return;
+    }
     setBusy(true); setMessage("");
     try {
       const result = await apiRequest<{ columns: Rule[] }>(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: rules }) }, accessToken);
@@ -50,7 +53,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
       <option value="">請選擇欄位</option>
       {[...new Set([...previewColumns, ...rules.map((rule) => rule.columnName)])].map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
-    <label>敏感資料分類 <select value={category} onChange={(event) => setCategory(event.target.value)}>
+    <label>敏感資料分類 <select value={category} onChange={(event) => { const next = event.target.value; setCategory(next); if (next !== "OTHER" && mode === "NONE") setMode("OMIT"); }}>
       {categories.map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
     <label>播放遮蔽方式 <select value={mode} onChange={(event) => setMode(event.target.value)}>
