@@ -8,6 +8,9 @@ type Workstation = { id: number; workstationCode: string; displayName: string; i
 export function SharedWorkstationsPage() {
   const { accessToken } = useAuth();
   const [items, setItems] = useState<Workstation[]>([]);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [staff, setStaff] = useState<{ id: number; username: string; displayName: string; isActive: boolean }[]>([]);
+  const [allowedIds, setAllowedIds] = useState<number[]>([]);
   const [code, setCode] = useState(""); const [name, setName] = useState("");
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
@@ -15,6 +18,28 @@ export function SharedWorkstationsPage() {
     catch (e) { setError(e instanceof Error ? e.message : "載入失敗"); }
   }, [accessToken]);
   useEffect(() => { void load(); }, [load]);
+  async function selectWorkstation(id: number) {
+    setError(""); setSelectedId(id);
+    try {
+      const [users, assigned] = await Promise.all([
+        apiRequest<{ users: { id: number; username: string; displayName: string; isActive: boolean }[] }>("/admin/users", {}, accessToken),
+        apiRequest<{ users: { userId: number }[] }>(`/admin/shared-workstations/${id}/users`, {}, accessToken),
+      ]);
+      setStaff(users.users.filter(u => u.isActive));
+      setAllowedIds(assigned.users.map(u => u.userId));
+    } catch (e) { setError(e instanceof Error ? e.message : "載入允許使用者失敗"); }
+  }
+  async function saveAllowed() {
+    if (selectedId === null || !window.confirm("更新員工清單將撤銷此工作站的所有 Session。確定儲存？")) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await apiRequest(`/admin/shared-workstations/${selectedId}/users`, {
+        method: "PUT", body: JSON.stringify({ userIds: allowedIds }),
+      }, accessToken);
+      setNotice("允許使用的員工已更新；PIN 登入仍未啟用。");
+    } catch (e) { setError(e instanceof Error ? e.message : "儲存失敗"); }
+    finally { setBusy(false); }
+  }
   async function create(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
@@ -48,11 +73,24 @@ export function SharedWorkstationsPage() {
         {items.map(item => <div key={item.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: 12, borderBottom: "1px solid #ddd" }}>
           <strong>{item.displayName}</strong><span>{item.workstationCode}</span>
           <span>{item.isActive ? "已啟用（僅登記）" : "停用"}</span><span>PIN 登入：停用</span>
+          <button className="secondary-button" type="button" disabled={busy} onClick={() => void selectWorkstation(item.id)}>設定允許員工</button>
           <button className="secondary-button" type="button" disabled={busy} onClick={() => toggle(item)}>
             {item.isActive ? "停用工作站" : "啟用工作站登記"}
           </button>
         </div>)}
       </div>}
     </section>
+    {selectedId !== null && <section className="admin-section">
+      <h2>允許使用的員工（工作站 #{selectedId}）</h2>
+      <p>僅設定允許名單，不會啟用 PIN 登入。</p>
+      <div className="admin-form">
+        {staff.map(u => <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <input type="checkbox" checked={allowedIds.includes(u.id)}
+            onChange={e => setAllowedIds(current => e.target.checked ? [...current, u.id] : current.filter(id => id !== u.id))} />
+          {u.displayName}（{u.username}）
+        </label>)}
+        <button type="button" className="primary-button" disabled={busy} onClick={() => void saveAllowed()}>儲存允許員工</button>
+      </div>
+    </section>}
   </main>;
 }
