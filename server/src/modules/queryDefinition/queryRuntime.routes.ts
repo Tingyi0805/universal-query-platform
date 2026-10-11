@@ -289,6 +289,18 @@ queryRuntimeRouter.post("/:id/export/csv", requirePermission("EXPORT_QUERY"), as
     });
 
     const result = await executeSavedDataset(query.datasetId, body.data.values);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Fail closed: persist the exact exported patient rows before creating a downloadable file.
+    await auditPatientListIfConfigured({
+      datasetId: query.datasetId,
+      queryDefinitionId: query.id,
+      userId: req.authUser!.id,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "MANUAL",
+      masked: false,
+      rows: result.rows,
+    });
     const reportColumns = await listReportColumns(query.id);
     const buffer = createQueryCsv(result, reportColumns);
     const filename = buildCsvFilename(query.code);
@@ -298,6 +310,7 @@ queryRuntimeRouter.post("/:id/export/csv", requirePermission("EXPORT_QUERY"), as
       durationMs: Date.now() - started,
     }).catch(() => undefined);
 
+    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(buffer);
@@ -345,6 +358,18 @@ queryRuntimeRouter.post("/:id/export/excel", requirePermission("EXPORT_QUERY"), 
     });
 
     const result = await executeSavedDataset(query.datasetId, body.data.values);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Fail closed: persist the exact exported patient rows before creating a downloadable file.
+    await auditPatientListIfConfigured({
+      datasetId: query.datasetId,
+      queryDefinitionId: query.id,
+      userId: req.authUser!.id,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "MANUAL",
+      masked: false,
+      rows: result.rows,
+    });
     const reportColumns = await listReportColumns(query.id);
     const buffer = await createQueryExcel(query.name, result, reportColumns);
     const filename = buildExcelFilename(query.code);
@@ -354,6 +379,7 @@ queryRuntimeRouter.post("/:id/export/excel", requirePermission("EXPORT_QUERY"), 
       durationMs: Date.now() - started,
     }).catch(() => undefined);
 
+    res.setHeader("Cache-Control", "no-store");
     res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
     res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
     res.send(buffer);
