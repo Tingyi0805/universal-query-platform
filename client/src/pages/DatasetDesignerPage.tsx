@@ -445,16 +445,18 @@ export function DatasetDesignerPage() {
         canDelete: boolean;
         queryCount: number;
         lookupReferenceCount: number;
+        auditCount: number;
       }>(`/datasets/${form.id}/delete-impact`, {}, accessToken);
 
       if (!impact.canDelete) {
         const details = [
           impact.queryCount > 0 ? `${impact.queryCount} 個 Query` : "",
           impact.lookupReferenceCount > 0 ? `${impact.lookupReferenceCount} 個參數選項來源` : "",
+          impact.auditCount > 0 ? `${impact.auditCount} 筆稽核紀錄` : "",
         ].filter(Boolean).join("、");
 
         setError(
-          `Dataset「${form.name}」目前仍被 ${details} 使用，不能永久刪除，請改用「封存」。`,
+          `Dataset「${form.name}」仍有${details ? ` ${details}` : "其他關聯資料"}，不能永久刪除，請改用「封存」。`,
         );
         return;
       }
