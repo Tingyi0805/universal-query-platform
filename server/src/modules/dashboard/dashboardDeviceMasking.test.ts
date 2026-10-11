@@ -7,6 +7,7 @@ test("masks patient name, MRN, and phone before delivery", () => {
   assert.equal(maskDeviceValue("00001234", "MRN"), "0000○○34");
   assert.equal(maskDeviceValue("0912345678", "PHONE"), "0912○○○678");
   assert.equal(maskDeviceValue(null, "NAME"), null);
+  assert.equal(maskDeviceValue("Sensitive", "FULL"), "○○○○");
 });
 
 test("resolves masks from default layout", () => {
@@ -17,4 +18,5 @@ test("resolves masks from default layout", () => {
   assert.deepEqual(masks, { PatientName: "NAME", MedicalRecordNo: "MRN" });
   assert.deepEqual(maskDeviceRows([{ PatientName: "王小佑", MedicalRecordNo: "00001234" }], masks),
     [{ PatientName: "王○佑", MedicalRecordNo: "0000○○34" }]);
+  assert.deepEqual(maskDeviceRows([{ PatientName: "王小佑", Diagnosis: "private" }], masks), [{ PatientName: "王○佑" }]);
 });
