@@ -110,7 +110,7 @@ authRouter.post("/change-password", authenticateJwt, async (req, res, next) => {
 
 const pinEnrollSchema = z.object({
   password: z.string().min(1).max(200),
-  pin: z.string().regex(/^\d{6,8}$/),
+  pin: z.string().regex(/^\d{4,12}$/),
 });
 const pinRevokeSchema = z.object({ password: z.string().min(1).max(200) });
 
@@ -119,7 +119,7 @@ authRouter.post("/quick-pin/enroll", authenticateJwt, async (req, res, next) => 
   try {
     const parsed = pinEnrollSchema.safeParse(req.body);
     if (!parsed.success || !req.authUser) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "請輸入密碼及 6 至 8 位數 PIN。" } });
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "請輸入密碼及 4 至 12 位數 PIN。" } });
       return;
     }
     const status = await enrollQuickPin(req.authUser.id, parsed.data.password, parsed.data.pin);
