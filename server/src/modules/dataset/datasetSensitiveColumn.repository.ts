@@ -53,6 +53,16 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
     const exists = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT Id FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
     if (!exists.recordset.length) throw new Error("DATASET_NOT_FOUND");
+    // Validate against saved Dataset columns under the same transaction.
+    // A Dataset without synchronized column metadata cannot accept new rules.
+    if (rules.length > 0) {
+      const metadata = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+        .query("SELECT ColumnName FROM uqp.DatasetColumn WITH (HOLDLOCK) WHERE DatasetId=@datasetId");
+      const allowed = new Set(metadata.recordset.map((row) => String(row.ColumnName).toUpperCase()));
+      if (rules.some((rule) => !allowed.has(rule.columnName.toUpperCase()))) {
+        throw new Error("SENSITIVITY_COLUMN_NOT_FOUND");
+      }
+    }
     const revision = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT VersionNumber FROM uqp.DatasetSensitivePolicyVersion WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId");
     const currentVersion = revision.recordset.length ? Number(revision.recordset[0].VersionNumber) : 0;
