@@ -171,7 +171,13 @@ const dashboardSchema = z.object({
   showClock: z.boolean().default(true),
   showPageNumber: z.boolean().default(true),
   showCountdown: z.boolean().default(true),
-  parameters: z.record(z.unknown()).default({}),
+  parameters: z.record(z.unknown()).refine((value) => {
+    const masks = value.deviceColumnMasks;
+    if (masks === undefined) return true;
+    if (!masks || typeof masks !== "object" || Array.isArray(masks)) return false;
+    const entries = Object.entries(masks);
+    return entries.length <= 300 && entries.every(([key, mode]) => key.trim().length > 0 && key.length <= 256 && ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"].includes(String(mode)));
+  }, "敏感欄位規則格式不正確").default({}),
   isActive: z.boolean().default(true),
 });
 
