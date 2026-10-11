@@ -741,13 +741,7 @@ datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
     if (new Set(names).size !== names.length) {
       res.status(400).json({ error: { code: "DUPLICATE_SENSITIVE_COLUMN", message: "欄位名稱不可重複。" } }); return;
     }
-    const before = await listDatasetSensitiveColumns(id.data);
-    await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id);
-    await tryWriteAuditEvent({
-      eventType: "DATASET_SENSITIVITY_UPDATED", userId: req.authUser.id,
-      parameters: { datasetId: id.data, before, after: parsed.data.columns },
-      ...auditRequestContext(req),
-    });
+    await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req));
     res.json({ status: "OK", columns: await listDatasetSensitiveColumns(id.data) });
   } catch (error) { next(error); }
 });
