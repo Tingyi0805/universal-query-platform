@@ -60,3 +60,11 @@ test("dataset classification alone does not grant a field to device playback", (
   ]);
   assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", ROOM: "OR01" }], masks), [{ ROOM: "OR01" }]);
 });
+
+test("mask conflicts preserve stronger protection", () => {
+  const rules = [{ columnName: "PAT_ID", sensitivityType: "NATIONAL_ID", deviceMaskMode: "MRN" as const }];
+  assert.equal(enforceDatasetDeviceMasks({ PAT_ID: "FULL" }, rules).PAT_ID, "FULL");
+  assert.equal(enforceDatasetDeviceMasks({ PAT_ID: "NAME" }, rules).PAT_ID, "FULL");
+  assert.equal(enforceDatasetDeviceMasks({ PAT_ID: "NONE" }, rules).PAT_ID, "MRN");
+  assert.equal(enforceDatasetDeviceMasks({ PAT_ID: "OMIT" }, rules).PAT_ID, "OMIT");
+});
