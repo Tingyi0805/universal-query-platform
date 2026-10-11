@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt } from "./auth.middleware.js";
 import { changeOwnPassword, login } from "./auth.service.js";
+import { enrollQuickPin, revokeQuickPin } from "./quickPin.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 
@@ -105,4 +106,49 @@ authRouter.post("/change-password", authenticateJwt, async (req, res, next) => {
     }
     next(error);
   }
+});
+
+const pinEnrollSchema = z.object({
+  password: z.string().min(1).max(200),
+  pin: z.string().regex(/^\\d{6,8}$/),
+});
+const pinRevokeSchema = z.object({ password: z.string().min(1).max(200) });
+
+// Enrollment/revocation only. PIN sign-in is deliberately not enabled yet.
+authRouter.post("/quick-pin/enroll", authenticateJwt, async (req, res, next) => {
+  try {
+    const parsed = pinEnrollSchema.safeParse(req.body);
+    if (!parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "請輸入密碼及 6 至 8 位數 PIN。" } });
+      return;
+    }
+    const status = await enrollQuickPin(req.authUser.id, parsed.data.password, parsed.data.pin);
+    if (status !== "OK") {
+      await tryWriteAuditEvent({ eventType: "QUICK_PIN_ENROLL_FAILED", status: "FAILED", userId: req.authUser.id, errorCode: status, ...auditRequestContext(req) });
+      res.status(status === "NOT_CONFIGURED" ? 503 : status === "PIN_WEAK" ? 400 : 401)
+        .json({ error: { code: status, message: status === "PIN_WEAK" ? "PIN 過於簡單，請重新設定。" : "無法設定 PIN，請確認正式密碼及系統設定。" } });
+      return;
+    }
+    await tryWriteAuditEvent({ eventType: "QUICK_PIN_ENROLLED", userId: req.authUser.id, ...auditRequestContext(req) });
+    res.json({ status: "OK" });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/quick-pin/revoke", authenticateJwt, async (req, res, next) => {
+  try {
+    const parsed = pinRevokeSchema.safeParse(req.body);
+    if (!parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "請輸入正式密碼。" } });
+      return;
+    }
+    const status = await revokeQuickPin(req.authUser.id, parsed.data.password);
+    if (status !== "OK") {
+      await tryWriteAuditEvent({ eventType: "QUICK_PIN_REVOKE_FAILED", status: "FAILED", userId: req.authUser.id, errorCode: status, ...auditRequestContext(req) });
+      res.status(status === "NOT_CONFIGURED" ? 503 : 401)
+        .json({ error: { code: status, message: "驗證失敗，無法撤銷 PIN。" } });
+      return;
+    }
+    await tryWriteAuditEvent({ eventType: "QUICK_PIN_REVOKED", userId: req.authUser.id, ...auditRequestContext(req) });
+    res.json({ status: "OK" });
+  } catch (error) { next(error); }
 });
