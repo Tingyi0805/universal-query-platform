@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
+import { enforceClassifiedDeviceMasks, maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 
 test("masks patient name, MRN, and phone before delivery", () => {
   assert.equal(maskDeviceValue("王小佑", "NAME"), "王○佑");
@@ -36,4 +36,11 @@ test("layout cannot disclose an unapproved sensitive field", () => {
   const masks = resolveEffectiveDeviceMasks({ Room: "NONE", NationalId: "FULL" }, profiles);
   assert.deepEqual(maskDeviceRows([{ Diagnosis: "private", NationalId: "A123456789", Room: "OR01" }], masks),
     [{ NationalId: "○○○○", Room: "OR01" }]);
+});
+
+test("classified fields cannot be sent raw even from old saved configuration", () => {
+  const masks = enforceClassifiedDeviceMasks({ PAT_ID: "NONE", ROOM_NO: "NONE", HEALTH_STATUS: "FULL" },
+    { PAT_ID: "NATIONAL_ID", ROOM_NO: "OTHER", HEALTH_STATUS: "HEALTH" });
+  assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", ROOM_NO: "OR01", HEALTH_STATUS: "private" }], masks),
+    [{ ROOM_NO: "OR01", HEALTH_STATUS: "○○○○" }]);
 });
