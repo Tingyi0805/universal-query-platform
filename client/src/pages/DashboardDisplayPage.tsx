@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -158,6 +158,7 @@ export function DashboardDisplayPage() {
   const { accessToken } = useAuth();
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const latestDataRequest = useRef(0);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   const [error, setError] = useState("");
   const [dataWarning, setDataWarning] = useState("");
@@ -177,6 +178,7 @@ export function DashboardDisplayPage() {
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
+    const requestId = ++latestDataRequest.current;
     try {
       if (deviceMode && !deviceToken) {
         setActivationRequired(true);
@@ -197,6 +199,8 @@ export function DashboardDisplayPage() {
         },
         deviceMode ? null : accessToken,
       );
+      if (requestId !== latestDataRequest.current) return;
+      if (deviceMode && result.page !== page) return;
       setPreview(result);
       setLastUpdatedAt(new Date());
       setDataWarning("");
@@ -204,6 +208,7 @@ export function DashboardDisplayPage() {
       setError("");
       if (deviceMode) { setActivationRequired(false); setActivationError(""); }
     } catch (e) {
+      if (requestId !== latestDataRequest.current) return;
       if (deviceMode && (e as { status?: number }).status === 401) {
         setActivationRequired(true);
         setPreview(null);
@@ -211,6 +216,7 @@ export function DashboardDisplayPage() {
         setError("");
         setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
       } else {
+        if (deviceMode) setPreview(null);
         const message = e instanceof Error ? e.message : "Dashboard 載入失敗。";
         setDataWarning(message);
         setRetryDelaySeconds((previous) => Math.min(previous * 2, 60));
@@ -275,8 +281,12 @@ export function DashboardDisplayPage() {
   }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
 
   useEffect(() => {
-    void Promise.all([loadData(), loadLayout()]);
-  }, [loadData, loadLayout]);
+    void loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    void loadLayout();
+  }, [loadLayout]);
 
 
   useEffect(() => {
@@ -468,7 +478,7 @@ export function DashboardDisplayPage() {
   }, [dashboardId, pageSeconds, Boolean(preview)]);
 
   useEffect(() => {
-    if (!preview) return;
+    if (!preview || (deviceMode && (dataWarning || preview.page !== safePage))) return;
     const timer = window.setInterval(() => {
       setCountdown((current) => {
         if (current <= 1) {
@@ -479,7 +489,7 @@ export function DashboardDisplayPage() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [pageSeconds, totalPages, Boolean(preview)]);
+  }, [pageSeconds, totalPages, Boolean(preview), deviceMode, dataWarning, safePage, preview?.page]);
 
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
