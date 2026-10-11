@@ -564,10 +564,6 @@ export function DashboardDesignerPage() {
     return lines.join("\r\n") + "\r\n";
   }
 
-  function downloadDevicePowerShell(dashboardId: number, deviceId: number, settings: DevicePlaybackSettings) {
-    downloadLauncherFile("dashboard-" + dashboardId + "-device-" + deviceId + ".ps1", generatePositionedPowerShell(dashboardId, settings), true);
-  }
-
   function generateStandaloneBat(dashboardId: number, settings: DevicePlaybackSettings) {
     // A single .bat carries its PowerShell payload after a marker. No temporary .ps1 is written.
     // CMD exits before reaching the payload; PowerShell reads the BAT as UTF-8 and runs only the payload.
@@ -587,20 +583,6 @@ export function DashboardDesignerPage() {
 
   function downloadDeviceBat(dashboardId: number, deviceId: number, settings: DevicePlaybackSettings) {
     downloadLauncherFile("dashboard-" + dashboardId + "-device-" + deviceId + ".bat", generateStandaloneBat(dashboardId, settings));
-  }
-
-  function downloadPowerShellLauncher() {
-    const setup = fixedPlaybackSetup;
-    if (!setup) return;
-    const settings: DevicePlaybackSettings = {
-      browser: setup.launcherBrowser, screenNumber: Number(setup.launcherScreen),
-      fullscreen: setup.autoFullscreen, windowX: Number(setup.windowX), windowY: Number(setup.windowY),
-      windowWidth: Number(setup.windowWidth), windowHeight: Number(setup.windowHeight),
-    };
-    if (!Number.isInteger(settings.screenNumber) || settings.screenNumber < 1 || settings.screenNumber > 16) {
-      setError("螢幕序號必須為 1～16。"); return;
-    }
-    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-auto-screen.ps1", generatePositionedPowerShell(setup.dashboard.id, settings), true);
   }
 
   function downloadWindowsLauncher() {
@@ -697,6 +679,29 @@ export function DashboardDesignerPage() {
         },
         accessToken,
       );
+
+      // Save creation-time launcher choices so editing the device shows the actual values.
+      const initialPlayback: DevicePlaybackSettings = {
+        browser: setup.launcherBrowser, screenNumber: Number(setup.launcherScreen),
+        fullscreen: setup.autoFullscreen, windowX: Number(setup.windowX),
+        windowY: Number(setup.windowY), windowWidth: Number(setup.windowWidth),
+        windowHeight: Number(setup.windowHeight),
+      };
+      try {
+        await apiRequest(
+          `/dashboards/${setup.dashboard.id}/devices/${result.device.id}/playback-settings`,
+          { method: "PUT", body: JSON.stringify(initialPlayback) }, accessToken,
+        );
+      } catch (settingsError) {
+        popup?.close();
+        setIssuedToken({ dashboardId: setup.dashboard.id, deviceId: result.device.id, deviceName: result.device.deviceName, token: result.token });
+        setDeviceDashboard(setup.dashboard);
+        setFixedPlaybackSetup(null);
+        await loadDevices(setup.dashboard);
+        setError("裝置已建立，但播放設定儲存失敗。請於裝置管理重新設定。原因：" +
+          (settingsError instanceof Error ? settingsError.message : "未知錯誤"));
+        return;
+      }
 
       if (popup) {
       popup.localStorage.setItem(`uqp.dashboard.device.${setup.dashboard.id}`, result.token);
@@ -1363,20 +1368,15 @@ export function DashboardDesignerPage() {
                 </div>
 
                 <div className="fixed-playback-hint" role="note">
-                  <strong>新播放電腦首次執行 PowerShell 注意事項</strong>
-                  <p>若下載的 .ps1 被 Windows 封鎖，請先確認檔案來源及內容，再於該檔案所在資料夾開啟 PowerShell，執行：</p>
-                  <code>Unblock-File ".\\dashboard-{fixedPlaybackSetup.dashboard.id}-auto-screen.ps1"</code>
-                  <p>解除封鎖只針對指定檔案，不會關閉系統安全政策。若仍被院內 GPO 或簽章政策禁止執行，請聯絡資訊室，不要全面停用執行原則。</p>
-                  <p>請在實體播放電腦本機操作，並使用已啟用 Device Token 的同一 Chrome／Edge 設定檔。</p>
+                  <strong>單一 BAT 播放說明</strong>
+                  <p>Windows 啟動腳本 (.bat) 已內含 PowerShell 螢幕定位功能，無需額外 PS1。請先建立固定播放裝置，之後可在裝置管理下載專屬 BAT。</p>
+                  <p>請在實體播放電腦本機執行，並使用已啟用 Device Token 的同一 Chrome／Edge 設定檔。若院內執行政策限制 PowerShell，請聯絡資訊室。</p>
                 </div>
 
                 <div className="fixed-playback-modal-actions">
-                  <button className="secondary-button" type="button" onClick={downloadPowerShellLauncher}>
-                    下載 PowerShell 固定螢幕版 (.ps1)
-                  </button>
                   {fixedPlaybackSetup.screenMode === "script" && (
                     <button className="secondary-button" type="button" onClick={downloadWindowsLauncher}>
-                      下載 Windows 啟動腳本
+                      下載 BAT 啟動檔
                     </button>
                   )}
                   <button
@@ -1420,8 +1420,7 @@ export function DashboardDesignerPage() {
                   <p>請先儲存，再下載單一 BAT 即可。BAT 已內含 PowerShell 定位程式，不需額外 PS1。</p>
                 </div>
                 <div className="fixed-playback-modal-actions">
-                  <button className="secondary-button" type="button" onClick={() => downloadDevicePowerShell(deviceDashboard.id, playbackEditing.id, playbackSettings)}>下載 PS1</button>
-                  <button className="secondary-button" type="button" onClick={() => downloadDeviceBat(deviceDashboard.id, playbackEditing.id, playbackSettings)}>下載 BAT</button>
+                  <button className="secondary-button" type="button" onClick={() => downloadDeviceBat(deviceDashboard.id, playbackEditing.id, playbackSettings)}>下載 BAT 啟動檔</button>
                   <button className="primary-button" type="button" disabled={playbackBusy || playbackSettings.screenNumber < 1 || playbackSettings.screenNumber > 16} onClick={() => void saveDevicePlaybackSettings()}>{playbackBusy ? "儲存中…" : "儲存播放設定"}</button>
                 </div>
               </section>
