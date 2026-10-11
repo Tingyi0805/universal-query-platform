@@ -742,7 +742,7 @@ datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
       res.status(400).json({ error: { code: "DUPLICATE_SENSITIVE_COLUMN", message: "欄位名稱不可重複。" } }); return;
     }
     const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion);
-    res.json({ status: "OK", version, columns: await listDatasetSensitiveColumns(id.data) });
+    res.json({ status: "OK", version, columns: parsed.data.columns });
   } catch (error) {
     if (error instanceof Error && error.message === "SENSITIVITY_VERSION_CONFLICT") {
       res.status(409).json({ error: { code: "SENSITIVITY_VERSION_CONFLICT", message: "其他管理者已更新敏感欄位規則，請重新載入後再修改。" } });
