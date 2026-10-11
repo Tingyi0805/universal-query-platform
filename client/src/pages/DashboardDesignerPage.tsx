@@ -75,6 +75,8 @@ type FixedPlaybackSetup = {
   screens: ManagedScreen[];
   selectedScreenIndex: number;
   screenMode: "auto" | "manual" | "script";
+  launcherBrowser: "chrome" | "edge";
+  launcherScreen: string;
   windowX: string;
   windowY: string;
   windowWidth: string;
@@ -439,11 +441,26 @@ export function DashboardDesignerPage() {
       screens,
       selectedScreenIndex: 0,
       screenMode: "auto",
+      launcherBrowser: "chrome",
+      launcherScreen: "2",
       windowX: "1920",
       windowY: "0",
       windowWidth: "1920",
       windowHeight: "1080",
     });
+  }
+
+  function downloadLauncherFile(filename: string, script: string, powershell = false) {
+    const blob = new Blob([powershell ? "\uFEFF" + script : script], { type: "text/plain;charset=utf-8" });
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+    setNotice("已下載啟動腳本。請在播放電腦的相同瀏覽器設定檔啟用 Device Token，並於本機桌面測試螢幕位置。");
   }
 
   function downloadWindowsLauncher() {
@@ -455,46 +472,63 @@ export function DashboardDesignerPage() {
       return;
     }
     const [x, y, width, height] = coords;
-    const url = new URL(`/display/dashboards/${setup.dashboard.id}`, window.location.origin).href;
+    const url = new URL("/display/dashboards/" + setup.dashboard.id, window.location.origin).href;
+    const browser = setup.launcherBrowser === "chrome" ? "chrome.exe" : "msedge.exe";
+    const args = setup.autoFullscreen ? "--kiosk" : "--new-window";
     const script = [
       "@echo off",
-      "rem Dashboard fixed playback launcher - no Device Token stored in this file",
-      "rem First provision the Device Token in this browser profile on the playback PC.",
-      "rem Edge may reuse an existing window and ignore position hints.",
-      'start "" msedge.exe --new-window --window-position=' + x + ',' + y
-        + ' --window-size=' + width + ',' + height + ' "' + url + '"',
+      "rem Run on the playback PC, in the same Windows account and browser profile used to provision the Device Token.",
+      "rem No Device Token or password is stored here.",
+      "rem If browser window placement is ignored, close existing browser windows and try again.",
+      'start "" "' + browser + '" ' + args + " --window-position=" + x + "," + y
+        + " --window-size=" + width + "," + height + ' "' + url + '"',
       "",
     ].join("\r\n");
-    const blob = new Blob([script], { type: "text/plain;charset=utf-8" });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = `dashboard-${setup.dashboard.id}-windows-launcher.bat`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
-    setNotice("已產生 Windows 啟動腳本；請先在播放電腦同一瀏覽器設定 Device Token。");
+    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-windows-launcher.bat", script);
   }
 
   function downloadPowerShellLauncher() {
     const setup = fixedPlaybackSetup;
     if (!setup) return;
     const url = new URL("/display/dashboards/" + setup.dashboard.id, window.location.origin).href;
-    const lines = ["# Windows Dashboard launcher. No Device Token is included.","Add-Type -AssemblyName System.Windows.Forms","$screens = [System.Windows.Forms.Screen]::AllScreens","if ($screens.Count -eq 0) { throw 'No screens found' }","for ($i=0; $i -lt $screens.Count; $i++) {"," $s=$screens[$i]; Write-Host ('[{0}] {1} {2}x{3} X={4} Y={5} Primary={6}' -f ($i+1),$s.DeviceName,$s.Bounds.Width,$s.Bounds.Height,$s.Bounds.X,$s.Bounds.Y,$s.Primary)","}","$choice=Read-Host 'Screen number (default 1)'","if (!$choice) { $choice='1' }","$number=0","if (![int]::TryParse($choice,[ref]$number) -or $number -lt 1 -or $number -gt $screens.Count) { throw 'Invalid screen number' }","$s=$screens[$number-1]","$mode=Read-Host 'Mode: A=Auto, O=Offset, M=Manual (default A)'","if (!$mode) { $mode='A' }","$mode=$mode.ToUpperInvariant()","if ($mode -notin @('A','O','M')) { throw 'Invalid mode' }","function AskInt([string]$label,[int]$default) {"," $raw=Read-Host ($label+' (default '+$default+')')"," if (!$raw) { return $default }"," $parsed=0; if (![int]::TryParse($raw,[ref]$parsed)) { throw ('Invalid '+$label) }; return $parsed","}","$x=$s.Bounds.X; $y=$s.Bounds.Y","if ($mode -eq 'O') { $x+=AskInt 'X offset' 0; $y+=AskInt 'Y offset' 0 }","if ($mode -eq 'M') { $x=AskInt 'X position' $x; $y=AskInt 'Y position' $y }","$w=AskInt 'Window width' $s.Bounds.Width","$h=AskInt 'Window height' $s.Bounds.Height","if ($w -lt 200 -or $h -lt 200) { throw 'Minimum window size is 200x200' }","$edgePaths=@()","if (${env:ProgramFiles(x86)}) { $edgePaths+=Join-Path ${env:ProgramFiles(x86)} 'Microsoft\\Edge\\Application\\msedge.exe' }","if ($env:ProgramFiles) { $edgePaths+=Join-Path $env:ProgramFiles 'Microsoft\\Edge\\Application\\msedge.exe' }","$edge=$edgePaths | Where-Object { Test-Path $_ } | Select-Object -First 1","if (!$edge) { throw 'Microsoft Edge not found' }","$targetUrl=__URL__","$args=@('--new-window',('--window-position={0},{1}' -f $x,$y),('--window-size={0},{1}' -f $w,$h),$targetUrl)","Start-Process -FilePath $edge -ArgumentList $args","Write-Host 'Edge launch requested. Window placement may be affected by existing Edge windows.'"];
-    const script = lines.map((line) => line === "$targetUrl=__URL__"
-      ? "$targetUrl='" + url.replace(/'/g, "''") + "'"
-      : line).join("\r\n");
-    const blob = new Blob(["\uFEFF", script], { type: "text/plain;charset=utf-8" });
-    const objectUrl = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = objectUrl;
-    link.download = "dashboard-" + setup.dashboard.id + "-auto-screen.ps1";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(objectUrl);
-    setNotice("已下載 PowerShell 自動偵測版，請在播放電腦執行並選擇螢幕。");
+    const selected = Number(setup.launcherScreen);
+    if (!Number.isInteger(selected) || selected < 1 || selected > 16) {
+      setError("播放螢幕編號必須為 1～16。");
+      return;
+    }
+    // The PowerShell launcher uses local interactive-session monitor coordinates, not RDP virtual monitors.
+    const lines = [
+      "# Dashboard launcher: no Device Token or password is stored.",
+      "# Run in the local interactive Windows session, not through Remote Desktop.",
+      "Add-Type -AssemblyName System.Windows.Forms",
+      "$screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y })",
+      "if ($screens.Count -eq 0) { throw 'No screens found' }",
+      "$selected = " + selected,
+      "if ($selected -gt $screens.Count) { throw ('Requested screen ' + $selected + ' not found; detected ' + $screens.Count + '. Check local console vs RDP.') }",
+      "$s = $screens[$selected - 1]",
+      "$x = $s.Bounds.X; $y = $s.Bounds.Y",
+      "$w = $s.Bounds.Width; $h = $s.Bounds.Height",
+      "$browserName = '" + setup.launcherBrowser + "'",
+      "$paths = @()",
+      "if ($browserName -eq 'chrome') {",
+      " if ($env:ProgramFiles) { $paths += (Join-Path $env:ProgramFiles 'Google\\Chrome\\Application\\chrome.exe') }",
+      " if (\${env:ProgramFiles(x86)}) { $paths += (Join-Path \${env:ProgramFiles(x86)} 'Google\\Chrome\\Application\\chrome.exe') }",
+      " if ($env:LOCALAPPDATA) { $paths += (Join-Path $env:LOCALAPPDATA 'Google\\Chrome\\Application\\chrome.exe') }",
+      "} else {",
+      " if (\${env:ProgramFiles(x86)}) { $paths += (Join-Path \${env:ProgramFiles(x86)} 'Microsoft\\Edge\\Application\\msedge.exe') }",
+      " if ($env:ProgramFiles) { $paths += (Join-Path $env:ProgramFiles 'Microsoft\\Edge\\Application\\msedge.exe') }",
+      "}",
+      "$browser = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1",
+      "if (!$browser) { throw ('Browser not found: ' + $browserName) }",
+      "$targetUrl = '" + url.replace(/'/g, "''") + "'",
+      "$args = @(" + (setup.autoFullscreen ? "'--kiosk'" : "'--new-window'") + ", ('--window-position={0},{1}' -f $x,$y), ('--window-size={0},{1}' -f $w,$h), $targetUrl)",
+      "Start-Process -FilePath $browser -ArgumentList $args",
+      "Write-Host ('Launched ' + $browserName + ' on screen ' + $selected + ' at ' + $x + ',' + $y)",
+      "# To auto-start after Windows sign-in: create a shortcut to this script in shell:startup.",
+      "# Run the shortcut with: powershell.exe -NoProfile -File <path-to-script>",
+      "# Requires an interactive signed-in Windows account; does not configure Windows auto-logon.",
+    ];
+    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-auto-screen.ps1", lines.join("\r\n") + "\r\n", true);
   }
 
   async function createFixedPlaybackFromSetup() {
@@ -1088,6 +1122,17 @@ export function DashboardDesignerPage() {
                     </select>
                   </label>
 
+                  <label>
+                    <span>Windows 腳本瀏覽器</span>
+                    <select value={fixedPlaybackSetup.launcherBrowser} onChange={(e) => setFixedPlaybackSetup({ ...fixedPlaybackSetup, launcherBrowser: e.target.value as FixedPlaybackSetup["launcherBrowser"] })}>
+                      <option value="chrome">Google Chrome（預設）</option>
+                      <option value="edge">Microsoft Edge</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>PowerShell 播放螢幕（依左至右排序）</span>
+                    <input type="number" min={1} max={16} value={fixedPlaybackSetup.launcherScreen} onChange={(e) => setFixedPlaybackSetup({ ...fixedPlaybackSetup, launcherScreen: e.target.value })} />
+                  </label>
                   {fixedPlaybackSetup.screenMode === "script" && (
                     <>
                       {(["windowX", "windowY", "windowWidth", "windowHeight"] as const).map((field) => (
@@ -1101,8 +1146,8 @@ export function DashboardDesignerPage() {
                         </label>
                       ))}
                       <p className="fixed-playback-hint">
-                        下載的 .bat 不包含 Token。請先在播放電腦的同一 Edge 使用者設定檔啟用 Device Token，
-                        再執行腳本。視窗定位是 Edge 啟動提示，不保證每次生效。
+                        下載的 .bat 不包含 Token。請先在播放電腦的同一 Chrome／Edge 使用者設定檔啟用 Device Token，
+                        再執行腳本。視窗定位是瀏覽器啟動提示，不保證每次生效。PowerShell 版會依本機實際螢幕位置定位；請勿透過 RDP 測試。
                       </p>
                     </>
                   )}
@@ -1173,7 +1218,7 @@ export function DashboardDesignerPage() {
 
                 <div className="fixed-playback-modal-actions">
                   <button className="secondary-button" type="button" onClick={downloadPowerShellLauncher}>
-                    下載 PowerShell 自動偵測版 (.ps1)
+                    下載 PowerShell 固定螢幕版 (.ps1)
                   </button>
                   {fixedPlaybackSetup.screenMode === "script" && (
                     <button className="secondary-button" type="button" onClick={downloadWindowsLauncher}>
