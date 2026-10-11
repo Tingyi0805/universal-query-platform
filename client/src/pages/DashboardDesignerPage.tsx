@@ -197,6 +197,9 @@ export function DashboardDesignerPage() {
   const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
   const [queries, setQueries] = useState<QueryDefinitionRow[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [sensitiveColumn, setSensitiveColumn] = useState("");
+  const [sensitiveType, setSensitiveType] = useState("OTHER");
+  const [sensitiveMode, setSensitiveMode] = useState("FULL");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewDashboardId, setPreviewDashboardId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -311,6 +314,18 @@ export function DashboardDesignerPage() {
 
     return () => window.clearInterval(timer);
   }, [dashboards, loadPreview, previewDashboardId]);
+
+  function addSensitiveColumnRule() {
+    if (!sensitiveColumn) return;
+    try {
+      const existing = JSON.parse(form.deviceColumnMasksJson || "{}") as Record<string, string>;
+      if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error("INVALID");
+      setForm((current) => ({ ...current, deviceColumnMasksJson: JSON.stringify({ ...existing, [sensitiveColumn]: sensitiveMode }, null, 2) }));
+      setNotice(`已設定欄位 ${sensitiveColumn}（${sensitiveType}），請儲存 Dashboard 以套用。`);
+    } catch {
+      setError("敏感欄位 JSON 格式不正確，請先修正。");
+    }
+  }
 
   function editDashboard(item: DashboardRow) {
     setForm({
@@ -1171,6 +1186,37 @@ export function DashboardDesignerPage() {
                   </button>
                 )}
                 {effectiveSnapshotSeconds < estimatedCycleSeconds && <p role="alert">目前快照時間短於一輪播放時間，可能中途過期。</p>}
+              </div>
+
+              <div className="wide">
+                <strong>敏感資料欄位設定（依查詢結果選擇）</strong>
+                <p><small>先在下方預覽 Dashboard 取得欄位清單，再選擇欄位及處理方式。</small></p>
+                <label><span>Dataset 查詢結果欄位</span>
+                  <select value={sensitiveColumn} onChange={(e) => setSensitiveColumn(e.target.value)}>
+                    <option value="">請選擇欄位</option>
+                    {(previewDashboardId === form.id ? preview?.result.columns ?? [] : []).map((column) => (
+                      <option key={column.name} value={column.name}>{column.name}</option>
+                    ))}
+                  </select>
+                </label>
+                <label><span>敏感資料類型（管理辨識用途）</span>
+                  <select value={sensitiveType} onChange={(e) => setSensitiveType(e.target.value)}>
+                    <option value="OTHER">其他／自訂</option><option value="NAME">姓名</option>
+                    <option value="NATIONAL_ID">身分證字號</option><option value="MRN">病歷號</option>
+                    <option value="PHONE">電話</option><option value="BIRTH_DATE">出生日期</option>
+                    <option value="ADDRESS">地址</option><option value="DIAGNOSIS">診斷</option>
+                    <option value="HEALTH">健康狀況</option><option value="LAB">檢驗結果</option>
+                  </select>
+                </label>
+                <label><span>播放裝置資料處理方式</span>
+                  <select value={sensitiveMode} onChange={(e) => setSensitiveMode(e.target.value)}>
+                    <option value="OMIT">不傳送（最安全）</option><option value="FULL">全部遮蔽</option>
+                    <option value="NAME">姓名部分遮蔽</option><option value="MRN">病歷號部分遮蔽</option>
+                    <option value="PHONE">電話部分遮蔽</option><option value="GENERIC">一般部分遮蔽</option>
+                    <option value="NONE">原樣顯示（僅核准非敏感資料）</option>
+                  </select>
+                </label>
+                <button type="button" disabled={!sensitiveColumn} onClick={addSensitiveColumnRule}>加入／更新欄位規則</button>
               </div>
 
               <label className="wide">
