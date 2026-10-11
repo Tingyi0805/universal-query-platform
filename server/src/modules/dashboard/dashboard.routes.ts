@@ -302,6 +302,9 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       res.status(409).json({ error: { code: "DASHBOARD_QUERY_NOT_AVAILABLE", message: "Dashboard 使用的 Query 目前不可執行。" } });
       return;
     }
+    // Resolve one consistent policy revision before serving or creating a page
+    // snapshot. A policy update invalidates existing snapshot IDs immediately.
+    const sensitivity = await getDatasetSensitivitySnapshot(query.datasetId);
     let snapshot = pageInput.data.snapshotId
       ? getDashboardPageSnapshot(pageInput.data.snapshotId, verification.device.id, id.data)
       : null;
@@ -309,7 +312,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已過期，請重新載入。" } });
       return;
     }
-    if (snapshot && (snapshot.queryId !== query.id || snapshot.datasetId !== query.datasetId)) {
+    if (snapshot && (snapshot.queryId !== query.id || snapshot.datasetId !== query.datasetId || snapshot.sensitivityVersion !== sensitivity.version)) {
       res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已變更，請重新載入。" } });
       return;
     }
@@ -335,6 +338,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
         ttlSeconds: Math.max(resolveDashboardSnapshotSeconds(kind, configuredSeconds), minimumSnapshotSeconds),
         deviceId: verification.device.id, dashboardId: id.data,
         queryId: query.id, datasetId: query.datasetId,
+        sensitivityVersion: sensitivity.version,
         sourceScope: `datasource:${dataset.dataSourceId}`,
         columns: result.columns, rows: result.rows,
       });
@@ -348,7 +352,6 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
     const layout = await getDashboardLayout(id.data);
     const dashboardMasks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
-    const sensitivity = await getDatasetSensitivitySnapshot(query.datasetId);
     const masks = enforceDatasetDeviceMasks(dashboardMasks, sensitivity.columns);
     const rows = maskDeviceRows(rawRows, masks);
     const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
