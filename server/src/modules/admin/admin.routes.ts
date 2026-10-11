@@ -1,4 +1,5 @@
 import bcrypt from "bcryptjs";
+import { readQuickPinPolicy, updateQuickPinPolicy } from "./quickPinPolicy.repository.js";
 import { Router } from "express";
 import { z } from "zod";
 import { env } from "../../config/env.js";
@@ -413,4 +414,35 @@ adminRouter.put("/roles/:id", async (req, res, next) => {
     }
     next(error);
   }
+});
+
+adminRouter.get("/quick-pin-policy", async (_req, res, next) => {
+  try {
+    const policy = await readQuickPinPolicy();
+    if (!policy) {
+      res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED", message: "平台資料庫尚未設定。" } });
+      return;
+    }
+    res.json(policy);
+  } catch (error) { next(error); }
+});
+
+adminRouter.put("/quick-pin-policy", async (req, res, next) => {
+  try {
+    const parsed = z.object({ pinLength: z.number().int().min(6).max(8) }).safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "PIN 長度必須為 6、7 或 8 位數。" } });
+      return;
+    }
+    const updated = await updateQuickPinPolicy(parsed.data.pinLength);
+    if (!updated) {
+      res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED", message: "平台資料庫尚未設定。" } });
+      return;
+    }
+    await tryWriteAuditEvent({
+      eventType: "QUICK_PIN_POLICY_UPDATED", userId: req.authUser?.id ?? null,
+      parameters: { pinLength: parsed.data.pinLength }, ...auditRequestContext(req),
+    });
+    res.json({ status: "OK", pinLength: parsed.data.pinLength, existingPinsMustBeReenrolled: true });
+  } catch (error) { next(error); }
 });
