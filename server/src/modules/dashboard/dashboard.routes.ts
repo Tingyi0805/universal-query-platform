@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { maskDeviceRows, resolveDeviceColumnMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
@@ -349,7 +350,11 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE", message: "頁碼超出資料範圍。" } });
       return;
     }
-    const rows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
+    const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
+    const layout = await getDashboardLayout(id.data);
+    const masks = resolveDeviceColumnMasks(layout.profiles);
+    const rows = maskDeviceRows(rawRows, masks);
+    const masked = Object.values(masks).some((mode) => mode !== "NONE");
     const disclosureId = await auditPatientListIfConfigured({
       datasetId: query.datasetId,
       queryDefinitionId: query.id,
@@ -358,7 +363,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       sourceScope: snapshot.sourceScope,
       deliveryType: "PAGE",
       pageNumber: pageInput.data.page,
-      masked: false,
+      masked,
       rows,
     });
     res.setHeader("Cache-Control", "no-store");
