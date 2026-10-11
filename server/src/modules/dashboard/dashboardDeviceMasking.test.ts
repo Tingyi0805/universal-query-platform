@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { enforceClassifiedDeviceMasks, maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
+import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 
 test("masks patient name, MRN, and phone before delivery", () => {
   assert.equal(maskDeviceValue("王小佑", "NAME"), "王○佑");
@@ -43,4 +43,13 @@ test("classified fields cannot be sent raw even from old saved configuration", (
     { PAT_ID: "NATIONAL_ID", ROOM_NO: "OTHER", HEALTH_STATUS: "HEALTH" });
   assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", ROOM_NO: "OR01", HEALTH_STATUS: "private" }], masks),
     [{ ROOM_NO: "OR01", HEALTH_STATUS: "○○○○" }]);
+});
+
+test("dataset policy overrides weaker dashboard masks", () => {
+  const masks = enforceDatasetDeviceMasks({ PAT_ID: "NONE", DIAGNOSIS: "NAME", ROOM: "NONE" }, [
+    { columnName: "PAT_ID", sensitivityType: "NATIONAL_ID", deviceMaskMode: "FULL" },
+    { columnName: "DIAGNOSIS", sensitivityType: "DIAGNOSIS", deviceMaskMode: "OMIT" },
+  ]);
+  assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", DIAGNOSIS: "private", ROOM: "OR01" }], masks),
+    [{ PAT_ID: "○○○○", ROOM: "OR01" }]);
 });
