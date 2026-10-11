@@ -53,7 +53,7 @@ export function QuickPinEnrollmentPage() {
     setBusy(true);
     try {
       await apiRequest("/auth/quick-pin/enroll", { method: "POST", body: JSON.stringify({ password, pin }) }, accessToken);
-      setNotice("個人 PIN 已註冊。工作站 PIN 快速登入尚未啟用。");
+      setNotice("個人 PIN 已設定或更新，舊 PIN 已失效。工作站 PIN 快速登入尚未啟用。");
       setPassword(""); setPin(""); setConfirmPin(""); setStage("enter");
     } catch (err) { setError(err instanceof Error ? err.message : "PIN 設定失敗"); }
     finally { setBusy(false); }
@@ -71,8 +71,8 @@ export function QuickPinEnrollmentPage() {
   }
 
   return <main className="page-shell">
-    <div className="page-toolbar"><div><p className="eyebrow">Account Security</p><h1>設定個人 PIN</h1>
-      <p className="subtitle">使用正式密碼驗證後註冊；適用於本機帳號。</p></div>
+    <div className="page-toolbar"><div><p className="eyebrow">Account Security</p><h1>設定或變更個人 PIN</h1>
+      <p className="subtitle">可隨時以正式密碼重新設定個人 PIN；適用於本機帳號。</p></div>
       <Link className="secondary-button link-button" to="/">返回首頁</Link></div>
     {error && <section className="form-error" role="alert">{error}</section>}
     {notice && <section className="notice" role="status">{notice}</section>}
@@ -88,7 +88,7 @@ export function QuickPinEnrollmentPage() {
           onClick={() => { setStage("enter"); setConfirmPin(""); setError(""); }}>返回修改</button>}
         <button type="submit" className="primary-button" disabled={!ready || busy || !password ||
           (stage === "enter" ? pin.length !== length : confirmPin.length !== length)}>
-          {busy ? "處理中…" : stage === "enter" ? "下一步：確認 PIN" : "完成 PIN 註冊"}
+          {busy ? "處理中…" : stage === "enter" ? "下一步：確認 PIN" : "儲存新 PIN（取代舊 PIN）"}
         </button>
         <button type="button" className="secondary-button" disabled={busy || !password} onClick={revoke}>撤銷既有 PIN</button>
       </div>
