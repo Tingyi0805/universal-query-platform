@@ -318,7 +318,8 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       return;
     }
     if (!snapshot) {
-      const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
+      const { snapshotKind: _snapshotKind, snapshotSeconds: _snapshotSeconds, ...queryParameters } = dashboard.parameters;
+      const result = await executeSavedDataset(query.datasetId, queryParameters);
       const dataset = await getDataset(query.datasetId);
       if (!dataset) throw new Error("DATASET_NOT_FOUND");
       const snapshotConfig = dashboard.parameters;
