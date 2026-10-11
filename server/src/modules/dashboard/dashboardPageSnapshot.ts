@@ -9,13 +9,14 @@ export type DashboardPageSnapshot = {
   sourceScope: string;
   createdAt: number;
   ttlMs: number;
+  byteSize: number;
   columns: { name: string }[];
   rows: Record<string, unknown>[];
 };
 
 // Process-local cache: no durable patient data, no cross-node guarantees.
 const MAX_SNAPSHOTS = 100;
-const DEFAULT_TTL_MS = 60_000;
+const MAX_TOTAL_BYTES = 32 * 1024 * 1024;
 const MAX_TTL_MS = 3_600_000;
 const MAX_ROWS = 10_000;
 const MAX_BYTES = 8 * 1024 * 1024;
@@ -30,22 +31,25 @@ export function resolveDashboardSnapshotSeconds(kind: DashboardSnapshotKind, con
 }
 const snapshots = new Map<string, DashboardPageSnapshot>();
 
-export function createDashboardPageSnapshot(input: Omit<DashboardPageSnapshot, "id" | "createdAt" | "ttlMs"> & { ttlSeconds?: number }): DashboardPageSnapshot {
-  if (input.rows.length > MAX_ROWS || Buffer.byteLength(JSON.stringify(input.rows), "utf8") > MAX_BYTES) {
+export function createDashboardPageSnapshot(input: Omit<DashboardPageSnapshot, "id" | "createdAt" | "ttlMs" | "byteSize"> & { ttlSeconds?: number }): DashboardPageSnapshot {
+  const byteSize = Buffer.byteLength(JSON.stringify({ rows: input.rows, columns: input.columns }), "utf8");
+  if (input.rows.length > MAX_ROWS || byteSize > MAX_BYTES) {
     throw new Error("DASHBOARD_SNAPSHOT_TOO_LARGE");
   }
   const now = Date.now();
   for (const [key, item] of snapshots) {
     if (now - item.createdAt > item.ttlMs) snapshots.delete(key);
   }
-  while (snapshots.size >= MAX_SNAPSHOTS) {
+  let totalBytes = Array.from(snapshots.values()).reduce((total, item) => total + item.byteSize, 0);
+  while (snapshots.size >= MAX_SNAPSHOTS || totalBytes + byteSize > MAX_TOTAL_BYTES) {
     const oldest = snapshots.keys().next().value;
     if (oldest === undefined) break;
+    totalBytes -= snapshots.get(oldest)?.byteSize ?? 0;
     snapshots.delete(oldest);
   }
   const { ttlSeconds, ...data } = input;
   const ttlMs = Math.min(MAX_TTL_MS, Math.max(10_000, (ttlSeconds ?? 60) * 1000));
-  const snapshot: DashboardPageSnapshot = { ...data, id: randomUUID(), createdAt: now, ttlMs };
+  const snapshot: DashboardPageSnapshot = { ...data, id: randomUUID(), createdAt: now, ttlMs, byteSize };
   snapshots.set(snapshot.id, snapshot);
   return snapshot;
 }
