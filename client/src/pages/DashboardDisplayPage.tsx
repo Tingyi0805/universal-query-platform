@@ -161,6 +161,7 @@ export function DashboardDisplayPage() {
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const latestDataRequest = useRef(0);
+  const latestLayoutRequest = useRef(0);
   const pageSnapshotId = useRef<string | null>(null);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   const [error, setError] = useState("");
@@ -270,6 +271,7 @@ export function DashboardDisplayPage() {
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
+    const requestId = ++latestLayoutRequest.current;
 
     if (previewKey) {
       try {
@@ -305,9 +307,11 @@ export function DashboardDisplayPage() {
         },
         deviceMode ? null : accessToken,
       );
+      if (requestId !== latestLayoutRequest.current || (deviceMode && !navigator.onLine)) return;
       setProfiles(result.profiles);
       setLayoutWarning("");
     } catch (e) {
+      if (requestId !== latestLayoutRequest.current) return;
       if (deviceMode && (e as { status?: number }).status === 401) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
@@ -524,6 +528,7 @@ export function DashboardDisplayPage() {
     };
     const onOffline = () => {
       ++activationAttempt.current;
+      ++latestLayoutRequest.current;
       setActivationBusy(false);
       ++latestDataRequest.current;
       setOnline(false);
@@ -677,6 +682,7 @@ export function DashboardDisplayPage() {
       if (attempt !== activationAttempt.current || !navigator.onLine) return;
       pageSnapshotId.current = null;
       ++latestDataRequest.current;
+      ++latestLayoutRequest.current;
       setPreview(null);
       setProfiles([]);
       setPage(1);
