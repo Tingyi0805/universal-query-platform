@@ -118,11 +118,11 @@ export async function getDashboard(id: number) {
 }
 
 /** A previously classified Dataset must not be activated after its rules were cleared. */
-async function assertSensitivityReadyForActivation(pool: sql.ConnectionPool, queryDefinitionId: number): Promise<void> {
-  const result = await pool.request().input("queryDefinitionId", sql.BigInt, queryDefinitionId).query(`
+async function assertSensitivityReadyForActivation(tx: sql.Transaction, queryDefinitionId: number): Promise<void> {
+  const result = await new sql.Request(tx).input("queryDefinitionId", sql.BigInt, queryDefinitionId).query(`
     SELECT TOP (1) d.Id
     FROM uqp.QueryDefinition q
-    INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
+    INNER JOIN uqp.Dataset d WITH (UPDLOCK, HOLDLOCK) ON d.Id=q.DatasetId
     INNER JOIN uqp.DatasetSensitivePolicyVersion v ON v.DatasetId=d.Id
     WHERE q.Id=@queryDefinitionId AND v.VersionNumber > 0
       AND NOT EXISTS (SELECT 1 FROM uqp.DatasetSensitiveColumn c WHERE c.DatasetId=d.Id)
