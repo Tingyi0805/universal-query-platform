@@ -14,6 +14,7 @@ import { DashboardDisplayPage } from "./pages/DashboardDisplayPage";
 import { DashboardLayoutDesignerPage } from "./pages/DashboardLayoutDesignerPage";
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
+import { QuickPinEnrollmentPage } from "./pages/QuickPinEnrollmentPage";
 import { QuickPinPolicyPage } from "./pages/QuickPinPolicyPage";
 import { QueryPortalPage } from "./pages/QueryPortalPage";
 import { QueryPublisherPage } from "./pages/QueryPublisherPage";
@@ -88,6 +89,7 @@ function HomePage() {
 
         <div className="user-panel">
           <span>{user?.displayName}</span>
+          <Link className="secondary-button link-button" to="/account/quick-pin">個人 PIN</Link>
           <Link className="secondary-button link-button" to="/account/password">變更密碼</Link>
           <button className="secondary-button" type="button" onClick={logout}>
             <LogOut size={16} />
@@ -175,6 +177,7 @@ export default function App() {
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<HomePage />} />
         <Route path="/account/password" element={<ChangePasswordPage />} />
+        <Route path="/account/quick-pin" element={<QuickPinEnrollmentPage />} />
         <Route path="/admin/quick-pin-policy" element={<PermissionRoute permission="MANAGE_USERS"><QuickPinPolicyPage /></PermissionRoute>} />
         <Route
           path="/queries"
