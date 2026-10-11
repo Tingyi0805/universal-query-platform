@@ -25,6 +25,8 @@
 | 遮蔽傳送 | Dashboard 核准欄位，Dataset 設 FULL 或 OMIT | 播放 API 僅回傳允許且經遮蔽的資料 |
 | 未核准欄位 | Dataset 設 FULL，但 Dashboard 未核准 | 播放 API 不傳送該欄位 |
 | 規則衝突 | Dashboard 設 NAME、Dataset 設 MRN | 播放 API 採 FULL |
+| 永久刪除稽核保護 | Dataset 有 AuditLog 記錄時嘗試永久刪除 | delete-impact 回傳 auditCount 大於 0；API 拒絕刪除，建議封存；稽核紀錄保留 |
+| 永久刪除併發 | 測試 Dataset 無引用，另一工作階段同時建立關聯或稽核紀錄 | 刪除與關聯建立不能同時成功；資料庫外鍵與交易必須維持一致 |
 | 規則更新後播放 | 播放中修改 Dataset 規則，再取得下一頁 | 依目前伺服器實作重新套用最新規則；檢查回傳值及欄位中繼資料 |
 
 ## 稽核與版本查核（測試 Dataset ID 請自行替換）
