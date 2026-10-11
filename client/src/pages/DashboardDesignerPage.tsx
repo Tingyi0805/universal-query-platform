@@ -637,6 +637,18 @@ export function DashboardDesignerPage() {
       return;
     }
 
+    if (setup.screenMode === "script") {
+      const screenNumber = Number(setup.launcherScreen);
+      const numbers = [setup.windowX, setup.windowY, setup.windowWidth, setup.windowHeight].map(Number);
+      if (!Number.isInteger(screenNumber) || screenNumber < 1 || screenNumber > 16 ||
+          numbers.some((value) => !Number.isSafeInteger(value)) ||
+          numbers[2] < 200 || numbers[2] > 7680 || numbers[3] < 200 || numbers[3] > 4320 ||
+          Math.abs(numbers[0]) > 32768 || Math.abs(numbers[1]) > 32768) {
+        setError("播放螢幕或視窗座標不正確，請修正後再建立裝置。");
+        return;
+      }
+    }
+
     const restriction = setup.restriction.trim();
     if (setup.enforceIpRestriction && !restriction) {
       setError("啟用來源 IP 限制時，必須輸入允許 IP 或 IPv4 CIDR。");
