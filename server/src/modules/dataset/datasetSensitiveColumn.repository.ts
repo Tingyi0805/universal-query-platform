@@ -13,6 +13,30 @@ export async function listDatasetSensitiveColumns(datasetId: number): Promise<Da
   return result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode }));
 }
 
+/** Read revision and rows under the same dataset row lock to avoid torn GET responses. */
+export async function getDatasetSensitivitySnapshot(datasetId: number): Promise<{ columns: DatasetSensitiveColumn[]; version: number }> {
+  const pool = await getPlatformDbPool();
+  if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
+  const transaction = new sql.Transaction(pool);
+  await transaction.begin(sql.ISOLATION_LEVEL.REPEATABLE_READ);
+  try {
+    const exists = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+      .query("SELECT Id FROM uqp.Dataset WITH (HOLDLOCK) WHERE Id=@datasetId");
+    if (!exists.recordset.length) throw new Error("DATASET_NOT_FOUND");
+    const revision = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+      .query("SELECT VersionNumber FROM uqp.DatasetSensitivePolicyVersion WHERE DatasetId=@datasetId");
+    const result = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+      .query("SELECT ColumnName, SensitivityType, DeviceMaskMode FROM uqp.DatasetSensitiveColumn WHERE DatasetId=@datasetId ORDER BY ColumnName");
+    const columns = result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode }));
+    const version = revision.recordset.length ? Number(revision.recordset[0].VersionNumber) : 0;
+    await transaction.commit();
+    return { columns, version };
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+}
+
 export async function getDatasetSensitivityVersion(datasetId: number): Promise<number> {
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
