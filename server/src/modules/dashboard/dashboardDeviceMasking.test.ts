@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks } from "./dashboardDeviceMasking.js";
+import { maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 
 test("masks patient name, MRN, and phone before delivery", () => {
   assert.equal(maskDeviceValue("王小佑", "NAME"), "王○佑");
@@ -25,5 +25,15 @@ test("accepts custom administrator rules and ignores unknown modes", () => {
   const rules = resolveConfiguredDeviceMasks({ NationalId: "FULL", HealthStatus: "OMIT", Room: "NONE", Unknown: "INVALID" });
   assert.deepEqual(rules, { NationalId: "FULL", HealthStatus: "OMIT", Room: "NONE" });
   assert.deepEqual(maskDeviceRows([{ NationalId: "A123456789", HealthStatus: "private", Room: "OR01", Extra: "private" }], rules),
+    [{ NationalId: "○○○○", Room: "OR01" }]);
+});
+
+test("layout cannot disclose an unapproved sensitive field", () => {
+  const profiles = [{ isDefault: true, widgets: [
+    { widgetType: "FIELD", sourceKey: "Diagnosis", config: { maskMode: "NONE" } },
+    { widgetType: "TABLE", sourceKey: null, config: { columnMasks: { NationalId: "NONE" } } },
+  ] }];
+  const masks = resolveEffectiveDeviceMasks({ Room: "NONE", NationalId: "FULL" }, profiles);
+  assert.deepEqual(maskDeviceRows([{ Diagnosis: "private", NationalId: "A123456789", Room: "OR01" }], masks),
     [{ NationalId: "○○○○", Room: "OR01" }]);
 });
