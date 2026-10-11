@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -522,7 +522,7 @@ export function DashboardDisplayPage() {
     );
   }
 
-  async function activateDevice(event: React.FormEvent<HTMLFormElement>) {
+  async function activateDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const token = activationInput.trim();
     if (!token || !Number.isInteger(dashboardId) || dashboardId <= 0) {
