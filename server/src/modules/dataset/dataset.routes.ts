@@ -34,7 +34,7 @@ import {
   setDatasetVersionPinned,
 } from "../version/version.repository.js";
 
-const idSchema = z.coerce.number().int().positive();
+const idSchema = z.coerce.number().int().positive().safe();
 
 const datasetSchema = z.object({
   code: z.string().trim().min(2).max(100).regex(/^[A-Z0-9_]+$/),
@@ -733,12 +733,12 @@ datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
 datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
-    const parsed = z.object({ columns: z.array(sensitiveColumnSchema).max(300), expectedVersion: z.number().int().nonnegative() }).safeParse(req.body);
+    const parsed = z.object({ columns: z.array(sensitiveColumnSchema).max(300), expectedVersion: z.number().int().nonnegative().safe() }).safeParse(req.body);
     if (!id.success || !parsed.success || !req.authUser) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "敏感欄位設定格式不正確。" } }); return;
     }
     const names = parsed.data.columns.map((column) => column.columnName);
-    if (new Set(names).size !== names.length) {
+    if (new Set(names.map((name) => name.toUpperCase())).size !== names.length) {
       res.status(400).json({ error: { code: "DUPLICATE_SENSITIVE_COLUMN", message: "欄位名稱不可重複。" } }); return;
     }
     const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion);
