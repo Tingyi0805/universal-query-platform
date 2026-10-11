@@ -13,7 +13,14 @@ export async function listDatasetSensitiveColumns(datasetId: number): Promise<Da
   return result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode }));
 }
 
-export async function replaceDatasetSensitiveColumns(datasetId: number, rules: DatasetSensitiveColumn[], userId: number, auditContext: { ipAddress?: string | null; userAgent?: string | null }): Promise<void> {
+export async function getDatasetSensitivityVersion(datasetId: number): Promise<number> {
+  const pool = await getPlatformDbPool();
+  if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
+  const result = await pool.request().input("datasetId", sql.BigInt, datasetId).query("SELECT VersionNumber FROM uqp.DatasetSensitivePolicyVersion WHERE DatasetId=@datasetId");
+  return result.recordset.length ? Number(result.recordset[0].VersionNumber) : 0;
+}
+
+export async function replaceDatasetSensitiveColumns(datasetId: number, rules: DatasetSensitiveColumn[], userId: number, auditContext: { ipAddress?: string | null; userAgent?: string | null }, expectedVersion: number): Promise<number> {
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
   const transaction = new sql.Transaction(pool);
@@ -22,6 +29,14 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
     const exists = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT Id FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
     if (!exists.recordset.length) throw new Error("DATASET_NOT_FOUND");
+    const revision = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+      .query("SELECT VersionNumber FROM uqp.DatasetSensitivePolicyVersion WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId");
+    const currentVersion = revision.recordset.length ? Number(revision.recordset[0].VersionNumber) : 0;
+    if (currentVersion !== expectedVersion) throw new Error("SENSITIVITY_VERSION_CONFLICT");
+    if (!revision.recordset.length) {
+      await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+        .query("INSERT INTO uqp.DatasetSensitivePolicyVersion (DatasetId, VersionNumber) VALUES (@datasetId, 0)");
+    }
     const before = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT ColumnName AS columnName, SensitivityType AS sensitivityType, DeviceMaskMode AS deviceMaskMode FROM uqp.DatasetSensitiveColumn WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId ORDER BY ColumnName");
     await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
@@ -44,7 +59,10 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
       .input("ipAddress", sql.NVarChar(100), auditContext.ipAddress ?? null)
       .input("userAgent", sql.NVarChar(500), auditContext.userAgent?.slice(0, 500) ?? null)
       .query("INSERT INTO uqp.AuditLog (EventType, EventCategory, IsImportant, UserId, DatasetId, Status, ParametersJson, IpAddress, UserAgent, CompletedAtUtc) VALUES ('DATASET_SENSITIVITY_UPDATED', 'CONFIG', 1, @userId, @datasetId, 'SUCCESS', @parametersJson, @ipAddress, @userAgent, SYSUTCDATETIME())");
+    await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+      .query("UPDATE uqp.DatasetSensitivePolicyVersion SET VersionNumber=VersionNumber+1 WHERE DatasetId=@datasetId");
     await transaction.commit();
+    return currentVersion + 1;
   } catch (error) {
     await transaction.rollback();
     throw error;
