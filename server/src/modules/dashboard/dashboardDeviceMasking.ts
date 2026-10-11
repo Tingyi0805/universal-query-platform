@@ -87,14 +87,19 @@ export function enforceDatasetDeviceMasks(
 ): Record<string, DeviceMaskMode> {
   const result = { ...dashboardMasks };
   for (const rule of datasetRules) {
+    // SQL Server column names are commonly case-insensitive; use the approved
+    // Dashboard spelling so a differently-cased Dataset rule cannot be bypassed.
+    const approvedColumn = Object.keys(result).find((key) => key.toUpperCase() === rule.columnName.toUpperCase());
+    if (approvedColumn === undefined) continue;
+    const column = approvedColumn;
     if (rule.deviceMaskMode === "OMIT" || (rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
-      result[rule.columnName] = "OMIT";
+      result[column] = "OMIT";
     } else if (rule.sensitivityType !== "OTHER") {
       // Dataset policy restricts existing dashboard approvals; it does not grant new fields.
-      if (result[rule.columnName] !== undefined && result[rule.columnName] !== "OMIT") {
+      if (result[column] !== undefined && result[column] !== "OMIT") {
         // FULL is stronger than any partial mask; different partial masks are not safely comparable.
-        const current = result[rule.columnName];
-        result[rule.columnName] = current === "FULL" || rule.deviceMaskMode === "FULL"
+        const current = result[column];
+        result[column] = current === "FULL" || rule.deviceMaskMode === "FULL"
           ? "FULL"
           : current === "NONE" || current === rule.deviceMaskMode
             ? rule.deviceMaskMode
