@@ -48,7 +48,7 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
   const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
     const exists = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT Id FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
