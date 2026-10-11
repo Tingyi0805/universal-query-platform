@@ -59,7 +59,8 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
       setMessage("敏感欄位規則已儲存，並記錄異動稽核。");
     } catch (error) {
       const detail = error instanceof Error ? error.message : "儲存失敗";
-      if (/SENSITIVITY_VERSION_CONFLICT|409|其他管理者已更新/.test(detail)) {
+      const apiError = error as { code?: string; status?: number } | null;
+      if (apiError?.code === "SENSITIVITY_VERSION_CONFLICT" && apiError.status === 409) {
         setConflict(true);
         setMessage("規則已由其他管理者更新。為避免覆蓋，已停止儲存；請重新載入並確認差異。");
       } else setMessage(detail);
