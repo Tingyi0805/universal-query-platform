@@ -402,7 +402,6 @@ export function DashboardDesignerPage() {
       case "active": return device.isActive && !expired;
       case "expired": return device.isActive && expired;
       case "disabled": return !device.isActive;
-      case "archived": return Boolean(device.archivedAtUtc);
       case "all": return true;
     }
   });
