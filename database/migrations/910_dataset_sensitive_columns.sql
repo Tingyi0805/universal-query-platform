@@ -28,6 +28,7 @@ BEGIN
     CREATE TABLE uqp.DatasetSensitivePolicyVersion (
         DatasetId BIGINT NOT NULL PRIMARY KEY,
         VersionNumber BIGINT NOT NULL CONSTRAINT DF_DatasetSensitivePolicyVersion_Number DEFAULT (0),
+        CONSTRAINT CK_DatasetSensitivePolicyVersion_Nonnegative CHECK (VersionNumber >= 0),
         CONSTRAINT FK_DatasetSensitivePolicyVersion_Dataset FOREIGN KEY (DatasetId) REFERENCES uqp.Dataset(Id)
     );
 END;
