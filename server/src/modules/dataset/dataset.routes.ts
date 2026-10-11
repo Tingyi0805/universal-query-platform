@@ -756,6 +756,10 @@ datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
     const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion);
     res.json({ status: "OK", version, columns: parsed.data.columns });
   } catch (error) {
+    if (error instanceof Error && error.message === "SENSITIVITY_ACTIVE_DASHBOARD") {
+      res.status(409).json({ error: { code: "SENSITIVITY_ACTIVE_DASHBOARD", message: "此 Dataset 仍有啟用中的 Dashboard，不能清空敏感欄位規則；請先停用相關 Dashboard，再進行規則調整。" } });
+      return;
+    }
     if (error instanceof Error && error.message === "SENSITIVITY_COLUMN_NOT_FOUND") {
       res.status(400).json({ error: { code: "SENSITIVITY_COLUMN_NOT_FOUND", message: "敏感欄位不在目前 Dataset 的已同步欄位清單中，請先執行查詢預覽同步欄位，再重新設定。" } });
       return;
