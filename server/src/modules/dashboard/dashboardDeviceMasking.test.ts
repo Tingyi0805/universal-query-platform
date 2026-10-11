@@ -68,3 +68,20 @@ test("mask conflicts preserve stronger protection", () => {
   assert.equal(enforceDatasetDeviceMasks({ PAT_ID: "NONE" }, rules).PAT_ID, "MRN");
   assert.equal(enforceDatasetDeviceMasks({ PAT_ID: "OMIT" }, rules).PAT_ID, "OMIT");
 });
+
+
+test("dataset rules apply despite column-name case differences", () => {
+  const masks = enforceDatasetDeviceMasks({ PAT_ID: "NONE", ROOM: "NONE" }, [
+    { columnName: "pat_id", sensitivityType: "NATIONAL_ID", deviceMaskMode: "FULL" },
+  ]);
+  assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", ROOM: "OR01" }], masks),
+    [{ PAT_ID: "○○○○", ROOM: "OR01" }]);
+});
+
+test("dataset rules never add an unapproved field even with different casing", () => {
+  const masks = enforceDatasetDeviceMasks({ ROOM: "NONE" }, [
+    { columnName: "pat_id", sensitivityType: "NATIONAL_ID", deviceMaskMode: "FULL" },
+  ]);
+  assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", ROOM: "OR01" }], masks),
+    [{ ROOM: "OR01" }]);
+});
