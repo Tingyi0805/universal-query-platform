@@ -44,8 +44,18 @@ export function resolveDeviceColumnMasks(profiles: Array<{ isDefault: boolean; w
   return masks;
 }
 
+/** A case-insensitive ambiguous approval is denied rather than choosing an arbitrary mask. */
+export function resolveDeviceColumnMask(column: string, masks: Record<string, DeviceMaskMode>): DeviceMaskMode {
+  const matches = Object.entries(masks).filter(([name]) => name.toUpperCase() === column.toUpperCase());
+  if (matches.length !== 1) return "OMIT";
+  return matches[0]![1];
+}
+
 export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DeviceMaskMode>): Record<string, unknown>[] {
-  return rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => masks[key] !== undefined && masks[key] !== "OMIT").map(([key, value]) => [key, maskDeviceValue(value, masks[key] ?? "OMIT")] )));
+  return rows.map((row) => Object.fromEntries(Object.entries(row).flatMap(([key, value]) => {
+    const mode = resolveDeviceColumnMask(key, masks);
+    return mode === "OMIT" ? [] : [[key, maskDeviceValue(value, mode)]];
+  })));
 }
 
 /** Explicit dashboard-level column policies. Unlisted fields are never sent to device clients. */
