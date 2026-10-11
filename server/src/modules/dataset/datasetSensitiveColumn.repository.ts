@@ -23,15 +23,6 @@ export async function getDatasetSensitivitySnapshot(datasetId: number): Promise<
     const exists = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT Id FROM uqp.Dataset WITH (HOLDLOCK) WHERE Id=@datasetId");
     if (!exists.recordset.length) throw new Error("DATASET_NOT_FOUND");
-    // Removing the final classification while a dashboard is enabled could
-    // temporarily expose new query columns during a SQL migration.
-    if (rules.length === 0) {
-      const active = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
-        .query(`SELECT TOP (1) db.Id FROM uqp.Dashboard db
-          INNER JOIN uqp.QueryDefinition q ON q.Id=db.QueryDefinitionId
-          WHERE q.DatasetId=@datasetId AND db.IsActive=1`);
-      if (active.recordset.length) throw new Error("SENSITIVITY_ACTIVE_DASHBOARD");
-    }
     const revision = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT VersionNumber FROM uqp.DatasetSensitivePolicyVersion WHERE DatasetId=@datasetId");
     const result = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
@@ -71,6 +62,15 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
       if (rules.some((rule) => !allowed.has(rule.columnName.toUpperCase()))) {
         throw new Error("SENSITIVITY_COLUMN_NOT_FOUND");
       }
+    }
+    // Removing the final classification while a dashboard is enabled could
+    // temporarily expose new query columns during a SQL migration.
+    if (rules.length === 0) {
+      const active = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
+        .query(`SELECT TOP (1) db.Id FROM uqp.Dashboard db
+          INNER JOIN uqp.QueryDefinition q ON q.Id=db.QueryDefinitionId
+          WHERE q.DatasetId=@datasetId AND db.IsActive=1`);
+      if (active.recordset.length) throw new Error("SENSITIVITY_ACTIVE_DASHBOARD");
     }
     const revision = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT VersionNumber FROM uqp.DatasetSensitivePolicyVersion WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId");
