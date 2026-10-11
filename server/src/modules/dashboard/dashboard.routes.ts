@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { createDashboardPageSnapshot, getDashboardPageSnapshot } from "./dashboardPageSnapshot.js";
+import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
 import { z } from "zod";
@@ -321,7 +321,14 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
       const dataset = await getDataset(query.datasetId);
       if (!dataset) throw new Error("DATASET_NOT_FOUND");
+      const snapshotConfig = dashboard.parameters;
+      const kindValue = snapshotConfig.snapshotKind;
+      const kind: DashboardSnapshotKind = kindValue === "SURGERY" || kindValue === "OUTPATIENT" || kindValue === "EXAM" || kindValue === "STATISTICS"
+        ? kindValue : "OTHER";
+      const secondsValue = snapshotConfig.snapshotSeconds;
+      const configuredSeconds = typeof secondsValue === "number" ? secondsValue : null;
       snapshot = createDashboardPageSnapshot({
+        ttlSeconds: resolveDashboardSnapshotSeconds(kind, configuredSeconds),
         deviceId: verification.device.id, dashboardId: id.data,
         queryId: query.id, datasetId: query.datasetId,
         sourceScope: `datasource:${dataset.dataSourceId}`,
