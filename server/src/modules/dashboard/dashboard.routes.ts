@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { enforceClassifiedDeviceMasks, maskDeviceRows, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
+import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
@@ -7,6 +7,7 @@ import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
 import { getDataset } from "../dataset/dataset.repository.js";
+import { listDatasetSensitiveColumns } from "../dataset/datasetSensitiveColumn.repository.js";
 import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
@@ -346,7 +347,8 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     }
     const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
     const layout = await getDashboardLayout(id.data);
-    const masks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
+    const dashboardMasks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
+    const masks = enforceDatasetDeviceMasks(dashboardMasks, await listDatasetSensitiveColumns(query.datasetId));
     const rows = maskDeviceRows(rawRows, masks);
     const masked = Object.values(masks).some((mode) => mode !== "NONE");
     const disclosureId = await auditPatientListIfConfigured({
