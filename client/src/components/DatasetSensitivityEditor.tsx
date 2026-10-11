@@ -13,15 +13,17 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   const [category, setCategory] = useState("OTHER");
   const [mode, setMode] = useState("OMIT");
   const [busy, setBusy] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => {
     let active = true;
     setRules([]);
+    setLoaded(false);
     setDirty(false);
     setMessage("");
     void apiRequest<{ columns: Rule[] }>(`/datasets/${datasetId}/sensitive-columns`, {}, accessToken)
-      .then((result) => { if (active) setRules(result.columns); })
+      .then((result) => { if (active) { setRules(result.columns); setLoaded(true); } })
       .catch((error: unknown) => { if (active) setMessage(error instanceof Error ? error.message : "無法載入敏感欄位設定"); });
     return () => { active = false; };
   }, [datasetId, accessToken]);
@@ -37,6 +39,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     if (rules.some((rule) => rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
       setMessage("敏感資料不可設定為原樣顯示。"); return;
     }
+    if (!loaded) { setMessage("尚未成功載入原有規則，為避免覆蓋設定，請先重新載入頁面。"); return; }
     setBusy(true); setMessage("");
     try {
       const result = await apiRequest<{ columns: Rule[] }>(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: rules }) }, accessToken);
@@ -63,7 +66,8 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     <table className="preview-table"><thead><tr><th>欄位</th><th>分類</th><th>遮蔽</th><th>操作</th></tr></thead>
       <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td><td>{rule.sensitivityType}</td><td>{rule.deviceMaskMode}</td>
         <td><button type="button" disabled={busy} onClick={() => setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName))}>移除</button></td></tr>)}</tbody></table>
-    <button type="button" disabled={busy || !dirty} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
+    <button type="button" disabled={busy || !dirty || !loaded} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
+    {!loaded && <p role="status">原有規則尚未載入完成，暫停儲存以避免誤覆蓋。</p>}
     {dirty && <p role="status">尚有未儲存的敏感欄位規則變更。</p>}
     {message && <p role="status">{message}</p>}
   </section>;
