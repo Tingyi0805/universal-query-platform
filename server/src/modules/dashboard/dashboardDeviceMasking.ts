@@ -47,3 +47,15 @@ export function resolveDeviceColumnMasks(profiles: Array<{ isDefault: boolean; w
 export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DeviceMaskMode>): Record<string, unknown>[] {
   return rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => masks[key] !== undefined && masks[key] !== "OMIT").map(([key, value]) => [key, maskDeviceValue(value, masks[key] ?? "OMIT")] )));
 }
+
+/** Explicit dashboard-level column policies. Unlisted fields are never sent to device clients. */
+export function resolveConfiguredDeviceMasks(value: unknown): Record<string, DeviceMaskMode> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, DeviceMaskMode> = {};
+  for (const [column, mode] of Object.entries(value)) {
+    if (column.length > 0 && column.length <= 256 && allowedModes.has(mode as DeviceMaskMode)) {
+      result[column] = mode as DeviceMaskMode;
+    }
+  }
+  return result;
+}
