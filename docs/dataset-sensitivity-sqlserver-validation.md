@@ -21,6 +21,7 @@
 | 同時首次建立 | 新 Dataset 兩個工作階段同時以 version 0 PUT | 最多一筆成功；另一筆應衝突或需重試；無重複版本列 |
 | 不合法遮蔽 | sensitivityType=NATIONAL_ID、deviceMaskMode=NONE | HTTP 400；規則及版本不變 |
 | 重複欄位 | 同一請求重複 columnName | HTTP 400；規則及版本不變 |
+| 稽核內容過大 | 送出總異動內容超過 20,000 字元的合法規則 | HTTP 400 SENSITIVITY_AUDIT_TOO_LARGE；規則、版本、稽核均不變 |
 | 稽核寫入失敗 | **僅測試環境**：以受限 DB 權限阻擋 AuditLog INSERT，再 PUT | 整筆交易失敗；規則、版本均不變 |
 | 遮蔽傳送 | Dashboard 核准欄位，Dataset 設 FULL 或 OMIT | 播放 API 僅回傳允許且經遮蔽的資料 |
 | 未核准欄位 | Dataset 設 FULL，但 Dashboard 未核准 | 播放 API 不傳送該欄位 |
