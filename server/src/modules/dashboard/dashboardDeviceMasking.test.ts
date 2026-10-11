@@ -85,3 +85,15 @@ test("dataset rules never add an unapproved field even with different casing", (
   assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", ROOM: "OR01" }], masks),
     [{ ROOM: "OR01" }]);
 });
+
+
+test("device row masking matches approved columns case-insensitively", () => {
+  const masks = { PAT_ID: "FULL" as const, ROOM: "NONE" as const };
+  assert.deepEqual(maskDeviceRows([{ pat_id: "A123456789", room: "OR01", extra: "secret" }], masks),
+    [{ pat_id: "○○○○", room: "OR01" }]);
+});
+
+test("ambiguous case-insensitive dashboard approvals are denied", () => {
+  const masks = { PAT_ID: "NONE" as const, pat_id: "FULL" as const };
+  assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", pat_id: "B123456789" }], masks), [{}]);
+});
