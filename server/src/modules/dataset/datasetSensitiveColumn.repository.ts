@@ -36,6 +36,7 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
         .query("INSERT INTO uqp.DatasetSensitiveColumn (DatasetId, ColumnName, SensitivityType, DeviceMaskMode, UpdatedByUserId) VALUES (@datasetId,@columnName,@sensitivityType,@deviceMaskMode,@userId)");
     }
     const details = JSON.stringify({ before: before.recordset, after: rules });
+    if (details.length > 20000) throw new Error("SENSITIVITY_AUDIT_TOO_LARGE");
     await new sql.Request(transaction)
       .input("userId", sql.BigInt, userId)
       .input("datasetId", sql.BigInt, datasetId)
