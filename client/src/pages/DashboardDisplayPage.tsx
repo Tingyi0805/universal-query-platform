@@ -558,7 +558,7 @@ export function DashboardDisplayPage() {
   }, [dashboardId, pageSeconds, Boolean(preview)]);
 
   useEffect(() => {
-    if (!preview || (deviceMode && (dataWarning || preview.page !== safePage))) return;
+    if (!preview || (deviceMode && (activationRequired || !deviceToken || !online || dataWarning || preview.page !== safePage))) return;
     const timer = window.setInterval(() => {
       setCountdown((current) => {
         if (current <= 1) {
@@ -569,7 +569,7 @@ export function DashboardDisplayPage() {
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [pageSeconds, totalPages, Boolean(preview), deviceMode, dataWarning, safePage, preview?.page]);
+  }, [pageSeconds, totalPages, Boolean(preview), deviceMode, activationRequired, deviceToken, online, dataWarning, safePage, preview?.page]);
 
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
