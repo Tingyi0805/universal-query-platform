@@ -486,13 +486,30 @@ export function DashboardDisplayPage() {
   useEffect(() => {
     const onOnline = () => {
       setOnline(true);
-      if (!activationRequired) { void loadData(); void loadLayout(); }
+      if (deviceMode) {
+        pageSnapshotId.current = null;
+        setPreview(null);
+        setPage(1);
+        setCountdown(0);
+        setSnapshotReloadKey((key) => key + 1);
+      } else if (!activationRequired) {
+        void loadData();
+      }
+      if (!activationRequired) void loadLayout();
     };
-    const onOffline = () => setOnline(false);
+    const onOffline = () => {
+      setOnline(false);
+      if (deviceMode) {
+        pageSnapshotId.current = null;
+        setPreview(null);
+        setCountdown(0);
+        setDataWarning("網路中斷，暫停顯示患者資料；連線恢復後重新載入。");
+      }
+    };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     return () => { window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
-  }, [loadData, loadLayout, activationRequired]);
+  }, [loadData, loadLayout, activationRequired, deviceMode]);
 
   useEffect(() => {
     setPage((current) => Math.min(Math.max(current, 1), totalPages));
@@ -697,8 +714,8 @@ export function DashboardDisplayPage() {
           background: !online || dataWarning || layoutWarning ? "#7f1d1d" : "rgba(0,0,0,.65)",
           color: "#fff", fontSize: 12, maxWidth: "min(75vw, 480px)",
         }}>
-          {!online ? "網路已中斷，顯示最後成功資料；連線恢復後會自動重試" :
-            dataWarning || layoutWarning ? "資料更新異常，保留最後成功畫面並自動重試" :
+          {!online ? "網路已中斷，已清除患者資料；連線恢復後會重新載入" :
+            dataWarning || layoutWarning ? "資料更新異常，正在安全重試" :
             "播放正常"}
           {lastUpdatedAt && " · 最後更新 " + lastUpdatedAt.toLocaleTimeString("zh-TW")}
         </div>
