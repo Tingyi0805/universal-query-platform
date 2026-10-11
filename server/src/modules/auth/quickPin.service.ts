@@ -38,6 +38,9 @@ export async function enrollQuickPin(userId: number, password: string, pin: stri
   if (!await bcrypt.compare(password, user.passwordHash)) return "INVALID_CREDENTIALS";
   const pool = await getPlatformDbPool();
   if (!pool) return "NOT_CONFIGURED";
+  const existing = await pool.request().input("userId", sql.BigInt, userId)
+    .query("SELECT PinHash FROM uqp.UserQuickPin WHERE UserId=@userId AND IsEnabled=1");
+  if (existing.recordset[0]?.PinHash && await bcrypt.compare(pin, String(existing.recordset[0].PinHash))) return "PIN_WEAK";
   const hash = await bcrypt.hash(pin, PIN_COST);
   await pool.request().input("userId", sql.BigInt, userId)
     .input("pinHash", sql.NVarChar(512), hash).query(`
