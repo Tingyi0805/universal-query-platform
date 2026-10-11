@@ -182,6 +182,13 @@ export function DashboardDisplayPage() {
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
     const requestId = ++latestDataRequest.current;
+    if (deviceMode && !navigator.onLine) {
+      pageSnapshotId.current = null;
+      setPreview(null);
+      setCountdown(0);
+      setDataWarning("網路中斷，已清除患者資料；連線恢復後重新載入。");
+      return;
+    }
     try {
       if (deviceMode && !deviceToken) {
         setActivationRequired(true);
@@ -202,7 +209,7 @@ export function DashboardDisplayPage() {
         },
         deviceMode ? null : accessToken,
       );
-      if (requestId !== latestDataRequest.current) return;
+      if (requestId !== latestDataRequest.current || (deviceMode && !navigator.onLine)) return;
       if (deviceMode && result.page !== page) return;
       if (deviceMode) pageSnapshotId.current = result.snapshotId ?? null;
       setPreview(result);
@@ -498,6 +505,7 @@ export function DashboardDisplayPage() {
       if (!activationRequired) void loadLayout();
     };
     const onOffline = () => {
+      ++latestDataRequest.current;
       setOnline(false);
       if (deviceMode) {
         pageSnapshotId.current = null;
