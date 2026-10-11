@@ -6,6 +6,7 @@ export type DashboardPageSnapshot = {
   dashboardId: number;
   queryId: number;
   datasetId: number;
+  sensitivityVersion?: number;
   sourceScope: string;
   createdAt: number;
   ttlMs: number;
