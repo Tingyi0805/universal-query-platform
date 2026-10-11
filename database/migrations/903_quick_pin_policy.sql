@@ -6,7 +6,7 @@ BEGIN
     Id INT NOT NULL CONSTRAINT PK_QuickPinPolicy PRIMARY KEY
       CONSTRAINT CK_QuickPinPolicy_Singleton CHECK (Id=1),
     PinLength INT NOT NULL CONSTRAINT DF_QuickPinPolicy_PinLength DEFAULT (6)
-      CONSTRAINT CK_QuickPinPolicy_PinLength CHECK (PinLength BETWEEN 6 AND 8),
+      CONSTRAINT CK_QuickPinPolicy_PinLength CHECK (PinLength BETWEEN 4 AND 12),
     UpdatedAtUtc DATETIME2(3) NOT NULL CONSTRAINT DF_QuickPinPolicy_UpdatedAt DEFAULT SYSUTCDATETIME()
   );
 END;
