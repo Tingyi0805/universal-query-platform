@@ -157,6 +157,12 @@ export function DashboardDisplayPage() {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   const [error, setError] = useState("");
+  const [dataWarning, setDataWarning] = useState("");
+  const [layoutWarning, setLayoutWarning] = useState("");
+  const [layoutRetryCount, setLayoutRetryCount] = useState(0);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  const [retryDelaySeconds, setRetryDelaySeconds] = useState(5);
+  const [online, setOnline] = useState(() => navigator.onLine);
   const [page, setPage] = useState(1);
   const [countdown, setCountdown] = useState(0);
   const [now, setNow] = useState(new Date());
@@ -188,15 +194,24 @@ export function DashboardDisplayPage() {
         deviceMode ? null : accessToken,
       );
       setPreview(result);
+      setLastUpdatedAt(new Date());
+      setDataWarning("");
+      setRetryDelaySeconds(5);
       setError("");
       if (deviceMode) { setActivationRequired(false); setActivationError(""); }
     } catch (e) {
       if (deviceMode && (e as { status?: number }).status === 401) {
         setActivationRequired(true);
         setPreview(null);
+        setDataWarning("");
         setError("");
         setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
-      } else setError(e instanceof Error ? e.message : "Dashboard 載入失敗。");
+      } else {
+        const message = e instanceof Error ? e.message : "Dashboard 載入失敗。";
+        setDataWarning(message);
+        setRetryDelaySeconds((previous) => Math.min(previous * 2, 60));
+        setError(message);
+      }
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken]);
 
@@ -238,13 +253,20 @@ export function DashboardDisplayPage() {
         deviceMode ? null : accessToken,
       );
       setProfiles(result.profiles);
+      setLayoutWarning("");
     } catch (e) {
       if (deviceMode && (e as { status?: number }).status === 401) {
         setActivationRequired(true);
         setProfiles([]);
+        setLayoutWarning("");
         setError("");
         setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
-      } else setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
+      } else {
+        const message = e instanceof Error ? e.message : "Dashboard 版面載入失敗。";
+        setLayoutWarning(message);
+        setLayoutRetryCount((count) => count + 1);
+        setError(message);
+      }
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
 
@@ -403,11 +425,31 @@ export function DashboardDisplayPage() {
     }));
   }, [preview]);
 
+  // Continue retrying even when the first load fails; do not discard last successful data.
   useEffect(() => {
-    if (!preview) return;
-    const timer = window.setInterval(() => void loadData(), refreshSeconds * 1000);
-    return () => window.clearInterval(timer);
-  }, [loadData, refreshSeconds, Boolean(preview)]);
+    if (deviceMode && activationRequired) return;
+    const delay = dataWarning ? retryDelaySeconds : refreshSeconds;
+    const timer = window.setTimeout(() => void loadData(), delay * 1000);
+    return () => window.clearTimeout(timer);
+  }, [loadData, refreshSeconds, dataWarning, retryDelaySeconds, lastUpdatedAt, deviceMode, activationRequired]);
+
+  useEffect(() => {
+    if (deviceMode && activationRequired) return;
+    if (!layoutWarning) return;
+    const timer = window.setTimeout(() => void loadLayout(), 15000);
+    return () => window.clearTimeout(timer);
+  }, [loadLayout, layoutWarning, layoutRetryCount, deviceMode, activationRequired]);
+
+  useEffect(() => {
+    const onOnline = () => {
+      setOnline(true);
+      if (!activationRequired) { void loadData(); void loadLayout(); }
+    };
+    const onOffline = () => setOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => { window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
+  }, [loadData, loadLayout, activationRequired]);
 
   useEffect(() => {
     setPage((current) => Math.min(Math.max(current, 1), totalPages));
@@ -600,6 +642,19 @@ export function DashboardDisplayPage() {
 
   return (
     <main className="dashboard-display-screen">
+      {deviceMode && (
+        <div role="status" aria-live="polite" style={{
+          position: "fixed", right: 12, bottom: 12, zIndex: 9999,
+          padding: "6px 10px", borderRadius: 6,
+          background: !online || dataWarning || layoutWarning ? "#7f1d1d" : "rgba(0,0,0,.65)",
+          color: "#fff", fontSize: 12, maxWidth: "min(75vw, 480px)",
+        }}>
+          {!online ? "網路已中斷，顯示最後成功資料；連線恢復後會自動重試" :
+            dataWarning || layoutWarning ? "資料更新異常，保留最後成功畫面並自動重試" :
+            "播放正常"}
+          {lastUpdatedAt && " · 最後更新 " + lastUpdatedAt.toLocaleTimeString("zh-TW")}
+        </div>
+      )}
       <div
         className="dashboard-display-profile-shell"
         style={{
