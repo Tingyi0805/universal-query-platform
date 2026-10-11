@@ -463,6 +463,8 @@ export function DashboardDisplayPage() {
   // Continue retrying even when the first load fails; do not discard last successful data.
   useEffect(() => {
     if (deviceMode && activationRequired) return;
+    // Device playback retains the same snapshot within a page; periodic refresh only retries failures.
+    if (deviceMode && !dataWarning) return;
     const delay = dataWarning ? retryDelaySeconds : refreshSeconds;
     const timer = window.setTimeout(() => void loadData(), delay * 1000);
     return () => window.clearTimeout(timer);
