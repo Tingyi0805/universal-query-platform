@@ -355,3 +355,60 @@ export async function autoArchiveDashboardDevices(): Promise<number> {
   `);
   return Number(result.recordset[0]?.Archived ?? 0);
 }
+
+export type DevicePlaybackSettings = {
+  browser: "chrome" | "edge";
+  screenNumber: number;
+  fullscreen: boolean;
+  windowX: number;
+  windowY: number;
+  windowWidth: number;
+  windowHeight: number;
+};
+
+export async function getDevicePlaybackSettings(dashboardId: number, deviceId: number): Promise<DevicePlaybackSettings | null> {
+  const pool = await requirePool();
+  const result = await pool.request().input("dashboardId", sql.BigInt, dashboardId)
+    .input("deviceId", sql.BigInt, deviceId).query(`
+      SELECT d.Id, p.Browser, p.ScreenNumber, p.Fullscreen, p.WindowX, p.WindowY, p.WindowWidth, p.WindowHeight
+      FROM uqp.DashboardDisplayDevice d
+      LEFT JOIN uqp.DashboardDevicePlaybackSettings p ON p.DeviceId=d.Id AND p.DashboardId=d.DashboardId
+      WHERE d.DashboardId=@dashboardId AND d.Id=@deviceId AND d.ArchivedAtUtc IS NULL
+    `);
+  const row = result.recordset[0];
+  if (!row) return null;
+  return { browser: row.Browser ?? "edge", screenNumber: Number(row.ScreenNumber ?? 2),
+    fullscreen: row.Fullscreen == null ? true : Boolean(row.Fullscreen),
+    windowX: Number(row.WindowX ?? 1920), windowY: Number(row.WindowY ?? 0),
+    windowWidth: Number(row.WindowWidth ?? 1920), windowHeight: Number(row.WindowHeight ?? 1080) };
+}
+
+export async function saveDevicePlaybackSettings(dashboardId: number, deviceId: number, input: DevicePlaybackSettings) {
+  const pool = await requirePool();
+  const tx = new sql.Transaction(pool);
+  await tx.begin();
+  try {
+    const request = new sql.Request(tx)
+      .input("dashboardId", sql.BigInt, dashboardId).input("deviceId", sql.BigInt, deviceId)
+      .input("browser", sql.NVarChar(10), input.browser)
+      .input("screenNumber", sql.Int, input.screenNumber)
+      .input("fullscreen", sql.Bit, input.fullscreen)
+      .input("windowX", sql.Int, input.windowX).input("windowY", sql.Int, input.windowY)
+      .input("windowWidth", sql.Int, input.windowWidth).input("windowHeight", sql.Int, input.windowHeight);
+    const result = await request.query(`
+      UPDATE uqp.DashboardDevicePlaybackSettings SET Browser=@browser,ScreenNumber=@screenNumber,
+        Fullscreen=@fullscreen,WindowX=@windowX,WindowY=@windowY,
+        WindowWidth=@windowWidth,WindowHeight=@windowHeight,UpdatedAtUtc=SYSUTCDATETIME()
+      WHERE DashboardId=@dashboardId AND DeviceId=@deviceId;
+      IF @@ROWCOUNT=0
+        INSERT INTO uqp.DashboardDevicePlaybackSettings
+          (DashboardId,DeviceId,Browser,ScreenNumber,Fullscreen,WindowX,WindowY,WindowWidth,WindowHeight)
+        SELECT @dashboardId,@deviceId,@browser,@screenNumber,@fullscreen,@windowX,@windowY,@windowWidth,@windowHeight
+        WHERE EXISTS (SELECT 1 FROM uqp.DashboardDisplayDevice
+          WHERE DashboardId=@dashboardId AND Id=@deviceId AND IsActive=1 AND ArchivedAtUtc IS NULL);
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+    if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("DASHBOARD_DEVICE_NOT_FOUND");
+    await tx.commit();
+  } catch (error) { await tx.rollback(); throw error; }
+}
