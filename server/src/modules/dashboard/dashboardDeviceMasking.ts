@@ -59,3 +59,11 @@ export function resolveConfiguredDeviceMasks(value: unknown): Record<string, Dev
   }
   return result;
 }
+
+/** A layout is only presentation; explicit administrator rules are the disclosure allowlist. */
+export function resolveEffectiveDeviceMasks(
+  configured: unknown,
+  _profiles: Array<{ isDefault: boolean; widgets: Array<{ widgetType: string; sourceKey: string | null; config: Record<string, unknown> }> }>,
+): Record<string, DeviceMaskMode> {
+  return resolveConfiguredDeviceMasks(configured);
+}
