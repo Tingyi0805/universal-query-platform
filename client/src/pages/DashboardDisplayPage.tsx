@@ -671,6 +671,14 @@ export function DashboardDisplayPage() {
         null,
       );
       pageSnapshotId.current = null;
+      ++latestDataRequest.current;
+      setPreview(null);
+      setProfiles([]);
+      setPage(1);
+      setCountdown(0);
+      setRetryDelaySeconds(5);
+      setDataWarning("");
+      setLayoutWarning("");
       localStorage.setItem(deviceStorageKey, token);
       setDeviceToken(token);
       setActivationInput("");
