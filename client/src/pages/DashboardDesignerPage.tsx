@@ -473,14 +473,20 @@ export function DashboardDesignerPage() {
     }
     const [x, y, width, height] = coords;
     const url = new URL("/display/dashboards/" + setup.dashboard.id, window.location.origin).href;
-    const browser = setup.launcherBrowser === "chrome" ? "chrome.exe" : "msedge.exe";
+    const browserSubpath = setup.launcherBrowser === "chrome"
+      ? "Google\\Chrome\\Application\\chrome.exe"
+      : "Microsoft\\Edge\\Application\\msedge.exe";
     const args = setup.autoFullscreen ? "--kiosk" : "--new-window";
     const script = [
       "@echo off",
-      "rem Run on the playback PC, in the same Windows account and browser profile used to provision the Device Token.",
+      "setlocal",
+      "rem Run on the playback PC with the same browser profile as the Device Token.",
       "rem No Device Token or password is stored here.",
-      "rem If browser window placement is ignored, close existing browser windows and try again.",
-      'start "" "' + browser + '" ' + args + " --window-position=" + x + "," + y
+      'set "BROWSER=%ProgramFiles%\\' + browserSubpath + '"',
+      'if not exist "%BROWSER%" set "BROWSER=%ProgramFiles(x86)%\\' + browserSubpath + '"',
+      'if not exist "%BROWSER%" set "BROWSER=%LOCALAPPDATA%\\' + browserSubpath + '"',
+      'if not exist "%BROWSER%" (echo Browser not found & pause & exit /b 1)',
+      'start "" "%BROWSER%" ' + args + " --window-position=" + x + "," + y
         + " --window-size=" + width + "," + height + ' "' + url + '"',
       "",
     ].join("\r\n");
