@@ -241,9 +241,16 @@ export function DashboardDisplayPage() {
         return;
       }
       if (deviceMode && (e as { status?: number }).status === 401) {
+        ++latestDataRequest.current;
+        pageSnapshotId.current = null;
+        localStorage.removeItem(deviceStorageKey);
+        setDeviceToken(null);
         setActivationRequired(true);
         setPreview(null);
+        setProfiles([]);
+        setCountdown(0);
         setDataWarning("");
+        setLayoutWarning("");
         setError("");
         setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
       } else {
@@ -258,7 +265,7 @@ export function DashboardDisplayPage() {
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken, page, snapshotReloadKey]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, deviceStorageKey, page, snapshotReloadKey]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -301,8 +308,14 @@ export function DashboardDisplayPage() {
       setLayoutWarning("");
     } catch (e) {
       if (deviceMode && (e as { status?: number }).status === 401) {
+        ++latestDataRequest.current;
+        pageSnapshotId.current = null;
+        localStorage.removeItem(deviceStorageKey);
+        setDeviceToken(null);
         setActivationRequired(true);
+        setPreview(null);
         setProfiles([]);
+        setCountdown(0);
         setLayoutWarning("");
         setError("");
         setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
@@ -313,7 +326,7 @@ export function DashboardDisplayPage() {
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, deviceStorageKey, previewKey]);
 
   useEffect(() => {
     void loadData();
