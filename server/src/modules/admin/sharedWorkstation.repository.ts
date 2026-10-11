@@ -1,8 +1,10 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
+export type WorkstationPlatform = "WINDOWS" | "ANDROID" | "IOS" | "UNKNOWN";
+
 export type Workstation = {
-  id: number; workstationCode: string; displayName: string;
+  id: number; workstationCode: string; displayName: string; platformCode: WorkstationPlatform;
   isActive: boolean; pinLoginEnabled: boolean; credentialVersion: number;
 };
 
@@ -10,7 +12,7 @@ export async function listSharedWorkstations(): Promise<Workstation[] | null> {
   const pool = await getPlatformDbPool();
   if (!pool) return null;
   const result = await pool.request().query(`
-    SELECT Id AS id, WorkstationCode AS workstationCode, DisplayName AS displayName,
+    SELECT Id AS id, WorkstationCode AS workstationCode, DisplayName AS displayName, PlatformCode AS platformCode,
       IsActive AS isActive, PinLoginEnabled AS pinLoginEnabled,
       CredentialVersion AS credentialVersion
     FROM uqp.SharedWorkstation ORDER BY DisplayName, Id
@@ -18,13 +20,13 @@ export async function listSharedWorkstations(): Promise<Workstation[] | null> {
   return result.recordset as Workstation[];
 }
 
-export async function createSharedWorkstation(code: string, name: string): Promise<number | null> {
+export async function createSharedWorkstation(code: string, name: string, platform: WorkstationPlatform): Promise<number | null> {
   const pool = await getPlatformDbPool();
   if (!pool) return null;
   const result = await pool.request().input("code", sql.NVarChar(100), code)
-    .input("name", sql.NVarChar(200), name).query(`
-      INSERT INTO uqp.SharedWorkstation (WorkstationCode, DisplayName, IsActive, PinLoginEnabled)
-      OUTPUT INSERTED.Id AS id VALUES (@code, @name, 0, 0)
+    .input("name", sql.NVarChar(200), name).input("platform", sql.NVarChar(20), platform).query(`
+      INSERT INTO uqp.SharedWorkstation (WorkstationCode, DisplayName, PlatformCode, IsActive, PinLoginEnabled)
+      OUTPUT INSERTED.Id AS id VALUES (@code, @name, @platform, 0, 0)
     `);
   return Number(result.recordset[0].id);
 }

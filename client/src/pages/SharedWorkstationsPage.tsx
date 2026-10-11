@@ -4,13 +4,14 @@ import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./AdminUsersPage.css";
 
-type Workstation = { id: number; workstationCode: string; displayName: string; isActive: boolean; pinLoginEnabled: boolean };
+type Workstation = { id: number; workstationCode: string; displayName: string; platformCode: string; isActive: boolean; pinLoginEnabled: boolean };
 export function SharedWorkstationsPage() {
   const { accessToken } = useAuth();
   const [items, setItems] = useState<Workstation[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [staff, setStaff] = useState<{ id: number; username: string; displayName: string; isActive: boolean }[]>([]);
   const [allowedIds, setAllowedIds] = useState<number[]>([]);
+  const [platform, setPlatform] = useState("UNKNOWN");
   const [code, setCode] = useState(""); const [name, setName] = useState("");
   const [error, setError] = useState(""); const [notice, setNotice] = useState(""); const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
@@ -43,8 +44,8 @@ export function SharedWorkstationsPage() {
   async function create(event: FormEvent) {
     event.preventDefault(); setBusy(true); setError(""); setNotice("");
     try {
-      await apiRequest("/admin/shared-workstations", { method: "POST", body: JSON.stringify({ workstationCode: code, displayName: name }) }, accessToken);
-      setCode(""); setName(""); setNotice("工作站已建立，PIN 登入仍維持停用。"); await load();
+      await apiRequest("/admin/shared-workstations", { method: "POST", body: JSON.stringify({ workstationCode: code, displayName: name, platformCode: platform }) }, accessToken);
+      setCode(""); setName(""); setPlatform("UNKNOWN"); setNotice("工作站已建立，PIN 登入仍維持停用。"); await load();
     } catch (e) { setError(e instanceof Error ? e.message : "新增失敗"); }
     finally { setBusy(false); }
   }
@@ -66,12 +67,16 @@ export function SharedWorkstationsPage() {
       <form className="admin-form" onSubmit={create}>
         <label>工作站代碼<input value={code} onChange={e => setCode(e.target.value)} placeholder="NURSE-STATION-01" required /></label>
         <label>工作站名稱<input value={name} onChange={e => setName(e.target.value)} placeholder="一樓護理站平板" required /></label>
+        <label>裝置平台<select value={platform} onChange={e => setPlatform(e.target.value)}>
+          <option value="UNKNOWN">待確認</option><option value="WINDOWS">Windows</option>
+          <option value="ANDROID">Android</option><option value="IOS">iOS / iPadOS</option>
+        </select></label>
         <button className="primary-button" type="submit" disabled={busy}>新增工作站</button>
       </form></section>
     <section className="admin-section"><h2>已登記工作站</h2>
       {items.length === 0 ? <p>尚無工作站。</p> : <div className="admin-form">
         {items.map(item => <div key={item.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 12, padding: 12, borderBottom: "1px solid #ddd" }}>
-          <strong>{item.displayName}</strong><span>{item.workstationCode}</span>
+          <strong>{item.displayName}</strong><span>{item.workstationCode}</span><span>{item.platformCode}</span>
           <span>{item.isActive ? "已啟用（僅登記）" : "停用"}</span><span>PIN 登入：停用</span>
           <button className="secondary-button" type="button" disabled={busy} onClick={() => void selectWorkstation(item.id)}>設定允許員工</button>
           <button className="secondary-button" type="button" disabled={busy} onClick={() => toggle(item)}>
