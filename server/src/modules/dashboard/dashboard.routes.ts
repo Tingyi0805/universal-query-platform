@@ -751,6 +751,10 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
       });
       return;
     }
+    if (error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED") {
+      res.status(409).json({ error: { code: "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED", message: "此 Dashboard 的 Dataset 曾設定敏感欄位保護，但目前沒有任何規則；請先重新檢視並設定敏感欄位，再啟用播放。" } });
+      return;
+    }
     if (error instanceof Error && error.message === "DASHBOARD_QUERY_NOT_AVAILABLE") {
       res.status(409).json({
         error: {
@@ -807,6 +811,10 @@ dashboardRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req, res, 
       res.status(404).json({
         error: { code: error.message, message: "找不到 Dashboard。" },
       });
+      return;
+    }
+    if (error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED") {
+      res.status(409).json({ error: { code: "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED", message: "此 Dashboard 的 Dataset 曾設定敏感欄位保護，但目前沒有任何規則；請先重新檢視並設定敏感欄位，再啟用播放。" } });
       return;
     }
     if (error instanceof Error && error.message === "DASHBOARD_QUERY_NOT_AVAILABLE") {
