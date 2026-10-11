@@ -24,6 +24,8 @@ import {
 } from "./dashboardLayout.repository.js";
 import {
   createDashboardDisplayDevice,
+  getDevicePlaybackSettings,
+  saveDevicePlaybackSettings,
   getDashboardDeviceArchivePolicy,
   setDashboardDeviceArchivePolicy,
   archiveDashboardDevices,
@@ -276,6 +278,45 @@ dashboardRouter.get("/:id/devices", requirePermission("DESIGN_QUERY"), async (re
     }
     res.json({ devices: await listDashboardDisplayDevices(id.data) });
   } catch (error) {
+    next(error);
+  }
+});
+
+const playbackSettingsSchema = z.object({
+  browser: z.enum(["chrome", "edge"]), screenNumber: z.number().int().min(1).max(16),
+  fullscreen: z.boolean(), windowX: z.number().int().min(-32768).max(32768),
+  windowY: z.number().int().min(-32768).max(32768),
+  windowWidth: z.number().int().min(200).max(7680),
+  windowHeight: z.number().int().min(200).max(4320),
+});
+
+dashboardRouter.get("/:id/devices/:deviceId/playback-settings", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const deviceId = idSchema.safeParse(req.params.deviceId);
+    if (!id.success || !deviceId.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "裝置編號不正確。" } }); return; }
+    const settings = await getDevicePlaybackSettings(id.data, deviceId.data);
+    if (!settings) { res.status(404).json({ error: { code: "DASHBOARD_DEVICE_NOT_FOUND", message: "找不到裝置。" } }); return; }
+    res.json(settings);
+  } catch (error) { next(error); }
+});
+
+dashboardRouter.put("/:id/devices/:deviceId/playback-settings", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const deviceId = idSchema.safeParse(req.params.deviceId);
+    const body = playbackSettingsSchema.safeParse(req.body);
+    if (!id.success || !deviceId.success || !body.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "播放位置設定不正確。" } }); return;
+    }
+    await saveDevicePlaybackSettings(id.data, deviceId.data, body.data);
+    await tryWriteAuditEvent({ eventType: "DASHBOARD_DEVICE_PLAYBACK_SETTINGS_UPDATED", userId: req.authUser.id,
+      parameters: { dashboardId: id.data, deviceId: deviceId.data, ...body.data }, ...auditRequestContext(req) });
+    res.json(body.data);
+  } catch (error) {
+    if (error instanceof Error && error.message === "DASHBOARD_DEVICE_NOT_FOUND") {
+      res.status(404).json({ error: { code: "DASHBOARD_DEVICE_NOT_FOUND", message: "找不到可編輯的裝置。" } }); return;
+    }
     next(error);
   }
 });

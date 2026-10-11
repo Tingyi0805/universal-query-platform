@@ -57,6 +57,16 @@ type DisplayDevice = {
   archivedAtUtc: string | null;
 };
 
+type DevicePlaybackSettings = {
+  browser: "chrome" | "edge";
+  screenNumber: number;
+  fullscreen: boolean;
+  windowX: number;
+  windowY: number;
+  windowWidth: number;
+  windowHeight: number;
+};
+
 type ManagedScreen = {
   label?: string;
   availLeft: number;
@@ -197,6 +207,9 @@ export function DashboardDesignerPage() {
   const [displayDevices, setDisplayDevices] = useState<DisplayDevice[]>([]);
   const [deviceStatusFilter, setDeviceStatusFilter] = useState<"current" | "active" | "expired" | "disabled" | "archived" | "all">("current");
   const [deviceLoading, setDeviceLoading] = useState(false);
+  const [playbackEditing, setPlaybackEditing] = useState<DisplayDevice | null>(null);
+  const [playbackSettings, setPlaybackSettings] = useState<DevicePlaybackSettings | null>(null);
+  const [playbackBusy, setPlaybackBusy] = useState(false);
   const [selectedArchiveIds, setSelectedArchiveIds] = useState<number[]>([]);
   const [archivePolicy, setArchivePolicy] = useState({ enabled: true, retentionDays: 90 });
   const [archiveBusy, setArchiveBusy] = useState(false);
@@ -480,58 +493,30 @@ export function DashboardDesignerPage() {
     setNotice("已下載啟動腳本。請在播放電腦的相同瀏覽器設定檔啟用 Device Token，並於本機桌面測試螢幕位置。");
   }
 
-  function downloadWindowsLauncher() {
-    const setup = fixedPlaybackSetup;
-    if (!setup) return;
-    const coords = [setup.windowX, setup.windowY, setup.windowWidth, setup.windowHeight].map(Number);
-    if (coords.some((value) => !Number.isSafeInteger(value)) || coords[2] < 200 || coords[3] < 200) {
-      setError("請輸入有效的整數座標，視窗寬度與高度至少 200。");
-      return;
-    }
-    const [x, y, width, height] = coords;
-    const url = new URL("/display/dashboards/" + setup.dashboard.id, window.location.origin).href;
-    const browserSubpath = setup.launcherBrowser === "chrome"
-      ? "Google\\Chrome\\Application\\chrome.exe"
-      : "Microsoft\\Edge\\Application\\msedge.exe";
-    const args = setup.autoFullscreen ? "--kiosk" : "--new-window";
-    const script = [
-      "@echo off",
-      "setlocal",
-      "rem Run on the playback PC with the same browser profile as the Device Token.",
-      "rem No Device Token or password is stored here.",
-      'set "BROWSER=%ProgramFiles%\\' + browserSubpath + '"',
-      'if not exist "%BROWSER%" set "BROWSER=%ProgramFiles(x86)%\\' + browserSubpath + '"',
-      'if not exist "%BROWSER%" set "BROWSER=%LOCALAPPDATA%\\' + browserSubpath + '"',
-      'if not exist "%BROWSER%" (echo Browser not found & pause & exit /b 1)',
-      'start "" "%BROWSER%" ' + args + " --window-position=" + x + "," + y
-        + " --window-size=" + width + "," + height + ' "' + url + '"',
-      "",
-    ].join("\r\n");
-    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-windows-launcher.bat", script);
-  }
-
-  function downloadPowerShellLauncher() {
-    const setup = fixedPlaybackSetup;
-    if (!setup) return;
-    const url = new URL("/display/dashboards/" + setup.dashboard.id, window.location.origin).href;
-    const selected = Number(setup.launcherScreen);
-    if (!Number.isInteger(selected) || selected < 1 || selected > 16) {
-      setError("播放螢幕編號必須為 1～16。");
-      return;
-    }
-    // The PowerShell launcher uses local interactive-session monitor coordinates, not RDP virtual monitors.
+  function generatePositionedPowerShell(dashboardId: number, settings: DevicePlaybackSettings) {
+    const url = new URL("/display/dashboards/" + dashboardId, window.location.origin).href;
     const lines = [
-      "# Dashboard launcher: no Device Token or password is stored.",
-      "# Run in the local interactive Windows session, not through Remote Desktop.",
+      "# Dashboard playback launcher. Does not contain tokens or passwords.",
+      "# Run from the physical Windows console, not RDP.",
       "Add-Type -AssemblyName System.Windows.Forms",
+      "Add-Type -TypeDefinition @'",
+      "using System; using System.Runtime.InteropServices;",
+      "public static class UqpWin {",
+      " [DllImport(\"user32.dll\")] public static extern bool EnumWindows(EnumWindowsProc fn, IntPtr p);",
+      " public delegate bool EnumWindowsProc(IntPtr h, IntPtr p);",
+      " [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);",
+      " [DllImport(\"user32.dll\")] public static extern bool IsWindowVisible(IntPtr h);",
+      " [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr h, int cmd);",
+      " [DllImport(\"user32.dll\")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int w, int height, uint flags);",
+      " [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr h);",
+      "}",
+      "'@",
       "$screens = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object { $_.Bounds.X }, { $_.Bounds.Y })",
-      "if ($screens.Count -eq 0) { throw 'No screens found' }",
-      "$selected = " + selected,
-      "if ($selected -gt $screens.Count) { throw ('Requested screen ' + $selected + ' not found; detected ' + $screens.Count + '. Check local console vs RDP.') }",
+      "$selected = " + settings.screenNumber,
+      "if ($selected -gt $screens.Count) { throw ('Screen ' + $selected + ' not found. Detected: ' + $screens.Count + '. Use the physical console, not RDP.') }",
       "$s = $screens[$selected - 1]",
-      "$x = $s.Bounds.X; $y = $s.Bounds.Y",
-      "$w = $s.Bounds.Width; $h = $s.Bounds.Height",
-      "$browserName = '" + setup.launcherBrowser + "'",
+      "$x = $s.Bounds.X; $y = $s.Bounds.Y; $w = $s.Bounds.Width; $h = $s.Bounds.Height",
+      "$browserName = '" + settings.browser + "'",
       "$paths = @()",
       "if ($browserName -eq 'chrome') {",
       " if ($env:ProgramFiles) { $paths += (Join-Path $env:ProgramFiles 'Google\\Chrome\\Application\\chrome.exe') }",
@@ -543,15 +528,95 @@ export function DashboardDesignerPage() {
       "}",
       "$browser = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1",
       "if (!$browser) { throw ('Browser not found: ' + $browserName) }",
+      "function Get-BrowserWindows {",
+      " $handles = New-Object 'System.Collections.Generic.List[System.IntPtr]'",
+      " $callback = [UqpWin+EnumWindowsProc]{ param($h,$p)",
+      "  if ([UqpWin]::IsWindowVisible($h)) {",
+      "   [uint32]$pidValue = 0; [void][UqpWin]::GetWindowThreadProcessId($h,[ref]$pidValue)",
+      "   try { $process = Get-Process -Id $pidValue -ErrorAction Stop",
+      "     if ($process.ProcessName -eq $browserName -or ($browserName -eq 'edge' -and $process.ProcessName -eq 'msedge')) { [void]$handles.Add($h) }",
+      "   } catch {}",
+      "  }; return $true",
+      " }",
+      " [void][UqpWin]::EnumWindows($callback,[IntPtr]::Zero); return @($handles.ToArray())",
+      "}",
+      "$before = @(Get-BrowserWindows | ForEach-Object { $_.ToInt64() })",
       "$targetUrl = '" + url.replace(/'/g, "''") + "'",
-      "$args = @(" + (setup.autoFullscreen ? "'--kiosk'" : "'--new-window'") + ", ('--window-position={0},{1}' -f $x,$y), ('--window-size={0},{1}' -f $w,$h), $targetUrl)",
+      "$args = @('--new-window', ('--window-position={0},{1}' -f $x,$y), ('--window-size={0},{1}' -f $w,$h), $targetUrl)",
       "Start-Process -FilePath $browser -ArgumentList $args",
-      "Write-Host ('Launched ' + $browserName + ' on screen ' + $selected + ' at ' + $x + ',' + $y)",
-      "# To auto-start after Windows sign-in: create a shortcut to this script in shell:startup.",
-      "# Run the shortcut with: powershell.exe -NoProfile -File <path-to-script>",
-      "# Requires an interactive signed-in Windows account; does not configure Windows auto-logon.",
+      "$target = [IntPtr]::Zero",
+      "for ($attempt=0; $attempt -lt 40; $attempt++) {",
+      " Start-Sleep -Milliseconds 250",
+      " $new = @(Get-BrowserWindows | Where-Object { $before -notcontains $_.ToInt64() })",
+      " if ($new.Count -gt 0) { $target = $new[-1]; break }",
+      "}",
+      "if ($target -eq [IntPtr]::Zero) { throw 'Cannot locate newly opened browser window. Close duplicate playback windows and retry.' }",
+      "[void][UqpWin]::ShowWindow($target,9)",
+      "if (![UqpWin]::SetWindowPos($target,[IntPtr]::Zero,$x,$y,$w,$h,0x0040)) { throw 'Failed to move browser window' }",
+      "[void][UqpWin]::SetForegroundWindow($target)",
+      "Start-Sleep -Milliseconds 500",
+      ...(settings.fullscreen ? [
+        "$shell = New-Object -ComObject WScript.Shell",
+        "$shell.SendKeys('{F11}')",
+      ] : []),
+      "Write-Host ('Dashboard launched on screen ' + $selected + ' at ' + $x + ',' + $y)",
     ];
-    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-auto-screen.ps1", lines.join("\r\n") + "\r\n", true);
+    return lines.join("\r\n") + "\r\n";
+  }
+
+  function downloadDevicePowerShell(dashboardId: number, deviceId: number, settings: DevicePlaybackSettings) {
+    downloadLauncherFile("dashboard-" + dashboardId + "-device-" + deviceId + ".ps1", generatePositionedPowerShell(dashboardId, settings), true);
+  }
+
+  function downloadDeviceBat(dashboardId: number, deviceId: number) {
+    const filename = "dashboard-" + dashboardId + "-device-" + deviceId + ".ps1";
+    const script = ["@echo off", "setlocal", "rem Keep this BAT and its PS1 in the same folder.",
+      'powershell.exe -NoProfile -File "%~dp0' + filename + '"', "if errorlevel 1 pause", ""].join("\r\n");
+    downloadLauncherFile("dashboard-" + dashboardId + "-device-" + deviceId + ".bat", script);
+  }
+
+  function downloadPowerShellLauncher() {
+    const setup = fixedPlaybackSetup;
+    if (!setup) return;
+    const settings: DevicePlaybackSettings = {
+      browser: setup.launcherBrowser, screenNumber: Number(setup.launcherScreen),
+      fullscreen: setup.autoFullscreen, windowX: Number(setup.windowX), windowY: Number(setup.windowY),
+      windowWidth: Number(setup.windowWidth), windowHeight: Number(setup.windowHeight),
+    };
+    if (!Number.isInteger(settings.screenNumber) || settings.screenNumber < 1 || settings.screenNumber > 16) {
+      setError("螢幕序號必須為 1～16。"); return;
+    }
+    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-auto-screen.ps1", generatePositionedPowerShell(setup.dashboard.id, settings), true);
+  }
+
+  function downloadWindowsLauncher() {
+    const setup = fixedPlaybackSetup;
+    if (!setup) return;
+    const script = ["@echo off", "setlocal", "rem Download the PS1 launcher into the same folder first.",
+      'powershell.exe -NoProfile -File "%~dp0dashboard-' + setup.dashboard.id + '-auto-screen.ps1"', "if errorlevel 1 pause", ""].join("\r\n");
+    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-windows-launcher.bat", script);
+  }
+
+  async function openDevicePlaybackSettings(device: DisplayDevice) {
+    if (!deviceDashboard) return;
+    setPlaybackBusy(true); setError("");
+    try {
+      const settings = await apiRequest<DevicePlaybackSettings>(
+        "/dashboards/" + deviceDashboard.id + "/devices/" + device.id + "/playback-settings", {}, accessToken);
+      setPlaybackSettings(settings); setPlaybackEditing(device);
+    } catch (e) { setError(e instanceof Error ? e.message : "無法載入播放設定。"); }
+    finally { setPlaybackBusy(false); }
+  }
+
+  async function saveDevicePlaybackSettings() {
+    if (!deviceDashboard || !playbackEditing || !playbackSettings) return;
+    setPlaybackBusy(true); setError("");
+    try {
+      await apiRequest("/dashboards/" + deviceDashboard.id + "/devices/" + playbackEditing.id + "/playback-settings",
+        { method: "PUT", body: JSON.stringify(playbackSettings) }, accessToken);
+      setNotice("播放設定已儲存。請重新下載 PS1 與 BAT 放在同一資料夾，原 Device Token 不變。");
+    } catch (e) { setError(e instanceof Error ? e.message : "儲存播放設定失敗。"); }
+    finally { setPlaybackBusy(false); }
   }
 
   async function createFixedPlaybackFromSetup() {
@@ -1315,6 +1380,34 @@ export function DashboardDesignerPage() {
             </div>
           )}
 
+          {playbackEditing && playbackSettings && deviceDashboard && (
+            <div className="fixed-playback-modal-backdrop" role="presentation">
+              <section className="fixed-playback-modal" role="dialog" aria-modal="true" aria-labelledby="device-playback-title">
+                <div className="fixed-playback-modal-heading">
+                  <div><p className="eyebrow">Playback Settings</p><h2 id="device-playback-title">修改播放螢幕位置</h2><p>{playbackEditing.deviceName}</p></div>
+                  <button className="secondary-button" type="button" onClick={() => { setPlaybackEditing(null); setPlaybackSettings(null); }}>關閉</button>
+                </div>
+                <div className="fixed-playback-form">
+                  <p>可於裝置建立後調整，不會更換 Device Token。螢幕序號依實際 Windows 螢幕座標由左至右排序，不一定等於 Windows 設定的編號。</p>
+                  <label><span>瀏覽器</span><select value={playbackSettings.browser} onChange={(e) => setPlaybackSettings({ ...playbackSettings, browser: e.target.value as "chrome" | "edge" })}><option value="chrome">Chrome</option><option value="edge">Edge</option></select></label>
+                  <label><span>目標螢幕（依左至右）</span><input type="number" min={1} max={16} value={playbackSettings.screenNumber} onChange={(e) => setPlaybackSettings({ ...playbackSettings, screenNumber: Number(e.target.value) })} /></label>
+                  <label><span>全螢幕</span><input type="checkbox" checked={playbackSettings.fullscreen} onChange={(e) => setPlaybackSettings({ ...playbackSettings, fullscreen: e.target.checked })} /></label>
+                  <p>下列座標供後續自訂位置參考；目前腳本依選定螢幕的實際範圍定位。</p>
+                  <label><span>X</span><input type="number" value={playbackSettings.windowX} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowX: Number(e.target.value) })} /></label>
+                  <label><span>Y</span><input type="number" value={playbackSettings.windowY} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowY: Number(e.target.value) })} /></label>
+                  <label><span>寬度</span><input type="number" min={200} value={playbackSettings.windowWidth} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowWidth: Number(e.target.value) })} /></label>
+                  <label><span>高度</span><input type="number" min={200} value={playbackSettings.windowHeight} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowHeight: Number(e.target.value) })} /></label>
+                  <p>請先儲存，再下載 PS1 與 BAT 放在同一資料夾。BAT 將呼叫相同的 PS1 定位邏輯。</p>
+                </div>
+                <div className="fixed-playback-modal-actions">
+                  <button className="secondary-button" type="button" onClick={() => downloadDevicePowerShell(deviceDashboard.id, playbackEditing.id, playbackSettings)}>下載 PS1</button>
+                  <button className="secondary-button" type="button" onClick={() => downloadDeviceBat(deviceDashboard.id, playbackEditing.id)}>下載 BAT</button>
+                  <button className="primary-button" type="button" disabled={playbackBusy || playbackSettings.screenNumber < 1 || playbackSettings.screenNumber > 16} onClick={() => void saveDevicePlaybackSettings()}>{playbackBusy ? "儲存中…" : "儲存播放設定"}</button>
+                </div>
+              </section>
+            </div>
+          )}
+
           {deviceDashboard && (
             <section className="dashboard-device-card">
               <div className="dashboard-preview-heading">
@@ -1460,6 +1553,7 @@ export function DashboardDesignerPage() {
                           <td className="actions">
                             {device.isActive && (
                               <>
+                                <button className="secondary-button" type="button" onClick={() => void openDevicePlaybackSettings(device)}>播放設定／螢幕位置</button>
                                 <button
                                   className="secondary-button"
                                   type="button"
