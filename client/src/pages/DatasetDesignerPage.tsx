@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { DatasetSensitivityEditor } from "../components/DatasetSensitivityEditor";
 import { DatasetParametersEditor } from "../components/DatasetParametersEditor";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
@@ -687,6 +688,8 @@ export function DatasetDesignerPage() {
               }}
             />
           )}
+
+          {form.id && !form.isArchived && <DatasetSensitivityEditor datasetId={form.id} accessToken={accessToken} previewColumns={preview?.columns.map((column) => column.name) ?? []} />}
 
           {preview && (
             <section className="preview-panel">
