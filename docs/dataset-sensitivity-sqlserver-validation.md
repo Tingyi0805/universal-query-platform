@@ -8,7 +8,7 @@
 2. 在**測試平台資料庫**執行 `database/migrations/910_dataset_sensitive_columns.sql`；再次執行 910，驗證冪等性。
 3. 執行唯讀 `database/migrations/911_verify_dataset_sensitivity.sql`；應顯示 `VerificationStatus = PASS`。
 4. 重啟測試版 API；確認管理者具有 `DESIGN_QUERY` 權限；確認其他角色不能修改 Dataset 敏感欄位。
-5. 確認新增兩張資料表的 Dataset 外鍵具有 ON DELETE CASCADE，避免永久刪除 Dataset 時留下規則或版本資料。
+5. 確認新增兩張資料表的 Dataset 外鍵具有 ON DELETE CASCADE；同時確認 AuditLog 外鍵**不**使用 CASCADE。若 Dataset 有稽核紀錄，現行永久刪除可能遭 FK 阻擋；應優先使用封存，絕不可為了刪除 Dataset 而清除稽核紀錄。
 6. 以沒有患者真實資料的 Dataset 執行以下測試；測試完確認稽核事件存在。
 
 ## 測試矩陣
