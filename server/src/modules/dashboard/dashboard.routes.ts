@@ -726,6 +726,7 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
         pageSize: parsed.data.pageSize,
         pageSeconds: parsed.data.pageSeconds,
         isActive: parsed.data.isActive,
+        deviceColumnMasks: parsed.data.parameters.deviceColumnMasks ?? {},
       },
       ...auditRequestContext(req),
     });
@@ -777,6 +778,7 @@ dashboardRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req, res, 
         pageSize: parsed.data.pageSize,
         pageSeconds: parsed.data.pageSeconds,
         isActive: parsed.data.isActive,
+        deviceColumnMasks: parsed.data.parameters.deviceColumnMasks ?? {},
       },
       ...auditRequestContext(req),
     });
