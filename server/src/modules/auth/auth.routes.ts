@@ -110,7 +110,7 @@ authRouter.post("/change-password", authenticateJwt, async (req, res, next) => {
 
 const pinEnrollSchema = z.object({
   password: z.string().min(1).max(200),
-  pin: z.string().regex(/^\\d{6,8}$/),
+  pin: z.string().regex(/^\d{6,8}$/),
 });
 const pinRevokeSchema = z.object({ password: z.string().min(1).max(200) });
 
