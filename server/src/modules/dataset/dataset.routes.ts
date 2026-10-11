@@ -495,6 +495,10 @@ datasetRouter.put("/:id", async (req, res, next) => {
       res.status(404).json({ error: { code: error.message, message: "找不到 Dataset。" } });
       return;
     }
+    if (error instanceof Error && error.message === "DATASET_SENSITIVITY_REVIEW_REQUIRED") {
+      res.status(409).json({ error: { code: "DATASET_SENSITIVITY_REVIEW_REQUIRED", message: "此 Dataset 已設定敏感欄位保護；變更 SQL 或資料來源前，請先由管理者檢視並調整敏感欄位規則，避免新欄位未受保護。" } });
+      return;
+    }
     if (error instanceof Error && error.message === "DATASET_ARCHIVED") {
       res.status(409).json({ error: { code: error.message, message: "此 Dataset 已封存，請先還原後再修改。" } });
       return;
