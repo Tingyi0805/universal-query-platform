@@ -196,6 +196,7 @@ export function DashboardDesignerPage() {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [tokenActionStatus, setTokenActionStatus] = useState("");
   const [listSearch, setListSearch] = useState("");
   const [listStatus, setListStatus] = useState<"ACTIVE" | "INACTIVE" | "ALL">("ACTIVE");
   const [listDisplayMode, setListDisplayMode] = useState<"" | "TABLE" | "BIG_SCREEN">("");
@@ -706,6 +707,7 @@ export function DashboardDesignerPage() {
         );
       } catch (settingsError) {
         popup?.close();
+        setTokenActionStatus("");
         setIssuedToken({ dashboardId: setup.dashboard.id, deviceId: result.device.id, deviceName: result.device.deviceName, token: result.token });
         setDeviceDashboard(setup.dashboard);
         setFixedPlaybackSetup(null);
@@ -843,23 +845,48 @@ export function DashboardDesignerPage() {
 
   async function copyIssuedToken() {
     if (!issuedToken) return;
+    setTokenActionStatus("");
     try {
-      await navigator.clipboard.writeText(issuedToken.token);
-      setNotice("Device Token 已複製到剪貼簿。");
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(issuedToken.token);
+        setTokenActionStatus("Token 已複製，可貼到播放電腦的啟用頁面。");
+        return;
+      }
     } catch {
-      setError("瀏覽器無法使用剪貼簿，請手動選取 Token 複製。");
+      // Intranet HTTP origins often do not expose the modern Clipboard API.
+    }
+    const temporary = document.createElement("textarea");
+    temporary.value = issuedToken.token;
+    temporary.setAttribute("readonly", "");
+    temporary.style.position = "fixed";
+    temporary.style.left = "-9999px";
+    document.body.appendChild(temporary);
+    temporary.focus();
+    temporary.select();
+    let copied = false;
+    try { copied = document.execCommand("copy"); } catch { /* clipboard blocked */ }
+    temporary.remove();
+    if (copied) {
+      setTokenActionStatus("Token 已複製，可貼到播放電腦的啟用頁面。");
+    } else {
+      setTokenActionStatus("瀏覽器限制剪貼簿存取。請選取下方 Token 文字，按 Ctrl+C 複製。");
     }
   }
 
   function applyIssuedTokenToThisBrowser() {
     if (!issuedToken) return;
-    localStorage.setItem(
-      `uqp.dashboard.device.${issuedToken.dashboardId}`,
-      issuedToken.token,
-    );
-    setNotice(
-      `已將「${issuedToken.deviceName}」的新 Token 套用到目前瀏覽器。此電腦可使用該 Dashboard 的固定播放模式。`,
-    );
+    setTokenActionStatus("");
+    try {
+      localStorage.setItem(`uqp.dashboard.device.${issuedToken.dashboardId}`, issuedToken.token);
+      if (localStorage.getItem(`uqp.dashboard.device.${issuedToken.dashboardId}`) !== issuedToken.token) {
+        throw new Error("Token 未能保存");
+      }
+      setTokenActionStatus(
+        "已啟用於目前瀏覽器（" + window.location.host + "）。請在相同瀏覽器設定檔開啟播放頁面驗證；其他電腦及 Chrome／Edge 不會同步啟用。",
+      );
+    } catch {
+      setTokenActionStatus("啟用失敗：瀏覽器禁止本機儲存。請確認未封鎖網站儲存空間，或改在播放電腦的啟用頁面輸入 Token。");
+    }
   }
 
   async function renewDevice(device: DisplayDevice) {
@@ -1465,10 +1492,11 @@ export function DashboardDesignerPage() {
                   <div>
                     <strong>新 Device Token（只顯示一次）</strong>
                     <p>
-                      重新離開此頁後無法從 Server 查回原始 Token。若尚未套用到播放電腦，請先複製保存。
+                      重新離開此頁後無法從 Server 查回原始 Token。請先複製保存。此處的啟用僅對目前瀏覽器有效；若播放電腦不同，請在播放電腦的啟用頁面輸入 Token。
                     </p>
                   </div>
-                  <code>{issuedToken.token}</code>
+                  <code style={{ userSelect: "all", overflowWrap: "anywhere" }}>{issuedToken.token}</code>
+                  {tokenActionStatus && <p role="status" aria-live="polite" style={{ fontWeight: 600 }}>{tokenActionStatus}</p>}
                   <div className="actions">
                     <button
                       className="secondary-button"
@@ -1482,7 +1510,7 @@ export function DashboardDesignerPage() {
                       type="button"
                       onClick={applyIssuedTokenToThisBrowser}
                     >
-                      在此電腦啟用
+                      在目前瀏覽器啟用
                     </button>
                     <button
                       className="secondary-button"
