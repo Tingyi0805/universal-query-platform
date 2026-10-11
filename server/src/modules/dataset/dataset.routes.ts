@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { getDatasetPatientAuditConfig, saveDatasetPatientAuditConfig } from "./patientAuditConfig.repository.js";
 import { z } from "zod";
 import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
@@ -306,8 +307,21 @@ datasetRouter.post("/:id/execute", async (req, res, next) => {
     }
 
     const result = await executeSavedDataset(id.data, body.data.values, body.data.maxRows);
+    const dataset = await getDataset(id.data);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Audit the exact rows returned, before delivering them to the caller.
+    // This route is authenticated by DESIGN_QUERY; user identity comes from JWT.
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: id.data,
+      userId: req.authUser?.id ?? null,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "MANUAL",
+      masked: false,
+      rows: result.rows,
+    });
     await syncDatasetColumns(id.data, result.columns);
-    res.json({ result });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ result, disclosureId });
   } catch (error) {
     if (sendDatasetExecutionError(res, error)) return;
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
