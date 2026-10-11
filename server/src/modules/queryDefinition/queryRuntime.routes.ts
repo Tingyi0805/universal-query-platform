@@ -1,4 +1,6 @@
 import { Router } from "express";
+import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
+import { getDataset } from "../dataset/dataset.repository.js";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset, getParameterOptions } from "../dataset/dataset.service.js";
@@ -222,13 +224,26 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
     });
 
     const result = await executeSavedDataset(query.datasetId, body.data.values);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Must commit disclosure audit before sending any patient-bearing rows.
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: query.datasetId,
+      queryDefinitionId: query.id,
+      userId: req.authUser!.id,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "MANUAL",
+      masked: false,
+      rows: result.rows,
+    });
 
     await completeAuditSuccess(auditId, {
       rowCount: result.rowCount,
       durationMs: Date.now() - started,
     }).catch(() => undefined);
 
-    res.json({ result });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ result, disclosureId });
   } catch (error) {
     if (auditId) {
       await completeAuditFailure(auditId, {
