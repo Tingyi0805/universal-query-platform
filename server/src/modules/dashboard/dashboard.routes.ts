@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { maskDeviceRows, resolveDeviceColumnMasks } from "./dashboardDeviceMasking.js";
+import { maskDeviceRows, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
@@ -319,7 +319,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       return;
     }
     if (!snapshot) {
-      const { snapshotKind: _snapshotKind, snapshotSeconds: _snapshotSeconds, ...queryParameters } = dashboard.parameters;
+      const { snapshotKind: _snapshotKind, snapshotSeconds: _snapshotSeconds, deviceColumnMasks: _deviceColumnMasks, ...queryParameters } = dashboard.parameters;
       const result = await executeSavedDataset(query.datasetId, queryParameters);
       const dataset = await getDataset(query.datasetId);
       if (!dataset) throw new Error("DATASET_NOT_FOUND");
@@ -352,7 +352,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     }
     const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
     const layout = await getDashboardLayout(id.data);
-    const masks = resolveDeviceColumnMasks(layout.profiles);
+    const masks = { ...resolveDeviceColumnMasks(layout.profiles), ...resolveConfiguredDeviceMasks(dashboard.parameters.deviceColumnMasks) };
     const rows = maskDeviceRows(rawRows, masks);
     const masked = Object.values(masks).some((mode) => mode !== "NONE");
     const disclosureId = await auditPatientListIfConfigured({
