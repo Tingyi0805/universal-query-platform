@@ -20,6 +20,7 @@
 | 雙人衝突 | A、B 同時 GET 相同版本；A 先 PUT；B 再以舊版本 PUT | A 成功；B HTTP 409；B 的規則不覆蓋 A |
 | 同時首次建立 | 新 Dataset 兩個工作階段同時以 version 0 PUT | 最多一筆成功；另一筆應衝突或需重試；無重複版本列 |
 | 啟用中 Dashboard 清空規則 | Dataset 有啟用中的 Dashboard 時 PUT columns=[] | HTTP 409 SENSITIVITY_ACTIVE_DASHBOARD；原有規則與版本不變 |
+| 清空後重新啟用 | 曾有敏感規則的 Dataset 清空規則後，嘗試啟用 Dashboard | HTTP 409 DASHBOARD_SENSITIVITY_REVIEW_REQUIRED；重新設定規則後才允許啟用 |
 | 停用後調整規則 | 停用所有相關 Dashboard，再調整 Dataset 規則 | 可依版本檢查正常儲存，完成 SQL 與規則設定後才重新啟用 Dashboard |
 | 直接修改受保護 SQL | Dataset 有敏感欄位規則時直接 PUT 修改 sqlText 或 dataSourceId | HTTP 409 DATASET_SENSITIVITY_REVIEW_REQUIRED；舊 SQL 與規則保持不變 |
 | 一般設定修改 | 只修改 Dataset 名稱或說明，不變更 SQL 與資料來源 | 可正常儲存 |
