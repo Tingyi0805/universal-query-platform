@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
+import { listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
 import { getDatasetPatientAuditConfig, saveDatasetPatientAuditConfig } from "./patientAuditConfig.repository.js";
 import { z } from "zod";
 import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
@@ -711,5 +712,42 @@ datasetRouter.put("/:id/patient-audit-config", async (req, res, next) => {
       ...auditRequestContext(req),
     });
     res.json({ status: "OK", config: parsed.data });
+  } catch (error) { next(error); }
+});
+
+const sensitiveColumnSchema = z.object({
+  columnName: z.string().trim().min(1).max(256),
+  sensitivityType: z.string().regex(/^[A-Z0-9_]{1,64}$/),
+  deviceMaskMode: z.enum(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"]),
+}).refine((rule) => rule.sensitivityType === "OTHER" || rule.deviceMaskMode !== "NONE", "敏感欄位不可原樣顯示");
+
+datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    if (!await getDataset(id.data)) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
+    res.json({ columns: await listDatasetSensitiveColumns(id.data) });
+  } catch (error) { next(error); }
+});
+
+datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const parsed = z.object({ columns: z.array(sensitiveColumnSchema).max(300) }).safeParse(req.body);
+    if (!id.success || !parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "敏感欄位設定格式不正確。" } }); return;
+    }
+    const names = parsed.data.columns.map((column) => column.columnName);
+    if (new Set(names).size !== names.length) {
+      res.status(400).json({ error: { code: "DUPLICATE_SENSITIVE_COLUMN", message: "欄位名稱不可重複。" } }); return;
+    }
+    const before = await listDatasetSensitiveColumns(id.data);
+    await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id);
+    await tryWriteAuditEvent({
+      eventType: "DATASET_SENSITIVITY_UPDATED", userId: req.authUser.id,
+      parameters: { datasetId: id.data, before, after: parsed.data.columns },
+      ...auditRequestContext(req),
+    });
+    res.json({ status: "OK", columns: await listDatasetSensitiveColumns(id.data) });
   } catch (error) { next(error); }
 });
