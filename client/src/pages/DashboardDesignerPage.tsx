@@ -568,11 +568,25 @@ export function DashboardDesignerPage() {
     downloadLauncherFile("dashboard-" + dashboardId + "-device-" + deviceId + ".ps1", generatePositionedPowerShell(dashboardId, settings), true);
   }
 
-  function downloadDeviceBat(dashboardId: number, deviceId: number) {
-    const filename = "dashboard-" + dashboardId + "-device-" + deviceId + ".ps1";
-    const script = ["@echo off", "setlocal", "rem Keep this BAT and its PS1 in the same folder.",
-      'powershell.exe -NoProfile -File "%~dp0' + filename + '"', "if errorlevel 1 pause", ""].join("\r\n");
-    downloadLauncherFile("dashboard-" + dashboardId + "-device-" + deviceId + ".bat", script);
+  function generateStandaloneBat(dashboardId: number, settings: DevicePlaybackSettings) {
+    // A single .bat carries its PowerShell payload after a marker. No temporary .ps1 is written.
+    // CMD exits before reaching the payload; PowerShell reads the BAT as UTF-8 and runs only the payload.
+    const marker = "# UQP_EMBEDDED_POWERSHELL_START";
+    const bootstrap = [
+      "@echo off",
+      "setlocal",
+      "rem Standalone Dashboard launcher. No separate PS1 or Device Token is embedded.",
+      'set "UQP_LAUNCHER_PATH=%~f0"',
+      'powershell.exe -NoProfile -Command "$ErrorActionPreference=\'Stop\'; $source=[System.IO.File]::ReadAllText($env:UQP_LAUNCHER_PATH,[System.Text.Encoding]::UTF8); $marker=\'# UQP_EMBEDDED_POWERSHELL_START\'; $index=$source.IndexOf($marker,[StringComparison]::Ordinal); if($index -lt 0){throw \'Launcher payload missing\'}; Invoke-Expression $source.Substring($index+$marker.Length)"',
+      "if errorlevel 1 pause",
+      "exit /b %errorlevel%",
+      marker,
+    ];
+    return bootstrap.join("\r\n") + "\r\n" + generatePositionedPowerShell(dashboardId, settings);
+  }
+
+  function downloadDeviceBat(dashboardId: number, deviceId: number, settings: DevicePlaybackSettings) {
+    downloadLauncherFile("dashboard-" + dashboardId + "-device-" + deviceId + ".bat", generateStandaloneBat(dashboardId, settings));
   }
 
   function downloadPowerShellLauncher() {
@@ -592,9 +606,15 @@ export function DashboardDesignerPage() {
   function downloadWindowsLauncher() {
     const setup = fixedPlaybackSetup;
     if (!setup) return;
-    const script = ["@echo off", "setlocal", "rem Download the PS1 launcher into the same folder first.",
-      'powershell.exe -NoProfile -File "%~dp0dashboard-' + setup.dashboard.id + '-auto-screen.ps1"', "if errorlevel 1 pause", ""].join("\r\n");
-    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-windows-launcher.bat", script);
+    const settings: DevicePlaybackSettings = {
+      browser: setup.launcherBrowser, screenNumber: Number(setup.launcherScreen),
+      fullscreen: setup.autoFullscreen, windowX: Number(setup.windowX), windowY: Number(setup.windowY),
+      windowWidth: Number(setup.windowWidth), windowHeight: Number(setup.windowHeight),
+    };
+    if (!Number.isInteger(settings.screenNumber) || settings.screenNumber < 1 || settings.screenNumber > 16) {
+      setError("螢幕序號必須為 1～16。"); return;
+    }
+    downloadLauncherFile("dashboard-" + setup.dashboard.id + "-windows-launcher.bat", generateStandaloneBat(setup.dashboard.id, settings));
   }
 
   async function openDevicePlaybackSettings(device: DisplayDevice) {
@@ -614,7 +634,7 @@ export function DashboardDesignerPage() {
     try {
       await apiRequest("/dashboards/" + deviceDashboard.id + "/devices/" + playbackEditing.id + "/playback-settings",
         { method: "PUT", body: JSON.stringify(playbackSettings) }, accessToken);
-      setNotice("播放設定已儲存。請重新下載 PS1 與 BAT 放在同一資料夾，原 Device Token 不變。");
+      setNotice("播放設定已儲存。請重新下載單一 BAT，原 Device Token 不變。");
     } catch (e) { setError(e instanceof Error ? e.message : "儲存播放設定失敗。"); }
     finally { setPlaybackBusy(false); }
   }
@@ -1397,11 +1417,11 @@ export function DashboardDesignerPage() {
                   <label><span>Y</span><input type="number" value={playbackSettings.windowY} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowY: Number(e.target.value) })} /></label>
                   <label><span>寬度</span><input type="number" min={200} value={playbackSettings.windowWidth} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowWidth: Number(e.target.value) })} /></label>
                   <label><span>高度</span><input type="number" min={200} value={playbackSettings.windowHeight} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowHeight: Number(e.target.value) })} /></label>
-                  <p>請先儲存，再下載 PS1 與 BAT 放在同一資料夾。BAT 將呼叫相同的 PS1 定位邏輯。</p>
+                  <p>請先儲存，再下載單一 BAT 即可。BAT 已內含 PowerShell 定位程式，不需額外 PS1。</p>
                 </div>
                 <div className="fixed-playback-modal-actions">
                   <button className="secondary-button" type="button" onClick={() => downloadDevicePowerShell(deviceDashboard.id, playbackEditing.id, playbackSettings)}>下載 PS1</button>
-                  <button className="secondary-button" type="button" onClick={() => downloadDeviceBat(deviceDashboard.id, playbackEditing.id)}>下載 BAT</button>
+                  <button className="secondary-button" type="button" onClick={() => downloadDeviceBat(deviceDashboard.id, playbackEditing.id, playbackSettings)}>下載 BAT</button>
                   <button className="primary-button" type="button" disabled={playbackBusy || playbackSettings.screenNumber < 1 || playbackSettings.screenNumber > 16} onClick={() => void saveDevicePlaybackSettings()}>{playbackBusy ? "儲存中…" : "儲存播放設定"}</button>
                 </div>
               </section>
