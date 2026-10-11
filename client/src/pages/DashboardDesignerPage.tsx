@@ -192,6 +192,7 @@ export function DashboardDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
   const [deviceDashboard, setDeviceDashboard] = useState<DashboardRow | null>(null);
   const [displayDevices, setDisplayDevices] = useState<DisplayDevice[]>([]);
+  const [deviceStatusFilter, setDeviceStatusFilter] = useState<"current" | "active" | "expired" | "disabled" | "all">("current");
   const [deviceLoading, setDeviceLoading] = useState(false);
   const [fixedPlaybackSetup, setFixedPlaybackSetup] = useState<FixedPlaybackSetup | null>(null);
   const [fixedPlaybackSaving, setFixedPlaybackSaving] = useState(false);
@@ -381,6 +382,17 @@ export function DashboardDesignerPage() {
     await loadPreview(item.id);
   }
 
+
+  const filteredDisplayDevices = displayDevices.filter((device) => {
+    const expired = device.expiresAtUtc ? new Date(device.expiresAtUtc).getTime() <= Date.now() : false;
+    switch (deviceStatusFilter) {
+      case "current": return device.isActive;
+      case "active": return device.isActive && !expired;
+      case "expired": return device.isActive && expired;
+      case "disabled": return !device.isActive;
+      case "all": return true;
+    }
+  });
 
   async function loadDevices(item: DashboardRow) {
     setDeviceDashboard(item);
@@ -1245,10 +1257,26 @@ export function DashboardDesignerPage() {
                 </div>
               )}
 
+              <div className="dashboard-device-filter">
+                <label htmlFor="dashboard-device-status-filter">裝置狀態</label>
+                <select
+                  id="dashboard-device-status-filter"
+                  value={deviceStatusFilter}
+                  onChange={(event) => setDeviceStatusFilter(event.target.value as typeof deviceStatusFilter)}
+                >
+                  <option value="current">目前管理（含已到期）</option>
+                  <option value="active">使用中（未到期）</option>
+                  <option value="expired">已到期（未停用）</option>
+                  <option value="disabled">已停用</option>
+                  <option value="all">全部裝置</option>
+                </select>
+                <span>顯示 {filteredDisplayDevices.length} / {displayDevices.length} 筆</span>
+              </div>
+
               {deviceLoading ? (
                 <div className="notice">載入裝置中…</div>
-              ) : displayDevices.length === 0 ? (
-                <div className="empty-state">尚未建立固定播放裝置。</div>
+              ) : filteredDisplayDevices.length === 0 ? (
+                <div className="empty-state">{displayDevices.length === 0 ? "尚未建立固定播放裝置。" : "此篩選條件沒有符合的裝置，可切換「全部裝置」查看歷史紀錄。"}</div>
               ) : (
                 <div className="dashboard-table-wrap">
                   <table>
@@ -1265,7 +1293,7 @@ export function DashboardDesignerPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {displayDevices.map((device) => (
+                      {filteredDisplayDevices.map((device) => (
                         <tr key={device.id}>
                           <td>{device.deviceName}</td>
                           <td>{device.isActive ? "啟用" : "已停用"}</td>
