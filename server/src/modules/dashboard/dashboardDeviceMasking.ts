@@ -67,3 +67,15 @@ export function resolveEffectiveDeviceMasks(
 ): Record<string, DeviceMaskMode> {
   return resolveConfiguredDeviceMasks(configured);
 }
+
+/** Classified fields may never be disclosed raw, even if an older saved dashboard bypassed write validation. */
+export function enforceClassifiedDeviceMasks(masks: Record<string, DeviceMaskMode>, classifications: unknown): Record<string, DeviceMaskMode> {
+  if (!classifications || typeof classifications !== "object" || Array.isArray(classifications)) return masks;
+  const safe = { ...masks };
+  for (const [column, category] of Object.entries(classifications)) {
+    if (category !== "OTHER" && typeof category === "string" && category.length > 0) {
+      if (safe[column] === "NONE") safe[column] = "OMIT";
+    }
+  }
+  return safe;
+}
