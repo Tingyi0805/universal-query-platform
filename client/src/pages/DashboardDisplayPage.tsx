@@ -195,7 +195,7 @@ export function DashboardDisplayPage() {
         setActivationRequired(true);
         setPreview(null);
         setError("");
-        setActivationError("裝置憑證已失效、停用或不符合來源 IP 限制。請向管理員取得新 Token，或確認裝置狀態。");
+        setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
       } else setError(e instanceof Error ? e.message : "Dashboard 載入失敗。");
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken]);
@@ -243,7 +243,7 @@ export function DashboardDisplayPage() {
         setActivationRequired(true);
         setProfiles([]);
         setError("");
-        setActivationError("裝置憑證驗證失敗，請確認裝置是否啟用、過期或限制來源 IP。");
+        setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
       } else setError(e instanceof Error ? e.message : "Dashboard 版面載入失敗。");
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
@@ -559,7 +559,7 @@ export function DashboardDisplayPage() {
         <div className="dashboard-display-error" style={{ maxWidth: 620 }}>
           <h1>啟用 Dashboard 播放裝置</h1>
           <p>Dashboard #{dashboardId} 尚未在目前瀏覽器設定檔完成驗證，或原有憑證已失效。</p>
-          <p>請由管理員在「固定播放裝置」重新核發 Token，並在這台播放電腦的 Chrome／Edge 輸入。啟用成功後會自動播放，不需要登入管理後台。</p>
+          <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>
             <input id="dashboard-device-activation-token" type="password" autoComplete="off" spellCheck={false} required
