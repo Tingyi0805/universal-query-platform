@@ -1222,6 +1222,14 @@ export function DashboardDesignerPage() {
                   )}
                 </div>
 
+                <div className="fixed-playback-hint" role="note">
+                  <strong>新播放電腦首次執行 PowerShell 注意事項</strong>
+                  <p>若下載的 .ps1 被 Windows 封鎖，請先確認檔案來源及內容，再於該檔案所在資料夾開啟 PowerShell，執行：</p>
+                  <code>Unblock-File ".\\dashboard-{fixedPlaybackSetup.dashboard.id}-auto-screen.ps1"</code>
+                  <p>解除封鎖只針對指定檔案，不會關閉系統安全政策。若仍被院內 GPO 或簽章政策禁止執行，請聯絡資訊室，不要全面停用執行原則。</p>
+                  <p>請在實體播放電腦本機操作，並使用已啟用 Device Token 的同一 Chrome／Edge 設定檔。</p>
+                </div>
+
                 <div className="fixed-playback-modal-actions">
                   <button className="secondary-button" type="button" onClick={downloadPowerShellLauncher}>
                     下載 PowerShell 固定螢幕版 (.ps1)
