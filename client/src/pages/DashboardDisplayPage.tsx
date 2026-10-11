@@ -159,6 +159,7 @@ export function DashboardDisplayPage() {
   const [error, setError] = useState("");
   const [dataWarning, setDataWarning] = useState("");
   const [layoutWarning, setLayoutWarning] = useState("");
+  const [layoutRetryCount, setLayoutRetryCount] = useState(0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [retryDelaySeconds, setRetryDelaySeconds] = useState(5);
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -263,6 +264,7 @@ export function DashboardDisplayPage() {
       } else {
         const message = e instanceof Error ? e.message : "Dashboard 版面載入失敗。";
         setLayoutWarning(message);
+        setLayoutRetryCount((count) => count + 1);
         setError(message);
       }
     }
@@ -436,7 +438,7 @@ export function DashboardDisplayPage() {
     if (!layoutWarning) return;
     const timer = window.setTimeout(() => void loadLayout(), 15000);
     return () => window.clearTimeout(timer);
-  }, [loadLayout, layoutWarning, deviceMode, activationRequired]);
+  }, [loadLayout, layoutWarning, layoutRetryCount, deviceMode, activationRequired]);
 
   useEffect(() => {
     const onOnline = () => {
