@@ -279,6 +279,63 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
   }
 });
 
+// Page-scoped device delivery: only the requested page leaves the server.
+// The existing preview endpoint remains for compatibility and is audited as full-result delivery.
+dashboardRouter.post("/device/:id/page", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const pageInput = z.object({ page: z.number().int().min(1).max(100000) }).safeParse(req.body);
+    if (!id.success || !pageInput.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 或頁碼不正確。" } });
+      return;
+    }
+    const token = getDeviceToken(req);
+    const verification = token ? await checkDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)) : { status: "INVALID_TOKEN" as const };
+    if (verification.status !== "VALID") {
+      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED", message: "播放裝置驗證失敗。" } });
+      return;
+    }
+    const dashboard = await getDashboard(id.data);
+    if (!dashboard || !dashboard.isActive) {
+      res.status(409).json({ error: { code: "DASHBOARD_NOT_AVAILABLE", message: "Dashboard 目前不可播放。" } });
+      return;
+    }
+    const query = await getQueryDefinition(dashboard.queryDefinitionId);
+    if (!query || !query.isPublished || !query.isActive || query.isArchived) {
+      res.status(409).json({ error: { code: "DASHBOARD_QUERY_NOT_AVAILABLE", message: "Dashboard 使用的 Query 目前不可執行。" } });
+      return;
+    }
+    const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
+    const pageSize = Math.max(1, dashboard.pageSize);
+    const totalPages = Math.max(1, Math.ceil(result.rows.length / pageSize));
+    if (pageInput.data.page > totalPages) {
+      res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE", message: "頁碼超出資料範圍。" } });
+      return;
+    }
+    const rows = result.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: query.datasetId,
+      queryDefinitionId: query.id,
+      userId: null,
+      dashboardDeviceId: verification.device.id,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "PAGE",
+      pageNumber: pageInput.data.page,
+      masked: false,
+      rows,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ dashboard, query: { id: query.id, code: query.code, name: query.name },
+      reportColumns: await listReportColumns(query.id),
+      result: { columns: result.columns, rows },
+      page: pageInput.data.page, totalPages, totalRows: result.rows.length, disclosureId });
+  } catch (error) {
+    next(error);
+  }
+});
+
 dashboardRouter.use(authenticateJwt);
 
 dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
