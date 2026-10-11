@@ -327,8 +327,15 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
         ? kindValue : "OTHER";
       const secondsValue = snapshotConfig.snapshotSeconds;
       const configuredSeconds = typeof secondsValue === "number" ? secondsValue : null;
+      const totalPagesForSnapshot = Math.max(1, Math.ceil(result.rows.length / Math.max(1, dashboard.pageSize)));
+      const cycleSeconds = totalPagesForSnapshot * Math.max(5, dashboard.pageSeconds);
+      const minimumSnapshotSeconds = Math.ceil((cycleSeconds + Math.max(10, Math.ceil(cycleSeconds * 0.2))) / 10) * 10;
+      if (minimumSnapshotSeconds > 3600) {
+        res.status(409).json({ error: { code: "DASHBOARD_PLAYBACK_TOO_LONG", message: "完整輪播超過快照有效時間上限，請調整每頁筆數或換頁秒數。" } });
+        return;
+      }
       snapshot = createDashboardPageSnapshot({
-        ttlSeconds: resolveDashboardSnapshotSeconds(kind, configuredSeconds),
+        ttlSeconds: Math.max(resolveDashboardSnapshotSeconds(kind, configuredSeconds), minimumSnapshotSeconds),
         deviceId: verification.device.id, dashboardId: id.data,
         queryId: query.id, datasetId: query.datasetId,
         sourceScope: `datasource:${dataset.dataSourceId}`,
