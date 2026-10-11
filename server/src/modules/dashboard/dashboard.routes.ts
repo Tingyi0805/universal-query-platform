@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
+import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, resolveDeviceColumnMask, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
@@ -350,7 +350,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     const dashboardMasks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
     const masks = enforceDatasetDeviceMasks(dashboardMasks, await listDatasetSensitiveColumns(query.datasetId));
     const rows = maskDeviceRows(rawRows, masks);
-    const masked = snapshot.columns.some((column) => masks[column.name] !== "NONE");
+    const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
     const disclosureId = await auditPatientListIfConfigured({
       datasetId: query.datasetId,
       queryDefinitionId: query.id,
@@ -363,8 +363,8 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       rows: rawRows,
     });
     res.setHeader("Cache-Control", "no-store");
-    const reportColumns = (await listReportColumns(query.id)).filter((column) => masks[column.columnName] !== undefined && masks[column.columnName] !== "OMIT");
-    const columns = snapshot.columns.filter((column) => masks[column.name] !== undefined && masks[column.name] !== "OMIT");
+    const reportColumns = (await listReportColumns(query.id)).filter((column) => resolveDeviceColumnMask(column.columnName, masks) !== "OMIT");
+    const columns = snapshot.columns.filter((column) => resolveDeviceColumnMask(column.name, masks) !== "OMIT");
     const { parameters: _privateParameters, ...safeDashboard } = dashboard;
     res.json({ dashboard: safeDashboard, query: { id: query.id, code: query.code, name: query.name },
       reportColumns,
