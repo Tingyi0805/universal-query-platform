@@ -133,9 +133,12 @@ async function assertSensitivityReadyForActivation(tx: sql.Transaction, queryDef
 export async function createDashboard(input: DashboardInput, userId: number): Promise<number> {
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
-  if (input.isActive) await assertSensitivityReadyForActivation(pool, input.queryDefinitionId);
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    if (input.isActive) await assertSensitivityReadyForActivation(tx, input.queryDefinitionId);
 
-  const result = await pool.request()
+  const result = await new sql.Request(tx)
     .input("code", sql.NVarChar(100), input.code)
     .input("name", sql.NVarChar(200), input.name)
     .input("description", sql.NVarChar(1000), input.description)
@@ -167,15 +170,23 @@ export async function createDashboard(input: DashboardInput, userId: number): Pr
       )
     `);
 
+  await tx.commit();
   return Number(result.recordset[0].Id);
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
 }
 
 export async function updateDashboard(id: number, input: DashboardInput, userId: number): Promise<void> {
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
-  if (input.isActive) await assertSensitivityReadyForActivation(pool, input.queryDefinitionId);
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    if (input.isActive) await assertSensitivityReadyForActivation(tx, input.queryDefinitionId);
 
-  const result = await pool.request()
+  const result = await new sql.Request(tx)
     .input("id", sql.BigInt, id)
     .input("code", sql.NVarChar(100), input.code)
     .input("name", sql.NVarChar(200), input.name)
@@ -216,6 +227,11 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
 
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
     throw new Error("DASHBOARD_NOT_FOUND");
+  }
+  await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
   }
 }
 
