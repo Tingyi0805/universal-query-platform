@@ -247,7 +247,11 @@ export function DashboardDisplayPage() {
         setError("");
         setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
       } else {
-        if (deviceMode) setPreview(null);
+        if (deviceMode) {
+          pageSnapshotId.current = null;
+          setPreview(null);
+          setCountdown(0);
+        }
         const message = e instanceof Error ? e.message : "Dashboard 載入失敗。";
         setDataWarning(message);
         setRetryDelaySeconds((previous) => Math.min(previous * 2, 60));
