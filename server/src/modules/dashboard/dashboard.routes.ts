@@ -7,7 +7,7 @@ import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
 import { getDataset } from "../dataset/dataset.repository.js";
-import { listDatasetSensitiveColumns } from "../dataset/datasetSensitiveColumn.repository.js";
+import { getDatasetSensitivitySnapshot } from "../dataset/datasetSensitiveColumn.repository.js";
 import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
@@ -348,7 +348,8 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
     const layout = await getDashboardLayout(id.data);
     const dashboardMasks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
-    const masks = enforceDatasetDeviceMasks(dashboardMasks, await listDatasetSensitiveColumns(query.datasetId));
+    const sensitivity = await getDatasetSensitivitySnapshot(query.datasetId);
+    const masks = enforceDatasetDeviceMasks(dashboardMasks, sensitivity.columns);
     const rows = maskDeviceRows(rawRows, masks);
     const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
     const disclosureId = await auditPatientListIfConfigured({
