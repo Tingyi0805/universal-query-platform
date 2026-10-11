@@ -243,6 +243,10 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
       return;
     }
 
+    // Legacy full-result device delivery must not bypass the page-scoped masking policy.
+    res.status(410).json({ error: { code: "DASHBOARD_DEVICE_PAGE_REQUIRED", message: "此裝置須使用分頁安全播放介面。" } });
+    return;
+    /*
     const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
     const dataset = await getDataset(query.datasetId);
     if (!dataset) throw new Error("DATASET_NOT_FOUND");
@@ -267,6 +271,7 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
       result,
       disclosureId,
     });
+    */
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
       res.status(400).json({
