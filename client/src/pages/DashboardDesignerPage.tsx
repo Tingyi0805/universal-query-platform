@@ -124,6 +124,7 @@ type FormState = {
   parametersJson: string;
   snapshotKind: "SURGERY" | "OUTPATIENT" | "EXAM" | "STATISTICS" | "OTHER";
   snapshotSeconds: string;
+  estimatedRows: string;
   isActive: boolean;
 };
 
@@ -144,6 +145,7 @@ const emptyForm: FormState = {
   parametersJson: "{}",
   snapshotKind: "OTHER",
   snapshotSeconds: "",
+  estimatedRows: "25",
   isActive: true,
 };
 
@@ -263,6 +265,14 @@ export function DashboardDesignerPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  const snapshotDefaultSeconds: Record<FormState["snapshotKind"], number> = {
+    SURGERY: 20, OUTPATIENT: 60, EXAM: 60, STATISTICS: 180, OTHER: 60,
+  };
+  const estimatedPages = Math.max(1, Math.ceil(Math.max(1, Number(form.estimatedRows) || 1) / Math.max(1, Number(form.pageSize) || 1)));
+  const estimatedCycleSeconds = estimatedPages * Math.max(5, Number(form.pageSeconds) || 5);
+  const recommendedSnapshotSeconds = Math.ceil((estimatedCycleSeconds + Math.max(10, Math.ceil(estimatedCycleSeconds * 0.2))) / 10) * 10;
+  const effectiveSnapshotSeconds = form.snapshotSeconds.trim() ? Number(form.snapshotSeconds) : snapshotDefaultSeconds[form.snapshotKind];
+
   const usableQueries = useMemo(
     () => queries.filter((query) => query.isPublished && query.isActive && !query.isArchived),
     [queries],
@@ -318,6 +328,7 @@ export function DashboardDesignerPage() {
       parametersJson: JSON.stringify(Object.fromEntries(Object.entries(item.parameters ?? {}).filter(([key]) => key !== "snapshotKind" && key !== "snapshotSeconds")), null, 2),
       snapshotKind: (["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS"].includes(String(item.parameters?.snapshotKind)) ? item.parameters.snapshotKind : "OTHER") as FormState["snapshotKind"],
       snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
+      estimatedRows: "25",
       isActive: item.isActive,
     });
     setNotice("");
@@ -1126,6 +1137,26 @@ export function DashboardDesignerPage() {
                   onChange={(e) => setForm({ ...form, snapshotSeconds: e.target.value })} />
                 <small>留白使用上方建議值；與換頁秒數、資料更新秒數分開。</small>
               </label>
+
+              <div className="wide" style={{ padding: 12, border: "1px solid var(--border-color, #d1d5db)", borderRadius: 8 }}>
+                <strong>快照時間試算與建議值</strong>
+                <label style={{ display: "block", marginTop: 8 }}>
+                  <span>預估總資料筆數（僅供試算，不會儲存）</span>
+                  <input type="number" min={1} max={100000} value={form.estimatedRows}
+                    onChange={(e) => setForm({ ...form, estimatedRows: e.target.value })} />
+                </label>
+                <p>預估 {estimatedPages} 頁 × 每頁 {form.pageSeconds || "0"} 秒 = {estimatedCycleSeconds} 秒／輪。</p>
+                <p>建議快照：<strong>{recommendedSnapshotSeconds} 秒</strong>（含至少 10 秒或 20% 緩衝）。目前設定：{effectiveSnapshotSeconds} 秒。</p>
+                {recommendedSnapshotSeconds > 3600 ? (
+                  <small>建議時間超過 3600 秒，請減少頁數或縮短換頁時間。</small>
+                ) : (
+                  <button type="button" className="secondary-button"
+                    onClick={() => setForm({ ...form, snapshotSeconds: String(recommendedSnapshotSeconds) })}>
+                    套用建議快照秒數
+                  </button>
+                )}
+                {effectiveSnapshotSeconds < estimatedCycleSeconds && <p role="alert">目前快照時間短於一輪播放時間，可能中途過期。</p>}
+              </div>
 
               <div className="dashboard-display-options wide">
                 <label>
