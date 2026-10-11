@@ -341,3 +341,22 @@
   font-size: 13px;
   line-height: 1.6;
 }
+
+.dashboard-device-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0;
+}
+.dashboard-device-filter select {
+  min-width: 190px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+}
+.dashboard-device-filter span {
+  color: #64748b;
+  font-size: 13px;
+}
