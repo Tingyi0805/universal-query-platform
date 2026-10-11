@@ -552,24 +552,29 @@ export function DashboardDisplayPage() {
     if (deviceMode && page === 1) pageSnapshotId.current = null;
   }, [deviceMode, dashboardId, page]);
 
-  useEffect(() => {
-    if (!preview) return;
-    setCountdown(pageSeconds);
-  }, [dashboardId, pageSeconds, Boolean(preview)]);
+  const canAdvancePage = Boolean(preview) &&
+    (!deviceMode || (!activationRequired && Boolean(deviceToken) && online &&
+      !dataWarning && preview?.page === safePage));
 
   useEffect(() => {
-    if (!preview || (deviceMode && (activationRequired || !deviceToken || !online || dataWarning || preview.page !== safePage))) return;
+    // A new page (or successful recovery) always gets a fresh countdown.
+    // While waiting for authorization, network or page data, keep it stopped.
+    setCountdown(canAdvancePage ? pageSeconds : 0);
+  }, [dashboardId, pageSeconds, page, canAdvancePage, preview]);
+
+  useEffect(() => {
+    if (!canAdvancePage) return;
     const timer = window.setInterval(() => {
       setCountdown((current) => {
         if (current <= 1) {
           setPage((currentPage) => currentPage >= totalPages ? 1 : currentPage + 1);
-          return pageSeconds;
+          return 0;
         }
         return current - 1;
       });
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [pageSeconds, totalPages, Boolean(preview), deviceMode, activationRequired, deviceToken, online, dataWarning, safePage, preview?.page]);
+  }, [pageSeconds, totalPages, canAdvancePage, safePage, preview?.page]);
 
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
