@@ -5,6 +5,7 @@ import { hashPatientForDisclosure, type PatientAuditKeyring } from "./patientAud
 export type PatientListDisclosureInput = {
   userId: number | null;
   workstationId?: number | null;
+  dashboardDeviceId?: number | null;
   sessionId?: string | null;
   queryDefinitionId?: number | null;
   datasetId: number;
@@ -40,6 +41,7 @@ export async function persistPatientListDisclosure(input: PatientListDisclosureI
     const inserted = await new sql.Request(tx)
       .input("userId", sql.BigInt, input.userId)
       .input("workstationId", sql.BigInt, input.workstationId ?? null)
+      .input("dashboardDeviceId", sql.BigInt, input.dashboardDeviceId ?? null)
       .input("sessionId", sql.UniqueIdentifier, input.sessionId ?? null)
       .input("queryDefinitionId", sql.BigInt, input.queryDefinitionId ?? null)
       .input("datasetId", sql.BigInt, input.datasetId)
@@ -49,10 +51,10 @@ export async function persistPatientListDisclosure(input: PatientListDisclosureI
       .input("masked", sql.Bit, input.masked)
       .query(`
         INSERT INTO uqp.PatientListDisclosure
-          (UserId, WorkstationId, SessionId, QueryDefinitionId, DatasetId,
+          (UserId, WorkstationId, DashboardDeviceId, SessionId, QueryDefinitionId, DatasetId,
            DeliveryType, RowCount, PageNumber, Masked)
         OUTPUT INSERTED.Id AS id
-        VALUES (@userId,@workstationId,@sessionId,@queryDefinitionId,@datasetId,
+        VALUES (@userId,@workstationId,@dashboardDeviceId,@sessionId,@queryDefinitionId,@datasetId,
                 @deliveryType,@rowCount,@pageNumber,@masked)
       `);
     const disclosureId = Number(inserted.recordset[0].id);
