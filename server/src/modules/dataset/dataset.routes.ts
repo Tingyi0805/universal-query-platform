@@ -744,6 +744,10 @@ datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
     const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion);
     res.json({ status: "OK", version, columns: parsed.data.columns });
   } catch (error) {
+    if (error instanceof Error && error.message === "SENSITIVITY_AUDIT_TOO_LARGE") {
+      res.status(400).json({ error: { code: "SENSITIVITY_AUDIT_TOO_LARGE", message: "敏感欄位規則異動內容超過稽核紀錄上限，請減少單次修改的欄位數量或縮短欄位名稱。" } });
+      return;
+    }
     if (error instanceof Error && error.message === "SENSITIVITY_VERSION_CONFLICT") {
       res.status(409).json({ error: { code: "SENSITIVITY_VERSION_CONFLICT", message: "其他管理者已更新敏感欄位規則，請重新載入後再修改。" } });
       return;
