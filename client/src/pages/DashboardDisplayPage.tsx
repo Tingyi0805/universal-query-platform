@@ -209,6 +209,14 @@ export function DashboardDisplayPage() {
       if (deviceMode) { setActivationRequired(false); setActivationError(""); }
     } catch (e) {
       if (requestId !== latestDataRequest.current) return;
+      if (deviceMode && (e as { code?: string }).code === "DASHBOARD_PAGE_OUT_OF_RANGE" && page !== 1) {
+        // The dataset shrank between page requests; restart from the first page.
+        setPreview(null);
+        setPage(1);
+        setCountdown(0);
+        setDataWarning("資料筆數已變更，正在從第一頁重新載入。");
+        return;
+      }
       if (deviceMode && (e as { status?: number }).status === 401) {
         setActivationRequired(true);
         setPreview(null);
