@@ -45,5 +45,5 @@ export function resolveDeviceColumnMasks(profiles: Array<{ isDefault: boolean; w
 }
 
 export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DeviceMaskMode>): Record<string, unknown>[] {
-  return rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => masks[key] !== undefined && masks[key] !== "OMIT").map(([key, value]) => [key, maskDeviceValue(value, masks[key])] )));
+  return rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) => masks[key] !== undefined && masks[key] !== "OMIT").map(([key, value]) => [key, maskDeviceValue(value, masks[key] ?? "OMIT")] )));
 }
