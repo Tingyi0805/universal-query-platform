@@ -196,6 +196,9 @@ export function DashboardDesignerPage() {
   const [displayDevices, setDisplayDevices] = useState<DisplayDevice[]>([]);
   const [deviceStatusFilter, setDeviceStatusFilter] = useState<"current" | "active" | "expired" | "disabled" | "all">("current");
   const [deviceLoading, setDeviceLoading] = useState(false);
+  const [deviceSearch, setDeviceSearch] = useState("");
+  const [devicePage, setDevicePage] = useState(1);
+  const [devicePageSize, setDevicePageSize] = useState(20);
   const [fixedPlaybackSetup, setFixedPlaybackSetup] = useState<FixedPlaybackSetup | null>(null);
   const [fixedPlaybackSaving, setFixedPlaybackSaving] = useState(false);
   const [issuedToken, setIssuedToken] = useState<{
@@ -386,6 +389,7 @@ export function DashboardDesignerPage() {
 
 
   const filteredDisplayDevices = displayDevices.filter((device) => {
+    if (!device.deviceName.toLocaleLowerCase().includes(deviceSearch.trim().toLocaleLowerCase())) return false;
     const expired = device.expiresAtUtc ? new Date(device.expiresAtUtc).getTime() <= Date.now() : false;
     switch (deviceStatusFilter) {
       case "current": return device.isActive;
@@ -396,8 +400,12 @@ export function DashboardDesignerPage() {
     }
   });
 
+  const deviceTotalPages = Math.max(1, Math.ceil(filteredDisplayDevices.length / devicePageSize));
+  const visibleDisplayDevices = filteredDisplayDevices.slice((Math.min(devicePage, deviceTotalPages) - 1) * devicePageSize, Math.min(devicePage, deviceTotalPages) * devicePageSize);
+
   async function loadDevices(item: DashboardRow) {
     setDeviceDashboard(item);
+    setDevicePage(1);
     setDeviceLoading(true);
     setError("");
     try {
@@ -440,7 +448,7 @@ export function DashboardDesignerPage() {
       expiresDays: "365",
       screens,
       selectedScreenIndex: 0,
-      screenMode: "auto",
+      screenMode: "script",
       launcherBrowser: "chrome",
       launcherScreen: "2",
       windowX: "1920",
@@ -559,8 +567,11 @@ export function DashboardDesignerPage() {
       return;
     }
 
-    const popup = window.open("about:blank", "_blank");
-    if (!popup) {
+    // Windows scripts are provisioned on the target PC. Do not open an unrelated browser
+    // or write the token into the administrator's current browser profile.
+    const useLocalBrowser = setup.screenMode !== "script";
+    const popup = useLocalBrowser ? window.open("about:blank", "_blank") : null;
+    if (useLocalBrowser && !popup) {
       setError("瀏覽器封鎖了播放視窗，請允許此網站開啟新視窗後再試一次。");
       return;
     }
@@ -571,8 +582,8 @@ export function DashboardDesignerPage() {
     try {
       const selectedScreen = setup.screenMode === "auto" ? setup.screens[setup.selectedScreenIndex] ?? null : null;
       if (selectedScreen) {
-        popup.moveTo(selectedScreen.availLeft, selectedScreen.availTop);
-        popup.resizeTo(selectedScreen.availWidth, selectedScreen.availHeight);
+        popup?.moveTo(selectedScreen.availLeft, selectedScreen.availTop);
+        popup?.resizeTo(selectedScreen.availWidth, selectedScreen.availHeight);
       }
 
       const allowedCidr = setup.enforceIpRestriction && restriction.includes("/") ? restriction : null;
@@ -593,6 +604,7 @@ export function DashboardDesignerPage() {
         accessToken,
       );
 
+      if (popup) {
       popup.localStorage.setItem(`uqp.dashboard.device.${setup.dashboard.id}`, result.token);
       popup.localStorage.setItem(
         `uqp.dashboard.display-settings.${setup.dashboard.id}`,
@@ -615,13 +627,20 @@ export function DashboardDesignerPage() {
         `/display/dashboards/${setup.dashboard.id}${setup.autoFullscreen ? "?autoFullscreen=1" : ""}`,
       );
 
-      setNotice(`已建立固定播放裝置「${result.device.deviceName}」。`);
+      }
+      if (!popup) {
+        setIssuedToken({ dashboardId: setup.dashboard.id, deviceId: result.device.id, deviceName: result.device.deviceName, token: result.token });
+        setDeviceDashboard(setup.dashboard);
+        setNotice(`已建立「${result.device.deviceName}」。請先下載腳本，並將下方 Token 在播放電腦的 ${setup.launcherBrowser === "chrome" ? "Chrome" : "Edge"} 啟用；不要在管理電腦啟用。`);
+      } else {
+        setNotice(`已建立固定播放裝置「${result.device.deviceName}」。`);
+      }
       setFixedPlaybackSetup(null);
       if (deviceDashboard?.id === setup.dashboard.id) {
         await loadDevices(setup.dashboard);
       }
     } catch (e) {
-      popup.close();
+      popup?.close();
       setError(e instanceof Error ? e.message : "建立固定播放裝置失敗。");
     } finally {
       setFixedPlaybackSaving(false);
@@ -1103,6 +1122,7 @@ export function DashboardDesignerPage() {
                 </div>
 
                 <div className="fixed-playback-form">
+                  <p className="fixed-playback-hint">請先選擇播放方式、Chrome／Edge、螢幕及全螢幕設定，再建立裝置。Windows 腳本模式不會自動開啟管理電腦的瀏覽器。</p>
                   <label>
                     <span>裝置名稱</span>
                     <input
@@ -1124,7 +1144,7 @@ export function DashboardDesignerPage() {
                     >
                       <option value="auto">瀏覽器自動偵測</option>
                       <option value="manual">手動開啟（不指定螢幕）</option>
-                      <option value="script">Windows 啟動腳本（指定座標）</option>
+                      <option value="script">Windows 固定播放（先設定再建立）</option>
                     </select>
                   </label>
 
@@ -1266,7 +1286,7 @@ export function DashboardDesignerPage() {
                 <div>
                   <p className="eyebrow">Display Devices</p>
                   <h2>{deviceDashboard.name}－固定播放裝置</h2>
-                  <p>固定播放使用獨立裝置憑證，不受一般 8 小時登入 JWT 影響。</p>
+                  <p>固定播放使用獨立裝置憑證，不受一般 8 小時登入 JWT 影響。已停用紀錄保留供稽核，預設不顯示。</p>
                 </div>
                 <button
                   className="secondary-button"
@@ -1321,7 +1341,7 @@ export function DashboardDesignerPage() {
                 <select
                   id="dashboard-device-status-filter"
                   value={deviceStatusFilter}
-                  onChange={(event) => setDeviceStatusFilter(event.target.value as typeof deviceStatusFilter)}
+                  onChange={(event) => { setDeviceStatusFilter(event.target.value as typeof deviceStatusFilter); setDevicePage(1); }}
                 >
                   <option value="current">目前管理（含已到期）</option>
                   <option value="active">使用中（未到期）</option>
@@ -1329,9 +1349,19 @@ export function DashboardDesignerPage() {
                   <option value="disabled">已停用</option>
                   <option value="all">全部裝置</option>
                 </select>
-                <span>顯示 {filteredDisplayDevices.length} / {displayDevices.length} 筆</span>
+                <input aria-label="搜尋播放裝置名稱" placeholder="搜尋裝置名稱" value={deviceSearch} onChange={(event) => { setDeviceSearch(event.target.value); setDevicePage(1); }} />
+                <label htmlFor="dashboard-device-page-size">每頁</label>
+                <select id="dashboard-device-page-size" value={devicePageSize} onChange={(event) => { setDevicePageSize(Number(event.target.value)); setDevicePage(1); }}><option value={10}>10</option><option value={20}>20</option><option value={50}>50</option></select>
+                <span>符合 {filteredDisplayDevices.length} / {displayDevices.length} 筆</span>
               </div>
 
+              {!deviceLoading && filteredDisplayDevices.length > 0 && (
+                <div className="dashboard-device-filter">
+                  <span>第 {Math.min(devicePage, deviceTotalPages)} / {deviceTotalPages} 頁</span>
+                  <button type="button" className="secondary-button" disabled={devicePage <= 1} onClick={() => setDevicePage((p) => Math.max(1, p - 1))}>上一頁</button>
+                  <button type="button" className="secondary-button" disabled={devicePage >= deviceTotalPages} onClick={() => setDevicePage((p) => Math.min(deviceTotalPages, p + 1))}>下一頁</button>
+                </div>
+              )}
               {deviceLoading ? (
                 <div className="notice">載入裝置中…</div>
               ) : filteredDisplayDevices.length === 0 ? (
@@ -1352,7 +1382,7 @@ export function DashboardDesignerPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredDisplayDevices.map((device) => (
+                      {visibleDisplayDevices.map((device) => (
                         <tr key={device.id}>
                           <td>{device.deviceName}</td>
                           <td>{device.isActive ? "啟用" : "已停用"}</td>
