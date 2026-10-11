@@ -172,6 +172,11 @@ const dashboardSchema = z.object({
   showPageNumber: z.boolean().default(true),
   showCountdown: z.boolean().default(true),
   parameters: z.record(z.unknown()).refine((value) => {
+    const classifications = value.deviceColumnTypes;
+    if (classifications !== undefined) {
+      if (!classifications || typeof classifications !== "object" || Array.isArray(classifications)) return false;
+      if (Object.entries(classifications).length > 300 || Object.entries(classifications).some(([key, category]) => !key.trim() || key.length > 256 || typeof category !== "string" || !/^[A-Z0-9_]{1,64}$/.test(category))) return false;
+    }
     const masks = value.deviceColumnMasks;
     if (masks === undefined) return true;
     if (!masks || typeof masks !== "object" || Array.isArray(masks)) return false;
@@ -727,6 +732,7 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
         pageSeconds: parsed.data.pageSeconds,
         isActive: parsed.data.isActive,
         deviceColumnMasks: parsed.data.parameters.deviceColumnMasks ?? {},
+        deviceColumnTypes: parsed.data.parameters.deviceColumnTypes ?? {},
       },
       ...auditRequestContext(req),
     });
