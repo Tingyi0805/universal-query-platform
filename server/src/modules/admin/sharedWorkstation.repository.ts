@@ -48,3 +48,51 @@ export async function updateSharedWorkstation(id: number, name: string, active: 
     `);
   return Number(result.recordset[0]?.updated) === 1 ? "OK" : "NOT_FOUND";
 }
+
+export async function listWorkstationUsers(workstationId: number): Promise<{ userId: number; username: string; displayName: string }[] | null> {
+  const pool = await getPlatformDbPool();
+  if (!pool) return null;
+  const result = await pool.request().input("workstationId", sql.BigInt, workstationId).query(`
+    SELECT u.Id AS userId, u.Username AS username, u.DisplayName AS displayName
+    FROM uqp.SharedWorkstationUser wu
+    INNER JOIN uqp.AppUser u ON u.Id=wu.UserId
+    WHERE wu.WorkstationId=@workstationId AND wu.IsAllowed=1
+    ORDER BY u.DisplayName
+  `);
+  return result.recordset;
+}
+
+export async function setWorkstationUsers(workstationId: number, userIds: number[]): Promise<"OK" | "NOT_FOUND" | "INVALID_USER" | "NOT_CONFIGURED"> {
+  const pool = await getPlatformDbPool();
+  if (!pool) return "NOT_CONFIGURED";
+  const transaction = new sql.Transaction(pool);
+  await transaction.begin();
+  try {
+    const lock = await new sql.Request(transaction).input("id", sql.BigInt, workstationId)
+      .query("SELECT Id FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
+    if (lock.recordset.length === 0) { await transaction.rollback(); return "NOT_FOUND"; }
+    const users = await new sql.Request(transaction).query(
+      "SELECT Id FROM uqp.AppUser WHERE IsActive=1"
+    );
+    const allowed = new Set<number>(users.recordset.map((row: { Id: number }) => Number(row.Id)));
+    if (userIds.some(id => !allowed.has(id))) { await transaction.rollback(); return "INVALID_USER"; }
+    await new sql.Request(transaction).input("id", sql.BigInt, workstationId)
+      .query("DELETE FROM uqp.SharedWorkstationUser WHERE WorkstationId=@id");
+    for (const userId of userIds) {
+      await new sql.Request(transaction).input("id", sql.BigInt, workstationId)
+        .input("userId", sql.BigInt, userId)
+        .query("INSERT INTO uqp.SharedWorkstationUser (WorkstationId, UserId, IsAllowed) VALUES (@id,@userId,1)");
+    }
+    await new sql.Request(transaction).input("id", sql.BigInt, workstationId).query(`
+      UPDATE uqp.SharedWorkstation SET CredentialVersion=CredentialVersion+1,
+        PinLoginEnabled=0, UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@id;
+      UPDATE uqp.SharedWorkstationSession SET RevokedAtUtc=SYSUTCDATETIME()
+        WHERE WorkstationId=@id AND RevokedAtUtc IS NULL;
+    `);
+    await transaction.commit();
+    return "OK";
+  } catch (error) {
+    await transaction.rollback();
+    throw error;
+  }
+}
