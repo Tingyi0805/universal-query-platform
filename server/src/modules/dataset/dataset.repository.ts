@@ -250,16 +250,19 @@ export async function getDatasetDeleteImpact(id: number) {
     SELECT
       CASE WHEN EXISTS (SELECT 1 FROM uqp.Dataset WHERE Id=@id) THEN 1 ELSE 0 END AS ExistsFlag,
       (SELECT COUNT(1) FROM uqp.QueryDefinition WHERE DatasetId=@id) AS QueryCount,
-      (SELECT COUNT(1) FROM uqp.DatasetParameter WHERE LookupDatasetId=@id) AS LookupReferenceCount
+      (SELECT COUNT(1) FROM uqp.DatasetParameter WHERE LookupDatasetId=@id) AS LookupReferenceCount,
+      (SELECT COUNT(1) FROM uqp.AuditLog WHERE DatasetId=@id) AS AuditCount
   `);
   const row = result.recordset[0];
   if (!row || !Boolean(row.ExistsFlag)) throw new Error("DATASET_NOT_FOUND");
   const queryCount = Number(row.QueryCount ?? 0);
   const lookupReferenceCount = Number(row.LookupReferenceCount ?? 0);
+  const auditCount = Number(row.AuditCount ?? 0);
   return {
-    canDelete: queryCount === 0 && lookupReferenceCount === 0,
+    canDelete: queryCount === 0 && lookupReferenceCount === 0 && auditCount === 0,
     queryCount,
     lookupReferenceCount,
+    auditCount,
   };
 }
 
