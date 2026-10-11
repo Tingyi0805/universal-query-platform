@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
-import { getDatasetSensitivityVersion, listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
+import { getDatasetSensitivitySnapshot, listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
 import { getDatasetPatientAuditConfig, saveDatasetPatientAuditConfig } from "./patientAuditConfig.repository.js";
 import { z } from "zod";
 import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
@@ -726,7 +726,7 @@ datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
     if (!await getDataset(id.data)) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
-    res.json({ columns: await listDatasetSensitiveColumns(id.data), version: await getDatasetSensitivityVersion(id.data) });
+    res.json(await getDatasetSensitivitySnapshot(id.data));
   } catch (error) { next(error); }
 });
 
