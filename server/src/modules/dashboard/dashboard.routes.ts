@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
 import { z } from "zod";
@@ -284,7 +285,7 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
 dashboardRouter.post("/device/:id/page", async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
-    const pageInput = z.object({ page: z.number().int().min(1).max(100000) }).safeParse(req.body);
+    const pageInput = z.object({ page: z.number().int().min(1).max(100000), snapshotId: z.string().uuid().optional() }).safeParse(req.body);
     if (!id.success || !pageInput.success) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 或頁碼不正確。" } });
       return;
@@ -305,22 +306,56 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
       res.status(409).json({ error: { code: "DASHBOARD_QUERY_NOT_AVAILABLE", message: "Dashboard 使用的 Query 目前不可執行。" } });
       return;
     }
-    const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
+    let snapshot = pageInput.data.snapshotId
+      ? getDashboardPageSnapshot(pageInput.data.snapshotId, verification.device.id, id.data)
+      : null;
+    if (pageInput.data.snapshotId && !snapshot) {
+      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已過期，請重新載入。" } });
+      return;
+    }
+    if (snapshot && (snapshot.queryId !== query.id || snapshot.datasetId !== query.datasetId)) {
+      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已變更，請重新載入。" } });
+      return;
+    }
+    if (!snapshot) {
+      const { snapshotKind: _snapshotKind, snapshotSeconds: _snapshotSeconds, ...queryParameters } = dashboard.parameters;
+      const result = await executeSavedDataset(query.datasetId, queryParameters);
+      const dataset = await getDataset(query.datasetId);
+      if (!dataset) throw new Error("DATASET_NOT_FOUND");
+      const snapshotConfig = dashboard.parameters;
+      const kindValue = snapshotConfig.snapshotKind;
+      const kind: DashboardSnapshotKind = kindValue === "SURGERY" || kindValue === "OUTPATIENT" || kindValue === "EXAM" || kindValue === "STATISTICS"
+        ? kindValue : "OTHER";
+      const secondsValue = snapshotConfig.snapshotSeconds;
+      const configuredSeconds = typeof secondsValue === "number" ? secondsValue : null;
+      const totalPagesForSnapshot = Math.max(1, Math.ceil(result.rows.length / Math.max(1, dashboard.pageSize)));
+      const cycleSeconds = totalPagesForSnapshot * Math.max(5, dashboard.pageSeconds);
+      const minimumSnapshotSeconds = Math.ceil((cycleSeconds + Math.max(10, Math.ceil(cycleSeconds * 0.2))) / 10) * 10;
+      if (minimumSnapshotSeconds > 3600) {
+        res.status(409).json({ error: { code: "DASHBOARD_PLAYBACK_TOO_LONG", message: "完整輪播超過快照有效時間上限，請調整每頁筆數或換頁秒數。" } });
+        return;
+      }
+      snapshot = createDashboardPageSnapshot({
+        ttlSeconds: Math.max(resolveDashboardSnapshotSeconds(kind, configuredSeconds), minimumSnapshotSeconds),
+        deviceId: verification.device.id, dashboardId: id.data,
+        queryId: query.id, datasetId: query.datasetId,
+        sourceScope: `datasource:${dataset.dataSourceId}`,
+        columns: result.columns, rows: result.rows,
+      });
+    }
     const pageSize = Math.max(1, dashboard.pageSize);
-    const totalPages = Math.max(1, Math.ceil(result.rows.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / pageSize));
     if (pageInput.data.page > totalPages) {
       res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE", message: "頁碼超出資料範圍。" } });
       return;
     }
-    const rows = result.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    const rows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
     const disclosureId = await auditPatientListIfConfigured({
       datasetId: query.datasetId,
       queryDefinitionId: query.id,
       userId: null,
       dashboardDeviceId: verification.device.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
+      sourceScope: snapshot.sourceScope,
       deliveryType: "PAGE",
       pageNumber: pageInput.data.page,
       masked: false,
@@ -329,8 +364,8 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.json({ dashboard, query: { id: query.id, code: query.code, name: query.name },
       reportColumns: await listReportColumns(query.id),
-      result: { columns: result.columns, rows },
-      page: pageInput.data.page, totalPages, totalRows: result.rows.length, disclosureId });
+      result: { columns: snapshot.columns, rows },
+      page: pageInput.data.page, totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, disclosureId });
   } catch (error) {
     next(error);
   }
