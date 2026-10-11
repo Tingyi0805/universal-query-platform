@@ -91,7 +91,15 @@ export function enforceDatasetDeviceMasks(
       result[rule.columnName] = "OMIT";
     } else if (rule.sensitivityType !== "OTHER") {
       // Dataset policy restricts existing dashboard approvals; it does not grant new fields.
-      if (result[rule.columnName] !== undefined && result[rule.columnName] !== "OMIT") result[rule.columnName] = rule.deviceMaskMode;
+      if (result[rule.columnName] !== undefined && result[rule.columnName] !== "OMIT") {
+        // FULL is stronger than any partial mask; different partial masks are not safely comparable.
+        const current = result[rule.columnName];
+        result[rule.columnName] = current === "FULL" || rule.deviceMaskMode === "FULL"
+          ? "FULL"
+          : current === "NONE" || current === rule.deviceMaskMode
+            ? rule.deviceMaskMode
+            : "FULL";
+      }
     }
   }
   return result;
