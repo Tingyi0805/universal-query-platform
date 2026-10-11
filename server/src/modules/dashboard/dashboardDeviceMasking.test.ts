@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { maskDeviceRows, maskDeviceValue, resolveDeviceColumnMasks } from "./dashboardDeviceMasking.js";
+import { maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks } from "./dashboardDeviceMasking.js";
 
 test("masks patient name, MRN, and phone before delivery", () => {
   assert.equal(maskDeviceValue("王小佑", "NAME"), "王○佑");
@@ -19,4 +19,11 @@ test("resolves masks from default layout", () => {
   assert.deepEqual(maskDeviceRows([{ PatientName: "王小佑", MedicalRecordNo: "00001234" }], masks),
     [{ PatientName: "王○佑", MedicalRecordNo: "0000○○34" }]);
   assert.deepEqual(maskDeviceRows([{ PatientName: "王小佑", Diagnosis: "private" }], masks), [{ PatientName: "王○佑" }]);
+});
+
+test("accepts custom administrator rules and ignores unknown modes", () => {
+  const rules = resolveConfiguredDeviceMasks({ NationalId: "FULL", HealthStatus: "OMIT", Room: "NONE", Unknown: "INVALID" });
+  assert.deepEqual(rules, { NationalId: "FULL", HealthStatus: "OMIT", Room: "NONE" });
+  assert.deepEqual(maskDeviceRows([{ NationalId: "A123456789", HealthStatus: "private", Room: "OR01", Extra: "private" }], rules),
+    [{ NationalId: "○○○○", Room: "OR01" }]);
 });
