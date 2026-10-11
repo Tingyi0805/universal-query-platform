@@ -22,7 +22,7 @@ npm run db:migrate:status
 
 編輯 `server/.env`，至少設定 `PLATFORM_DB_SERVER`、`PLATFORM_DB_DATABASE`、`PLATFORM_DB_USER`、`PLATFORM_DB_PASSWORD`、`JWT_SECRET`、`DATASOURCE_ENCRYPTION_KEY` 與首次初始化用的 `BOOTSTRAP_ADMIN_TOKEN`。密鑰不可提交 GitHub。
 
-**Migration 先核對狀態再執行**。尤其注意 `900_dashboard_device_archive.sql`、`910_dataset_sensitive_columns.sql`、`911_dataset_sensitive_policy_version.sql`；如顯示手動執行但未記錄或結構不完整，先停下來檢查，不要強制覆蓋。
+**Migration 先核對狀態再執行**。尤其注意 `900_dashboard_device_archive.sql`、`910_dataset_sensitive_columns.sql`、`911_verify_dataset_sensitivity.sql`（911 是唯讀結構驗證，不是建立版本資料表；版本資料表由 910 建立）；如顯示手動執行但未記錄或結構不完整，先停下來檢查，不要強制覆蓋。
 
 ```bat
 npm run db:migrate
