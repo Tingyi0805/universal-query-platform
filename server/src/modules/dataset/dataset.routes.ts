@@ -276,6 +276,10 @@ datasetRouter.post("/preview/run", async (req, res, next) => {
       result,
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_SENSITIVITY_COLUMNS_STALE") {
+      res.status(409).json({ error: { code: "DATASET_SENSITIVITY_COLUMNS_STALE", message: "查詢欄位已異動，現有敏感資料規則無法對應；請先調整欄位別名或更新敏感資料設定。" } });
+      return;
+    }
     if (sendDatasetExecutionError(res, error)) return;
     if (error instanceof Error && error.message.startsWith("MISSING_QUERY_PARAMETER:")) {
       const name = error.message.split(":")[1];
@@ -324,6 +328,10 @@ datasetRouter.post("/:id/execute", async (req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     res.json({ result, disclosureId });
   } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_SENSITIVITY_COLUMNS_STALE") {
+      res.status(409).json({ error: { code: "DATASET_SENSITIVITY_COLUMNS_STALE", message: "查詢欄位已異動，現有敏感資料規則無法對應；請先調整欄位別名或更新敏感資料設定。" } });
+      return;
+    }
     if (sendDatasetExecutionError(res, error)) return;
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
       res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
