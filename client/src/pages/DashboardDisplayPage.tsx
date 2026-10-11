@@ -170,6 +170,7 @@ export function DashboardDisplayPage() {
   const [retryDelaySeconds, setRetryDelaySeconds] = useState(5);
   const [online, setOnline] = useState(() => navigator.onLine);
   const [page, setPage] = useState(1);
+  const [snapshotReloadKey, setSnapshotReloadKey] = useState(0);
   const [countdown, setCountdown] = useState(0);
   const [now, setNow] = useState(new Date());
   const [viewport, setViewport] = useState({
@@ -216,7 +217,12 @@ export function DashboardDisplayPage() {
         pageSnapshotId.current = null;
         setPreview(null);
         setPage(1);
+        setCountdown(0);
+        setError("");
         setDataWarning("播放資料版本已過期，正在重新載入。");
+        // Changing page to 1 is a no-op when already on page 1.
+        // A separate reload key guarantees the first page is fetched again.
+        setSnapshotReloadKey((key) => key + 1);
         return;
       }
       if (deviceMode && (e as { code?: string }).code === "DASHBOARD_PAGE_OUT_OF_RANGE" && page !== 1) {
@@ -241,7 +247,7 @@ export function DashboardDisplayPage() {
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken, page]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, page, snapshotReloadKey]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
