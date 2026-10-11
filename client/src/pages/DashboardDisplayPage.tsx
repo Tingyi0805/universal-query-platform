@@ -154,6 +154,7 @@ export function DashboardDisplayPage() {
   const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode ? localStorage.getItem(deviceStorageKey) : null);
   const [activationInput, setActivationInput] = useState("");
   const [activationBusy, setActivationBusy] = useState(false);
+  const activationAttempt = useRef(0);
   const [activationError, setActivationError] = useState("");
   const [activationRequired, setActivationRequired] = useState(() => deviceMode && !localStorage.getItem(deviceStorageKey));
   const { accessToken } = useAuth();
@@ -522,6 +523,8 @@ export function DashboardDisplayPage() {
       if (!activationRequired) void loadLayout();
     };
     const onOffline = () => {
+      ++activationAttempt.current;
+      setActivationBusy(false);
       ++latestDataRequest.current;
       setOnline(false);
       if (deviceMode) {
@@ -660,6 +663,7 @@ export function DashboardDisplayPage() {
       setActivationError("請輸入有效的裝置 Token。");
       return;
     }
+    const attempt = ++activationAttempt.current;
     setActivationBusy(true);
     setActivationError("");
     try {
@@ -670,6 +674,7 @@ export function DashboardDisplayPage() {
         { headers: { "X-Dashboard-Device-Token": token } },
         null,
       );
+      if (attempt !== activationAttempt.current || !navigator.onLine) return;
       pageSnapshotId.current = null;
       ++latestDataRequest.current;
       setPreview(null);
@@ -687,9 +692,9 @@ export function DashboardDisplayPage() {
       setProfiles([]);
       setError("");
     } catch (e) {
-      setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請確認 Token。");
+      if (attempt === activationAttempt.current) setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請確認 Token。");
     } finally {
-      setActivationBusy(false);
+      if (attempt === activationAttempt.current) setActivationBusy(false);
     }
   }
 
