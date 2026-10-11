@@ -4,12 +4,13 @@ import { getPlatformDbPool } from "../../config/database.js";
 import { findUserById } from "./auth.repository.js";
 
 const PIN_COST = 12;
-const blocked = new Set(["000000", "111111", "123456", "654321", "12345678", "87654321"]);
+const blocked = new Set(["000000", "111111", "123456", "654321", "12345678", "87654321", "121212", "112233", "123123"]);
 
 export function validateQuickPin(pin: string): boolean {
   return /^\d{6,8}$/.test(pin) && !blocked.has(pin) &&
     !/^(\d)\1+$/.test(pin) &&
-    !("0123456789".includes(pin) || "9876543210".includes(pin));
+    !("0123456789".includes(pin) || "9876543210".includes(pin)) &&
+    !/^(\\d{2})\\1{2,3}$/.test(pin);
 }
 
 export async function enrollQuickPin(userId: number, password: string, pin: string): Promise<"OK" | "INVALID_CREDENTIALS" | "PIN_WEAK" | "NOT_CONFIGURED"> {
