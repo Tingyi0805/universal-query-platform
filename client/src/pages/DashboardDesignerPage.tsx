@@ -1380,6 +1380,34 @@ export function DashboardDesignerPage() {
             </div>
           )}
 
+          {playbackEditing && playbackSettings && deviceDashboard && (
+            <div className="fixed-playback-modal-backdrop" role="presentation">
+              <section className="fixed-playback-modal" role="dialog" aria-modal="true" aria-labelledby="device-playback-title">
+                <div className="fixed-playback-modal-heading">
+                  <div><p className="eyebrow">Playback Settings</p><h2 id="device-playback-title">修改播放螢幕位置</h2><p>{playbackEditing.deviceName}</p></div>
+                  <button className="secondary-button" type="button" onClick={() => { setPlaybackEditing(null); setPlaybackSettings(null); }}>關閉</button>
+                </div>
+                <div className="fixed-playback-form">
+                  <p>可於裝置建立後調整，不會更換 Device Token。螢幕序號依實際 Windows 螢幕座標由左至右排序，不一定等於 Windows 設定的編號。</p>
+                  <label><span>瀏覽器</span><select value={playbackSettings.browser} onChange={(e) => setPlaybackSettings({ ...playbackSettings, browser: e.target.value as "chrome" | "edge" })}><option value="chrome">Chrome</option><option value="edge">Edge</option></select></label>
+                  <label><span>目標螢幕（依左至右）</span><input type="number" min={1} max={16} value={playbackSettings.screenNumber} onChange={(e) => setPlaybackSettings({ ...playbackSettings, screenNumber: Number(e.target.value) })} /></label>
+                  <label><span>全螢幕</span><input type="checkbox" checked={playbackSettings.fullscreen} onChange={(e) => setPlaybackSettings({ ...playbackSettings, fullscreen: e.target.checked })} /></label>
+                  <p>下列座標供後續自訂位置參考；目前腳本依選定螢幕的實際範圍定位。</p>
+                  <label><span>X</span><input type="number" value={playbackSettings.windowX} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowX: Number(e.target.value) })} /></label>
+                  <label><span>Y</span><input type="number" value={playbackSettings.windowY} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowY: Number(e.target.value) })} /></label>
+                  <label><span>寬度</span><input type="number" min={200} value={playbackSettings.windowWidth} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowWidth: Number(e.target.value) })} /></label>
+                  <label><span>高度</span><input type="number" min={200} value={playbackSettings.windowHeight} onChange={(e) => setPlaybackSettings({ ...playbackSettings, windowHeight: Number(e.target.value) })} /></label>
+                  <p>請先儲存，再下載 PS1 與 BAT 放在同一資料夾。BAT 將呼叫相同的 PS1 定位邏輯。</p>
+                </div>
+                <div className="fixed-playback-modal-actions">
+                  <button className="secondary-button" type="button" onClick={() => downloadDevicePowerShell(deviceDashboard.id, playbackEditing.id, playbackSettings)}>下載 PS1</button>
+                  <button className="secondary-button" type="button" onClick={() => downloadDeviceBat(deviceDashboard.id, playbackEditing.id)}>下載 BAT</button>
+                  <button className="primary-button" type="button" disabled={playbackBusy || playbackSettings.screenNumber < 1 || playbackSettings.screenNumber > 16} onClick={() => void saveDevicePlaybackSettings()}>{playbackBusy ? "儲存中…" : "儲存播放設定"}</button>
+                </div>
+              </section>
+            </div>
+          )}
+
           {deviceDashboard && (
             <section className="dashboard-device-card">
               <div className="dashboard-preview-heading">
@@ -1525,6 +1553,7 @@ export function DashboardDesignerPage() {
                           <td className="actions">
                             {device.isActive && (
                               <>
+                                <button className="secondary-button" type="button" onClick={() => void openDevicePlaybackSettings(device)}>播放設定／螢幕位置</button>
                                 <button
                                   className="secondary-button"
                                   type="button"
