@@ -23,6 +23,9 @@ type ReportColumn = {
 };
 
 type PreviewResult = {
+  page?: number;
+  totalPages?: number;
+  totalRows?: number;
   dashboard: DashboardRow;
   reportColumns: ReportColumn[];
   result: {
@@ -183,12 +186,13 @@ export function DashboardDisplayPage() {
 
       const result = await apiRequest<PreviewResult>(
         deviceMode
-          ? `/dashboards/device/${dashboardId}/preview`
+          ? `/dashboards/device/${dashboardId}/page`
           : `/dashboards/${dashboardId}/preview`,
         {
           method: "POST",
+          body: deviceMode ? JSON.stringify({ page }) : undefined,
           headers: deviceMode
-            ? { "X-Dashboard-Device-Token": deviceToken ?? "" }
+            ? { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" }
             : undefined,
         },
         deviceMode ? null : accessToken,
@@ -213,7 +217,7 @@ export function DashboardDisplayPage() {
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, page]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -398,14 +402,17 @@ export function DashboardDisplayPage() {
   const pageSize = Math.max(1, preview?.dashboard.pageSize ?? 5);
   const pageSeconds = Math.max(5, preview?.dashboard.pageSeconds ?? 20);
   const refreshSeconds = Math.max(5, preview?.dashboard.refreshSeconds ?? 10);
-  const totalPages = Math.max(1, Math.ceil((preview?.result.rows.length ?? 0) / pageSize));
+  const totalPages = deviceMode
+    ? Math.max(1, preview?.totalPages ?? 1)
+    : Math.max(1, Math.ceil((preview?.result.rows.length ?? 0) / pageSize));
   const safePage = Math.min(page, totalPages);
 
   const pageRows = useMemo(() => {
     if (!preview) return [];
+    if (deviceMode) return preview.page === safePage ? preview.result.rows : [];
     const start = (safePage - 1) * pageSize;
     return preview.result.rows.slice(start, start + pageSize);
-  }, [pageSize, preview, safePage]);
+  }, [deviceMode, pageSize, preview, safePage]);
 
   const visibleColumns = useMemo(() => {
     if (!preview) return [];
@@ -483,7 +490,7 @@ export function DashboardDisplayPage() {
   }, [activeProfile, viewport]);
 
   function renderWidget(widget: LayoutWidget) {
-    const firstRow = pageRows[0] ?? preview?.result.rows[0] ?? {};
+    const firstRow = pageRows[0] ?? (!deviceMode ? preview?.result.rows[0] : undefined) ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
     if (widget.widgetType === "CONTAINER") {
