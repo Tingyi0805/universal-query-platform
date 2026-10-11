@@ -1,5 +1,5 @@
 import { isIP } from "node:net";
-import { maskDeviceRows, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
+import { enforceClassifiedDeviceMasks, maskDeviceRows, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
@@ -346,7 +346,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     }
     const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
     const layout = await getDashboardLayout(id.data);
-    const masks = resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles);
+    const masks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
     const rows = maskDeviceRows(rawRows, masks);
     const masked = Object.values(masks).some((mode) => mode !== "NONE");
     const disclosureId = await auditPatientListIfConfigured({
