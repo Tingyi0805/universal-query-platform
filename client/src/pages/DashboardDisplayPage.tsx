@@ -26,6 +26,7 @@ type PreviewResult = {
   page?: number;
   totalPages?: number;
   totalRows?: number;
+  snapshotId?: string;
   dashboard: DashboardRow;
   reportColumns: ReportColumn[];
   result: {
@@ -159,6 +160,7 @@ export function DashboardDisplayPage() {
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const latestDataRequest = useRef(0);
+  const pageSnapshotId = useRef<string | null>(null);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   const [error, setError] = useState("");
   const [dataWarning, setDataWarning] = useState("");
@@ -192,7 +194,7 @@ export function DashboardDisplayPage() {
           : `/dashboards/${dashboardId}/preview`,
         {
           method: "POST",
-          body: deviceMode ? JSON.stringify({ page }) : undefined,
+          body: deviceMode ? JSON.stringify({ page, ...(page > 1 && pageSnapshotId.current ? { snapshotId: pageSnapshotId.current } : {}) }) : undefined,
           headers: deviceMode
             ? { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" }
             : undefined,
@@ -201,6 +203,7 @@ export function DashboardDisplayPage() {
       );
       if (requestId !== latestDataRequest.current) return;
       if (deviceMode && result.page !== page) return;
+      if (deviceMode) pageSnapshotId.current = result.snapshotId ?? null;
       setPreview(result);
       setLastUpdatedAt(new Date());
       setDataWarning("");
@@ -209,6 +212,13 @@ export function DashboardDisplayPage() {
       if (deviceMode) { setActivationRequired(false); setActivationError(""); }
     } catch (e) {
       if (requestId !== latestDataRequest.current) return;
+      if (deviceMode && (e as { code?: string }).code === "DASHBOARD_SNAPSHOT_EXPIRED") {
+        pageSnapshotId.current = null;
+        setPreview(null);
+        setPage(1);
+        setDataWarning("播放資料版本已過期，正在重新載入。");
+        return;
+      }
       if (deviceMode && (e as { code?: string }).code === "DASHBOARD_PAGE_OUT_OF_RANGE" && page !== 1) {
         // The dataset shrank between page requests; restart from the first page.
         setPreview(null);
@@ -606,6 +616,7 @@ export function DashboardDisplayPage() {
         { headers: { "X-Dashboard-Device-Token": token } },
         null,
       );
+      pageSnapshotId.current = null;
       localStorage.setItem(deviceStorageKey, token);
       setDeviceToken(token);
       setActivationInput("");
