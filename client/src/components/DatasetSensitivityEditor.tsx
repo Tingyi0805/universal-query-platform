@@ -13,10 +13,12 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   const [category, setCategory] = useState("OTHER");
   const [mode, setMode] = useState("OMIT");
   const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState("");
   useEffect(() => {
     let active = true;
     setRules([]);
+    setDirty(false);
     setMessage("");
     void apiRequest<{ columns: Rule[] }>(`/datasets/${datasetId}/sensitive-columns`, {}, accessToken)
       .then((result) => { if (active) setRules(result.columns); })
@@ -28,12 +30,15 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
       setMessage("敏感資料不可設定為原樣顯示。"); return;
     }
     setRules((previous) => [...previous.filter((rule) => rule.columnName !== column), { columnName: column, sensitivityType: category, deviceMaskMode: mode }]);
+    setDirty(true);
     setMessage("已加入編輯清單，請按儲存規則。");
   };
   const save = async () => {
     setBusy(true); setMessage("");
     try {
-      await apiRequest(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: rules }) }, accessToken);
+      const result = await apiRequest<{ columns: Rule[] }>(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: rules }) }, accessToken);
+      setRules(result.columns);
+      setDirty(false);
       setMessage("敏感欄位規則已儲存，並記錄異動稽核。");
     } catch (error) { setMessage(error instanceof Error ? error.message : "儲存失敗"); }
     finally { setBusy(false); }
@@ -55,7 +60,8 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     <table className="preview-table"><thead><tr><th>欄位</th><th>分類</th><th>遮蔽</th><th>操作</th></tr></thead>
       <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td><td>{rule.sensitivityType}</td><td>{rule.deviceMaskMode}</td>
         <td><button type="button" disabled={busy} onClick={() => setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName))}>移除</button></td></tr>)}</tbody></table>
-    <button type="button" disabled={busy} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
+    <button type="button" disabled={busy || !dirty} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
+    {dirty && <p role="status">尚有未儲存的敏感欄位規則變更。</p>}
     {message && <p role="status">{message}</p>}
   </section>;
 }
