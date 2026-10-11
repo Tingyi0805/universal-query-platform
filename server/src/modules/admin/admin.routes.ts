@@ -451,6 +451,7 @@ adminRouter.put("/quick-pin-policy", async (req, res, next) => {
 const workstationSchema = z.object({
   workstationCode: z.string().trim().min(2).max(100).regex(/^[A-Za-z0-9_-]+$/),
   displayName: z.string().trim().min(1).max(200),
+  platformCode: z.enum(["WINDOWS", "ANDROID", "IOS", "UNKNOWN"]).default("UNKNOWN"),
 });
 adminRouter.get("/shared-workstations", async (_req, res, next) => {
   try {
@@ -463,7 +464,7 @@ adminRouter.post("/shared-workstations", async (req, res, next) => {
   try {
     const parsed = workstationSchema.safeParse(req.body);
     if (!parsed.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "工作站代碼或名稱格式錯誤。" } }); return; }
-    const id = await createSharedWorkstation(parsed.data.workstationCode, parsed.data.displayName);
+    const id = await createSharedWorkstation(parsed.data.workstationCode, parsed.data.displayName, parsed.data.platformCode);
     if (id === null) { res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED" } }); return; }
     await tryWriteAuditEvent({ eventType: "SHARED_WORKSTATION_CREATED", userId: req.authUser?.id ?? null,
       parameters: { workstationId: id, workstationCode: parsed.data.workstationCode }, ...auditRequestContext(req) });
