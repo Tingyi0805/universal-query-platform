@@ -7,7 +7,7 @@ const PIN_COST = 12;
 export const DEFAULT_PIN_LENGTH = 6;
 
 export function isAllowedPinLength(value: number): boolean {
-  return Number.isInteger(value) && value >= 6 && value <= 8;
+  return Number.isInteger(value) && value >= 4 && value <= 12;
 }
 
 export function validateQuickPinLength(pin: string, length: number): boolean {
@@ -24,10 +24,10 @@ export async function getConfiguredPinLength(): Promise<number> {
 const blocked = new Set(["000000", "111111", "123456", "654321", "12345678", "87654321", "121212", "112233", "123123"]);
 
 export function validateQuickPin(pin: string): boolean {
-  return /^\d{6,8}$/.test(pin) && !blocked.has(pin) &&
+  return /^\d{4,12}$/.test(pin) && !blocked.has(pin) &&
     !/^(\d)\1+$/.test(pin) &&
     !("0123456789".includes(pin) || "9876543210".includes(pin)) &&
-    !/^(\d{2})\1{2,3}$/.test(pin);
+    !/^(\d{2})\1{1,5}$/.test(pin);
 }
 
 export async function enrollQuickPin(userId: number, password: string, pin: string): Promise<"OK" | "INVALID_CREDENTIALS" | "PIN_WEAK" | "NOT_CONFIGURED"> {
