@@ -117,9 +117,23 @@ export async function getDashboard(id: number) {
   return result.recordset[0] ? mapRow(result.recordset[0]) : null;
 }
 
+/** A previously classified Dataset must not be activated after its rules were cleared. */
+async function assertSensitivityReadyForActivation(pool: sql.ConnectionPool, queryDefinitionId: number): Promise<void> {
+  const result = await pool.request().input("queryDefinitionId", sql.BigInt, queryDefinitionId).query(`
+    SELECT TOP (1) d.Id
+    FROM uqp.QueryDefinition q
+    INNER JOIN uqp.Dataset d ON d.Id=q.DatasetId
+    INNER JOIN uqp.DatasetSensitivePolicyVersion v ON v.DatasetId=d.Id
+    WHERE q.Id=@queryDefinitionId AND v.VersionNumber > 0
+      AND NOT EXISTS (SELECT 1 FROM uqp.DatasetSensitiveColumn c WHERE c.DatasetId=d.Id)
+  `);
+  if (result.recordset.length) throw new Error("DASHBOARD_SENSITIVITY_REVIEW_REQUIRED");
+}
+
 export async function createDashboard(input: DashboardInput, userId: number): Promise<number> {
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
+  if (input.isActive) await assertSensitivityReadyForActivation(pool, input.queryDefinitionId);
 
   const result = await pool.request()
     .input("code", sql.NVarChar(100), input.code)
