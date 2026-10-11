@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { listSharedWorkstations, createSharedWorkstation, updateSharedWorkstation } from "./sharedWorkstation.repository.js";
+import { listSharedWorkstations, createSharedWorkstation, updateSharedWorkstation, listWorkstationUsers, setWorkstationUsers } from "./sharedWorkstation.repository.js";
 import { readQuickPinPolicy, updateQuickPinPolicy } from "./quickPinPolicy.repository.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -486,6 +486,33 @@ adminRouter.put("/shared-workstations/:id", async (req, res, next) => {
     }
     await tryWriteAuditEvent({ eventType: "SHARED_WORKSTATION_UPDATED", userId: req.authUser?.id ?? null,
       parameters: { workstationId: id.data, isActive: body.data.isActive }, ...auditRequestContext(req) });
+    res.json({ status: "OK", pinLoginEnabled: false });
+  } catch (error) { next(error); }
+});
+
+adminRouter.get("/shared-workstations/:id/users", async (req, res, next) => {
+  try {
+    const id = z.coerce.number().int().positive().safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    const users = await listWorkstationUsers(id.data);
+    if (!users) { res.status(503).json({ error: { code: "PLATFORM_DB_NOT_CONFIGURED" } }); return; }
+    res.json({ users });
+  } catch (error) { next(error); }
+});
+adminRouter.put("/shared-workstations/:id/users", async (req, res, next) => {
+  try {
+    const id = z.coerce.number().int().positive().safeParse(req.params.id);
+    const body = z.object({ userIds: z.array(z.number().int().positive()).max(100).refine(
+      values => new Set(values).size === values.length, "duplicate userIds"
+    ) }).safeParse(req.body);
+    if (!id.success || !body.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    const status = await setWorkstationUsers(id.data, body.data.userIds);
+    if (status !== "OK") {
+      res.status(status === "NOT_CONFIGURED" ? 503 : status === "NOT_FOUND" ? 404 : 400)
+        .json({ error: { code: status } }); return;
+    }
+    await tryWriteAuditEvent({ eventType: "SHARED_WORKSTATION_USERS_UPDATED", userId: req.authUser?.id ?? null,
+      parameters: { workstationId: id.data, userIds: body.data.userIds }, ...auditRequestContext(req) });
     res.json({ status: "OK", pinLoginEnabled: false });
   } catch (error) { next(error); }
 });
