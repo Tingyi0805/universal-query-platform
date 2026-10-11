@@ -1,6 +1,8 @@
 -- Dataset-level sensitivity policy. Apply after the existing Dataset schema migrations.
 IF OBJECT_ID(N'uqp.Dataset', N'U') IS NULL
     THROW 51011, 'DATASET_MIGRATION_REQUIRED', 1;
+IF OBJECT_ID(N'uqp.AuditLog', N'U') IS NULL
+    THROW 51012, 'AUDIT_LOG_MIGRATION_REQUIRED', 1;
 IF OBJECT_ID(N'uqp.DatasetSensitiveColumn', N'U') IS NULL
 BEGIN
     CREATE TABLE uqp.DatasetSensitiveColumn (
@@ -16,3 +18,6 @@ BEGIN
         CONSTRAINT CK_DatasetSensitiveColumn_SensitiveNotRaw CHECK (SensitivityType='OTHER' OR DeviceMaskMode <> 'NONE')
     );
 END;
+
+IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name = N'IX_DatasetSensitiveColumn_Type' AND object_id = OBJECT_ID(N'uqp.DatasetSensitiveColumn'))
+    CREATE INDEX IX_DatasetSensitiveColumn_Type ON uqp.DatasetSensitiveColumn(SensitivityType, DatasetId);
