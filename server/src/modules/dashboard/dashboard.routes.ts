@@ -1,4 +1,5 @@
 import { isIP } from "node:net";
+import { listDashboardDataSources, replaceDashboardDataSources } from "./dashboardDataSource.repository.js";
 import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, resolveDeviceColumnMask, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
@@ -904,6 +905,47 @@ dashboardRouter.get("/:id/layout", async (req, res, next) => {
 
     res.json(await getDashboardLayout(id.data));
   } catch (error) {
+    next(error);
+  }
+});
+
+
+const supplementalSourceSchema = z.object({
+  sourceKey: z.string().trim().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9_]*$/),
+  datasetId: z.number().int().positive(),
+  refreshSeconds: z.number().int().min(5).max(3600).default(30),
+  parameters: z.record(z.unknown()).default({}),
+  isEnabled: z.boolean().default(true),
+});
+dashboardRouter.get("/:id/data-sources", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    if (!await getDashboard(id.data)) { res.status(404).json({ error: { code: "DASHBOARD_NOT_FOUND" } }); return; }
+    res.json({ sources: await listDashboardDataSources(id.data) });
+  } catch (error) { next(error); }
+});
+dashboardRouter.put("/:id/data-sources", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const parsed = z.object({ sources: z.array(supplementalSourceSchema).max(8) }).safeParse(req.body);
+    if (!id.success || !parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "資料來源設定格式不正確。" } }); return;
+    }
+    const keys = parsed.data.sources.map((source) => source.sourceKey.toUpperCase());
+    if (new Set(keys).size !== keys.length) {
+      res.status(400).json({ error: { code: "DUPLICATE_SOURCE_KEY", message: "同一看板的資料來源代碼不可重複。" } }); return;
+    }
+    const sources = await replaceDashboardDataSources(id.data, parsed.data.sources);
+    await tryWriteAuditEvent({ eventType: "DASHBOARD_DATA_SOURCES_UPDATED",
+      userId: req.authUser.id, parameters: { dashboardId: id.data,
+        sources: sources.map(({ sourceKey, datasetId, refreshSeconds, isEnabled }) => ({ sourceKey, datasetId, refreshSeconds, isEnabled })) },
+      ...auditRequestContext(req) });
+    res.json({ status: "OK", sources });
+  } catch (error) {
+    if (error instanceof Error && ["DASHBOARD_NOT_FOUND", "DATASET_NOT_AVAILABLE"].includes(error.message)) {
+      res.status(409).json({ error: { code: error.message } }); return;
+    }
     next(error);
   }
 });
