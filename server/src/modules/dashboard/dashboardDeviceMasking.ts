@@ -1,9 +1,23 @@
-export type DeviceMaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC" | "FULL" | "OMIT";
-const allowedModes = new Set<DeviceMaskMode>(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"]);
-export function maskDeviceValue(value: unknown, mode: DeviceMaskMode): unknown {
+export type DeviceMaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC" | "FULL" | "OMIT" | "CUSTOM";
+const allowedModes = new Set<DeviceMaskMode>(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM"]);
+export type CustomMaskConfig = { prefix: number; suffix: number; symbol: string };
+/** Invalid/overlapping custom settings fail closed rather than returning original text. */
+export function maskCustomValue(value: unknown, config: CustomMaskConfig | null | undefined): string {
+  if (!config || !Number.isInteger(config.prefix) || !Number.isInteger(config.suffix)
+    || config.prefix < 0 || config.suffix < 0 || config.prefix > 100 || config.suffix > 100
+    || Array.from(config.symbol ?? "").length !== 1 || /[\\r\\n\\t]/u.test(config.symbol)) return "○○○○";
+  const chars = Array.from(typeof value === "object" ? JSON.stringify(value) : String(value));
+  if (chars.length === 0) return "";
+  if (config.prefix + config.suffix >= chars.length) return config.symbol.repeat(chars.length);
+  return chars.slice(0, config.prefix).join("")
+    + config.symbol.repeat(chars.length - config.prefix - config.suffix)
+    + (config.suffix ? chars.slice(-config.suffix).join("") : "");
+}
+export function maskDeviceValue(value: unknown, mode: DeviceMaskMode, custom?: CustomMaskConfig | null): unknown {
   if (mode === "NONE" || value == null) return value;
   if (mode === "OMIT") return undefined;
   if (mode === "FULL") return "○○○○";
+  if (mode === "CUSTOM") return maskCustomValue(value, custom);
   const text = typeof value === "object" ? JSON.stringify(value) : String(value);
   if (!text) return text;
   if (mode === "NAME") {
@@ -51,10 +65,13 @@ export function resolveDeviceColumnMask(column: string, masks: Record<string, De
   return matches[0]![1];
 }
 
-export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DeviceMaskMode>): Record<string, unknown>[] {
+export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DeviceMaskMode>,
+  datasetRules: Array<{ columnName: string; customMask?: CustomMaskConfig | null }> = []): Record<string, unknown>[] {
   return rows.map((row) => Object.fromEntries(Object.entries(row).flatMap(([key, value]) => {
     const mode = resolveDeviceColumnMask(key, masks);
-    return mode === "OMIT" ? [] : [[key, maskDeviceValue(value, mode)]];
+    const matches = datasetRules.filter((rule) => rule.columnName.toUpperCase() === key.toUpperCase());
+    const custom = matches.length === 1 ? matches[0]!.customMask : null;
+    return mode === "OMIT" ? [] : [[key, maskDeviceValue(value, mode, custom)]];
   })));
 }
 
