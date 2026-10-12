@@ -200,29 +200,43 @@ export function DashboardDisplayPage() {
     for (const key of keys) {
       let inFlight = false;
       let failures = 0;
-      let nextTimer: number | undefined;
+      let currentPage = 1;
+      let lastTotalPages = 1;
       const refresh = async () => {
         if (disposed || inFlight || !navigator.onLine) return;
         inFlight = true;
         let seconds = 30;
         try {
-          const result = await apiRequest<SupplementalPage>(
+          const fetchPage = (requestedPage: number) => apiRequest<SupplementalPage>(
             `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
-            { method: "POST", body: JSON.stringify({ page: 1, pageSize: 100 }),
+            { method: "POST", body: JSON.stringify({ page: requestedPage, pageSize: 10 }),
               headers: { "X-Dashboard-Device-Token": deviceToken, "Content-Type": "application/json" } }, null);
+          let result: SupplementalPage;
+          try {
+            result = await fetchPage(currentPage);
+          } catch (error) {
+            // A changing result set can shrink below the next page. Restart safely.
+            if (currentPage === 1 || (error as { code?: string }).code !== "DASHBOARD_PAGE_OUT_OF_RANGE") throw error;
+            currentPage = 1;
+            result = await fetchPage(1);
+          }
           if (disposed || generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
           setSupplementalPages((previous) => ({ ...previous, [key]: result }));
           seconds = Math.max(5, Math.min(3600, result.refreshSeconds));
+          lastTotalPages = Math.max(1, result.totalPages);
+          currentPage = currentPage >= lastTotalPages ? 1 : currentPage + 1;
           failures = 0;
         } catch {
           if (!disposed && generation === supplementalRequestGeneration.current) {
             setSupplementalPages((previous) => { const next = { ...previous }; delete next[key]; return next; });
           }
+          currentPage = 1;
+          lastTotalPages = 1;
           failures++;
           seconds = Math.min(300, 5 * Math.pow(2, Math.min(failures, 6)));
         } finally {
           inFlight = false;
-          if (!disposed) { nextTimer = window.setTimeout(() => void refresh(), seconds * 1000); timers.push(nextTimer); }
+          if (!disposed) timers.push(window.setTimeout(() => void refresh(), seconds * 1000));
         }
       };
       void refresh();
