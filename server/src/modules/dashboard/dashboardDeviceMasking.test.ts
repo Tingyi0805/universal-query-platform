@@ -97,3 +97,23 @@ test("ambiguous case-insensitive dashboard approvals are denied", () => {
   const masks = { PAT_ID: "NONE" as const, pat_id: "FULL" as const };
   assert.deepEqual(maskDeviceRows([{ PAT_ID: "A123456789", pat_id: "B123456789" }], masks), [{}]);
 });
+
+test("custom masks support prefix/suffix and custom symbol", () => {
+  assert.equal(maskDeviceValue("00001234", "CUSTOM", { prefix: 0, suffix: 4, symbol: "*" }), "****1234");
+  assert.equal(maskDeviceValue("0912345678", "CUSTOM", { prefix: 3, suffix: 3, symbol: "*" }), "091****678");
+  assert.equal(maskDeviceValue("王小明", "CUSTOM", { prefix: 1, suffix: 1, symbol: "○" }), "王○明");
+});
+
+test("custom mask invalid config and short values fail closed", () => {
+  assert.equal(maskDeviceValue("1234", "CUSTOM"), "○○○○");
+  assert.equal(maskDeviceValue("123", "CUSTOM", { prefix: 3, suffix: 3, symbol: "*" }), "***");
+  assert.equal(maskDeviceValue("1234", "CUSTOM", { prefix: 1, suffix: 1, symbol: "**" }), "○○○○");
+});
+
+test("dataset custom masking applies to page rows without granting new columns", () => {
+  const rules = [{ columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM" as const,
+    customMask: { prefix: 0, suffix: 4, symbol: "*" } }];
+  const masks = enforceDatasetDeviceMasks({ MRN: "MRN" }, rules);
+  assert.deepEqual(maskDeviceRows([{ MRN: "00001234", HIDDEN: "private" }], masks, rules),
+    [{ MRN: "****1234" }]);
+});
