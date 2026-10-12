@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import { listDashboardDataSources, replaceDashboardDataSources } from "./dashboardDataSource.repository.js";
-import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, resolveDeviceColumnMask, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
+import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
@@ -950,6 +950,44 @@ dashboardRouter.put("/:id/data-sources", requirePermission("DESIGN_QUERY"), asyn
   }
 });
 
+
+// Designer-only masked preview of a supplemental Dataset. Never return raw values.
+dashboardRouter.post("/:id/data-sources/:sourceKey/preview", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const sourceKey = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).safeParse(req.params.sourceKey);
+    if (!id.success || !sourceKey.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return;
+    }
+    const dashboard = await getDashboard(id.data);
+    if (!dashboard) { res.status(404).json({ error: { code: "DASHBOARD_NOT_FOUND" } }); return; }
+    const sources = await listDashboardDataSources(id.data);
+    const source = sources.find((item) => item.sourceKey === sourceKey.data && item.isEnabled);
+    if (!source) { res.status(404).json({ error: { code: "DASHBOARD_SOURCE_NOT_FOUND" } }); return; }
+    const dataset = await getDataset(source.datasetId);
+    if (!dataset || !dataset.isActive || dataset.isArchived) {
+      res.status(409).json({ error: { code: "DATASET_NOT_AVAILABLE" } }); return;
+    }
+    const policy = await getDatasetSensitivitySnapshot(source.datasetId);
+    const result = await executeSavedDataset(source.datasetId, source.parameters, 100);
+    const allowed = new Map(policy.columns.filter((rule) => rule.deviceMaskMode !== "OMIT" && rule.deviceMaskMode !== "NONE")
+      .map((rule) => [rule.columnName.toUpperCase(), rule]));
+    const columns = result.columns.filter((column) => allowed.has(column.name.toUpperCase()));
+    const rows = result.rows.map((row) => Object.fromEntries(columns.map((column) => {
+      const rule = allowed.get(column.name.toUpperCase())!;
+      return [column.name, maskDeviceValue(row[column.name], rule.deviceMaskMode, rule.customMask)];
+    })));
+    // Audit the disclosure before transmitting masked patient rows.
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: source.datasetId, userId: req.authUser.id,
+      sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "DASHBOARD",
+      masked: true, rows,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds,
+      sensitivityVersion: policy.version, result: { columns, rows }, disclosureId });
+  } catch (error) { next(error); }
+});
 dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
