@@ -3,32 +3,38 @@ import { apiRequest } from "../api/client";
 
 type CustomMask = { prefix: number; suffix: number; symbol: string };
 type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: CustomMask | null };
-const categories = ["OTHER", "NAME", "NATIONAL_ID", "MRN", "PHONE", "BIRTH_DATE", "ADDRESS", "DIAGNOSIS", "HEALTH", "LAB"];
-const modes = ["OMIT", "FULL", "NAME", "MRN", "PHONE", "GENERIC", "NONE", "CUSTOM"];
+
 
 export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumns }: {
   datasetId: number; accessToken: string | null; previewColumns: string[];
 }) {
   const [rules, setRules] = useState<Rule[]>([]);
   const [column, setColumn] = useState("");
-  const [category, setCategory] = useState("OTHER");
-  const [mode, setMode] = useState("OMIT");
+  const [action, setAction] = useState<"CUSTOM" | "FULL" | "OMIT">("CUSTOM");
   const [prefix, setPrefix] = useState(0);
   const [suffix, setSuffix] = useState(4);
   const [symbol, setSymbol] = useState("*");
   const [sample, setSample] = useState("00001234");
-  const example: Record<string, [string, string]> = {
-    FULL: ["王小明", "○○○○"], NAME: ["王小明", "王○明"],
-    MRN: ["00001234", "0000○○34"], PHONE: ["0912345678", "0912○○○678"],
-    GENERIC: ["ABCD123456", "A○○○○○○○○6"], OMIT: ["王小明", "不回傳此欄位"],
-    NONE: ["015", "015"],
-  };
   const chars = Array.from(sample);
-  const customPreview = prefix + suffix >= chars.length
+  const validSettings = Number.isInteger(prefix) && Number.isInteger(suffix)
+    && prefix >= 0 && suffix >= 0 && prefix <= 100 && suffix <= 100
+    && Array.from(symbol).length === 1 && !/[\\r\\n\\t]/u.test(symbol);
+  const customPreview = !validSettings || prefix + suffix >= chars.length
     ? symbol.repeat(chars.length)
     : chars.slice(0, prefix).join("") + symbol.repeat(chars.length - prefix - suffix)
       + (suffix ? chars.slice(-suffix).join("") : "");
-  const invalidCustom = mode === "CUSTOM" && (prefix + suffix >= chars.length || Array.from(symbol).length !== 1);
+  const selectedRule = rules.find((rule) => rule.columnName === column);
+  const editRule = (name: string) => {
+    setColumn(name);
+    const rule = rules.find((item) => item.columnName === name);
+    if (!rule) { setAction("CUSTOM"); return; }
+    setAction(rule.deviceMaskMode === "OMIT" ? "OMIT" : rule.deviceMaskMode === "FULL" ? "FULL" : "CUSTOM");
+    if (rule.customMask) {
+      setPrefix(rule.customMask.prefix); setSuffix(rule.customMask.suffix); setSymbol(rule.customMask.symbol);
+    }
+    setMessage(rule.deviceMaskMode === "CUSTOM" || rule.deviceMaskMode === "OMIT" || rule.deviceMaskMode === "FULL"
+      ? "" : "此欄位原本使用舊版遮蔽模式。儲存前請確認新的自訂規則。");
+  };
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [version, setVersion] = useState<number | null>(null);
@@ -54,15 +60,17 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     setReloadKey((current) => current + 1);
   };
   const add = () => {
-    if (!column || (category !== "OTHER" && mode === "NONE")) {
-      setMessage("敏感資料不可設定為原樣顯示。"); return;
+    if (!column) { setMessage("請先選擇查詢欄位。"); return; }
+    if (action === "CUSTOM" && !validSettings) {
+      setMessage("保留碼數須為 0～100 的整數，遮蔽符號限單一字元。"); return;
     }
-    if (mode === "CUSTOM" && (Array.from(symbol).length !== 1 || /[\\r\\n\\t]/u.test(symbol) || prefix < 0 || suffix < 0 || prefix > 100 || suffix > 100)) {
-      setMessage("自訂遮蔽設定無效，請確認保留碼數與遮蔽符號。"); return;
-    }
+    // Preserve the classification of existing rules; new fields default to sensitive.
+    // Classification is not editable in the simplified UI.
+    const sensitivityType = selectedRule?.sensitivityType ?? "OTHER";
     setRules((previous) => [...previous.filter((rule) => rule.columnName !== column), {
-      columnName: column, sensitivityType: category, deviceMaskMode: mode,
-      customMask: mode === "CUSTOM" ? { prefix, suffix, symbol } : null,
+      columnName: column, sensitivityType,
+      deviceMaskMode: action,
+      customMask: action === "CUSTOM" ? { prefix, suffix, symbol } : null,
     }]);
     setDirty(true);
     setMessage("已加入編輯清單，請按儲存規則。");
@@ -92,33 +100,39 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   };
   return <section className="preview-panel">
     <h2>Dataset 敏感資料欄位管理</h2>
-    <p>規則適用於使用此 Dataset 的固定播放裝置。先預覽查詢取得欄位名稱；未列入規則的欄位仍需在 Dashboard 明確核准才能顯示。</p>
-    <label>查詢結果欄位 <select value={column} onChange={(event) => setColumn(event.target.value)}>
+    <p>選擇欄位後設定遮蔽位置及符號，無需選擇英文模式或敏感資料分類。原有敏感分類與既有規則會保留；未核准欄位不會傳送到播放裝置。</p>
+    <label>查詢結果欄位 <select value={column} onChange={(event) => editRule(event.target.value)}>
       <option value="">請選擇欄位</option>
       {[...new Set([...previewColumns, ...rules.map((rule) => rule.columnName)])].map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
-    <label>敏感資料分類 <select value={category} onChange={(event) => { const next = event.target.value; setCategory(next); if (next !== "OTHER" && mode === "NONE") setMode("OMIT"); }}>
-      {categories.map((name) => <option key={name} value={name}>{name}</option>)}
-    </select></label>
-    <label>播放遮蔽方式 <select value={mode} onChange={(event) => setMode(event.target.value)}>
-      {modes.map((name) => <option key={name} value={name} disabled={name === "NONE" && category !== "OTHER"}>{name}</option>)}
-    </select></label>
-    {mode === "CUSTOM" && <div className="preview-panel">
-      <h3>自訂遮蔽位置與符號</h3>
-      <label>保留前幾碼 <input type="number" min="0" max="100" value={prefix} onChange={(e) => setPrefix(Number(e.target.value))}/></label>
-      <label>保留後幾碼 <input type="number" min="0" max="100" value={suffix} onChange={(e) => setSuffix(Number(e.target.value))}/></label>
+    <fieldset>
+      <legend>播放裝置資料處理方式</legend>
+      <label><input type="radio" name="maskAction" checked={action === "CUSTOM"} onChange={() => setAction("CUSTOM")}/> 自訂遮蔽</label>
+      <label><input type="radio" name="maskAction" checked={action === "FULL"} onChange={() => setAction("FULL")}/> 全部遮蔽</label>
+      <label><input type="radio" name="maskAction" checked={action === "OMIT"} onChange={() => setAction("OMIT")}/> 完全不傳送</label>
+    </fieldset>
+    {action === "CUSTOM" && <div className="preview-panel">
+      <h3>自訂遮蔽設定</h3>
+      <label>保留前幾碼 <input type="number" min="0" max="100" step="1" value={prefix} onChange={(e) => setPrefix(Number(e.target.value))}/></label>
+      <label>保留後幾碼 <input type="number" min="0" max="100" step="1" value={suffix} onChange={(e) => setSuffix(Number(e.target.value))}/></label>
       <label>遮蔽符號 <input type="text" maxLength={2} value={symbol} onChange={(e) => setSymbol(e.target.value)}/></label>
-      <label>預覽用模擬資料 <input type="text" value={sample} onChange={(e) => setSample(e.target.value)}/></label>
-      <p>遮蔽預覽：<strong>{invalidCustom ? "保留碼數過多，實際播放將全部遮蔽" : customPreview}</strong></p>
-      <p>範例：病歷號 00001234 → ****1234（前 0／後 4）；電話 0912345678 → 091****678（前 3／後 3）。</p>
+      <label>模擬資料（請勿輸入真實患者資料） <input type="text" value={sample} onChange={(e) => setSample(e.target.value)}/></label>
+      <p role="status">預覽：{validSettings ? customPreview : "請輸入合法的遮蔽設定"}</p>
+      <p>範例：病歷號 00001234 → ****1234（前 0、後 4）；電話 0912345678 → 091****678（前 3、後 3）。</p>
+      <p>資料長度不足以保留指定碼數時，後端將全部遮蔽。</p>
     </div>}
-    {mode !== "CUSTOM" && <p role="status">範例：{example[mode]?.[0]} → <strong>{example[mode]?.[1]}</strong></p>}
-    <button type="button" disabled={!column || busy} onClick={add}>加入／更新</button>
-    <table className="preview-table"><thead><tr><th>欄位</th><th>分類</th><th>遮蔽</th><th>操作</th></tr></thead>
-      <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td><td>{rule.sensitivityType}</td><td>{rule.deviceMaskMode === "CUSTOM" && rule.customMask
-          ? `CUSTOM（前 ${rule.customMask.prefix}／後 ${rule.customMask.suffix}，符號 ${rule.customMask.symbol}）`
-          : rule.deviceMaskMode}</td>
-        <td><button type="button" disabled={busy} onClick={() => { setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName)); setDirty(true); }}>移除</button></td></tr>)}</tbody></table>
+    {action === "FULL" && <p role="status">全部遮蔽，例如：王小明 → ○○○○</p>}
+    {action === "OMIT" && <p role="status">完全不傳送：此欄位不會出現在播放裝置的資料中。</p>}
+    <button type="button" disabled={!column || busy || (action === "CUSTOM" && !validSettings)} onClick={add}>加入／更新欄位規則</button>
+    <table className="preview-table"><thead><tr><th>欄位</th><th>資料處理方式</th><th>操作</th></tr></thead>
+      <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td>
+        <td>{rule.deviceMaskMode === "CUSTOM" && rule.customMask
+          ? `自訂遮蔽（保留前 ${rule.customMask.prefix} 碼、後 ${rule.customMask.suffix} 碼，符號 ${rule.customMask.symbol}）`
+          : rule.deviceMaskMode === "OMIT" ? "完全不傳送"
+          : rule.deviceMaskMode === "FULL" ? "全部遮蔽"
+          : `舊版規則：${rule.deviceMaskMode}（仍有效，選取欄位可調整）`}</td>
+        <td><button type="button" disabled={busy} onClick={() => editRule(rule.columnName)}>編輯</button>
+          <button type="button" disabled={busy} onClick={() => { setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName)); setDirty(true); }}>移除</button></td></tr>)}</tbody></table>
     <button type="button" disabled={busy || !dirty || !loaded || version === null || conflict} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
     {!loaded && <p role="status">原有規則尚未載入完成，暫停儲存以避免誤覆蓋。</p>}
     {dirty && <p role="status">尚有未儲存的敏感欄位規則變更。</p>}
