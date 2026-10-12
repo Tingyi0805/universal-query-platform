@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../api/client";
 
-type Source = { sourceKey: string; datasetId: number; refreshSeconds: number; parameters: Record<string, unknown>; isEnabled: boolean };
+type Source = { sourceKey: string; datasetId: number; refreshSeconds: number; pageSize: number; pageSeconds: number; parameters: Record<string, unknown>; isEnabled: boolean };
 type Dataset = { id: number; code: string; name: string; isActive: boolean; isArchived: boolean };
-type Draft = { sourceKey: string; datasetId: string; refreshSeconds: string; parametersJson: string; isEnabled: boolean };
-const initial: Draft = { sourceKey: "", datasetId: "", refreshSeconds: "30", parametersJson: "{}", isEnabled: true };
+type Draft = { sourceKey: string; datasetId: string; refreshSeconds: string; pageSize: string; pageSeconds: string; parametersJson: string; isEnabled: boolean };
+const initial: Draft = { sourceKey: "", datasetId: "", refreshSeconds: "30", pageSize: "10", pageSeconds: "15", parametersJson: "{}", isEnabled: true };
 
 export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
   const [sources, setSources] = useState<Source[]>([]);
@@ -31,9 +31,13 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
     const key = draft.sourceKey.trim();
     const datasetId = Number(draft.datasetId);
     const seconds = Number(draft.refreshSeconds);
+    const pageSize = Number(draft.pageSize);
+    const pageSeconds = Number(draft.pageSeconds);
     if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) || !Number.isSafeInteger(datasetId) || datasetId <= 0
-      || !Number.isInteger(seconds) || seconds < 5 || seconds > 3600) {
-      setMessage("來源代碼須以英文字母開頭；請選擇 Dataset，更新秒數須為 5～3600。"); return;
+      || !Number.isInteger(seconds) || seconds < 5 || seconds > 3600
+      || !Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100
+      || !Number.isInteger(pageSeconds) || pageSeconds < 5 || pageSeconds > 3600) {
+      setMessage("來源代碼須以英文字母開頭；請選擇 Dataset，更新秒數與換頁秒數須為 5～3600，每頁筆數須為 1～100。"); return;
     }
     let parameters: Record<string, unknown>;
     try {
@@ -44,7 +48,7 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
     if (!datasets.some((dataset) => dataset.id === datasetId && dataset.isActive && !dataset.isArchived)) {
       setMessage("請選擇可用的 Dataset。"); return;
     }
-    const item: Source = { sourceKey: key, datasetId, refreshSeconds: seconds, parameters, isEnabled: draft.isEnabled };
+    const item: Source = { sourceKey: key, datasetId, refreshSeconds: seconds, pageSize, pageSeconds, parameters, isEnabled: draft.isEnabled };
     setSources((previous) => [...previous.filter((source) => source.sourceKey.toUpperCase() !== key.toUpperCase()), item]);
     setDirty(true); setMessage("已加入清單，請按儲存資料來源。");
   }
@@ -78,15 +82,17 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
         {datasets.filter((item) => item.isActive && !item.isArchived).map((item) => <option key={item.id} value={item.id}>{item.name}（{item.code}）</option>)}
       </select></label>
       <label>更新秒數 <input type="number" min="5" max="3600" step="1" value={draft.refreshSeconds} onChange={(e) => setDraft({ ...draft, refreshSeconds: e.target.value })}/></label>
+      <label>每頁筆數 <input type="number" min="1" max="100" step="1" value={draft.pageSize} onChange={(e) => setDraft({ ...draft, pageSize: e.target.value })}/></label>
+      <label>換頁秒數 <input type="number" min="5" max="3600" step="1" value={draft.pageSeconds} onChange={(e) => setDraft({ ...draft, pageSeconds: e.target.value })}/></label>
       <label>查詢參數 JSON <textarea rows={2} value={draft.parametersJson} onChange={(e) => setDraft({ ...draft, parametersJson: e.target.value })}/></label>
       <label><input type="checkbox" checked={draft.isEnabled} onChange={(e) => setDraft({ ...draft, isEnabled: e.target.checked })}/> 啟用來源</label>
       <button type="button" disabled={busy || !loaded || sources.length >= 8 && !sources.some((item) => item.sourceKey.toUpperCase() === draft.sourceKey.toUpperCase())} onClick={add}>加入／更新來源</button>
     </div>
-    <table className="preview-table"><thead><tr><th>來源</th><th>Dataset</th><th>更新秒數</th><th>狀態</th><th>操作</th></tr></thead>
+    <table className="preview-table"><thead><tr><th>來源</th><th>Dataset</th><th>更新秒數</th><th>每頁筆數</th><th>換頁秒數</th><th>狀態</th><th>操作</th></tr></thead>
       <tbody>{sources.map((source) => <tr key={source.sourceKey}>
         <td>{source.sourceKey}</td><td>{datasets.find((item) => item.id === source.datasetId)?.name ?? source.datasetId}</td>
-        <td>{source.refreshSeconds}</td><td>{source.isEnabled ? "啟用" : "停用"}</td>
-        <td><button type="button" disabled={busy} onClick={() => setDraft({ sourceKey: source.sourceKey, datasetId: String(source.datasetId), refreshSeconds: String(source.refreshSeconds), parametersJson: JSON.stringify(source.parameters, null, 2), isEnabled: source.isEnabled })}>編輯</button>
+        <td>{source.refreshSeconds}</td><td>{source.pageSize}</td><td>{source.pageSeconds}</td><td>{source.isEnabled ? "啟用" : "停用"}</td>
+        <td><button type="button" disabled={busy} onClick={() => setDraft({ sourceKey: source.sourceKey, datasetId: String(source.datasetId), refreshSeconds: String(source.refreshSeconds), pageSize: String(source.pageSize), pageSeconds: String(source.pageSeconds), parametersJson: JSON.stringify(source.parameters, null, 2), isEnabled: source.isEnabled })}>編輯</button>
           <button type="button" disabled={busy || dirty || !source.isEnabled} onClick={() => void showPreview(source.sourceKey)}>遮蔽預覽</button>
           <button type="button" disabled={busy} onClick={() => { setSources((previous) => previous.filter((item) => item.sourceKey !== source.sourceKey)); setDirty(true); }}>移除</button></td>
       </tr>)}</tbody></table>
