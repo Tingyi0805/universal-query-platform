@@ -1,25 +1,27 @@
-import { describe, expect, it } from "vitest";
+import assert from "node:assert/strict";
+import test from "node:test";
 import { resolveWidgetDataSourceKey, validateWidgetDataSources } from "./dashboardWidgetSource.js";
 
-describe("Dashboard widget Dataset source binding", () => {
-  it("preserves existing single-query layouts", () => {
-    expect(resolveWidgetDataSourceKey({})).toBe("PRIMARY");
-    expect(resolveWidgetDataSourceKey({ dataSourceKey: "PRIMARY" })).toBe("PRIMARY");
-    expect(validateWidgetDataSources([{ widgets: [
-      { widgetType: "FIELD", config: {} },
-      { widgetType: "TABLE", config: { dataSourceKey: "PRIMARY" } },
-    ] }], [])).toEqual({ valid: true });
-  });
-  it("accepts configured supplemental sources only", () => {
-    const profiles = [{ widgets: [{ widgetType: "FIELD", config: { dataSourceKey: "CLINIC" } }] }];
-    expect(validateWidgetDataSources(profiles, ["CLINIC"])).toEqual({ valid: true });
-    expect(validateWidgetDataSources(profiles, ["WAITING"])).toEqual({ valid: false, sourceKey: "CLINIC" });
-  });
-  it("rejects malformed source keys", () => {
-    for (const value of ["../secret", "a.b", " ", 5, {}, "x".repeat(65)]) {
-      expect(resolveWidgetDataSourceKey({ dataSourceKey: value })).toBe("INVALID");
-    }
-    expect(validateWidgetDataSources([{ widgets: [{ widgetType: "TABLE", config: { dataSourceKey: "../secret" } }] }], ["CLINIC"]))
-      .toEqual({ valid: false, sourceKey: "INVALID" });
-  });
+test("preserves existing single-query layouts", () => {
+  assert.equal(resolveWidgetDataSourceKey({}), "PRIMARY");
+  assert.equal(resolveWidgetDataSourceKey({ dataSourceKey: "PRIMARY" }), "PRIMARY");
+  assert.deepEqual(validateWidgetDataSources([{ widgets: [
+    { widgetType: "FIELD", config: {} },
+    { widgetType: "TABLE", config: { dataSourceKey: "PRIMARY" } },
+  ] }], []), { valid: true });
+});
+
+test("accepts configured supplemental sources only", () => {
+  const profiles = [{ widgets: [{ widgetType: "FIELD", config: { dataSourceKey: "CLINIC" } }] }];
+  assert.deepEqual(validateWidgetDataSources(profiles, ["CLINIC"]), { valid: true });
+  assert.deepEqual(validateWidgetDataSources(profiles, ["WAITING"]), { valid: false, sourceKey: "CLINIC" });
+});
+
+test("rejects malformed source keys", () => {
+  for (const value of ["../secret", "a.b", " ", 5, {}, "x".repeat(65)]) {
+    assert.equal(resolveWidgetDataSourceKey({ dataSourceKey: value }), "INVALID");
+  }
+  assert.deepEqual(validateWidgetDataSources([{ widgets: [
+    { widgetType: "TABLE", config: { dataSourceKey: "../secret" } },
+  ] }], ["CLINIC"]), { valid: false, sourceKey: "INVALID" });
 });
