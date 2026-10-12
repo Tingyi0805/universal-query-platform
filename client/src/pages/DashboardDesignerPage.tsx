@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
+import { DashboardDataSourcesEditor } from "../components/DashboardDataSourcesEditor";
 import "./DashboardDesignerPage.css";
 
 type DashboardRow = {
@@ -1312,6 +1313,8 @@ export function DashboardDesignerPage() {
               </div>
             </form>
           </section>
+
+          {form.id && <DashboardDataSourcesEditor key={form.id} dashboardId={form.id} accessToken={accessToken} />}
 
           <section className="dashboard-list-card">
             <h2>Dashboard 清單</h2>
