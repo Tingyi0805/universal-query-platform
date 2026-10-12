@@ -353,7 +353,7 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
     const layout = await getDashboardLayout(id.data);
     const dashboardMasks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
     const masks = enforceDatasetDeviceMasks(dashboardMasks, sensitivity.columns);
-    const rows = maskDeviceRows(rawRows, masks);
+    const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
     const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
     const disclosureId = await auditPatientListIfConfigured({
       datasetId: query.datasetId,
