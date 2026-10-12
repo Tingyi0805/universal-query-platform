@@ -223,9 +223,8 @@ export function DashboardDisplayPage() {
           }
           if (disposed || generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
           setSupplementalPages((previous) => ({ ...previous, [key]: result }));
-          refreshSeconds = Math.max(5, Math.min(3600, result.refreshSeconds));
           rotationSeconds = Math.max(5, Math.min(3600, result.pageSeconds));
-          // Independent rotation cadence; backend runs the saved SELECT for each requested page.
+          // Rotation cadence is independent of other sources; each page request re-executes the saved SELECT.
           seconds = rotationSeconds;
           lastTotalPages = Math.max(1, result.totalPages);
           currentPage = currentPage >= lastTotalPages ? 1 : currentPage + 1;
