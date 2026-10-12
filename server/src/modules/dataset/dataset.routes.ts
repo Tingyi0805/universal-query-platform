@@ -730,8 +730,14 @@ datasetRouter.put("/:id/patient-audit-config", async (req, res, next) => {
 const sensitiveColumnSchema = z.object({
   columnName: z.string().trim().min(1).max(256),
   sensitivityType: z.string().regex(/^[A-Z0-9_]{1,64}$/),
-  deviceMaskMode: z.enum(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"]),
-}).refine((rule) => rule.sensitivityType === "OTHER" || rule.deviceMaskMode !== "NONE", "敏感欄位不可原樣顯示");
+  deviceMaskMode: z.enum(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM"]),
+  customMask: z.object({
+    prefix: z.number().int().min(0).max(100),
+    suffix: z.number().int().min(0).max(100),
+    symbol: z.string().min(1).max(2).refine((v) => Array.from(v).length === 1 && !/[\\r\\n\\t]/u.test(v)),
+  }).nullable().optional(),
+}).refine((rule) => rule.sensitivityType === "OTHER" || rule.deviceMaskMode !== "NONE", "敏感欄位不可原樣顯示")
+  .refine((rule) => rule.deviceMaskMode !== "CUSTOM" || !!rule.customMask, "自訂遮蔽必須提供合法的保留碼數及遮蔽符號");
 
 datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
   try {
