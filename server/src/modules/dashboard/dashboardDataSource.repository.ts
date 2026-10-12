@@ -7,6 +7,8 @@ export type DashboardDataSource = {
   sourceKey: string;
   datasetId: number;
   refreshSeconds: number;
+  pageSize: number;
+  pageSeconds: number;
   parameters: Record<string, unknown>;
   isEnabled: boolean;
 };
@@ -25,10 +27,10 @@ export async function listDashboardDataSources(dashboardId: number): Promise<Das
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
   const result = await pool.request().input("dashboardId", sql.BigInt, dashboardId)
-    .query("SELECT Id, DashboardId, SourceKey, DatasetId, RefreshSeconds, ParametersJson, IsEnabled FROM uqp.DashboardDataSource WHERE DashboardId=@dashboardId ORDER BY Id");
+    .query("SELECT Id, DashboardId, SourceKey, DatasetId, RefreshSeconds, PageSize, PageSeconds, ParametersJson, IsEnabled FROM uqp.DashboardDataSource WHERE DashboardId=@dashboardId ORDER BY Id");
   return result.recordset.map((row) => ({
     id: Number(row.Id), dashboardId: Number(row.DashboardId), sourceKey: String(row.SourceKey),
-    datasetId: Number(row.DatasetId), refreshSeconds: Number(row.RefreshSeconds),
+    datasetId: Number(row.DatasetId), refreshSeconds: Number(row.RefreshSeconds), pageSize: Number(row.PageSize), pageSeconds: Number(row.PageSeconds),
     parameters: parseParameters(row.ParametersJson), isEnabled: Boolean(row.IsEnabled),
   }));
 }
@@ -54,9 +56,11 @@ export async function replaceDashboardDataSources(dashboardId: number, sources: 
         .input("sourceKey", sql.NVarChar(64), source.sourceKey)
         .input("datasetId", sql.BigInt, source.datasetId)
         .input("refreshSeconds", sql.Int, source.refreshSeconds)
+        .input("pageSize", sql.Int, source.pageSize)
+        .input("pageSeconds", sql.Int, source.pageSeconds)
         .input("parametersJson", sql.NVarChar(sql.MAX), JSON.stringify(source.parameters))
         .input("isEnabled", sql.Bit, source.isEnabled)
-        .query("INSERT INTO uqp.DashboardDataSource (DashboardId,SourceKey,DatasetId,RefreshSeconds,ParametersJson,IsEnabled) VALUES (@dashboardId,@sourceKey,@datasetId,@refreshSeconds,@parametersJson,@isEnabled)");
+        .query("INSERT INTO uqp.DashboardDataSource (DashboardId,SourceKey,DatasetId,RefreshSeconds,PageSize,PageSeconds,ParametersJson,IsEnabled) VALUES (@dashboardId,@sourceKey,@datasetId,@refreshSeconds,@pageSize,@pageSeconds,@parametersJson,@isEnabled)");
     }
     await tx.commit();
   } catch (error) {
