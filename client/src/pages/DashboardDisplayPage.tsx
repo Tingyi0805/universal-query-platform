@@ -195,7 +195,7 @@ export function DashboardDisplayPage() {
       .filter((widget) => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
       .map((widget) => widget.config?.dataSourceKey)
       .filter((key): key is string => typeof key === "string" && key !== "PRIMARY" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))))];
-    const timers: number[] = [];
+    const timers = new Set<number>();
     let disposed = false;
     for (const key of keys) {
       let inFlight = false;
@@ -236,12 +236,15 @@ export function DashboardDisplayPage() {
           seconds = Math.min(300, 5 * Math.pow(2, Math.min(failures, 6)));
         } finally {
           inFlight = false;
-          if (!disposed) timers.push(window.setTimeout(() => void refresh(), seconds * 1000));
+          if (!disposed) {
+            const timer = window.setTimeout(() => { timers.delete(timer); void refresh(); }, seconds * 1000);
+            timers.add(timer);
+          }
         }
       };
       void refresh();
     }
-    return () => { disposed = true; ++supplementalRequestGeneration.current; timers.forEach(window.clearTimeout); };
+    return () => { disposed = true; ++supplementalRequestGeneration.current; timers.forEach((timer) => window.clearTimeout(timer)); timers.clear(); };
   }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles]);
 
   const loadData = useCallback(async () => {
