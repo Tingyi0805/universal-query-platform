@@ -381,6 +381,76 @@ dashboardRouter.post("/device/:id/page", async (req, res, next) => {
   }
 });
 
+
+// Supplemental Dataset device delivery: per-source page request, never full-result.
+// Deliberately fail closed: only explicitly classified, masked columns may leave the server.
+dashboardRouter.post("/device/:id/data-sources/:sourceKey/page", async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).safeParse(req.params.sourceKey);
+    const input = z.object({ page: z.number().int().min(1).max(100000),
+      pageSize: z.number().int().min(1).max(100).default(10) }).safeParse(req.body);
+    if (!id.success || !key.success || !input.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return;
+    }
+    const token = getDeviceToken(req);
+    const verification = token
+      ? await checkDashboardDisplayDevice(id.data, token, getRequestSourceIp(req))
+      : { status: "INVALID_TOKEN" as const };
+    if (verification.status !== "VALID") {
+      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } }); return;
+    }
+    const dashboard = await getDashboard(id.data);
+    if (!dashboard || !dashboard.isActive) {
+      res.status(409).json({ error: { code: "DASHBOARD_NOT_AVAILABLE" } }); return;
+    }
+    const sources = await listDashboardDataSources(id.data);
+    const source = sources.find((item) => item.sourceKey === key.data && item.isEnabled);
+    if (!source) { res.status(404).json({ error: { code: "DASHBOARD_SOURCE_NOT_FOUND" } }); return; }
+    const layout = await getDashboardLayout(id.data);
+    const referenced = layout.profiles.some((profile) => profile.widgets.some((widget) =>
+      (widget.widgetType === "FIELD" || widget.widgetType === "TABLE") && widget.config.dataSourceKey === key.data));
+    if (!referenced) {
+      res.status(403).json({ error: { code: "DASHBOARD_SOURCE_NOT_IN_LAYOUT" } }); return;
+    }
+    const dataset = await getDataset(source.datasetId);
+    if (!dataset || !dataset.isActive || dataset.isArchived) {
+      res.status(409).json({ error: { code: "DATASET_NOT_AVAILABLE" } }); return;
+    }
+    const policy = await getDatasetSensitivitySnapshot(source.datasetId);
+    // Require an explicit dataset rule and actual masking. Unclassified fields are omitted.
+    const allowed = new Map<string, (typeof policy.columns)[number]>();
+    const ambiguous = new Set<string>();
+    for (const rule of policy.columns) {
+      const normalized = rule.columnName.toUpperCase();
+      if (allowed.has(normalized)) ambiguous.add(normalized);
+      if (rule.deviceMaskMode !== "NONE" && rule.deviceMaskMode !== "OMIT") allowed.set(normalized, rule);
+    }
+    for (const column of ambiguous) allowed.delete(column);
+    const result = await executeSavedDataset(source.datasetId, source.parameters);
+    const columns = result.columns.filter((column) => allowed.has(column.name.toUpperCase()));
+    const pageSize = input.data.pageSize;
+    const totalPages = Math.max(1, Math.ceil(result.rows.length / pageSize));
+    if (input.data.page > totalPages) {
+      res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE" } }); return;
+    }
+    const rawRows = result.rows.slice((input.data.page - 1) * pageSize, input.data.page * pageSize);
+    const rows = rawRows.map((row) => Object.fromEntries(columns.map((column) => {
+      const rule = allowed.get(column.name.toUpperCase())!;
+      return [column.name, maskDeviceValue(row[column.name], rule.deviceMaskMode, rule.customMask)];
+    })));
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: source.datasetId, dashboardDeviceId: verification.device.id, userId: null,
+      sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "PAGE",
+      pageNumber: input.data.page, masked: true, rows: rawRows,
+    });
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds,
+      result: { columns, rows }, page: input.data.page,
+      totalPages, totalRows: result.rows.length, sensitivityVersion: policy.version, disclosureId });
+  } catch (error) { next(error); }
+});
+
 dashboardRouter.use(authenticateJwt);
 
 dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
