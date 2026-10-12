@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import { listDashboardDataSources, replaceDashboardDataSources } from "./dashboardDataSource.repository.js";
+import { validateWidgetDataSources } from "./dashboardWidgetSource.js";
 import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { Router, type Request } from "express";
@@ -1019,6 +1020,13 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
           return;
         }
       }
+    }
+
+    const configuredSources = await listDashboardDataSources(id.data);
+    const bindingValidation = validateWidgetDataSources(parsed.data.profiles, configuredSources.filter((source) => source.isEnabled).map((source) => source.sourceKey));
+    if (!bindingValidation.valid) {
+      res.status(400).json({ error: { code: "DASHBOARD_WIDGET_SOURCE_NOT_AVAILABLE",
+        message: "版面元件指定的額外資料來源不存在或未啟用。" } }); return;
     }
 
     await replaceDashboardLayout(id.data, parsed.data.profiles);
