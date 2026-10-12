@@ -388,8 +388,7 @@ dashboardRouter.post("/device/:id/data-sources/:sourceKey/page", async (req, res
   try {
     const id = idSchema.safeParse(req.params.id);
     const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).safeParse(req.params.sourceKey);
-    const input = z.object({ page: z.number().int().min(1).max(100000),
-      }).safeParse(req.body);
+    const input = z.object({ page: z.number().int().min(1).max(100000), snapshotId: z.string().uuid().optional() }).safeParse(req.body);
     if (!id.success || !key.success || !input.success) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return;
     }
@@ -427,27 +426,46 @@ dashboardRouter.post("/device/:id/data-sources/:sourceKey/page", async (req, res
       if (rule.deviceMaskMode !== "NONE" && rule.deviceMaskMode !== "OMIT") allowed.set(normalized, rule);
     }
     for (const column of ambiguous) allowed.delete(column);
-    const result = await executeSavedDataset(source.datasetId, source.parameters);
-    const columns = result.columns.filter((column) => allowed.has(column.name.toUpperCase()));
+    const sourceScope = `datasource:${dataset.dataSourceId}:dashboard-source:${source.sourceKey}`;
+    let snapshot = input.data.snapshotId
+      ? getDashboardPageSnapshot(input.data.snapshotId, verification.device.id, id.data) : null;
+    if (input.data.snapshotId && !snapshot) {
+      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED" } }); return;
+    }
+    if (snapshot && (snapshot.datasetId !== source.datasetId || snapshot.sourceScope !== sourceScope ||
+        snapshot.sensitivityVersion !== policy.version || snapshot.queryId !== source.id)) {
+      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED" } }); return;
+    }
+    if (!snapshot) {
+      const result = await executeSavedDataset(source.datasetId, source.parameters);
+      const minimumSeconds = Math.min(3600, Math.max(source.refreshSeconds,
+        Math.ceil(result.rows.length / source.pageSize) * source.pageSeconds + 10));
+      snapshot = createDashboardPageSnapshot({
+        ttlSeconds: minimumSeconds, deviceId: verification.device.id, dashboardId: id.data,
+        queryId: source.id, datasetId: source.datasetId, sensitivityVersion: policy.version,
+        sourceScope, columns: result.columns, rows: result.rows,
+      });
+    }
+    const columns = snapshot.columns.filter((column) => allowed.has(column.name.toUpperCase()));
     const pageSize = source.pageSize;
-    const totalPages = Math.max(1, Math.ceil(result.rows.length / pageSize));
+    const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / pageSize));
     if (input.data.page > totalPages) {
       res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE" } }); return;
     }
-    const rawRows = result.rows.slice((input.data.page - 1) * pageSize, input.data.page * pageSize);
+    const rawRows = snapshot.rows.slice((input.data.page - 1) * pageSize, input.data.page * pageSize);
     const rows = rawRows.map((row) => Object.fromEntries(columns.map((column) => {
       const rule = allowed.get(column.name.toUpperCase())!;
       return [column.name, maskDeviceValue(row[column.name], rule.deviceMaskMode, rule.customMask)];
     })));
     const disclosureId = await auditPatientListIfConfigured({
       datasetId: source.datasetId, dashboardDeviceId: verification.device.id, userId: null,
-      sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "PAGE",
+      sourceScope, deliveryType: "PAGE",
       pageNumber: input.data.page, masked: true, rows: rawRows,
     });
     res.setHeader("Cache-Control", "no-store");
     res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds,
       result: { columns, rows }, page: input.data.page,
-      totalPages, totalRows: result.rows.length, sensitivityVersion: policy.version, disclosureId });
+      totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, sensitivityVersion: policy.version, disclosureId });
   } catch (error) { next(error); }
 });
 
