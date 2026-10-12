@@ -30,6 +30,9 @@ type PreviewResult = {
   };
 };
 
+type SupplementalSource = { sourceKey: string; datasetId: number; refreshSeconds: number; isEnabled: boolean };
+type SupplementalPreview = { result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
+
 type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
 
 type LayoutWidget = {
@@ -209,6 +212,8 @@ export function DashboardLayoutDesignerPage() {
   const [activeProfileKey, setActiveProfileKey] = useState("");
   const [selectedWidgetKey, setSelectedWidgetKey] = useState("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [supplementalSources, setSupplementalSources] = useState<SupplementalSource[]>([]);
+  const [supplementalPreviews, setSupplementalPreviews] = useState<Record<string, SupplementalPreview>>({});
   const [drag, setDrag] = useState<DragState | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -279,6 +284,18 @@ export function DashboardLayoutDesignerPage() {
         ),
       ]);
 
+      const supplemental = await apiRequest<{ sources: SupplementalSource[] }>(
+        `/dashboards/${dashboardId}/data-sources`, {}, accessToken);
+      setSupplementalSources(supplemental.sources.filter((source) => source.isEnabled));
+      const sourceResults = await Promise.allSettled(supplemental.sources.filter((source) => source.isEnabled).map(async (source) => ({
+        key: source.sourceKey,
+        preview: await apiRequest<SupplementalPreview>(
+          `/dashboards/${dashboardId}/data-sources/${encodeURIComponent(source.sourceKey)}/preview`,
+          { method: "POST" }, accessToken),
+      })));
+      setSupplementalPreviews(Object.fromEntries(sourceResults.filter(
+        (item): item is PromiseFulfilledResult<{ key: string; preview: SupplementalPreview }> => item.status === "fulfilled",
+      ).map((item) => [item.value.key, item.value.preview])));
       const loadedProfiles = layoutResult.profiles.map(withClientKeys);
       setProfiles(loadedProfiles);
       setActiveProfileKey(
@@ -556,7 +573,9 @@ export function DashboardLayoutDesignerPage() {
   }
 
   function renderWidget(widget: LayoutWidget) {
-    const firstRow = preview?.result.rows[0] ?? {};
+    const selectedSource = String(widget.config?.dataSourceKey ?? "PRIMARY");
+    const sourcePreview = selectedSource === "PRIMARY" ? preview : supplementalPreviews[selectedSource];
+    const firstRow = sourcePreview?.result.rows[0] ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
     if (widget.widgetType === "CONTAINER") {
@@ -564,7 +583,7 @@ export function DashboardLayoutDesignerPage() {
     }
 
     if (widget.widgetType === "TABLE") {
-      const rows = (preview?.result.rows ?? []).slice(0, preview?.dashboard.pageSize ?? 5);
+      const rows = (sourcePreview?.result.rows ?? []).slice(0, preview?.dashboard.pageSize ?? 5);
       return (
         <div
           className="layout-widget-table"
@@ -899,6 +918,22 @@ export function DashboardLayoutDesignerPage() {
                 </label>
               )}
 
+              {(selectedWidget.widgetType === "FIELD" || selectedWidget.widgetType === "TABLE") && (
+                <label>
+                  SQL／Dataset 資料來源
+                  <select value={String(selectedWidget.config?.dataSourceKey ?? "PRIMARY")}
+                    onChange={(e) => updateSelectedWidget({
+                      sourceKey: selectedWidget.widgetType === "FIELD" ? null : selectedWidget.sourceKey,
+                      config: { ...selectedWidget.config, dataSourceKey: e.target.value },
+                    })}>
+                    <option value="PRIMARY">主要 SQL（原 Dashboard）</option>
+                    {supplementalSources.map((source) => (
+                      <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}（每 {source.refreshSeconds} 秒）</option>
+                    ))}
+                  </select>
+                </label>
+              )}
+
               {selectedWidget.widgetType === "FIELD" && (
                 <>
                   <label>
@@ -906,7 +941,10 @@ export function DashboardLayoutDesignerPage() {
                     <select value={selectedWidget.sourceKey ?? ""}
                       onChange={(e) => updateSelectedWidget({ sourceKey: e.target.value || null })}>
                       <option value="">請選擇</option>
-                      {(preview?.result.columns ?? []).map((column) => (
+                      {(String(selectedWidget.config?.dataSourceKey ?? "PRIMARY") === "PRIMARY"
+                        ? preview?.result.columns ?? []
+                        : supplementalPreviews[String(selectedWidget.config?.dataSourceKey)]?.result.columns ?? []
+                      ).map((column) => (
                         <option key={column.name} value={column.name}>{column.name}</option>
                       ))}
                     </select>
