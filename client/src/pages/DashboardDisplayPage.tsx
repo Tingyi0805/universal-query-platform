@@ -164,7 +164,7 @@ export function DashboardDisplayPage() {
   const latestLayoutRequest = useRef(0);
   const pageSnapshotId = useRef<string | null>(null);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
-  type SupplementalPage = { sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; page: number;
+  type SupplementalPage = { sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; snapshotId: string; page: number;
     totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
   const [supplementalPages, setSupplementalPages] = useState<Record<string, SupplementalPage>>({});
   const supplementalRequestGeneration = useRef(0);
@@ -201,46 +201,58 @@ export function DashboardDisplayPage() {
       let inFlight = false;
       let failures = 0;
       let currentPage = 1;
-      let lastTotalPages = 1;
       let rotationSeconds = 15;
+      let refreshSeconds = 30;
+      let snapshotId: string | null = null;
+      let snapshotCreatedAt = 0;
       const refresh = async () => {
         if (disposed || inFlight || !navigator.onLine) return;
         inFlight = true;
-        let seconds = rotationSeconds;
+        let delay = rotationSeconds;
         try {
-          const fetchPage = (requestedPage: number) => apiRequest<SupplementalPage>(
-            `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
-            { method: "POST", body: JSON.stringify({ page: requestedPage }),
-              headers: { "X-Dashboard-Device-Token": deviceToken, "Content-Type": "application/json" } }, null);
+          const fetchPage = (requestedPage: number, currentSnapshot: string | null) =>
+            apiRequest<SupplementalPage>(
+              `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
+              { method: "POST", body: JSON.stringify({ page: requestedPage,
+                  ...(currentSnapshot ? { snapshotId: currentSnapshot } : {}) }),
+                headers: { "X-Dashboard-Device-Token": deviceToken, "Content-Type": "application/json" } }, null);
+          // Requery on refresh cadence, while paging within the same server-side snapshot.
+          if (snapshotId && Date.now() - snapshotCreatedAt >= refreshSeconds * 1000) {
+            snapshotId = null;
+            currentPage = 1;
+          }
           let result: SupplementalPage;
           try {
-            result = await fetchPage(currentPage);
+            result = await fetchPage(currentPage, snapshotId);
           } catch (error) {
-            // A changing result set can shrink below the next page. Restart safely.
-            if (currentPage === 1 || (error as { code?: string }).code !== "DASHBOARD_PAGE_OUT_OF_RANGE") throw error;
+            const code = (error as { code?: string }).code;
+            if (currentPage === 1 && code !== "DASHBOARD_SNAPSHOT_EXPIRED") throw error;
+            if (code !== "DASHBOARD_SNAPSHOT_EXPIRED" && code !== "DASHBOARD_PAGE_OUT_OF_RANGE") throw error;
+            snapshotId = null;
             currentPage = 1;
-            result = await fetchPage(1);
+            result = await fetchPage(1, null);
           }
           if (disposed || generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
+          if (!snapshotId || snapshotId !== result.snapshotId) snapshotCreatedAt = Date.now();
+          snapshotId = result.snapshotId;
           setSupplementalPages((previous) => ({ ...previous, [key]: result }));
+          refreshSeconds = Math.max(5, Math.min(3600, result.refreshSeconds));
           rotationSeconds = Math.max(5, Math.min(3600, result.pageSeconds));
-          // Rotation cadence is independent of other sources; each page request re-executes the saved SELECT.
-          seconds = rotationSeconds;
-          lastTotalPages = Math.max(1, result.totalPages);
-          currentPage = currentPage >= lastTotalPages ? 1 : currentPage + 1;
+          delay = rotationSeconds;
+          currentPage = currentPage >= Math.max(1, result.totalPages) ? 1 : currentPage + 1;
           failures = 0;
         } catch {
           if (!disposed && generation === supplementalRequestGeneration.current) {
             setSupplementalPages((previous) => { const next = { ...previous }; delete next[key]; return next; });
           }
           currentPage = 1;
-          lastTotalPages = 1;
+          snapshotId = null;
           failures++;
-          seconds = Math.min(300, 5 * Math.pow(2, Math.min(failures, 6)));
+          delay = Math.min(300, 5 * Math.pow(2, Math.min(failures, 6)));
         } finally {
           inFlight = false;
           if (!disposed) {
-            const timer = window.setTimeout(() => { timers.delete(timer); void refresh(); }, seconds * 1000);
+            const timer = window.setTimeout(() => { timers.delete(timer); void refresh(); }, delay * 1000);
             timers.add(timer);
           }
         }
