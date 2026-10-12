@@ -19,7 +19,7 @@ export function validateWidgetDataSources(
     for (const widget of profile.widgets) {
       if (widget.widgetType !== "FIELD" && widget.widgetType !== "TABLE") continue;
       const sourceKey = resolveWidgetDataSourceKey(widget.config);
-      if (sourceKey !== "PRIMARY" && !allowed.has(sourceKey)) return { valid: false, sourceKey };
+      if (sourceKey === "INVALID" || (sourceKey !== "PRIMARY" && !allowed.has(sourceKey))) return { valid: false, sourceKey };
     }
   }
   return { valid: true };
