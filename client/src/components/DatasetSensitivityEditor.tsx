@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../api/client";
 
-type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string };
+type CustomMask = { prefix: number; suffix: number; symbol: string };
+type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: CustomMask | null };
 const categories = ["OTHER", "NAME", "NATIONAL_ID", "MRN", "PHONE", "BIRTH_DATE", "ADDRESS", "DIAGNOSIS", "HEALTH", "LAB"];
-const modes = ["OMIT", "FULL", "NAME", "MRN", "PHONE", "GENERIC", "NONE"];
+const modes = ["OMIT", "FULL", "NAME", "MRN", "PHONE", "GENERIC", "NONE", "CUSTOM"];
 
 export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumns }: {
   datasetId: number; accessToken: string | null; previewColumns: string[];
@@ -12,6 +13,22 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   const [column, setColumn] = useState("");
   const [category, setCategory] = useState("OTHER");
   const [mode, setMode] = useState("OMIT");
+  const [prefix, setPrefix] = useState(0);
+  const [suffix, setSuffix] = useState(4);
+  const [symbol, setSymbol] = useState("*");
+  const [sample, setSample] = useState("00001234");
+  const example: Record<string, [string, string]> = {
+    FULL: ["王小明", "○○○○"], NAME: ["王小明", "王○明"],
+    MRN: ["00001234", "0000○○34"], PHONE: ["0912345678", "0912○○○678"],
+    GENERIC: ["ABCD123456", "A○○○○○○○○6"], OMIT: ["王小明", "不回傳此欄位"],
+    NONE: ["015", "015"],
+  };
+  const chars = Array.from(sample);
+  const customPreview = prefix + suffix >= chars.length
+    ? symbol.repeat(chars.length)
+    : chars.slice(0, prefix).join("") + symbol.repeat(chars.length - prefix - suffix)
+      + (suffix ? chars.slice(-suffix).join("") : "");
+  const invalidCustom = mode === "CUSTOM" && (prefix + suffix >= chars.length || Array.from(symbol).length !== 1);
   const [busy, setBusy] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [version, setVersion] = useState<number | null>(null);
@@ -40,7 +57,13 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     if (!column || (category !== "OTHER" && mode === "NONE")) {
       setMessage("敏感資料不可設定為原樣顯示。"); return;
     }
-    setRules((previous) => [...previous.filter((rule) => rule.columnName !== column), { columnName: column, sensitivityType: category, deviceMaskMode: mode }]);
+    if (mode === "CUSTOM" && (Array.from(symbol).length !== 1 || /[\\r\\n\\t]/u.test(symbol) || prefix < 0 || suffix < 0 || prefix > 100 || suffix > 100)) {
+      setMessage("自訂遮蔽設定無效，請確認保留碼數與遮蔽符號。"); return;
+    }
+    setRules((previous) => [...previous.filter((rule) => rule.columnName !== column), {
+      columnName: column, sensitivityType: category, deviceMaskMode: mode,
+      customMask: mode === "CUSTOM" ? { prefix, suffix, symbol } : null,
+    }]);
     setDirty(true);
     setMessage("已加入編輯清單，請按儲存規則。");
   };
@@ -80,9 +103,21 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     <label>播放遮蔽方式 <select value={mode} onChange={(event) => setMode(event.target.value)}>
       {modes.map((name) => <option key={name} value={name} disabled={name === "NONE" && category !== "OTHER"}>{name}</option>)}
     </select></label>
+    {mode === "CUSTOM" && <div className="preview-panel">
+      <h3>自訂遮蔽位置與符號</h3>
+      <label>保留前幾碼 <input type="number" min="0" max="100" value={prefix} onChange={(e) => setPrefix(Number(e.target.value))}/></label>
+      <label>保留後幾碼 <input type="number" min="0" max="100" value={suffix} onChange={(e) => setSuffix(Number(e.target.value))}/></label>
+      <label>遮蔽符號 <input type="text" maxLength={2} value={symbol} onChange={(e) => setSymbol(e.target.value)}/></label>
+      <label>預覽用模擬資料 <input type="text" value={sample} onChange={(e) => setSample(e.target.value)}/></label>
+      <p>遮蔽預覽：<strong>{invalidCustom ? "保留碼數過多，實際播放將全部遮蔽" : customPreview}</strong></p>
+      <p>範例：病歷號 00001234 → ****1234（前 0／後 4）；電話 0912345678 → 091****678（前 3／後 3）。</p>
+    </div>}
+    {mode !== "CUSTOM" && <p role="status">範例：{example[mode]?.[0]} → <strong>{example[mode]?.[1]}</strong></p>}
     <button type="button" disabled={!column || busy} onClick={add}>加入／更新</button>
     <table className="preview-table"><thead><tr><th>欄位</th><th>分類</th><th>遮蔽</th><th>操作</th></tr></thead>
-      <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td><td>{rule.sensitivityType}</td><td>{rule.deviceMaskMode}</td>
+      <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td><td>{rule.sensitivityType}</td><td>{rule.deviceMaskMode === "CUSTOM" && rule.customMask
+          ? `CUSTOM（前 ${rule.customMask.prefix}／後 ${rule.customMask.suffix}，符號 ${rule.customMask.symbol}）`
+          : rule.deviceMaskMode}</td>
         <td><button type="button" disabled={busy} onClick={() => { setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName)); setDirty(true); }}>移除</button></td></tr>)}</tbody></table>
     <button type="button" disabled={busy || !dirty || !loaded || version === null || conflict} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
     {!loaded && <p role="status">原有規則尚未載入完成，暫停儲存以避免誤覆蓋。</p>}
