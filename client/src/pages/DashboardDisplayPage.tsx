@@ -164,6 +164,11 @@ export function DashboardDisplayPage() {
   const latestLayoutRequest = useRef(0);
   const pageSnapshotId = useRef<string | null>(null);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
+  type SupplementalPage = { sourceKey: string; refreshSeconds: number; page: number;
+    totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
+  const [supplementalPages, setSupplementalPages] = useState<Record<string, SupplementalPage>>({});
+  const supplementalRequestGeneration = useRef(0);
+
   const [error, setError] = useState("");
   const [dataWarning, setDataWarning] = useState("");
   const [layoutWarning, setLayoutWarning] = useState("");
@@ -180,6 +185,50 @@ export function DashboardDisplayPage() {
     height: window.innerHeight,
   });
   const [fullscreenNeedsClick, setFullscreenNeedsClick] = useState(false);
+
+  // Supplemental sources refresh independently; never cache PHI across token/network changes.
+  useEffect(() => {
+    const generation = ++supplementalRequestGeneration.current;
+    setSupplementalPages({});
+    if (!deviceMode || !deviceToken || !online || activationRequired) return;
+    const keys = [...new Set(profiles.flatMap((profile) => profile.widgets
+      .filter((widget) => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
+      .map((widget) => widget.config?.dataSourceKey)
+      .filter((key): key is string => typeof key === "string" && key !== "PRIMARY" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))))];
+    const timers: number[] = [];
+    let disposed = false;
+    for (const key of keys) {
+      let inFlight = false;
+      let failures = 0;
+      let nextTimer: number | undefined;
+      const refresh = async () => {
+        if (disposed || inFlight || !navigator.onLine) return;
+        inFlight = true;
+        let seconds = 30;
+        try {
+          const result = await apiRequest<SupplementalPage>(
+            `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
+            { method: "POST", body: JSON.stringify({ page: 1, pageSize: 100 }),
+              headers: { "X-Dashboard-Device-Token": deviceToken, "Content-Type": "application/json" } }, null);
+          if (disposed || generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
+          setSupplementalPages((previous) => ({ ...previous, [key]: result }));
+          seconds = Math.max(5, Math.min(3600, result.refreshSeconds));
+          failures = 0;
+        } catch {
+          if (!disposed && generation === supplementalRequestGeneration.current) {
+            setSupplementalPages((previous) => { const next = { ...previous }; delete next[key]; return next; });
+          }
+          failures++;
+          seconds = Math.min(300, 5 * Math.pow(2, Math.min(failures, 6)));
+        } finally {
+          inFlight = false;
+          if (!disposed) { nextTimer = window.setTimeout(() => void refresh(), seconds * 1000); timers.push(nextTimer); }
+        }
+      };
+      void refresh();
+    }
+    return () => { disposed = true; ++supplementalRequestGeneration.current; timers.forEach(window.clearTimeout); };
+  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles]);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -598,7 +647,14 @@ export function DashboardDisplayPage() {
   }, [activeProfile, viewport]);
 
   function renderWidget(widget: LayoutWidget) {
-    const firstRow = pageRows[0] ?? (!deviceMode ? preview?.result.rows[0] : undefined) ?? {};
+    const sourceKey = typeof widget.config?.dataSourceKey === "string" ? widget.config.dataSourceKey : "PRIMARY";
+    const supplemental = sourceKey !== "PRIMARY" ? supplementalPages[sourceKey] : undefined;
+    const widgetRows = sourceKey === "PRIMARY" ? pageRows : supplemental?.result.rows ?? [];
+    const widgetColumns = sourceKey === "PRIMARY" ? visibleColumns
+      : (supplemental?.result.columns ?? []).map((column) => ({
+        columnName: column.name, displayLabel: column.name, alignment: "LEFT" as const,
+      }));
+    const firstRow = widgetRows[0] ?? (sourceKey === "PRIMARY" && !deviceMode ? preview?.result.rows[0] : undefined) ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
     if (widget.widgetType === "CONTAINER") {
@@ -620,27 +676,27 @@ export function DashboardDisplayPage() {
           <table>
             <thead>
               <tr>
-                {visibleColumns.map((column) => (
+                {widgetColumns.map((column) => (
                   <th key={column.columnName}>{column.displayLabel}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((row, rowIndex) => (
+              {widgetRows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
-                  {visibleColumns.map((column) => (
+                  {widgetColumns.map((column) => (
                     <td
                       key={column.columnName}
                       style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}
                     >
-                      {maskText(row[column.columnName], tableColumnMask(widget, column.columnName))}
+                      {sourceKey === "PRIMARY" ? maskText(row[column.columnName], tableColumnMask(widget, column.columnName)) : textValue(row[column.columnName])}
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-          {pageRows.length === 0 && <div className="dashboard-play-empty">目前沒有資料</div>}
+          {widgetRows.length === 0 && <div className="dashboard-play-empty">目前沒有資料</div>}
         </div>
       );
     }
@@ -655,7 +711,7 @@ export function DashboardDisplayPage() {
         break;
       case "FIELD":
         value = widget.sourceKey
-          ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode)
+          ? sourceKey === "PRIMARY" ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode) : textValue(firstRow[widget.sourceKey])
           : "";
         break;
       case "CLOCK":
