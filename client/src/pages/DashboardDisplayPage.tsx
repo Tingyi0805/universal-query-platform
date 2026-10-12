@@ -164,7 +164,7 @@ export function DashboardDisplayPage() {
   const latestLayoutRequest = useRef(0);
   const pageSnapshotId = useRef<string | null>(null);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
-  type SupplementalPage = { sourceKey: string; refreshSeconds: number; page: number;
+  type SupplementalPage = { sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; page: number;
     totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
   const [supplementalPages, setSupplementalPages] = useState<Record<string, SupplementalPage>>({});
   const supplementalRequestGeneration = useRef(0);
@@ -202,14 +202,15 @@ export function DashboardDisplayPage() {
       let failures = 0;
       let currentPage = 1;
       let lastTotalPages = 1;
+      let rotationSeconds = 15;
       const refresh = async () => {
         if (disposed || inFlight || !navigator.onLine) return;
         inFlight = true;
-        let seconds = 30;
+        let seconds = rotationSeconds;
         try {
           const fetchPage = (requestedPage: number) => apiRequest<SupplementalPage>(
             `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
-            { method: "POST", body: JSON.stringify({ page: requestedPage, pageSize: 10 }),
+            { method: "POST", body: JSON.stringify({ page: requestedPage }),
               headers: { "X-Dashboard-Device-Token": deviceToken, "Content-Type": "application/json" } }, null);
           let result: SupplementalPage;
           try {
@@ -222,7 +223,10 @@ export function DashboardDisplayPage() {
           }
           if (disposed || generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
           setSupplementalPages((previous) => ({ ...previous, [key]: result }));
-          seconds = Math.max(5, Math.min(3600, result.refreshSeconds));
+          refreshSeconds = Math.max(5, Math.min(3600, result.refreshSeconds));
+          rotationSeconds = Math.max(5, Math.min(3600, result.pageSeconds));
+          // Independent rotation cadence; backend runs the saved SELECT for each requested page.
+          seconds = rotationSeconds;
           lastTotalPages = Math.max(1, result.totalPages);
           currentPage = currentPage >= lastTotalPages ? 1 : currentPage + 1;
           failures = 0;
