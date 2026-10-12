@@ -389,7 +389,7 @@ dashboardRouter.post("/device/:id/data-sources/:sourceKey/page", async (req, res
     const id = idSchema.safeParse(req.params.id);
     const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).safeParse(req.params.sourceKey);
     const input = z.object({ page: z.number().int().min(1).max(100000),
-      pageSize: z.number().int().min(1).max(100).default(10) }).safeParse(req.body);
+      }).safeParse(req.body);
     if (!id.success || !key.success || !input.success) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return;
     }
@@ -429,7 +429,7 @@ dashboardRouter.post("/device/:id/data-sources/:sourceKey/page", async (req, res
     for (const column of ambiguous) allowed.delete(column);
     const result = await executeSavedDataset(source.datasetId, source.parameters);
     const columns = result.columns.filter((column) => allowed.has(column.name.toUpperCase()));
-    const pageSize = input.data.pageSize;
+    const pageSize = source.pageSize;
     const totalPages = Math.max(1, Math.ceil(result.rows.length / pageSize));
     if (input.data.page > totalPages) {
       res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE" } }); return;
@@ -445,7 +445,7 @@ dashboardRouter.post("/device/:id/data-sources/:sourceKey/page", async (req, res
       pageNumber: input.data.page, masked: true, rows: rawRows,
     });
     res.setHeader("Cache-Control", "no-store");
-    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds,
+    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds,
       result: { columns, rows }, page: input.data.page,
       totalPages, totalRows: result.rows.length, sensitivityVersion: policy.version, disclosureId });
   } catch (error) { next(error); }
@@ -985,6 +985,8 @@ const supplementalSourceSchema = z.object({
   sourceKey: z.string().trim().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9_]*$/),
   datasetId: z.number().int().positive(),
   refreshSeconds: z.number().int().min(5).max(3600).default(30),
+  pageSize: z.number().int().min(1).max(100).default(10),
+  pageSeconds: z.number().int().min(5).max(3600).default(15),
   parameters: z.record(z.unknown()).default({}),
   isEnabled: z.boolean().default(true),
 });
@@ -1010,7 +1012,7 @@ dashboardRouter.put("/:id/data-sources", requirePermission("DESIGN_QUERY"), asyn
     const sources = await replaceDashboardDataSources(id.data, parsed.data.sources);
     await tryWriteAuditEvent({ eventType: "DASHBOARD_DATA_SOURCES_UPDATED",
       userId: req.authUser.id, parameters: { dashboardId: id.data,
-        sources: sources.map(({ sourceKey, datasetId, refreshSeconds, isEnabled }) => ({ sourceKey, datasetId, refreshSeconds, isEnabled })) },
+        sources: sources.map(({ sourceKey, datasetId, refreshSeconds, pageSize, pageSeconds, isEnabled }) => ({ sourceKey, datasetId, refreshSeconds, pageSize, pageSeconds, isEnabled })) },
       ...auditRequestContext(req) });
     res.json({ status: "OK", sources });
   } catch (error) {
