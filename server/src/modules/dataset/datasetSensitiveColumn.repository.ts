@@ -1,16 +1,16 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
-import type { DeviceMaskMode } from "../dashboard/dashboardDeviceMasking.js";
+import type { DeviceMaskMode, CustomMaskConfig } from "../dashboard/dashboardDeviceMasking.js";
 
-export type DatasetSensitiveColumn = { columnName: string; sensitivityType: string; deviceMaskMode: DeviceMaskMode };
+export type DatasetSensitiveColumn = { columnName: string; sensitivityType: string; deviceMaskMode: DeviceMaskMode; customMask?: CustomMaskConfig | null };
 
 export async function listDatasetSensitiveColumns(datasetId: number): Promise<DatasetSensitiveColumn[]> {
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
   const result = await pool.request().input("datasetId", sql.BigInt, datasetId).query(
-    "SELECT ColumnName, SensitivityType, DeviceMaskMode FROM uqp.DatasetSensitiveColumn WHERE DatasetId=@datasetId ORDER BY ColumnName"
+    "SELECT ColumnName, SensitivityType, DeviceMaskMode, CustomMaskJson FROM uqp.DatasetSensitiveColumn WHERE DatasetId=@datasetId ORDER BY ColumnName"
   );
-  return result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode }));
+  return result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode, customMask: row.CustomMaskJson ? JSON.parse(String(row.CustomMaskJson)) as CustomMaskConfig : null }));
 }
 
 /** Read revision and rows under the same dataset row lock to avoid torn GET responses. */
@@ -26,8 +26,8 @@ export async function getDatasetSensitivitySnapshot(datasetId: number): Promise<
     const revision = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("SELECT VersionNumber FROM uqp.DatasetSensitivePolicyVersion WHERE DatasetId=@datasetId");
     const result = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
-      .query("SELECT ColumnName, SensitivityType, DeviceMaskMode FROM uqp.DatasetSensitiveColumn WHERE DatasetId=@datasetId ORDER BY ColumnName");
-    const columns = result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode }));
+      .query("SELECT ColumnName, SensitivityType, DeviceMaskMode, CustomMaskJson FROM uqp.DatasetSensitiveColumn WHERE DatasetId=@datasetId ORDER BY ColumnName");
+    const columns = result.recordset.map((row) => ({ columnName: String(row.ColumnName), sensitivityType: String(row.SensitivityType), deviceMaskMode: row.DeviceMaskMode as DeviceMaskMode, customMask: row.CustomMaskJson ? JSON.parse(String(row.CustomMaskJson)) as CustomMaskConfig : null }));
     const version = revision.recordset.length ? Number(revision.recordset[0].VersionNumber) : 0;
     await transaction.commit();
     return { columns, version };
@@ -81,7 +81,7 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
         .query("INSERT INTO uqp.DatasetSensitivePolicyVersion (DatasetId, VersionNumber) VALUES (@datasetId, 0)");
     }
     const before = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
-      .query("SELECT ColumnName AS columnName, SensitivityType AS sensitivityType, DeviceMaskMode AS deviceMaskMode FROM uqp.DatasetSensitiveColumn WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId ORDER BY ColumnName");
+      .query("SELECT ColumnName AS columnName, SensitivityType AS sensitivityType, DeviceMaskMode AS deviceMaskMode, CustomMaskJson AS customMaskJson FROM uqp.DatasetSensitiveColumn WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId ORDER BY ColumnName");
     await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId)
       .query("DELETE FROM uqp.DatasetSensitiveColumn WHERE DatasetId=@datasetId");
     for (const rule of rules) {
@@ -90,8 +90,9 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
         .input("columnName", sql.NVarChar(256), rule.columnName)
         .input("sensitivityType", sql.NVarChar(64), rule.sensitivityType)
         .input("deviceMaskMode", sql.VarChar(16), rule.deviceMaskMode)
+        .input("customMaskJson", sql.NVarChar(256), rule.deviceMaskMode === "CUSTOM" ? JSON.stringify(rule.customMask) : null)
         .input("userId", sql.BigInt, userId)
-        .query("INSERT INTO uqp.DatasetSensitiveColumn (DatasetId, ColumnName, SensitivityType, DeviceMaskMode, UpdatedByUserId) VALUES (@datasetId,@columnName,@sensitivityType,@deviceMaskMode,@userId)");
+        .query("INSERT INTO uqp.DatasetSensitiveColumn (DatasetId, ColumnName, SensitivityType, DeviceMaskMode, CustomMaskJson, UpdatedByUserId) VALUES (@datasetId,@columnName,@sensitivityType,@deviceMaskMode,@customMaskJson,@userId)");
     }
     const details = JSON.stringify({ before: before.recordset, after: rules });
     if (details.length > 20000) throw new Error("SENSITIVITY_AUDIT_TOO_LARGE");
