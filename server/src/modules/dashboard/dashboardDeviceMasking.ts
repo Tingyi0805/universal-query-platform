@@ -128,7 +128,7 @@ export function enforceDatasetDeviceMasks(
         const current = result[column];
         result[column] = current === "FULL" || rule.deviceMaskMode === "FULL"
           ? "FULL"
-          : current === "NONE" || current === rule.deviceMaskMode
+          : current === "NONE" || current === rule.deviceMaskMode || rule.deviceMaskMode === "CUSTOM"
             ? rule.deviceMaskMode
             : "FULL";
       }
