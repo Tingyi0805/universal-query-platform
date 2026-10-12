@@ -575,6 +575,11 @@ export function DashboardLayoutDesignerPage() {
   function renderWidget(widget: LayoutWidget) {
     const selectedSource = String(widget.config?.dataSourceKey ?? "PRIMARY");
     const sourcePreview = selectedSource === "PRIMARY" ? preview : supplementalPreviews[selectedSource];
+    const widgetColumns = selectedSource === "PRIMARY" ? visibleColumns
+      : (sourcePreview?.result.columns ?? []).map((column, index) => ({
+        columnName: column.name, displayLabel: column.name, displayOrder: index,
+        isVisible: true, alignment: "LEFT" as const,
+      }));
     const firstRow = sourcePreview?.result.rows[0] ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
@@ -598,13 +603,13 @@ export function DashboardLayoutDesignerPage() {
           <table>
             <thead>
               <tr>
-                {visibleColumns.map((column) => <th key={column.columnName}>{column.displayLabel}</th>)}
+                {widgetColumns.map((column) => <th key={column.columnName}>{column.displayLabel}</th>)}
               </tr>
             </thead>
             <tbody>
               {rows.map((row, index) => (
                 <tr key={index}>
-                  {visibleColumns.map((column) => (
+                  {widgetColumns.map((column) => (
                     <td key={column.columnName}>{maskText(row[column.columnName], getColumnMask(widget, column.columnName))}</td>
                   ))}
                 </tr>
@@ -969,7 +974,13 @@ export function DashboardLayoutDesignerPage() {
                 <div className="layout-mask-settings">
                   <strong>表格欄位遮蔽</strong>
                   <p className="layout-hint">可個別設定姓名、病歷號、電話等欄位的顯示方式。</p>
-                  {visibleColumns.map((column) => (
+                  {(String(selectedWidget.config?.dataSourceKey ?? "PRIMARY") === "PRIMARY"
+                    ? visibleColumns
+                    : (supplementalPreviews[String(selectedWidget.config?.dataSourceKey)]?.result.columns ?? []).map((column, index) => ({
+                      columnName: column.name, displayLabel: column.name, displayOrder: index,
+                      isVisible: true, alignment: "LEFT" as const,
+                    }))
+                  ).map((column) => (
                     <label key={column.columnName}>
                       {column.displayLabel}
                       <select
