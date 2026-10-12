@@ -734,7 +734,7 @@ const sensitiveColumnSchema = z.object({
   customMask: z.object({
     prefix: z.number().int().min(0).max(100),
     suffix: z.number().int().min(0).max(100),
-    symbol: z.string().min(1).max(2).refine((v) => Array.from(v).length === 1 && !/[\\r\\n\\t]/u.test(v)),
+    symbol: z.string().min(1).max(2).refine((v) => Array.from(v).length === 1 && !/[\r\n\t]/u.test(v)),
   }).nullable().optional(),
 }).refine((rule) => rule.sensitivityType === "OTHER" || rule.deviceMaskMode !== "NONE", "敏感欄位不可原樣顯示")
   .refine((rule) => rule.deviceMaskMode !== "CUSTOM" || !!rule.customMask, "自訂遮蔽必須提供合法的保留碼數及遮蔽符號");

@@ -49,7 +49,7 @@ export async function replaceDashboardDataSources(dashboardId: number, sources: 
       .query("DELETE FROM uqp.DashboardDataSource WHERE DashboardId=@dashboardId");
     for (const source of sources) {
       const dataset = await new sql.Request(tx).input("datasetId", sql.BigInt, source.datasetId)
-        .query("SELECT Id FROM uqp.Dataset WHERE Id=@datasetId AND IsActive=1 AND IsArchived=0");
+        .query("SELECT d.Id FROM uqp.Dataset d INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId AND s.IsActive=1 WHERE d.Id=@datasetId AND d.IsActive=1 AND d.IsArchived=0");
       if (!dataset.recordset.length) throw new Error("DATASET_NOT_AVAILABLE");
       await new sql.Request(tx)
         .input("dashboardId", sql.BigInt, dashboardId)

@@ -1,8 +1,13 @@
+import { getQueryAccessRevision } from "../queryDefinition/queryAccess.repository.js";
+import { dashboardSourcesSchema } from "./dashboardDataSource.schema.js";
 import { isIP } from "node:net";
 import { listDashboardDataSources, replaceDashboardDataSources } from "./dashboardDataSource.repository.js";
 import { validateWidgetDataSources } from "./dashboardWidgetSource.js";
-import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
-import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
+import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks, resolveSupplementalDeviceRules } from "./dashboardDeviceMasking.js";
+import { createDashboardDevicePageRouter } from "./dashboardDevicePage.routes.js";
+import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
+import { listDatasetParameters } from "../dataset/parameter.repository.js";
+import { getDataSourcePlaybackState } from "../datasource/datasource.repository.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
 import { z } from "zod";
@@ -278,196 +283,9 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
   }
 });
 
-// Page-scoped device delivery: only the requested page leaves the server.
-// The existing preview endpoint remains for compatibility and is audited as full-result delivery.
-dashboardRouter.post("/device/:id/page", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const pageInput = z.object({ page: z.number().int().min(1).max(100000), snapshotId: z.string().uuid().optional() }).safeParse(req.body);
-    if (!id.success || !pageInput.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 或頁碼不正確。" } });
-      return;
-    }
-    const token = getDeviceToken(req);
-    const verification = token ? await checkDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)) : { status: "INVALID_TOKEN" as const };
-    if (verification.status !== "VALID") {
-      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED", message: "播放裝置驗證失敗。" } });
-      return;
-    }
-    const dashboard = await getDashboard(id.data);
-    if (!dashboard || !dashboard.isActive) {
-      res.status(409).json({ error: { code: "DASHBOARD_NOT_AVAILABLE", message: "Dashboard 目前不可播放。" } });
-      return;
-    }
-    const query = await getQueryDefinition(dashboard.queryDefinitionId);
-    if (!query || !query.isPublished || !query.isActive || query.isArchived) {
-      res.status(409).json({ error: { code: "DASHBOARD_QUERY_NOT_AVAILABLE", message: "Dashboard 使用的 Query 目前不可執行。" } });
-      return;
-    }
-    // Resolve one consistent policy revision before serving or creating a page
-    // snapshot. A policy update invalidates existing snapshot IDs immediately.
-    const sensitivity = await getDatasetSensitivitySnapshot(query.datasetId);
-    let snapshot = pageInput.data.snapshotId
-      ? getDashboardPageSnapshot(pageInput.data.snapshotId, verification.device.id, id.data)
-      : null;
-    if (pageInput.data.snapshotId && !snapshot) {
-      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已過期，請重新載入。" } });
-      return;
-    }
-    if (snapshot && (snapshot.queryId !== query.id || snapshot.datasetId !== query.datasetId || snapshot.sensitivityVersion !== sensitivity.version)) {
-      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已變更，請重新載入。" } });
-      return;
-    }
-    if (!snapshot) {
-      const { snapshotKind: _snapshotKind, snapshotSeconds: _snapshotSeconds, deviceColumnMasks: _deviceColumnMasks, ...queryParameters } = dashboard.parameters;
-      const result = await executeSavedDataset(query.datasetId, queryParameters);
-      const dataset = await getDataset(query.datasetId);
-      if (!dataset) throw new Error("DATASET_NOT_FOUND");
-      const snapshotConfig = dashboard.parameters;
-      const kindValue = snapshotConfig.snapshotKind;
-      const kind: DashboardSnapshotKind = kindValue === "SURGERY" || kindValue === "OUTPATIENT" || kindValue === "EXAM" || kindValue === "STATISTICS"
-        ? kindValue : "OTHER";
-      const secondsValue = snapshotConfig.snapshotSeconds;
-      const configuredSeconds = typeof secondsValue === "number" ? secondsValue : null;
-      const totalPagesForSnapshot = Math.max(1, Math.ceil(result.rows.length / Math.max(1, dashboard.pageSize)));
-      const cycleSeconds = totalPagesForSnapshot * Math.max(5, dashboard.pageSeconds);
-      const minimumSnapshotSeconds = Math.ceil((cycleSeconds + Math.max(10, Math.ceil(cycleSeconds * 0.2))) / 10) * 10;
-      if (minimumSnapshotSeconds > 3600) {
-        res.status(409).json({ error: { code: "DASHBOARD_PLAYBACK_TOO_LONG", message: "完整輪播超過快照有效時間上限，請調整每頁筆數或換頁秒數。" } });
-        return;
-      }
-      snapshot = createDashboardPageSnapshot({
-        ttlSeconds: Math.max(resolveDashboardSnapshotSeconds(kind, configuredSeconds), minimumSnapshotSeconds),
-        deviceId: verification.device.id, dashboardId: id.data,
-        queryId: query.id, datasetId: query.datasetId,
-        sensitivityVersion: sensitivity.version,
-        sourceScope: `datasource:${dataset.dataSourceId}`,
-        columns: result.columns, rows: result.rows,
-      });
-    }
-    const pageSize = Math.max(1, dashboard.pageSize);
-    const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / pageSize));
-    if (pageInput.data.page > totalPages) {
-      res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE", message: "頁碼超出資料範圍。" } });
-      return;
-    }
-    const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
-    const layout = await getDashboardLayout(id.data);
-    const dashboardMasks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
-    const masks = enforceDatasetDeviceMasks(dashboardMasks, sensitivity.columns);
-    const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
-    const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: null,
-      dashboardDeviceId: verification.device.id,
-      sourceScope: snapshot.sourceScope,
-      deliveryType: "PAGE",
-      pageNumber: pageInput.data.page,
-      masked,
-      rows: rawRows,
-    });
-    res.setHeader("Cache-Control", "no-store");
-    const reportColumns = (await listReportColumns(query.id)).filter((column) => resolveDeviceColumnMask(column.columnName, masks) !== "OMIT");
-    const columns = snapshot.columns.filter((column) => resolveDeviceColumnMask(column.name, masks) !== "OMIT");
-    const { parameters: _privateParameters, ...safeDashboard } = dashboard;
-    res.json({ dashboard: safeDashboard, query: { id: query.id, code: query.code, name: query.name },
-      reportColumns,
-      result: { columns, rows },
-      page: pageInput.data.page, totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, disclosureId });
-  } catch (error) {
-    next(error);
-  }
-});
-
-
-// Supplemental Dataset device delivery: per-source page request, never full-result.
-// Deliberately fail closed: only explicitly classified, masked columns may leave the server.
-dashboardRouter.post("/device/:id/data-sources/:sourceKey/page", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).safeParse(req.params.sourceKey);
-    const input = z.object({ page: z.number().int().min(1).max(100000), snapshotId: z.string().uuid().optional() }).safeParse(req.body);
-    if (!id.success || !key.success || !input.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return;
-    }
-    const token = getDeviceToken(req);
-    const verification = token
-      ? await checkDashboardDisplayDevice(id.data, token, getRequestSourceIp(req))
-      : { status: "INVALID_TOKEN" as const };
-    if (verification.status !== "VALID") {
-      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } }); return;
-    }
-    const dashboard = await getDashboard(id.data);
-    if (!dashboard || !dashboard.isActive) {
-      res.status(409).json({ error: { code: "DASHBOARD_NOT_AVAILABLE" } }); return;
-    }
-    const sources = await listDashboardDataSources(id.data);
-    const source = sources.find((item) => item.sourceKey === key.data && item.isEnabled);
-    if (!source) { res.status(404).json({ error: { code: "DASHBOARD_SOURCE_NOT_FOUND" } }); return; }
-    const layout = await getDashboardLayout(id.data);
-    const referenced = layout.profiles.some((profile) => profile.widgets.some((widget) =>
-      (widget.widgetType === "FIELD" || widget.widgetType === "TABLE") && widget.config.dataSourceKey === key.data));
-    if (!referenced) {
-      res.status(403).json({ error: { code: "DASHBOARD_SOURCE_NOT_IN_LAYOUT" } }); return;
-    }
-    const dataset = await getDataset(source.datasetId);
-    if (!dataset || !dataset.isActive || dataset.isArchived) {
-      res.status(409).json({ error: { code: "DATASET_NOT_AVAILABLE" } }); return;
-    }
-    const policy = await getDatasetSensitivitySnapshot(source.datasetId);
-    // Require an explicit dataset rule and actual masking. Unclassified fields are omitted.
-    const allowed = new Map<string, (typeof policy.columns)[number]>();
-    const ambiguous = new Set<string>();
-    for (const rule of policy.columns) {
-      const normalized = rule.columnName.toUpperCase();
-      if (allowed.has(normalized)) ambiguous.add(normalized);
-      if (rule.deviceMaskMode !== "NONE" && rule.deviceMaskMode !== "OMIT") allowed.set(normalized, rule);
-    }
-    for (const column of ambiguous) allowed.delete(column);
-    const sourceScope = `datasource:${dataset.dataSourceId}:dashboard-source:${source.sourceKey}`;
-    let snapshot = input.data.snapshotId
-      ? getDashboardPageSnapshot(input.data.snapshotId, verification.device.id, id.data) : null;
-    if (input.data.snapshotId && !snapshot) {
-      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED" } }); return;
-    }
-    if (snapshot && (snapshot.datasetId !== source.datasetId || snapshot.sourceScope !== sourceScope ||
-        snapshot.sensitivityVersion !== policy.version || snapshot.queryId !== source.id)) {
-      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED" } }); return;
-    }
-    if (!snapshot) {
-      const result = await executeSavedDataset(source.datasetId, source.parameters);
-      const minimumSeconds = Math.min(3600, Math.max(source.refreshSeconds,
-        Math.ceil(result.rows.length / source.pageSize) * source.pageSeconds + 10));
-      snapshot = createDashboardPageSnapshot({
-        ttlSeconds: minimumSeconds, deviceId: verification.device.id, dashboardId: id.data,
-        queryId: source.id, datasetId: source.datasetId, sensitivityVersion: policy.version,
-        sourceScope, columns: result.columns, rows: result.rows,
-      });
-    }
-    const columns = snapshot.columns.filter((column) => allowed.has(column.name.toUpperCase()));
-    const pageSize = source.pageSize;
-    const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / pageSize));
-    if (input.data.page > totalPages) {
-      res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE" } }); return;
-    }
-    const rawRows = snapshot.rows.slice((input.data.page - 1) * pageSize, input.data.page * pageSize);
-    const rows = rawRows.map((row) => Object.fromEntries(columns.map((column) => {
-      const rule = allowed.get(column.name.toUpperCase())!;
-      return [column.name, maskDeviceValue(row[column.name], rule.deviceMaskMode, rule.customMask)];
-    })));
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: source.datasetId, dashboardDeviceId: verification.device.id, userId: null,
-      sourceScope, deliveryType: "PAGE",
-      pageNumber: input.data.page, masked: true, rows: rawRows,
-    });
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds,
-      result: { columns, rows }, page: input.data.page,
-      totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, sensitivityVersion: policy.version, disclosureId });
-  } catch (error) { next(error); }
-});
+dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
+  getDataset, getDatasetSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
+  auditPatientListIfConfigured, listReportColumns, listDatasetParameters, getDataSourcePlaybackState }));
 
 dashboardRouter.use(authenticateJwt);
 
@@ -999,15 +817,6 @@ dashboardRouter.get("/:id/layout", async (req, res, next) => {
 });
 
 
-const supplementalSourceSchema = z.object({
-  sourceKey: z.string().trim().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9_]*$/),
-  datasetId: z.number().int().positive(),
-  refreshSeconds: z.number().int().min(5).max(3600).default(30),
-  pageSize: z.number().int().min(1).max(100).default(10),
-  pageSeconds: z.number().int().min(5).max(3600).default(15),
-  parameters: z.record(z.unknown()).default({}),
-  isEnabled: z.boolean().default(true),
-});
 dashboardRouter.get("/:id/data-sources", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
@@ -1019,7 +828,7 @@ dashboardRouter.get("/:id/data-sources", requirePermission("DESIGN_QUERY"), asyn
 dashboardRouter.put("/:id/data-sources", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
-    const parsed = z.object({ sources: z.array(supplementalSourceSchema).max(8) }).safeParse(req.body);
+    const parsed = dashboardSourcesSchema.safeParse(req.body);
     if (!id.success || !parsed.success || !req.authUser) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "資料來源設定格式不正確。" } }); return;
     }
@@ -1060,9 +869,9 @@ dashboardRouter.post("/:id/data-sources/:sourceKey/preview", requirePermission("
       res.status(409).json({ error: { code: "DATASET_NOT_AVAILABLE" } }); return;
     }
     const policy = await getDatasetSensitivitySnapshot(source.datasetId);
-    const result = await executeSavedDataset(source.datasetId, source.parameters, 100);
-    const allowed = new Map(policy.columns.filter((rule) => rule.deviceMaskMode !== "OMIT" && rule.deviceMaskMode !== "NONE")
-      .map((rule) => [rule.columnName.toUpperCase(), rule]));
+    const result = await dashboardQueryExecutor.run(`preview:${req.authUser.id}:${source.id}:${JSON.stringify(source.parameters)}`,
+      () => executeSavedDataset(source.datasetId, source.parameters, 100));
+    const allowed = resolveSupplementalDeviceRules(policy.columns);
     const columns = result.columns.filter((column) => allowed.has(column.name.toUpperCase()));
     const rows = result.rows.map((row) => Object.fromEntries(columns.map((column) => {
       const rule = allowed.get(column.name.toUpperCase())!;
@@ -1072,10 +881,10 @@ dashboardRouter.post("/:id/data-sources/:sourceKey/preview", requirePermission("
     const disclosureId = await auditPatientListIfConfigured({
       datasetId: source.datasetId, userId: req.authUser.id,
       sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "DASHBOARD",
-      masked: true, rows,
+      masked: true, rows: result.rows,
     });
     res.setHeader("Cache-Control", "no-store");
-    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds,
+    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds,
       sensitivityVersion: policy.version, result: { columns, rows }, disclosureId });
   } catch (error) { next(error); }
 });

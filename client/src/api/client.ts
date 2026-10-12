@@ -18,19 +18,30 @@ export async function apiRequest<T>(
   headers.set("Content-Type", "application/json");
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
 
-  const response = await fetch(`${API_BASE}${path}`, { ...options, headers });
-  const body = (await response.json().catch(() => ({}))) as T & ApiError;
+  // Avoid AbortSignal.any/timeout so supported older kiosk browsers use the same deadline.
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const timer = setTimeout(abort, 75_000);
+  options.signal?.addEventListener("abort", abort, { once: true });
+  if (options.signal?.aborted) abort();
+  try {
+    const response = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
+    const body = (await response.json().catch(() => ({}))) as T & ApiError;
 
-  if (!response.ok) {
-    notifyAuthInvalid(body.error?.code);
-    const message = body.error?.message ?? "系統發生錯誤。";
-    const detail = body.error?.detail?.trim();
-    const error = new Error(detail ? `${message}（${detail}）` : message);
-    Object.assign(error, { code: body.error?.code, status: response.status });
-    throw error;
+    if (!response.ok) {
+      notifyAuthInvalid(body.error?.code);
+      const message = body.error?.message ?? "系統發生錯誤。";
+      const detail = body.error?.detail?.trim();
+      const error = new Error(detail ? `${message}（${detail}）` : message);
+      Object.assign(error, { code: body.error?.code, status: response.status });
+      throw error;
+    }
+
+    return body;
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", abort);
   }
-
-  return body;
 }
 
 

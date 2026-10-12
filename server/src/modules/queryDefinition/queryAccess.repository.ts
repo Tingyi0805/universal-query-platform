@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { createHash } from "node:crypto";
 import { getPlatformDbPool } from "../../config/database.js";
 
 async function requirePool() {
@@ -145,4 +146,20 @@ export async function searchQueryAccessUsers(searchText: string, limit = 20) {
     displayName: String(row.DisplayName),
     isActive: Boolean(row.IsActive),
   }));
+}
+
+/** Deterministic ACL revision without user names or credentials in playback payloads. */
+export async function getQueryAccessRevision(queryId: number): Promise<string> {
+  const pool = await requirePool();
+  const result = await pool.request().input("queryId", sql.BigInt, queryId).query(`
+    SELECT 'ROLE' AS Kind, a.RoleId AS PrincipalId, a.CanView, a.CanExecute, a.CanExport, r.IsActive
+    FROM uqp.RoleQueryAccess a INNER JOIN uqp.Role r ON r.Id=a.RoleId
+    WHERE a.QueryDefinitionId=@queryId
+    UNION ALL
+    SELECT 'USER' AS Kind, a.UserId AS PrincipalId, a.CanView, a.CanExecute, a.CanExport, u.IsActive
+    FROM uqp.UserQueryAccess a INNER JOIN uqp.AppUser u ON u.Id=a.UserId
+    WHERE a.QueryDefinitionId=@queryId
+    ORDER BY Kind, PrincipalId
+  `);
+  return createHash("sha256").update(JSON.stringify(result.recordset)).digest("hex");
 }

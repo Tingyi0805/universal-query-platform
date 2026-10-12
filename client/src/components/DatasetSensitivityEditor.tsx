@@ -18,7 +18,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   const chars = Array.from(sample);
   const validSettings = Number.isInteger(prefix) && Number.isInteger(suffix)
     && prefix >= 0 && suffix >= 0 && prefix <= 100 && suffix <= 100
-    && Array.from(symbol).length === 1 && !/[\\r\\n\\t]/u.test(symbol);
+    && Array.from(symbol).length === 1 && !/[\r\n\t]/u.test(symbol);
   const customPreview = !validSettings || prefix + suffix >= chars.length
     ? symbol.repeat(chars.length)
     : chars.slice(0, prefix).join("") + symbol.repeat(chars.length - prefix - suffix)
@@ -64,7 +64,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     if (action === "CUSTOM" && !validSettings) {
       setMessage("保留碼數須為 0～100 的整數，遮蔽符號限單一字元。"); return;
     }
-    // Preserve the classification of existing rules; new fields default to sensitive.
+    // Preserve existing classifications; explicit masks protect new OTHER fields too.
     // Classification is not editable in the simplified UI.
     const sensitivityType = selectedRule?.sensitivityType ?? "OTHER";
     setRules((previous) => [...previous.filter((rule) => rule.columnName !== column), {

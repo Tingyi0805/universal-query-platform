@@ -123,6 +123,7 @@ export async function updateOwnLocalPassword(userId: number, passwordHash: strin
 export async function getTokenSessionState(userId: number): Promise<{
   isActive: boolean;
   tokenVersion: number;
+  permissions: string[];
 } | null | undefined> {
   const pool = await getPlatformDbPool();
   if (!pool) return undefined;
@@ -138,7 +139,15 @@ export async function getTokenSessionState(userId: number): Promise<{
   const row = result.recordset[0];
   if (!row) return null;
 
+  const permissions = await pool.request().input("userId", sql.BigInt, userId).query(`
+    SELECT DISTINCT p.Code FROM uqp.UserRole ur
+    INNER JOIN uqp.Role r ON r.Id=ur.RoleId AND r.IsActive=1
+    INNER JOIN uqp.RolePermission rp ON rp.RoleId=r.Id
+    INNER JOIN uqp.Permission p ON p.Id=rp.PermissionId
+    WHERE ur.UserId=@userId
+  `);
   return {
+    permissions: permissions.recordset.map(row => String(row.Code)),
     isActive: Boolean(row.IsActive),
     tokenVersion: Number(row.TokenVersion ?? 1),
   };

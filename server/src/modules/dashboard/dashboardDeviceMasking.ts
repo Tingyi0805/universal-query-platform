@@ -5,7 +5,7 @@ export type CustomMaskConfig = { prefix: number; suffix: number; symbol: string 
 export function maskCustomValue(value: unknown, config: CustomMaskConfig | null | undefined): string {
   if (!config || !Number.isInteger(config.prefix) || !Number.isInteger(config.suffix)
     || config.prefix < 0 || config.suffix < 0 || config.prefix > 100 || config.suffix > 100
-    || Array.from(config.symbol ?? "").length !== 1 || /[\\r\\n\\t]/u.test(config.symbol)) return "○○○○";
+    || Array.from(config.symbol ?? "").length !== 1 || /[\r\n\t]/u.test(config.symbol)) return "○○○○";
   const chars = Array.from(typeof value === "object" ? JSON.stringify(value) : String(value));
   if (chars.length === 0) return "";
   if (config.prefix + config.suffix >= chars.length) return config.symbol.repeat(chars.length);
@@ -14,8 +14,8 @@ export function maskCustomValue(value: unknown, config: CustomMaskConfig | null 
     + (config.suffix ? chars.slice(-config.suffix).join("") : "");
 }
 export function maskDeviceValue(value: unknown, mode: DeviceMaskMode, custom?: CustomMaskConfig | null): unknown {
-  if (mode === "NONE" || value == null) return value;
   if (mode === "OMIT") return undefined;
+  if (mode === "NONE" || value == null) return value;
   if (mode === "FULL") return "○○○○";
   if (mode === "CUSTOM") return maskCustomValue(value, custom);
   const text = typeof value === "object" ? JSON.stringify(value) : String(value);
@@ -101,7 +101,9 @@ export function enforceClassifiedDeviceMasks(masks: Record<string, DeviceMaskMod
   const safe = { ...masks };
   for (const [column, category] of Object.entries(classifications)) {
     if (category !== "OTHER" && typeof category === "string" && category.length > 0) {
-      if (safe[column] === "NONE") safe[column] = "OMIT";
+      for (const key of Object.keys(safe)) {
+        if (key.toUpperCase() === column.toUpperCase() && safe[key] === "NONE") safe[key] = "OMIT";
+      }
     }
   }
   return safe;
@@ -121,18 +123,32 @@ export function enforceDatasetDeviceMasks(
     const column = approvedColumn;
     if (rule.deviceMaskMode === "OMIT" || (rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
       result[column] = "OMIT";
-    } else if (rule.sensitivityType !== "OTHER") {
+    } else if (rule.deviceMaskMode !== "NONE") {
+      // The simplified editor uses OTHER for new fields. Its explicit masking policy
+      // remains authoritative even when no semantic sensitivity label is supplied.
       // Dataset policy restricts existing dashboard approvals; it does not grant new fields.
       if (result[column] !== undefined && result[column] !== "OMIT") {
         // FULL is stronger than any partial mask; different partial masks are not safely comparable.
         const current = result[column];
         result[column] = current === "FULL" || rule.deviceMaskMode === "FULL"
           ? "FULL"
-          : current === "NONE" || current === rule.deviceMaskMode || rule.deviceMaskMode === "CUSTOM"
+          : current === "NONE" || current === rule.deviceMaskMode
             ? rule.deviceMaskMode
             : "FULL";
       }
     }
   }
   return result;
+}
+
+/** Supplemental approvals require a unique Dataset rule; ambiguous or raw rules never grant fields. */
+export function resolveSupplementalDeviceRules<T extends { columnName: string; deviceMaskMode: DeviceMaskMode }>(rules: T[]): Map<string, T> {
+  const counts = new Map<string, number>();
+  for (const rule of rules) {
+    const key = rule.columnName.toUpperCase();
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return new Map(rules.filter(rule => counts.get(rule.columnName.toUpperCase()) === 1
+    && allowedModes.has(rule.deviceMaskMode) && rule.deviceMaskMode !== "NONE" && rule.deviceMaskMode !== "OMIT")
+    .map(rule => [rule.columnName.toUpperCase(), rule]));
 }

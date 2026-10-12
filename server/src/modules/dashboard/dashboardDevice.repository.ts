@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { getTokenSessionState } from "../auth/auth.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { matchesIpRestriction, normalizeClientIp } from "./dashboardDeviceIp.js";
@@ -241,6 +242,7 @@ export async function checkDashboardDisplayDevice(
   token: string,
   clientIp: string,
 ) {
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return { status: "INVALID_TOKEN" as const };
   const pool = await requirePool();
   const tokenHash = hashToken(token);
   const result = await pool.request()
@@ -256,8 +258,12 @@ export async function checkDashboardDisplayDevice(
 
   const row = result.recordset[0];
   if (!row) return { status: "INVALID_TOKEN" as const };
-  if (!Boolean(row.IsActive) || row.RevokedAtUtc != null) return { status: "DISABLED" as const };
+  if (!Boolean(row.IsActive) || row.RevokedAtUtc != null || row.ArchivedAtUtc != null) return { status: "DISABLED" as const };
   if (row.ExpiresAtUtc != null && new Date(row.ExpiresAtUtc).getTime() <= Date.now()) return { status: "EXPIRED" as const };
+
+  // Device playback is delegated by a designer; removing that authority revokes the delegation.
+  const owner = await getTokenSessionState(Number(row.CreatedByUserId));
+  if (!owner?.isActive || !owner.permissions.includes("DESIGN_QUERY")) return { status: "DISABLED" as const };
 
   const normalizedClientIp = normalizeClientIp(clientIp);
   if (
@@ -279,7 +285,7 @@ export async function checkDashboardDisplayDevice(
       WHERE Id=@id
     `);
 
-  return { status: "VALID" as const, device: mapRow(row) };
+  return { status: "VALID" as const, device: { ...mapRow(row), authorizationRevision: owner.tokenVersion } };
 }
 
 export async function validateDashboardDisplayDevice(dashboardId: number, token: string, clientIp: string) {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
+import { startSourcePlayback, retainSourceColumns } from "../dashboard/sourcePlayback";
 import { useAuth } from "../auth/AuthContext";
 import "./DashboardDisplayPage.css";
 
@@ -163,6 +164,8 @@ export function DashboardDisplayPage() {
   const latestDataRequest = useRef(0);
   const latestLayoutRequest = useRef(0);
   const pageSnapshotId = useRef<string | null>(null);
+  const pageSnapshotCreatedAt = useRef(0);
+  const lastVisibleColumns = useRef<ReportColumn[]>([]);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   type SupplementalPage = { sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; snapshotId: string; page: number;
     totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
@@ -190,77 +193,59 @@ export function DashboardDisplayPage() {
   useEffect(() => {
     const generation = ++supplementalRequestGeneration.current;
     setSupplementalPages({});
-    if (!deviceMode || !deviceToken || !online || activationRequired) return;
+    if (!online || (deviceMode ? !deviceToken || activationRequired : !accessToken)) return;
     const keys = [...new Set(profiles.flatMap((profile) => profile.widgets
       .filter((widget) => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
       .map((widget) => widget.config?.dataSourceKey)
       .filter((key): key is string => typeof key === "string" && key !== "PRIMARY" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))))];
-    const timers = new Set<number>();
-    let disposed = false;
-    for (const key of keys) {
-      let inFlight = false;
-      let failures = 0;
-      let currentPage = 1;
-      let rotationSeconds = 15;
-      let refreshSeconds = 30;
-      let snapshotId: string | null = null;
-      let snapshotCreatedAt = 0;
-      const refresh = async () => {
-        if (disposed || inFlight || !navigator.onLine) return;
-        inFlight = true;
-        let delay = rotationSeconds;
-        try {
-          const fetchPage = (requestedPage: number, currentSnapshot: string | null) =>
-            apiRequest<SupplementalPage>(
-              `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
-              { method: "POST", body: JSON.stringify({ page: requestedPage,
-                  ...(currentSnapshot ? { snapshotId: currentSnapshot } : {}) }),
-                headers: { "X-Dashboard-Device-Token": deviceToken, "Content-Type": "application/json" } }, null);
-          // Requery on refresh cadence, while paging within the same server-side snapshot.
-          if (snapshotId && Date.now() - snapshotCreatedAt >= refreshSeconds * 1000) {
-            snapshotId = null;
-            currentPage = 1;
-          }
-          let result: SupplementalPage;
-          try {
-            result = await fetchPage(currentPage, snapshotId);
-          } catch (error) {
-            const code = (error as { code?: string }).code;
-            if (currentPage === 1 && code !== "DASHBOARD_SNAPSHOT_EXPIRED") throw error;
-            if (code !== "DASHBOARD_SNAPSHOT_EXPIRED" && code !== "DASHBOARD_PAGE_OUT_OF_RANGE") throw error;
-            snapshotId = null;
-            currentPage = 1;
-            result = await fetchPage(1, null);
-          }
-          if (disposed || generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
-          if (!snapshotId || snapshotId !== result.snapshotId) snapshotCreatedAt = Date.now();
-          snapshotId = result.snapshotId;
-          setSupplementalPages((previous) => ({ ...previous, [key]: result }));
-          refreshSeconds = Math.max(5, Math.min(3600, result.refreshSeconds));
-          rotationSeconds = Math.max(5, Math.min(3600, result.pageSeconds));
-          delay = rotationSeconds;
-          currentPage = currentPage >= Math.max(1, result.totalPages) ? 1 : currentPage + 1;
-          failures = 0;
-        } catch {
-          if (!disposed && generation === supplementalRequestGeneration.current) {
-            setSupplementalPages((previous) => { const next = { ...previous }; delete next[key]; return next; });
-          }
-          currentPage = 1;
-          snapshotId = null;
-          failures++;
-          delay = Math.min(300, 5 * Math.pow(2, Math.min(failures, 6)));
-        } finally {
-          inFlight = false;
-          if (!disposed) {
-            const timer = window.setTimeout(() => { timers.delete(timer); void refresh(); }, delay * 1000);
-            timers.add(timer);
-          }
+    const previewCache = new Map<string, { id: string; data: SupplementalPage }>();
+    let previewRevision = 0;
+    const stops = keys.map((key) => startSourcePlayback<SupplementalPage>({
+      fetchPage: async (requestedPage, snapshotId, signal) => {
+        if (deviceMode) return apiRequest<SupplementalPage>(
+          `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
+          { method: "POST", signal, body: JSON.stringify({ page: requestedPage, ...(snapshotId ? { snapshotId } : {}) }),
+            headers: { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" } }, null);
+        // Designer playback previews reuse their masked, capped result for local pagination.
+        let cached = previewCache.get(key);
+        if (!cached || !snapshotId || cached.id !== snapshotId) {
+          const data = await apiRequest<SupplementalPage>(`/dashboards/${dashboardId}/data-sources/${encodeURIComponent(key)}/preview`,
+            { method: "POST", signal }, accessToken);
+          cached = { id: `preview-${++previewRevision}`, data };
+          previewCache.set(key, cached);
         }
-      };
-      void refresh();
-    }
-    return () => { disposed = true; ++supplementalRequestGeneration.current; timers.forEach((timer) => window.clearTimeout(timer)); timers.clear(); };
-  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles]);
+        const size = Math.max(1, cached.data.pageSize);
+        const totalPages = Math.max(1, Math.ceil(cached.data.result.rows.length / size));
+        const currentPage = Math.min(requestedPage, totalPages);
+        return { ...cached.data, page: currentPage, totalPages, snapshotId: cached.id,
+          result: { ...cached.data.result, rows: cached.data.result.rows.slice((currentPage - 1) * size, currentPage * size) } };
+      },
+      show: (result) => {
+        if (generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
+        setSupplementalPages(previous => ({ ...previous, [key]: result }));
+      },
+      clear: () => {
+        if (generation !== supplementalRequestGeneration.current) return;
+        setSupplementalPages(previous => previous[key] ? { ...previous, [key]: retainSourceColumns(previous[key]!) } : previous);
+      },
+      unauthorized: () => {
+        if (!deviceMode) return;
+        ++supplementalRequestGeneration.current;
+        ++latestDataRequest.current;
+        ++latestLayoutRequest.current;
+        pageSnapshotId.current = null;
+        localStorage.removeItem(deviceStorageKey);
+        setDeviceToken(null);
+        setActivationRequired(true);
+        setPreview(null);
+        setSupplementalPages({});
+        setProfiles([]);
+        setCountdown(0);
+        setActivationError("裝置授權失效，請重新驗證。");
+      },
+    }));
+    return () => { ++supplementalRequestGeneration.current; stops.forEach(stop => stop()); };
+  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, deviceStorageKey, accessToken]);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -294,7 +279,10 @@ export function DashboardDisplayPage() {
       );
       if (requestId !== latestDataRequest.current || (deviceMode && !navigator.onLine)) return;
       if (deviceMode && result.page !== page) return;
-      if (deviceMode) pageSnapshotId.current = result.snapshotId ?? null;
+      if (deviceMode) {
+        if (pageSnapshotId.current !== result.snapshotId) pageSnapshotCreatedAt.current = Date.now();
+        pageSnapshotId.current = result.snapshotId ?? null;
+      }
       setPreview(result);
       setLastUpdatedAt(new Date());
       setDataWarning("");
@@ -323,13 +311,15 @@ export function DashboardDisplayPage() {
         setDataWarning("資料筆數已變更，正在從第一頁重新載入。");
         return;
       }
-      if (deviceMode && (e as { status?: number }).status === 401) {
+      if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
         localStorage.removeItem(deviceStorageKey);
         setDeviceToken(null);
         setActivationRequired(true);
         setPreview(null);
+        ++supplementalRequestGeneration.current;
+        setSupplementalPages({});
         setProfiles([]);
         setCountdown(0);
         setDataWarning("");
@@ -393,13 +383,15 @@ export function DashboardDisplayPage() {
       setLayoutWarning("");
     } catch (e) {
       if (requestId !== latestLayoutRequest.current) return;
-      if (deviceMode && (e as { status?: number }).status === 401) {
+      if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
         localStorage.removeItem(deviceStorageKey);
         setDeviceToken(null);
         setActivationRequired(true);
         setPreview(null);
+        ++supplementalRequestGeneration.current;
+        setSupplementalPages({});
         setProfiles([]);
         setCountdown(0);
         setLayoutWarning("");
@@ -559,7 +551,7 @@ export function DashboardDisplayPage() {
   }, [deviceMode, pageSize, preview, safePage]);
 
   const visibleColumns = useMemo(() => {
-    if (!preview) return [];
+    if (!preview) return lastVisibleColumns.current;
     const resultNames = new Set(preview.result.columns.map((column) => column.name));
     const configured = preview.reportColumns
       .filter((column) => column.isVisible && resultNames.has(column.columnName))
@@ -576,16 +568,19 @@ export function DashboardDisplayPage() {
     }));
   }, [preview]);
 
+  useEffect(() => {
+    if (preview) lastVisibleColumns.current = visibleColumns;
+  }, [preview, visibleColumns]);
+
   // Continue retrying even when the first load fails; do not discard last successful data.
-  // Single-page device boards never advance pages, so refresh their snapshot
-  // explicitly. This also handles an empty result becoming non-empty later.
+  // SQL refresh uses snapshot creation time, independent of page rotation and cycle wrap.
   useEffect(() => {
     if (!deviceMode || activationRequired || !deviceToken || !online || dataWarning ||
-        !preview || totalPages !== 1) return;
+        !preview) return;
     const timer = window.setTimeout(() => {
       pageSnapshotId.current = null;
       setSnapshotReloadKey((key) => key + 1);
-    }, refreshSeconds * 1000);
+    }, Math.max(1, refreshSeconds * 1000 - (Date.now() - pageSnapshotCreatedAt.current)));
     return () => window.clearTimeout(timer);
   }, [deviceMode, activationRequired, deviceToken, online, dataWarning, preview, totalPages, refreshSeconds]);
 
@@ -628,6 +623,8 @@ export function DashboardDisplayPage() {
       if (deviceMode) {
         pageSnapshotId.current = null;
         setPreview(null);
+        ++supplementalRequestGeneration.current;
+        setSupplementalPages({});
         setCountdown(0);
         setDataWarning("網路中斷，暫停顯示患者資料；連線恢復後重新載入。");
       }
@@ -642,8 +639,9 @@ export function DashboardDisplayPage() {
   }, [totalPages]);
 
   useEffect(() => {
-    if (deviceMode && page === 1) pageSnapshotId.current = null;
-  }, [deviceMode, dashboardId, page]);
+    pageSnapshotId.current = null;
+    pageSnapshotCreatedAt.current = 0;
+  }, [deviceMode, dashboardId, deviceToken]);
 
   // Do not run a page-advance timer for empty results or a single-page view.
   const canAdvancePage = Boolean(preview && preview.result.rows.length > 0 && totalPages > 1) &&
@@ -651,24 +649,20 @@ export function DashboardDisplayPage() {
       !dataWarning && preview?.page === safePage));
 
   useEffect(() => {
-    // A new page (or successful recovery) always gets a fresh countdown.
-    // While waiting for authorization, network or page data, keep it stopped.
-    setCountdown(canAdvancePage ? pageSeconds : 0);
-  }, [dashboardId, pageSeconds, page, canAdvancePage, preview]);
-
-  useEffect(() => {
-    if (!canAdvancePage) return;
+    if (!canAdvancePage) { setCountdown(0); return; }
+    const deadline = Date.now() + pageSeconds * 1000;
+    setCountdown(pageSeconds);
     const timer = window.setInterval(() => {
-      setCountdown((current) => {
-        if (current <= 1) {
-          setPage((currentPage) => currentPage >= totalPages ? 1 : currentPage + 1);
-          return 0;
-        }
-        return current - 1;
-      });
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setCountdown(remaining);
+      if (remaining === 0) {
+        window.clearInterval(timer);
+        // React may invoke state updaters twice; page advancement must stay outside countdown updaters.
+        setPage(currentPage => currentPage >= totalPages ? 1 : currentPage + 1);
+      }
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [pageSeconds, totalPages, canAdvancePage, safePage, preview?.page]);
+  }, [dashboardId, pageSeconds, totalPages, canAdvancePage, safePage, preview?.page]);
 
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
@@ -709,7 +703,7 @@ export function DashboardDisplayPage() {
             <thead>
               <tr>
                 {widgetColumns.map((column) => (
-                  <th key={column.columnName}>{column.displayLabel}</th>
+                  <th scope="col" key={column.columnName}>{column.displayLabel}</th>
                 ))}
               </tr>
             </thead>
@@ -833,7 +827,7 @@ export function DashboardDisplayPage() {
     );
   }
 
-  if (error && !preview) {
+  if (error && !preview && profiles.length === 0) {
     return (
       <main className="dashboard-display-screen">
         <div className="dashboard-display-error">
@@ -845,7 +839,7 @@ export function DashboardDisplayPage() {
     );
   }
 
-  if (!preview || !activeProfile) {
+  if (!activeProfile) {
     return (
       <main className="dashboard-display-screen">
         <div className="dashboard-display-loading">

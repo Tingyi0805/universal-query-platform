@@ -7,6 +7,7 @@ export type DashboardPageSnapshot = {
   queryId: number;
   datasetId: number;
   sensitivityVersion?: number;
+  bindingFingerprint?: string;
   sourceScope: string;
   createdAt: number;
   ttlMs: number;
@@ -39,7 +40,7 @@ export function createDashboardPageSnapshot(input: Omit<DashboardPageSnapshot, "
   }
   const now = Date.now();
   for (const [key, item] of snapshots) {
-    if (now - item.createdAt > item.ttlMs) snapshots.delete(key);
+    if (now - item.createdAt >= item.ttlMs) snapshots.delete(key);
   }
   let totalBytes = Array.from(snapshots.values()).reduce((total, item) => total + item.byteSize, 0);
   while (snapshots.size >= MAX_SNAPSHOTS || totalBytes + byteSize > MAX_TOTAL_BYTES) {
@@ -49,6 +50,7 @@ export function createDashboardPageSnapshot(input: Omit<DashboardPageSnapshot, "
     snapshots.delete(oldest);
   }
   const { ttlSeconds, ...data } = input;
+  if (ttlSeconds !== undefined && (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0)) throw new Error("DASHBOARD_SNAPSHOT_INVALID_TTL");
   const ttlMs = Math.min(MAX_TTL_MS, Math.max(10_000, (ttlSeconds ?? 60) * 1000));
   const snapshot: DashboardPageSnapshot = { ...data, id: randomUUID(), createdAt: now, ttlMs, byteSize };
   snapshots.set(snapshot.id, snapshot);
@@ -58,7 +60,7 @@ export function createDashboardPageSnapshot(input: Omit<DashboardPageSnapshot, "
 export function getDashboardPageSnapshot(id: string, deviceId: number, dashboardId: number): DashboardPageSnapshot | null {
   const item = snapshots.get(id);
   if (!item) return null;
-  if (Date.now() - item.createdAt > item.ttlMs) {
+  if (Date.now() - item.createdAt >= item.ttlMs) {
     snapshots.delete(id);
     return null;
   }

@@ -33,7 +33,9 @@ npm run db:migrate:status
 npm run dev
 ```
 
-檢查 `http://localhost:3000/api/health`；Migration 失敗請保留完整錯誤與檔名／批次序號。
+檢查 `http://localhost:3000/api/status`；Migration 失敗請保留完整錯誤與檔名／批次序號。
+
+本輪整合版本還需套用 912～915；915 用於修復已記錄早期 912／914 的測試資料庫約束。非空裝置資料現在必須先完成患者揭露稽核：每個 Dataset 啟用 patient-audit 設定，指定原始患者識別欄位，並安全設定 `PATIENT_AUDIT_ACTIVE_KEY_VERSION`、`PATIENT_AUDIT_HMAC_KEYRING_JSON`。未設定或稽核失敗時會回傳 503 且不提供任何資料列。完整驗收步驟見 [整合驗收與部署](dashboard-integration-acceptance.md)。
 
 ## 3. 前端
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks, resolveEffectiveDeviceMasks } from "./dashboardDeviceMasking.js";
+import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveConfiguredDeviceMasks, resolveDeviceColumnMasks, resolveEffectiveDeviceMasks, resolveSupplementalDeviceRules } from "./dashboardDeviceMasking.js";
 
 test("masks patient name, MRN, and phone before delivery", () => {
   assert.equal(maskDeviceValue("王小佑", "NAME"), "王○佑");
@@ -113,7 +113,33 @@ test("custom mask invalid config and short values fail closed", () => {
 test("dataset custom masking applies to page rows without granting new columns", () => {
   const rules = [{ columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM" as const,
     customMask: { prefix: 0, suffix: 4, symbol: "*" } }];
-  const masks = enforceDatasetDeviceMasks({ MRN: "MRN" }, rules);
+  const masks = enforceDatasetDeviceMasks({ MRN: "NONE" }, rules);
   assert.deepEqual(maskDeviceRows([{ MRN: "00001234", HIDDEN: "private" }], masks, rules),
     [{ MRN: "****1234" }]);
+});
+
+test("case-insensitive classified fields, conflicting CUSTOM masks and null omission fail closed", () => {
+  assert.equal(enforceClassifiedDeviceMasks({ NAME: "NONE" }, { name: "NAME" }).NAME, "OMIT");
+  assert.equal(enforceDatasetDeviceMasks({ MRN: "MRN" }, [
+    { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM" },
+  ]).MRN, "FULL");
+  assert.equal(maskDeviceValue(null, "OMIT"), undefined);
+});
+test("CUSTOM accepts ordinary letters and emoji, rejects actual control characters", () => {
+  for (const symbol of ["r", "n", "t", "😀"]) assert.equal(maskDeviceValue("1234", "CUSTOM", { prefix: 1, suffix: 1, symbol }), `1${symbol}${symbol}4`);
+  for (const symbol of ["\r", "\n", "\t"]) assert.equal(maskDeviceValue("1234", "CUSTOM", { prefix: 1, suffix: 1, symbol }), "○○○○");
+});
+test("ambiguous supplemental rules are omitted regardless of input order", () => {
+  for (const rules of [
+    [{ columnName: "NAME", deviceMaskMode: "NONE" as const }, { columnName: "name", deviceMaskMode: "NAME" as const }],
+    [{ columnName: "name", deviceMaskMode: "NAME" as const }, { columnName: "NAME", deviceMaskMode: "NONE" as const }],
+  ]) assert.equal(resolveSupplementalDeviceRules(rules).size, 0);
+});
+test("simplified editor OTHER rules still enforce CUSTOM and FULL over raw dashboard approval", () => {
+  const rules = [
+    { columnName: "MRN", sensitivityType: "OTHER", deviceMaskMode: "CUSTOM" as const, customMask: { prefix: 0, suffix: 2, symbol: "*" } },
+    { columnName: "NAME", sensitivityType: "OTHER", deviceMaskMode: "FULL" as const },
+  ];
+  const masks = enforceDatasetDeviceMasks({ MRN: "NONE", NAME: "NONE" }, rules);
+  assert.deepEqual(maskDeviceRows([{ MRN: "00000123", NAME: "合成患者" }], masks, rules), [{ MRN: "******23", NAME: "○○○○" }]);
 });

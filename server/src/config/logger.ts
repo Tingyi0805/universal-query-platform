@@ -1,7 +1,7 @@
 import pino from "pino";
 import { env } from "./env.js";
 
-export const logger = pino({
+export const loggerOptions = {
   level: env.LOG_LEVEL,
   base: {
     service: "universal-query-platform-server",
@@ -10,8 +10,16 @@ export const logger = pino({
   redact: {
     paths: [
       "req.headers.authorization",
+      'req.headers["x-dashboard-device-token"]',
+      'req.headers["x-workstation-credential"]',
       "req.headers.cookie",
       "res.headers.set-cookie",
+      "pin",
+      "*.pin",
+      "token",
+      "*.token",
+      "secret",
+      "*.secret",
       "password",
       "currentPassword",
       "newPassword",
@@ -27,4 +35,6 @@ export const logger = pino({
     ],
     censor: "[REDACTED]",
   },
-});
+};
+
+export const logger = pino(loggerOptions);
