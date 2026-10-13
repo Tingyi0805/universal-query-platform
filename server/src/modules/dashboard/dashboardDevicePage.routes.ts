@@ -7,6 +7,7 @@ import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboard
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 
 export type DevicePageDependencies = {
+  legacySourceIsQueryBound?: (id: number, key: string) => Promise<boolean>;
   getQueryAccessRevision: typeof import("../queryDefinition/queryAccess.repository.js").getQueryAccessRevision;
   checkDashboardDisplayDevice: typeof import("./dashboardDevice.repository.js").checkDashboardDisplayDevice;
   getDashboard: typeof import("./dashboard.repository.js").getDashboard;
@@ -35,6 +36,8 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
     if (verification.status !== "VALID") throw new DeliveryError(401, "DASHBOARD_DEVICE_UNAUTHORIZED");
     const dashboard = await getDashboard(dashboardId);
     if (!dashboard?.isActive) throw new DeliveryError(409, "DASHBOARD_NOT_AVAILABLE");
+    if (await deps.legacySourceIsQueryBound?.(dashboardId, sourceKey ?? "PRIMARY"))
+      throw new DeliveryError(409, "QUERY_SOURCE_MODE_NOT_ACTIVATED");
     const query = await getQueryDefinition(dashboard.queryDefinitionId);
     if (!query?.isPublished || !query.isActive || query.isArchived) throw new DeliveryError(409, "DASHBOARD_QUERY_NOT_AVAILABLE");
     const layout = await getDashboardLayout(dashboardId);

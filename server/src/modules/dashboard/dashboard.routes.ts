@@ -1,3 +1,7 @@
+import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
+import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
+import { loadQueryExecutionBinding, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
+import { getTokenSessionState } from "../auth/auth.repository.js";
 import { env } from "../../config/env.js";
 import { QuerySourceError, createQuerySourceManagement } from "./dashboardQuerySources.service.js";
 import { querySourceStore } from "./dashboardQuerySources.repository.js";
@@ -290,9 +294,14 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
 
 dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
   getDataset, getDatasetSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
-  auditPatientListIfConfigured, listReportColumns, listDatasetParameters, getDataSourcePlaybackState }));
+  auditPatientListIfConfigured, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createQuerySourceExecutionRouter(createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
+  getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
+  getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
+  getDataSource: getDataSourcePlaybackState, getSensitivity: getDatasetSensitivitySnapshot,
+  execute: executeSavedDataset, audit: auditPatientListIfConfigured }, () => env.DASHBOARD_QUERY_SOURCE_EXECUTION)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
 dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {

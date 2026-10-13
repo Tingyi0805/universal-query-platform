@@ -5,6 +5,12 @@ export type DashboardPageSnapshot = {
   deviceId: number;
   dashboardId: number;
   queryId: number;
+  sourceKey?: string;
+  sourceId?: number;
+  bindingRevision?: number;
+  accessRevision?: string;
+  authorizationRevision?: number;
+  modeVersion?: string;
   datasetId: number;
   sensitivityVersion?: number;
   bindingFingerprint?: string;

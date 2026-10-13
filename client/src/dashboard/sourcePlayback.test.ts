@@ -79,3 +79,14 @@ test("clearing a failed source retains table columns and removes patient rows", 
   assert.deepEqual(retainSourceColumns(data), { result: { columns: [{ name: "NAME" }], rows: [] } });
   assert.equal(data.result.rows.length, 1);
 });
+for (const status of [403, 400, 503]) test(`source ${status} remains local while healthy sources continue refreshing`, async () => {
+  const c = clock(); let unauthorized = 0, good = 0, errors = 0;
+  const stopBad = startSourcePlayback({ clock: c.api, fetchPage: async () => { throw Object.assign(new Error("private error"), { status }); },
+    show: () => assert.fail(), clear: () => {}, unauthorized: () => unauthorized++, failed: code => { assert.equal(code, status); errors++; } });
+  const stopGood = startSourcePlayback({ clock: c.api, fetchPage: async (page, snapshot) => {
+    good++; return { page, totalPages: 1, snapshotId: snapshot ?? `healthy-${good}`, refreshSeconds: 5, pageSeconds: 5 };
+  }, show: () => {}, clear: () => {}, unauthorized: () => unauthorized++ });
+  await c.flush(); await c.advance(20_000);
+  assert.equal(unauthorized, 0); assert.equal(good, 5); assert.equal(errors, 3);
+  stopBad(); stopGood(); assert.equal(c.count(), 0);
+});

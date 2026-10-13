@@ -16,7 +16,7 @@ async function fixture(run: (f: Awaited<ReturnType<typeof openFixture>>) => Prom
 }
 async function openFixture() {
   const state = {
-    valid: true, accessRevision: "acl-v1", sqlCalls: 0, audits: [] as Parameters<DevicePageDependencies["auditPatientListIfConfigured"]>[0][],
+    valid: true, queryManaged: false, accessRevision: "acl-v1", sqlCalls: 0, audits: [] as Parameters<DevicePageDependencies["auditPatientListIfConfigured"]>[0][],
     dashboard: { id: 1, queryDefinitionId: 2, isActive: true, pageSize: 1, pageSeconds: 5, refreshSeconds: 10,
       parameters: { deviceColumnMasks: { NAME: "NAME", MRN: "CUSTOM", ROOM: "NONE" } } } as unknown as Dashboard,
     dataset: { id: 3, dataSourceId: 4, sqlText: "SELECT NAME, MRN, ROOM FROM synthetic", isActive: true, isArchived: false } as Dataset,
@@ -32,6 +32,7 @@ async function openFixture() {
     afterSql: () => {}, afterAudit: () => {}, sqlFailure: false, auditFailure: false, auditEnabled: true,
   };
   const deps: DevicePageDependencies = {
+    legacySourceIsQueryBound: async () => state.queryManaged,
     getQueryAccessRevision: async () => state.accessRevision,
     checkDashboardDisplayDevice: async (_id, token) => state.valid && token === "synthetic-device-token"
       ? { status: "VALID", device: { id: 11, dashboardId: 1, createdByUserId: 12, lastUsedAtUtc: new Date().toISOString() } as Device }
@@ -69,6 +70,14 @@ async function openFixture() {
 }
 const primary = "/device/1/page";
 const supplemental = "/device/1/data-sources/ORACLE/page";
+test("managed bindings cannot be played through legacy PRIMARY or Dataset fallback routes", () => fixture(async f => {
+  f.state.queryManaged = true;
+  for (const path of [primary, supplemental]) {
+    const result = await f.request(path, { page: 1 });
+    assert.equal(result.status, 409); assert.equal(result.body.error.code, "QUERY_SOURCE_MODE_NOT_ACTIVATED");
+  }
+  assert.equal(f.state.sqlCalls, 0); assert.equal(f.state.audits.length, 0);
+}));
 
 for (const path of [primary, supplemental]) {
   test(`${path}: page-only masked delivery, raw identities audited server-side, paging does not execute SQL`, () => fixture(async f => {

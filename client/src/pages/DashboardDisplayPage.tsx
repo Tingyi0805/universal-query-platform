@@ -174,6 +174,7 @@ export function DashboardDisplayPage() {
   type SupplementalPage = { sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; snapshotId: string; page: number;
     totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
   const [supplementalPages, setSupplementalPages] = useState<Record<string, SupplementalPage>>({});
+  const [supplementalErrors, setSupplementalErrors] = useState<Record<string, string>>({});
   const supplementalRequestGeneration = useRef(0);
 
   const [error, setError] = useState("");
@@ -197,6 +198,7 @@ export function DashboardDisplayPage() {
   useEffect(() => {
     const generation = ++supplementalRequestGeneration.current;
     setSupplementalPages({});
+    setSupplementalErrors({});
     if (!online || (deviceMode ? !deviceToken || activationRequired : !accessToken)) return;
     const keys = [...new Set(profiles.flatMap((profile) => profile.widgets
       .filter((widget) => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
@@ -227,10 +229,16 @@ export function DashboardDisplayPage() {
       show: (result) => {
         if (generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
         setSupplementalPages(previous => ({ ...previous, [key]: result }));
+        setSupplementalErrors(previous => { const next = { ...previous }; delete next[key]; return next; });
       },
       clear: () => {
         if (generation !== supplementalRequestGeneration.current) return;
         setSupplementalPages(previous => previous[key] ? { ...previous, [key]: retainSourceColumns(previous[key]!) } : previous);
+      },
+      failed: (status) => {
+        if (generation !== supplementalRequestGeneration.current) return;
+        setSupplementalErrors(previous => ({ ...previous, [key]: status === 403 ? "此來源沒有查詢權限" :
+          status === 400 ? "此來源的查詢參數不完整或格式不正確" : "此來源暫時無法提供資料" }));
       },
       unauthorized: () => {
         if (!deviceMode) return;
@@ -726,7 +734,7 @@ export function DashboardDisplayPage() {
               ))}
             </tbody>
           </table>
-          {widgetRows.length === 0 && <div className="dashboard-play-empty">目前沒有資料</div>}
+          {widgetRows.length === 0 && <div className="dashboard-play-empty" role={supplementalErrors[sourceKey] ? "alert" : undefined}>{supplementalErrors[sourceKey] ?? "目前沒有資料"}</div>}
         </div>
       );
     }
@@ -740,6 +748,7 @@ export function DashboardDisplayPage() {
         value = widget.sourceKey ? textValue(parameters[widget.sourceKey]) : "";
         break;
       case "FIELD":
+        if (supplementalErrors[sourceKey]) { value = supplementalErrors[sourceKey]; break; }
         value = widget.sourceKey
           ? sourceKey === "PRIMARY" ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode) : textValue(firstRow[widget.sourceKey])
           : "";
