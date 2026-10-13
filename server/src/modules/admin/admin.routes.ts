@@ -1,3 +1,5 @@
+import { strictIds } from "./workstationManagement.js";
+import { createWorkstationManagementRouter } from "./workstationManagement.routes.js";
 import bcrypt from "bcryptjs";
 import { listDeviceCredentials, issueDeviceCredential, revokeDeviceCredential } from "./workstationCredential.repository.js";
 import { listSharedWorkstations, createSharedWorkstation, updateSharedWorkstation, listWorkstationUsers, setWorkstationUsers } from "./sharedWorkstation.repository.js";
@@ -114,6 +116,7 @@ adminRouter.post("/bootstrap", async (req, res, next) => {
 });
 
 adminRouter.use(authenticateJwt, requirePermission("MANAGE_USERS"));
+adminRouter.use(createWorkstationManagementRouter());
 
 adminRouter.get("/users", async (req, res, next) => {
   try {
@@ -482,7 +485,7 @@ adminRouter.put("/shared-workstations/:id", async (req, res, next) => {
     const id = z.coerce.number().int().positive().safeParse(req.params.id);
     const body = z.object({ displayName: z.string().trim().min(1).max(200), isActive: z.boolean() }).safeParse(req.body);
     if (!id.success || !body.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
-    const status = await updateSharedWorkstation(id.data, body.data.displayName, body.data.isActive);
+    const status = await updateSharedWorkstation(id.data, body.data.displayName, body.data.isActive, req.authUser!.id);
     if (status !== "OK") {
       res.status(status === "NOT_CONFIGURED" ? 503 : 404).json({ error: { code: status } }); return;
     }
@@ -504,9 +507,7 @@ adminRouter.get("/shared-workstations/:id/users", async (req, res, next) => {
 adminRouter.put("/shared-workstations/:id/users", async (req, res, next) => {
   try {
     const id = z.coerce.number().int().positive().safeParse(req.params.id);
-    const body = z.object({ userIds: z.array(z.number().int().positive()).max(100).refine(
-      values => new Set(values).size === values.length, "duplicate userIds"
-    ) }).safeParse(req.body);
+    const body = z.object({ userIds: strictIds(100) }).strict().safeParse(req.body);
     if (!id.success || !body.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
     const status = await setWorkstationUsers(id.data, body.data.userIds);
     if (status !== "OK") {

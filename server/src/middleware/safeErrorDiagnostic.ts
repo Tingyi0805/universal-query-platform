@@ -1,6 +1,6 @@
 export type ErrorModule = "dataset.parameters.read" | "dataset.parameters.sync" | "dataset.parameters.save" |
   "dataset.load" | "dataset.parameters.load" | "dataset.parameters.validate" | "dataset.query.compile" |
-  "dataset.query.execute" | "datasource.load" | "query.patient.disclosure" | "dataset.columns.sync" | "request";
+  "dataset.query.execute" | "datasource.load" | "query.patient.disclosure" | "dataset.columns.sync" | "admin.workstation" | "auth.pin" | "request";
 const modules = new WeakMap<object, ErrorModule>();
 export async function withErrorModule<T>(module: ErrorModule, operation: () => Promise<T>): Promise<T> {
   try { return await operation(); } catch (error) {
@@ -9,7 +9,7 @@ export async function withErrorModule<T>(module: ErrorModule, operation: () => P
   }
 }
 const driverCodes = new Set(["EREQUEST", "ETIMEOUT", "ELOGIN", "ECONNCLOSED", "ENOTOPEN", "ESOCKET", "ECONNRESET", "ENOCONN", "EARGS"]);
-const applicationCodes = new Set(["PLATFORM_DB_NOT_CONFIGURED", "PARAMETER_DEFINITION_MISMATCH", "PARAMETER_PARSE_FAILED",
+const applicationCodes = new Set(["PLATFORM_DB_NOT_CONFIGURED", "PIN_POLICY_INVALID", "PARAMETER_DEFINITION_MISMATCH", "PARAMETER_PARSE_FAILED",
   "PARAMETER_PREVIEW_STALE", "PARAMETER_REMOVAL_INVALID", "PARAMETER_SYNC_LIMIT", "MISSING_QUERY_PARAMETER", "QUOTED_QUERY_PARAMETER",
   "PARAMETER_REQUIRED", "PARAMETER_NUMBER_INVALID", "PARAMETER_BOOLEAN_INVALID", "PARAMETER_DATE_INVALID", "PARAMETER_DATETIME_INVALID"]);
 export function safeErrorDiagnostic(error: unknown) {

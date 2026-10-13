@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { readDashboardToken,rememberDashboardToken,forgetDashboardToken,requestDashboardTokenHandoff } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
 import { startSourcePlayback, retainSourceColumns } from "../dashboard/sourcePlayback";
 import { useAuth } from "../auth/AuthContext";
@@ -151,13 +152,16 @@ export function DashboardDisplayPage() {
   const previewKey = searchParams.get("previewKey");
   const autoFullscreenRequested = searchParams.get("autoFullscreen") === "1";
   const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
-  const deviceStorageKey = `uqp.dashboard.device.${dashboardId}`;
-  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode ? localStorage.getItem(deviceStorageKey) : null);
+  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode ? readDashboardToken(dashboardId) : null);
   const [activationInput, setActivationInput] = useState("");
   const [activationBusy, setActivationBusy] = useState(false);
   const activationAttempt = useRef(0);
   const [activationError, setActivationError] = useState("");
-  const [activationRequired, setActivationRequired] = useState(() => deviceMode && !localStorage.getItem(deviceStorageKey));
+  const [activationRequired, setActivationRequired] = useState(() => deviceMode && !readDashboardToken(dashboardId));
+  useEffect(()=>{
+    if(!deviceMode)return;
+    return requestDashboardTokenHandoff(dashboardId,token=>{setDeviceToken(token);setActivationRequired(false);});
+  },[dashboardId,deviceMode]);
   const { accessToken } = useAuth();
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -234,7 +238,7 @@ export function DashboardDisplayPage() {
         ++latestDataRequest.current;
         ++latestLayoutRequest.current;
         pageSnapshotId.current = null;
-        localStorage.removeItem(deviceStorageKey);
+        forgetDashboardToken(dashboardId);
         setDeviceToken(null);
         setActivationRequired(true);
         setPreview(null);
@@ -245,7 +249,7 @@ export function DashboardDisplayPage() {
       },
     }));
     return () => { ++supplementalRequestGeneration.current; stops.forEach(stop => stop()); };
-  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, deviceStorageKey, accessToken]);
+  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken]);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -314,7 +318,7 @@ export function DashboardDisplayPage() {
       if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
-        localStorage.removeItem(deviceStorageKey);
+        forgetDashboardToken(dashboardId);
         setDeviceToken(null);
         setActivationRequired(true);
         setPreview(null);
@@ -338,7 +342,7 @@ export function DashboardDisplayPage() {
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken, deviceStorageKey, page, snapshotReloadKey]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, page, snapshotReloadKey]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
@@ -386,7 +390,7 @@ export function DashboardDisplayPage() {
       if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
-        localStorage.removeItem(deviceStorageKey);
+        forgetDashboardToken(dashboardId);
         setDeviceToken(null);
         setActivationRequired(true);
         setPreview(null);
@@ -404,7 +408,7 @@ export function DashboardDisplayPage() {
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken, deviceStorageKey, previewKey]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
 
   useEffect(() => {
     void loadData();
@@ -790,7 +794,7 @@ export function DashboardDisplayPage() {
       setRetryDelaySeconds(5);
       setDataWarning("");
       setLayoutWarning("");
-      localStorage.setItem(deviceStorageKey, token);
+      rememberDashboardToken(dashboardId, token);
       setDeviceToken(token);
       setActivationInput("");
       setActivationRequired(false);
@@ -812,6 +816,7 @@ export function DashboardDisplayPage() {
           <p>Dashboard #{dashboardId} 尚未在目前瀏覽器設定檔完成驗證，或原有憑證已失效。</p>
           <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
+            <p>Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>
             <input id="dashboard-device-activation-token" type="password" autoComplete="off" spellCheck={false} required
               value={activationInput} onChange={(event) => setActivationInput(event.target.value)}

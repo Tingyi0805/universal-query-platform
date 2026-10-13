@@ -261,6 +261,11 @@ export async function checkDashboardDisplayDevice(
   if (!Boolean(row.IsActive) || row.RevokedAtUtc != null || row.ArchivedAtUtc != null) return { status: "DISABLED" as const };
   if (row.ExpiresAtUtc != null && new Date(row.ExpiresAtUtc).getTime() <= Date.now()) return { status: "EXPIRED" as const };
 
+  if (row.SharedWorkstationId != null) {
+    const station = (await pool.request().input("workstationId", sql.BigInt, row.SharedWorkstationId)
+      .query("SELECT * FROM uqp.SharedWorkstation WHERE Id=@workstationId")).recordset[0];
+    if (!station || !station.IsActive || station.RetiredAtUtc || station.PurposeCode !== "DASHBOARD") return { status: "DISABLED" as const };
+  }
   // Device playback is delegated by a designer; removing that authority revokes the delegation.
   const owner = await getTokenSessionState(Number(row.CreatedByUserId));
   if (!owner?.isActive || !owner.permissions.includes("DESIGN_QUERY")) return { status: "DISABLED" as const };

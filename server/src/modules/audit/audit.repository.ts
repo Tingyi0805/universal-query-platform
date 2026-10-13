@@ -1,3 +1,4 @@
+import { safeErrorDiagnostic } from "../../middleware/safeErrorDiagnostic.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { logger } from "../../config/logger.js";
@@ -77,7 +78,7 @@ export async function tryWriteAuditEvent(input: AuditStartInput & {
     await writeAuditEvent(input);
   } catch (error) {
     logger.warn(
-      { err: error, eventType: input.eventType },
+      { ...safeErrorDiagnostic(error), eventType: input.eventType },
       "Failed to write management Audit event",
     );
   }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { QuickPinPolicyPanel } from "./QuickPinPolicyPage";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
@@ -33,6 +34,8 @@ type PermissionRow = {
 };
 
 export function AdminUsersPage() {
+  const [tabParams,setTabParams]=useSearchParams();
+  const tab=tabParams.get("tab")==="pin"?"pin":"users";
   const { accessToken, user: currentUser } = useAuth();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
@@ -264,16 +267,21 @@ export function AdminUsersPage() {
       <div className="page-toolbar">
         <div>
           <p className="eyebrow">Administration</p>
-          <h1>使用者與角色</h1>
+          <h1>權限管理</h1>
         </div>
         <Link className="secondary-button link-button" to="/">返回首頁</Link>
       </div>
 
-      {loading && <section className="notice">載入中…</section>}
+      <div role="tablist" aria-label="權限管理頁籤" className="touch-actions">
+        <button role="tab" aria-selected={tab==="users"} onClick={()=>setTabParams({tab:"users"})}>使用者與角色</button>
+        <button role="tab" aria-selected={tab==="pin"} onClick={()=>setTabParams({tab:"pin"})}>PIN 安全設定</button>
+      </div>
+      {tab==="pin"&&<QuickPinPolicyPanel/>}
+      {tab==="users"&&loading && <section className="notice">載入中…</section>}
       {error && <section className="form-error">{error}</section>}
       {notice && <section className="notice">{notice}</section>}
 
-      {!loading && (
+      {tab==="users"&&!loading && (
         <>
           <section className="admin-section">
             <h2>新增使用者</h2>

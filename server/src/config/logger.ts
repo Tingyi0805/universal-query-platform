@@ -20,6 +20,8 @@ export const loggerOptions = {
       "*.token",
       "secret",
       "*.secret",
+      "pinHash", "*.pinHash", "passwordHash", "*.passwordHash",
+      "secretHash", "*.secretHash", "tokenHash", "*.tokenHash",
       "password",
       "currentPassword",
       "newPassword",

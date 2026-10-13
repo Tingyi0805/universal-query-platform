@@ -5,10 +5,10 @@ async function setup(page: Page, single = false) {
     sql: { PRIMARY: 0, A: 0, B: 0 }, pages: { PRIMARY: [] as number[], A: [] as number[], B: [] as number[] } };
   await page.clock.install({ time: new Date("2026-10-12T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-10-12T00:00:01Z"));
-  await page.addInitScript(() => localStorage.setItem("uqp.dashboard.device.1", "synthetic-token"));
+  await page.addInitScript(() => localStorage.setItem("uqp.dashboard.device.1", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
   const widget = (id: number, source: string, x: number) => ({ id, widgetType: "TABLE", x, y: 100, width: 350, height: 300,
     fontSize: 20, alignment: "LEFT", config: { dataSourceKey: source }, sortOrder: id, sourceKey: null });
-  await page.route("**/api/dashboards/device/1/**", async route => {
+  await page.context().route("**/api/dashboards/device/1/**", async route => {
     const url = new URL(route.request().url());
     if (state.revoked) { await route.fulfill({ status: 401, json: { error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } } }); return; }
     if (url.pathname.endsWith("/layout")) {
@@ -75,4 +75,22 @@ test("single-query compatibility: cycle wrap reuses SQL snapshot", async ({ page
   await page.clock.runFor(5000); await expect(page.getByText("PRIMARY○頁2", { exact: true })).toBeVisible();
   await page.clock.runFor(5000); await expect(page.getByText("PRIMARY○頁1", { exact: true })).toBeVisible();
   expect(state.sql.PRIMARY).toBe(initialQueries); expect(state.pages.PRIMARY.slice(-2)).toEqual([2, 1]);
+});
+
+test("playback token is memory-only; trusted popup handoff works and refresh requires activation",async({page})=>{
+  await setup(page,true);
+  expect(await page.evaluate(()=>localStorage.getItem("uqp.dashboard.device.1"))).toBeNull();
+  expect(await page.evaluate(()=>sessionStorage.getItem("uqp.dashboard.device.1"))).toBeNull();
+  const [popup]=await Promise.all([page.waitForEvent("popup"),page.evaluate(async()=>{
+    const modulePath="/src/security/dashboardToken.ts";
+    const {prepareDashboardTokenHandoff}=await import(modulePath);
+    const child=window.open("/display/dashboards/1","_blank");
+    if(!child)throw new Error("synthetic popup blocked");
+    prepareDashboardTokenHandoff(child,1,"A".repeat(43));
+  })]);
+  await expect(popup.getByText("PRIMARY○頁1",{exact:true})).toBeVisible();
+  expect(await popup.evaluate(()=>localStorage.getItem("uqp.dashboard.device.1"))).toBeNull();
+  await popup.reload();
+  await expect(popup.getByRole("heading",{name:"啟用 Dashboard 播放裝置"})).toBeVisible();
+  await popup.close();
 });

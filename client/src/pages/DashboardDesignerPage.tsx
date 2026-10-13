@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import { rememberDashboardToken,prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
@@ -785,7 +786,7 @@ export function DashboardDesignerPage() {
       }
 
       if (popup) {
-      popup.localStorage.setItem(`uqp.dashboard.device.${setup.dashboard.id}`, result.token);
+      prepareDashboardTokenHandoff(popup, setup.dashboard.id, result.token);
       popup.localStorage.setItem(
         `uqp.dashboard.display-settings.${setup.dashboard.id}`,
         JSON.stringify({
@@ -944,15 +945,15 @@ export function DashboardDesignerPage() {
     if (!issuedToken) return;
     setTokenActionStatus("");
     try {
-      localStorage.setItem(`uqp.dashboard.device.${issuedToken.dashboardId}`, issuedToken.token);
-      if (localStorage.getItem(`uqp.dashboard.device.${issuedToken.dashboardId}`) !== issuedToken.token) {
-        throw new Error("Token 未能保存");
-      }
+      rememberDashboardToken(issuedToken.dashboardId, issuedToken.token);
+      const popup=window.open(`/display/dashboards/${issuedToken.dashboardId}`,"_blank");
+      if(!popup)throw new Error("播放視窗未能開啟");
+      prepareDashboardTokenHandoff(popup,issuedToken.dashboardId,issuedToken.token);
       setTokenActionStatus(
-        "已啟用於目前瀏覽器（" + window.location.host + "）。請在相同瀏覽器設定檔開啟播放頁面驗證；其他電腦及 Chrome／Edge 不會同步啟用。",
+        "本次播放頁面已開啟，Token 僅存於頁面記憶體。重新整理或關閉後需重新啟用；其他電腦與視窗不會自動啟用。",
       );
     } catch {
-      setTokenActionStatus("啟用失敗：瀏覽器禁止本機儲存。請確認未封鎖網站儲存空間，或改在播放電腦的啟用頁面輸入 Token。");
+      setTokenActionStatus("播放視窗未能開啟，請允許此網站的彈出視窗，或在播放電腦的啟用頁面輸入 Token。");
     }
   }
 
@@ -1570,7 +1571,7 @@ export function DashboardDesignerPage() {
                 <div className="fixed-playback-hint" role="note">
                   <strong>單一 BAT 播放說明</strong>
                   <p>Windows 啟動腳本 (.bat) 已內含 PowerShell 螢幕定位功能，無需額外 PS1。請先建立固定播放裝置，之後可在裝置管理下載專屬 BAT。</p>
-                  <p>請在實體播放電腦本機執行，並使用已啟用 Device Token 的同一 Chrome／Edge 設定檔。若院內執行政策限制 PowerShell，請聯絡資訊室。</p>
+                  <p>請在實體播放電腦本機執行，腳本僅開啟播放頁面，請於頁面啟用 Device Token；重新整理或重啟後需重新啟用。若院內執行政策限制 PowerShell，請聯絡資訊室。</p>
                 </div>
 
                 <div className="fixed-playback-modal-actions">
@@ -1653,7 +1654,7 @@ export function DashboardDesignerPage() {
                   <div>
                     <strong>新 Device Token（只顯示一次）</strong>
                     <p>
-                      重新離開此頁後無法從 Server 查回原始 Token。請先複製保存。此處的啟用僅對目前瀏覽器有效；若播放電腦不同，請在播放電腦的啟用頁面輸入 Token。
+                      重新離開此頁後無法從 Server 查回原始 Token。請透過既定流程交付 Token。本次播放只在頁面記憶體保留啟用資訊；若播放電腦不同，請在播放電腦的啟用頁面輸入 Token。
                     </p>
                   </div>
                   <code style={{ userSelect: "all", overflowWrap: "anywhere" }}>{issuedToken.token}</code>
@@ -1671,7 +1672,7 @@ export function DashboardDesignerPage() {
                       type="button"
                       onClick={applyIssuedTokenToThisBrowser}
                     >
-                      在目前瀏覽器啟用
+                      開啟本次播放頁面
                     </button>
                     <button
                       className="secondary-button"

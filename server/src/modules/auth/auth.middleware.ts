@@ -30,7 +30,7 @@ export function createAuthenticateJwt(getSession = getTokenSessionState): Reques
       const userId = Number(payload.sub);
       const tokenVersion = Number(payload.tokenVersion);
 
-      if (!Number.isFinite(userId) || !Number.isInteger(tokenVersion)) {
+      if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(tokenVersion) || tokenVersion < 1) {
         res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
         return;
       }
