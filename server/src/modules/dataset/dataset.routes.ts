@@ -24,9 +24,10 @@ import { executeSavedDataset, getParameterOptions, previewDataset } from "./data
 import { syncDatasetColumns } from "./column.repository.js";
 import {
   listDatasetParameters,
-  replaceDatasetParameters,
-  syncDatasetParameters,
+  saveDatasetParameters,
 } from "./parameter.repository.js";
+import { createDatasetParameterRouter } from "./parameter.routes.js";
+import { withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
 import { isDynamicDateExpression } from "./dateParameter.js";
 import {
   listDatasetVersions,
@@ -76,15 +77,10 @@ const parameterSchema = z.object({
   lookupLabelField: z.string().max(128).nullable(),
 });
 
-const replaceParametersSchema = z.object({
+const saveParametersSchema = z.object({
   parameters: z.array(parameterSchema).max(100),
+  previewToken: z.string().regex(/^[a-f0-9]{64}$/),
 });
-
-function sameNameSet(a: string[], b: string[]): boolean {
-  const aa = [...new Set(a)].sort();
-  const bb = [...new Set(b)].sort();
-  return aa.length === bb.length && aa.every((value, index) => value === bb[index]);
-}
 
 function validateParameterOptions(parameters: z.infer<typeof parameterSchema>[]): string | null {
   for (const parameter of parameters) {
@@ -157,6 +153,10 @@ function validateParameterOptions(parameters: z.infer<typeof parameterSchema>[])
 
 function sendDatasetExecutionError(res: any, error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (["PARAMETER_DEFINITION_MISMATCH", "PARAMETER_PARSE_FAILED", "MISSING_QUERY_PARAMETER"].includes(error.message.split(":")[0]!)) {
+    res.status(409).json({ error: { code: error.message.split(":")[0], message: "查詢參數設定不完整，請由設計者檢視參數差異並明確同步。", requestId: res.req?.id } });
+    return true;
+  }
 
   if (error.message.startsWith("QUOTED_QUERY_PARAMETER:")) {
     const name = error.message.split(":")[1];
@@ -224,6 +224,7 @@ function sendDatasetExecutionError(res: any, error: unknown): boolean {
 
 export const datasetRouter = Router();
 datasetRouter.use(authenticateJwt, requirePermission("DESIGN_QUERY"));
+datasetRouter.use(createDatasetParameterRouter());
 
 datasetRouter.get("/datasource-options", async (_req, res, next) => {
   try { res.json({ dataSources: await listDesignerDataSources() }); }
@@ -269,7 +270,7 @@ datasetRouter.post("/preview/run", async (req, res, next) => {
     }
     const result = await previewDataset(parsed.data);
     if (parsed.data.datasetId) {
-      await syncDatasetColumns(parsed.data.datasetId, result.columns);
+      await withErrorModule("dataset.columns.sync", () => syncDatasetColumns(parsed.data.datasetId!, result.columns));
     }
     res.json({
       parameterNames: extractParameterNames(parsed.data.sqlText),
@@ -316,15 +317,15 @@ datasetRouter.post("/:id/execute", async (req, res, next) => {
     if (!dataset) throw new Error("DATASET_NOT_FOUND");
     // Audit the exact rows returned, before delivering them to the caller.
     // This route is authenticated by DESIGN_QUERY; user identity comes from JWT.
-    const disclosureId = await auditPatientListIfConfigured({
+    const disclosureId = await withErrorModule("query.patient.disclosure", () => auditPatientListIfConfigured({
       datasetId: id.data,
       userId: req.authUser?.id ?? null,
       sourceScope: `datasource:${dataset.dataSourceId}`,
       deliveryType: "MANUAL",
       masked: false,
       rows: result.rows,
-    });
-    await syncDatasetColumns(id.data, result.columns);
+    }));
+    await withErrorModule("dataset.columns.sync", () => syncDatasetColumns(id.data, result.columns));
     res.setHeader("Cache-Control", "no-store");
     res.json({ result, disclosureId });
   } catch (error) {
@@ -363,29 +364,10 @@ datasetRouter.get("/:id/parameters/:name/options", async (req, res, next) => {
   }
 });
 
-datasetRouter.get("/:id/parameters", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset ID 不正確。" } });
-      return;
-    }
-    const dataset = await getDataset(id.data);
-    if (!dataset) {
-      res.status(404).json({ error: { code: "DATASET_NOT_FOUND", message: "找不到 Dataset。" } });
-      return;
-    }
-    if (!dataset.isArchived) {
-      await syncDatasetParameters(id.data, extractParameterNames(dataset.sqlText));
-    }
-    res.json({ parameters: await listDatasetParameters(id.data) });
-  } catch (error) { next(error); }
-});
-
 datasetRouter.put("/:id/parameters", async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
-    const parsed = replaceParametersSchema.safeParse(req.body);
+    const parsed = saveParametersSchema.safeParse(req.body);
     if (!id.success || !parsed.success) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "參數設定格式不正確。" } });
       return;
@@ -401,27 +383,19 @@ datasetRouter.put("/:id/parameters", async (req, res, next) => {
       return;
     }
 
-    const tokenNames = extractParameterNames(dataset.sqlText);
-    const configuredNames = parsed.data.parameters.map((parameter) => parameter.name);
-    if (!sameNameSet(tokenNames, configuredNames)) {
-      res.status(409).json({
-        error: {
-          code: "PARAMETER_TOKEN_MISMATCH",
-          message: "參數設定必須與 SQL 中的 {{PARAM}} 完全一致，請先重新同步。",
-        },
-      });
-      return;
-    }
-
     const optionError = validateParameterOptions(parsed.data.parameters);
     if (optionError) {
       res.status(400).json({ error: { code: "PARAMETER_OPTION_INVALID", message: optionError } });
       return;
     }
 
-    await replaceDatasetParameters(id.data, parsed.data.parameters, req.authUser!.id);
+    await withErrorModule("dataset.parameters.save", () => saveDatasetParameters(id.data, parsed.data.parameters, req.authUser!.id, parsed.data.previewToken));
     res.json({ status: "OK" });
   } catch (error) {
+    if (error instanceof Error && ["PARAMETER_PREVIEW_STALE", "PARAMETER_DEFINITION_MISMATCH"].includes(error.message)) {
+      res.status(409).json({ error: { code: error.message, message: "參數設定已變更，請重新載入；新增與移除請使用明確同步。", requestId: req.id } });
+      return;
+    }
     if (error instanceof Error && error.message === "PARAMETER_LOOKUP_DATASET_ARCHIVED") {
       res.status(409).json({
         error: {
@@ -461,7 +435,6 @@ datasetRouter.post("/", async (req, res, next) => {
     assertSelectOnlySql(parsed.data.sqlText);
     const id = await createDataset(parsed.data);
     const parameterNames = extractParameterNames(parsed.data.sqlText);
-    await syncDatasetParameters(id, parameterNames);
     res.status(201).json({ id, parameterNames });
   } catch (error) {
     const number = (error as { number?: number })?.number;
@@ -488,7 +461,6 @@ datasetRouter.put("/:id", async (req, res, next) => {
     assertSelectOnlySql(parsed.data.sqlText);
     await updateDataset(id.data, parsed.data, req.authUser!.id);
     const parameterNames = extractParameterNames(parsed.data.sqlText);
-    await syncDatasetParameters(id.data, parameterNames);
     res.json({ status: "OK", parameterNames });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASET_NOT_FOUND") {

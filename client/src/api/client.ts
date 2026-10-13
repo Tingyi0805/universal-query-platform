@@ -1,6 +1,6 @@
 const API_BASE = "/api";
 
-type ApiError = { error?: { code?: string; message?: string; detail?: string } };
+type ApiError = { error?: { code?: string; message?: string; detail?: string; requestId?: string } };
 
 function notifyAuthInvalid(code?: string) {
   if (typeof window === "undefined") return;
@@ -32,8 +32,9 @@ export async function apiRequest<T>(
       notifyAuthInvalid(body.error?.code);
       const message = body.error?.message ?? "系統發生錯誤。";
       const detail = body.error?.detail?.trim();
-      const error = new Error(detail ? `${message}（${detail}）` : message);
-      Object.assign(error, { code: body.error?.code, status: response.status });
+      const text = detail ? `${message}（${detail}）` : message;
+      const error = new Error(body.error?.requestId ? `${text}（Request ID: ${body.error.requestId}）` : text);
+      Object.assign(error, { code: body.error?.code, status: response.status, requestId: body.error?.requestId });
       throw error;
     }
 

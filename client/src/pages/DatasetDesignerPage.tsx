@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -90,6 +90,9 @@ export function DatasetDesignerPage() {
   const [dataSources, setDataSources] = useState<DataSourceOption[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
+  const previewParameterSequence = useRef(0);
+  const [previewParametersLoading, setPreviewParametersLoading] = useState(false);
+  const [previewParameterError, setPreviewParameterError] = useState("");
   const [previewParameters, setPreviewParameters] = useState<PreviewParameter[]>([]);
   const [previewOptions, setPreviewOptions] = useState<Record<string, PreviewOption[]>>({});
   const [preview, setPreview] = useState<QueryResult | null>(null);
@@ -139,6 +142,9 @@ export function DatasetDesignerPage() {
 
   useEffect(() => { void load(); }, [load]);
   const loadPreviewParameterDefinitions = useCallback(async (datasetId?: number) => {
+    const sequence = ++previewParameterSequence.current;
+    setPreviewParameterError("");
+    setPreviewParametersLoading(Boolean(datasetId));
     if (!datasetId) {
       setPreviewParameters([]);
       setPreviewOptions({});
@@ -146,15 +152,16 @@ export function DatasetDesignerPage() {
     }
 
     try {
-      const result = await apiRequest<{ parameters: PreviewParameter[] }>(
+      const result = await apiRequest<{ parameters: PreviewParameter[]; preview: { detected: string[] } }>(
         `/datasets/${datasetId}/parameters`,
         {},
         accessToken,
       );
+      if (sequence !== previewParameterSequence.current) return;
       setPreviewParameters(result.parameters);
 
       const optionParameters = result.parameters.filter((parameter) =>
-        ["SELECT","MULTISELECT"].includes(parameter.controlType) && parameter.optionMode !== "NONE"
+        result.preview.detected.includes(parameter.name) && ["SELECT","MULTISELECT"].includes(parameter.controlType) && parameter.optionMode !== "NONE"
       );
 
       const optionEntries = await Promise.all(optionParameters.map(async (parameter) => {
@@ -166,10 +173,14 @@ export function DatasetDesignerPage() {
         return [parameter.name, response.options] as const;
       }));
 
-      setPreviewOptions(Object.fromEntries(optionEntries));
-    } catch {
+      if (sequence === previewParameterSequence.current) setPreviewOptions(Object.fromEntries(optionEntries));
+    } catch (e) {
+      if (sequence !== previewParameterSequence.current) return;
+      setPreviewParameterError(e instanceof Error ? e.message : "參數設定讀取失敗。");
       setPreviewParameters([]);
       setPreviewOptions({});
+    } finally {
+      if (sequence === previewParameterSequence.current) setPreviewParametersLoading(false);
     }
   }, [accessToken]);
 
@@ -333,6 +344,10 @@ export function DatasetDesignerPage() {
   }
 
   async function runPreview() {
+    if (form.id && (previewParametersLoading || previewParameterError)) {
+      setError("參數設定尚未成功載入，請先重試讀取再執行預覽。");
+      return;
+    }
     const quotedParameter = form.sqlText.match(/'\s*\{\{([A-Z][A-Z0-9_]*)\}\}\s*'/);
     if (quotedParameter?.[1]) {
       setError(`參數 {{${quotedParameter[1]}}} 外面不可加單引號，請直接使用 {{${quotedParameter[1]}}}。`);
@@ -610,7 +625,7 @@ export function DatasetDesignerPage() {
                 <strong>偵測到的參數</strong>
                 <p>語法：<code>{"{{PARAM_NAME}}"}</code></p>
               </div>
-              {parameterNames.length === 0 ? (
+              {previewParametersLoading ? <div className="notice">參數設定載入中…</div> : previewParameterError ? <div className="form-error" role="alert">參數設定讀取失敗：{previewParameterError}</div> : parameterNames.length === 0 ? (
                 <span className="muted">此 SQL 沒有參數。</span>
               ) : (
                 <div className="parameter-grid">

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./DatasetParametersEditor.css";
@@ -33,6 +33,15 @@ type ParameterRow = {
   lookupDatasetId: number | null;
   lookupValueField: string | null;
   lookupLabelField: string | null;
+};
+
+type ParameterPreview = {
+  previewToken: string;
+  detectionStatus: "OK" | "FAILED";
+  detected: string[];
+  added: string[];
+  retained: string[];
+  unused: string[];
 };
 
 const dateFormats = [
@@ -149,16 +158,28 @@ export function DatasetParametersEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [preview, setPreview] = useState<ParameterPreview | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [removeNames, setRemoveNames] = useState<string[]>([]);
+  const [dirty, setDirty] = useState(false);
+  const loadSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     setLoading(true);
+    setLoadFailed(false);
+    setPreview(null);
     setError("");
     try {
-      const result = await apiRequest<{ parameters: ParameterRow[] }>(
+      const result = await apiRequest<{ parameters: ParameterRow[]; preview: ParameterPreview }>(
         `/datasets/${datasetId}/parameters`,
         {},
         accessToken,
       );
+      if (sequence !== loadSequence.current) return;
+      setPreview(result.preview);
+      setRemoveNames([]);
+      setDirty(false);
       setParameters(result.parameters.map((parameter) => ({
         ...parameter,
         dateOutputMode: parameter.dateOutputMode ?? "NATIVE",
@@ -166,15 +187,19 @@ export function DatasetParametersEditor({
         dateFormat: parameter.dateFormat ?? null,
       })));
     } catch (e) {
+      if (sequence !== loadSequence.current) return;
+      setLoadFailed(true);
+      setParameters([]);
       setError(e instanceof Error ? e.message : "載入參數設定失敗。");
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [accessToken, datasetId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { loadSequence.current++; }; }, [load]);
 
   function update(index: number, patch: Partial<ParameterRow>) {
+    setDirty(true);
     setParameters((rows) => rows.map((row, i) => i === index ? { ...row, ...patch } : row));
   }
 
@@ -217,7 +242,24 @@ export function DatasetParametersEditor({
     update(index, { defaultValue });
   }
 
+  async function synchronize() {
+    if (!preview || preview.detectionStatus !== "OK") return;
+    if (dirty && !window.confirm("同步後會重新載入設定，尚未儲存的編輯將遺失。是否繼續？")) return;
+    if (removeNames.length && !window.confirm(`確認移除已選取的參數設定：${removeNames.join(", ")}？`)) return;
+    setSaving(true); setError(""); setNotice("");
+    try {
+      await apiRequest(`/datasets/${datasetId}/parameters/sync`, {
+        method: "POST", body: JSON.stringify({ previewToken: preview.previewToken, removeNames }),
+      }, accessToken);
+      await load();
+      setNotice("同步已套用。未選取移除的既有設定完整保留。");
+      await onChanged?.();
+    } catch (e) { setError(e instanceof Error ? e.message : "同步結果未確認，請重新載入差異。"); }
+    finally { setSaving(false); }
+  }
+
   async function save() {
+    if (!preview || loadFailed) return;
     setSaving(true);
     setError("");
     setNotice("");
@@ -225,7 +267,8 @@ export function DatasetParametersEditor({
       await apiRequest(`/datasets/${datasetId}/parameters`, {
         method: "PUT",
         body: JSON.stringify({
-          parameters: parameters.map((parameter, index) => ({
+          previewToken: preview.previewToken,
+          parameters: parameters.map((parameter) => ({
             name: parameter.name,
             label: parameter.label,
             dataType: parameter.dataType,
@@ -235,7 +278,7 @@ export function DatasetParametersEditor({
             dateOutputMode: parameter.dateOutputMode ?? "NATIVE",
             dateCalendar: parameter.dateCalendar ?? "GREGORIAN",
             dateFormat: parameter.dateFormat || null,
-            displayOrder: index,
+            displayOrder: parameter.displayOrder,
             placeholder: parameter.placeholder || null,
             helpText: parameter.helpText || null,
             optionMode: parameter.optionMode,
@@ -260,18 +303,39 @@ export function DatasetParametersEditor({
 
   if (loading) return <section className="parameter-designer"><div className="notice">參數載入中…</div></section>;
 
+  if (loadFailed) return <section className="parameter-designer">
+    <div className="form-error" role="alert">參數讀取失敗：{error}</div>
+    <button type="button" onClick={() => void load()}>重試讀取</button>
+  </section>;
+
   return (
     <section className="parameter-designer">
       <div className="section-title">
         <div>
           <h2>Parameter Designer</h2>
-          <p>SQL Token 會自動同步。DATE / DATETIME 支援固定值、今天／相對日期、民國年與自訂輸出格式。</p>
+          <p>讀取與 Dataset 儲存均不會自動同步。DATE / DATETIME 支援固定值、今天／相對日期、民國年與自訂輸出格式。</p>
         </div>
-        <button className="secondary-button" type="button" onClick={() => void (async () => {
-          await load();
-          await onChanged?.();
-        })()}>重新同步</button>
+        <button className="secondary-button" type="button" disabled={saving} onClick={() => {
+          if (!dirty || window.confirm("重新載入會捨棄尚未儲存的編輯，是否繼續？")) void load();
+        }}>重新載入差異</button>
       </div>
+
+      {preview && <div className="notice">
+        <strong>同步差異預覽</strong>
+        {preview.detectionStatus === "FAILED" ? <p>SQL 參數解析失敗，未套用任何同步。請修正 Token 語法。</p> : <>
+          <p>新增：{preview.added.join(", ") || "無"}；保留：{preview.retained.join(", ") || "無"}。</p>
+          <p>SQL 未使用：{preview.unused.join(", ") || "無"}。預設保留，不會自動刪除。</p>
+          {!preview.detected.length && <p>未偵測到參數；禁止同步移除既有設定。</p>}
+          {preview.unused.map(name => <label key={name}>
+            <input type="checkbox" disabled={!preview.detected.length || saving} checked={removeNames.includes(name)}
+              onChange={e => setRemoveNames(names => e.target.checked ? [...names, name] : names.filter(n => n !== name))} />
+            明確移除 {name}
+          </label>)}
+          <p>新增使用 STRING／TEXT、非必填；既有欄位與排序不變。修改設定請另行儲存。</p>
+          <button type="button" disabled={saving || (!preview.added.length && !removeNames.length)}
+            onClick={() => void synchronize()}>套用預覽同步</button>
+        </>}
+      </div>}
 
       {hasDateParameter && (
         <div className="parameter-date-note">
@@ -283,7 +347,7 @@ export function DatasetParametersEditor({
       {notice && <div className="notice">{notice}</div>}
 
       {parameters.length === 0 ? (
-        <div className="empty-state">此 Dataset 沒有 <code>{"{{PARAM}}"}</code> 參數。</div>
+        <div className="empty-state">此 Dataset 尚未儲存參數設定；請參考上方 SQL 偵測差異。</div>
       ) : (
         <div className="parameter-card-list">
           {parameters.map((parameter, index) => {

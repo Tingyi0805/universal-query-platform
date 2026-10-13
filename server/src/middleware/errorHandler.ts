@@ -1,4 +1,5 @@
 import type { ErrorRequestHandler } from "express";
+import { safeErrorDiagnostic } from "./safeErrorDiagnostic.js";
 import { logger } from "../config/logger.js";
 
 export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
@@ -10,7 +11,7 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
       code: "INTERNAL_SERVER_ERROR",
       requestId,
       method: req.method,
-      path: req.path,
+      ...safeErrorDiagnostic(error),
     },
     "Unhandled request error",
   );

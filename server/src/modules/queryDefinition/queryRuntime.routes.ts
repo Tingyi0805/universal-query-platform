@@ -1,9 +1,11 @@
+import { safeAuditErrorCode, withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
 import { Router } from "express";
 import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { getDataset } from "../dataset/dataset.repository.js";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset, getParameterOptions } from "../dataset/dataset.service.js";
+import { runtimeParameterDefinitions } from "../dataset/parameterSync.js";
 import { listDatasetParameters } from "../dataset/parameter.repository.js";
 import { resolveDateForRuntimeInput } from "../dataset/dateParameter.js";
 import {
@@ -33,6 +35,10 @@ const executeBodySchema = z.object({
 
 function sendRuntimeError(res: any, error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (["PARAMETER_DEFINITION_MISMATCH", "PARAMETER_PARSE_FAILED", "MISSING_QUERY_PARAMETER"].includes(error.message.split(":")[0]!)) {
+    res.status(409).json({ error: { code: error.message.split(":")[0], message: "查詢參數設定不完整，請通知報表設計者檢視參數差異。", requestId: res.req?.id } });
+    return true;
+  }
 
   if (error.message.startsWith("QUOTED_QUERY_PARAMETER:")) {
     const name = error.message.split(":")[1];
@@ -144,7 +150,10 @@ queryRuntimeRouter.get("/:id", requirePermission("VIEW_QUERY"), async (req, res,
       return;
     }
 
-    const parameters = await listDatasetParameters(query.datasetId);
+    const dataset = await withErrorModule("dataset.load", () => getDataset(query.datasetId));
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    const savedParameters = await withErrorModule("dataset.parameters.load", () => listDatasetParameters(query.datasetId));
+    const parameters = await withErrorModule("dataset.parameters.validate", async () => runtimeParameterDefinitions(dataset.sqlText, savedParameters));
     const reportColumns = await listReportColumns(query.id);
     res.json({
       query,
@@ -171,7 +180,7 @@ queryRuntimeRouter.get("/:id", requirePermission("VIEW_QUERY"), async (req, res,
         optionMode: parameter.optionMode,
       })),
     });
-  } catch (error) { next(error); }
+  } catch (error) { if (sendRuntimeError(res, error)) return; next(error); }
 });
 
 queryRuntimeRouter.get("/:id/parameters/:name/options", requirePermission("VIEW_QUERY"), async (req, res, next) => {
@@ -228,7 +237,7 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
     // Persist patient disclosure before delivering any rows; failure blocks the response.
     const dataset = await getDataset(query.datasetId);
     if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    const disclosureId = await auditPatientListIfConfigured({
+    const disclosureId = await withErrorModule("query.patient.disclosure", () => auditPatientListIfConfigured({
       datasetId: query.datasetId,
       queryDefinitionId: query.id,
       userId: req.authUser!.id,
@@ -236,7 +245,7 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
       deliveryType: "MANUAL",
       masked: false,
       rows: result.rows,
-    });
+    }));
 
     await completeAuditSuccess(auditId, {
       rowCount: result.rowCount,
@@ -248,7 +257,7 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
   } catch (error) {
     if (auditId) {
       await completeAuditFailure(auditId, {
-        errorCode: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+        errorCode: safeAuditErrorCode(error),
         durationMs: Date.now() - started,
       }).catch(() => undefined);
     }
@@ -317,7 +326,7 @@ queryRuntimeRouter.post("/:id/export/csv", requirePermission("EXPORT_QUERY"), as
   } catch (error) {
     if (auditId) {
       await completeAuditFailure(auditId, {
-        errorCode: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+        errorCode: safeAuditErrorCode(error),
         durationMs: Date.now() - started,
       }).catch(() => undefined);
     }
@@ -386,7 +395,7 @@ queryRuntimeRouter.post("/:id/export/excel", requirePermission("EXPORT_QUERY"), 
   } catch (error) {
     if (auditId) {
       await completeAuditFailure(auditId, {
-        errorCode: error instanceof Error ? error.message : "UNKNOWN_ERROR",
+        errorCode: safeAuditErrorCode(error),
         durationMs: Date.now() - started,
       }).catch(() => undefined);
     }
