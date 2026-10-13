@@ -10,9 +10,11 @@ import { maskDeviceValue, resolveSupplementalDeviceRules } from "./dashboardDevi
 export type ExecutionBinding = {
   dashboardId: number; sourceId: number; sourceKey: string; queryDefinitionId: number | null; bindingRevision: number;
   managed: boolean; dashboardActive: boolean; enabled: boolean; parameters: Record<string, unknown>;
+  mode?: string; modeRevision?: number; referenced?: boolean;
   refreshSeconds: number; pageSeconds: number; pageSize: number; maxRows: number | null;
 };
-export type ExecutionSubject = { userId: number; tokenVersion: number; tokenHash: string };
+export type ExecutionSubject = { userId: number; tokenVersion: number; tokenHash: string; deviceId?: number;
+  verifyDevice?: () => Promise<{ deviceId: number; userId: number; tokenVersion: number; fingerprint: string }> };
 export type ExecutionDependencies = {
   loadBinding: (dashboardId: number, sourceKey: string) => Promise<ExecutionBinding>;
   getSession: typeof import("../auth/auth.repository.js").getTokenSessionState;
@@ -26,15 +28,21 @@ export type ExecutionDependencies = {
   execute: typeof import("../dataset/dataset.service.js").executeSavedDataset;
   audit: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
 };
-const modeVersion = "QUERY_ONLY_PREVIEW_V1";
-export function createQuerySourceExecution(deps: ExecutionDependencies, enabled: () => boolean) {
+export function createQuerySourceExecution(deps: ExecutionDependencies, enabled: (device?: boolean) => boolean) {
   const state = async (id: number, key: string, subject: ExecutionSubject) => {
-    if (!enabled()) throw new QuerySourceError("QUERY_SOURCE_EXECUTION_DISABLED", 404);
+    if (!enabled(subject.deviceId !== undefined)) throw new QuerySourceError("QUERY_SOURCE_EXECUTION_DISABLED", 404);
+    const proof = subject.deviceId !== undefined ? await subject.verifyDevice?.() : undefined;
+    if (subject.deviceId !== undefined && (!proof || proof.deviceId !== subject.deviceId || proof.userId !== subject.userId || proof.tokenVersion !== subject.tokenVersion))
+      throw new QuerySourceError("DASHBOARD_DEVICE_UNAUTHORIZED", 401);
     const session = await deps.getSession(subject.userId);
     if (!session?.isActive || session.tokenVersion !== subject.tokenVersion) throw new QuerySourceError("TOKEN_REVOKED", 401);
     if (!session.permissions.includes("DESIGN_QUERY") || !session.permissions.includes("EXECUTE_QUERY")) throw new QuerySourceError("QUERY_SOURCE_QUERY_FORBIDDEN", 403);
     const binding = await deps.loadBinding(id, key);
-    if (!binding.managed || binding.dashboardActive) throw new QuerySourceError("QUERY_SOURCE_PREVIEW_REQUIRES_STAGED_DASHBOARD");
+    if (subject.deviceId !== undefined) {
+      if (binding.mode !== "QUERY_ONLY" || !binding.modeRevision || !binding.dashboardActive || !binding.managed)
+        throw new QuerySourceError("QUERY_SOURCE_MODE_NOT_ACTIVATED");
+      if (key !== "PRIMARY" && !binding.referenced) throw new QuerySourceError("DASHBOARD_SOURCE_NOT_IN_LAYOUT", 403);
+    } else if (!binding.managed || binding.dashboardActive) throw new QuerySourceError("QUERY_SOURCE_PREVIEW_REQUIRES_STAGED_DASHBOARD");
     if (!binding.enabled) throw new QuerySourceError("QUERY_SOURCE_DISABLED");
     if (binding.queryDefinitionId === null) throw new QuerySourceError("QUERY_SOURCE_PENDING_CONVERSION");
     if (binding.dashboardId !== id || binding.sourceKey !== key || !Number.isSafeInteger(binding.sourceId) || binding.sourceId < 1 ||
@@ -57,15 +65,16 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     catch (error) { safeParameterFailure(error); }
     const sensitivity = await deps.getSensitivity(dataset.id);
     const accessRevision = await deps.getAccessRevision(query.id);
-    const fingerprint = createHash("sha256").update(JSON.stringify({ modeVersion, subject, binding, query,
+    const modeVersion = subject.deviceId !== undefined ? `QUERY_ONLY_DEVICE_V1:${binding.modeRevision}` : "QUERY_ONLY_PREVIEW_V1";
+    const fingerprint = createHash("sha256").update(JSON.stringify({ modeVersion, proof, subject, binding, query,
       session, access, accessRevision, dataset, source, definitions, sensitivity })).digest("hex");
-    return { fingerprint, binding, query, dataset, sensitivity, accessRevision };
+    return { fingerprint, binding, query, dataset, sensitivity, accessRevision, modeVersion };
   };
   return {
     async page(id: number, key: string, subject: ExecutionSubject, input: { page: number; snapshotId?: string }) {
       const initial = await state(id, key, subject);
-      const { binding, query, dataset, sensitivity } = initial;
-      const ownerId = -subject.userId; // Disjoint from positive device IDs in the legacy cache.
+      const { binding, query, dataset, sensitivity, modeVersion } = initial;
+      const ownerId = subject.deviceId ?? -subject.userId;
       let snapshot = input.snapshotId ? getDashboardPageSnapshot(input.snapshotId, ownerId, id) : null;
       if (input.snapshotId && (!snapshot || snapshot.sourceKey !== key || snapshot.modeVersion !== modeVersion ||
           snapshot.queryId !== query.id || snapshot.bindingRevision !== binding.bindingRevision ||
@@ -103,13 +112,14 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       let disclosureId: number | null;
       try {
         disclosureId = await deps.audit({ datasetId: dataset.id, queryDefinitionId: query.id,
-          userId: subject.userId, sourceScope: snapshot.sourceScope, deliveryType: "PAGE", pageNumber: input.page,
+          userId: subject.deviceId === undefined ? subject.userId : null, dashboardDeviceId: subject.deviceId,
+          sourceScope: snapshot.sourceScope, deliveryType: "PAGE", pageNumber: input.page,
           masked: true, rows: rawRows });
       } catch { throw new QuerySourceError("PATIENT_AUDIT_FAILED", 503); }
       if (rawRows.length && disclosureId === null) throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       await current();
       if (!getDashboardPageSnapshot(snapshot.id, ownerId, id)) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
-      return { sourceKey: key, modeVersion, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
+      return { sourceKey: key, modeVersion, query: { id: query.id, code: query.code, name: query.name }, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
         pageSize: binding.pageSize, page: input.page, totalPages, totalRows: snapshot.rows.length,
         snapshotId: snapshot.id, disclosureId, result: { columns, rows } };
     },

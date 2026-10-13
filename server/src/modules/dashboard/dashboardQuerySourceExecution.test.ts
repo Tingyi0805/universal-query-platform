@@ -7,6 +7,7 @@ import { env } from "../../config/env.js";
 import { createAuthenticateJwt } from "../auth/auth.middleware.js";
 import { createQuerySourceExecution, type ExecutionBinding, type ExecutionDependencies } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
+import { createQueryDeviceRouter, type QueryDeviceDependencies } from "./dashboardQueryDevice.routes.js";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { getDashboardPageSnapshot } from "./dashboardPageSnapshot.js";
 
@@ -160,4 +161,51 @@ test("Mock HTTP uses real JWT/TokenVersion middleware and never exposes private 
     f.control.failExecute = false; assert.equal((await request()).status, 200);
     f.control.session.tokenVersion = 2; assert.equal((await request()).status, 401);
   } finally { env.JWT_SECRET = oldSecret; await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+test("device PRIMARY and extra sources use stored delegator ACL, isolated snapshots and mandatory audit", async () => {
+  const f = fixture();
+  f.control.bindings.PRIMARY = { ...f.control.bindings.WARD!, sourceKey: "PRIMARY", sourceId: 1 };
+  for (const binding of Object.values(f.control.bindings)) Object.assign(binding, { dashboardActive: true, mode: "QUERY_ONLY", modeRevision: 1, referenced: true });
+  let valid = true, modeVersion = 1, grantVersion = 1;
+  const owners: number[] = [];
+  const original = f.deps.getAccess;
+  f.deps.getAccess = async (user, query) => { owners.push(user); return original(user, query); };
+  const deps: QueryDeviceDependencies = {
+    mode: async () => ({ mode: "QUERY_ONLY", version: modeVersion }),
+    dashboard: async () => ({ id: 1, name: "synthetic", parameters: { PRIVATE: "synthetic-secret" }, refreshSeconds: 30, pageSize: 1, pageSeconds: 5 } as unknown as NonNullable<Awaited<ReturnType<QueryDeviceDependencies["dashboard"]>>>),
+    checkDevice: async () => valid ? { status: "VALID", device: { id: 7, dashboardId: 1, createdByUserId: 2,
+      authorizationRevision: f.control.session.tokenVersion, queryModeGrantVersion: grantVersion, delegatorTokenVersion: 1,
+      lastUsedAtUtc: new Date().toISOString() } as Extract<Awaited<ReturnType<QueryDeviceDependencies["checkDevice"]>>, { status: "VALID" }>["device"] } : { status: "DISABLED" },
+  };
+  const app = express(); app.use(express.json()); app.use(createQueryDeviceRouter(f.service, deps));
+  const server = createServer(app); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const request = async (key: string, snapshotId?: string) => {
+    const path = key === "PRIMARY" ? "/device/1/page" : `/device/1/data-sources/${key}/page`;
+    const response = await fetch(base + path, { method: "POST", headers: { "X-Dashboard-Device-Token": "A".repeat(43), "Content-Type": "application/json" },
+      body: JSON.stringify({ page: 1, ...(snapshotId ? { snapshotId } : {}) }) });
+    return { status: response.status, body: await response.json() };
+  };
+  try {
+    const primary = await request("PRIMARY"), room = await request("ROOM");
+    assert.equal(primary.status, 200); assert.equal(room.status, 200);
+    assert.equal(primary.body.dashboard.parameters, undefined);
+    assert.ok(owners.length && owners.every(id => id === 2)); // Never inherits requester/designer 1.
+    assert.equal(f.control.audits[0]!.dashboardDeviceId, 7); assert.equal(f.control.audits[0]!.userId, null);
+    assert.equal(JSON.stringify(primary.body).includes("00000123"), false);
+    assert.equal((await request("ROOM", primary.body.snapshotId)).status, 409);
+    f.control.denied.add(21); assert.equal((await request("WARD")).status, 403);
+    assert.equal((await request("PRIMARY", primary.body.snapshotId)).status, 403);
+    assert.equal((await request("ROOM", room.body.snapshotId)).status, 200);
+    f.control.denied.clear();
+    f.control.bindings.WARD!.parameters = {}; assert.equal((await request("WARD")).status, 400);
+    assert.equal((await request("ROOM", room.body.snapshotId)).status, 200);
+    f.control.bindings.WARD!.parameters = { WARD: "SYNTHETIC" };
+    f.control.failExecute = true; assert.equal((await request("WARD")).status, 503); f.control.failExecute = false;
+    assert.equal((await request("ROOM", room.body.snapshotId)).status, 200);
+    modeVersion = 2; assert.equal((await request("ROOM", room.body.snapshotId)).status, 401);
+    modeVersion = 1; grantVersion = 0; assert.equal((await request("PRIMARY")).status, 401);
+    grantVersion = 1; f.control.session.tokenVersion = 2; assert.equal((await request("PRIMARY")).status, 401);
+    f.control.session.tokenVersion = 1; valid = false; assert.equal((await request("PRIMARY")).status, 401);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });

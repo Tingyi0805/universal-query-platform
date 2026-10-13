@@ -3,10 +3,25 @@ import { getPlatformDbPool } from "../../config/database.js";
 import { querySourceSchemaReady } from "./dashboardQuerySources.repository.js";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import type { ExecutionBinding } from "./dashboardQuerySourceExecution.js";
+import { readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
+import { getDashboardLayout } from "./dashboardLayout.repository.js";
 
 export async function loadQueryExecutionBinding(id: number, key: string): Promise<ExecutionBinding> {
   const pool = await getPlatformDbPool();
   if (!pool || !await querySourceSchemaReady(pool.request())) throw new QuerySourceError("QUERY_SOURCE_SCHEMA_REQUIRED", 503);
+  const mode = await readDashboardQueryMode(id);
+  if (key === "PRIMARY") {
+    const row = (await pool.request().input("id", sql.BigInt, id).query("SELECT * FROM uqp.Dashboard WHERE Id=@id")).recordset[0];
+    if (!row) throw new QuerySourceError("DASHBOARD_NOT_FOUND", 404);
+    let values: Record<string, unknown>;
+    try { values = JSON.parse(String(row.ParametersJson)); if (!values || typeof values !== "object" || Array.isArray(values)) throw new Error(); }
+    catch { throw new QuerySourceError("QUERY_SOURCE_SAVED_CONFIG_INVALID"); }
+    const { snapshotKind: _kind, snapshotSeconds: _seconds, deviceColumnMasks: _masks, deviceColumnTypes: _types, ...parameters } = values;
+    return { dashboardId: id, sourceId: id, sourceKey: "PRIMARY", queryDefinitionId: Number(row.QueryDefinitionId),
+      bindingRevision: Math.max(1, mode.version), managed: row.QuerySourceMaxRows != null, mode: mode.mode, modeRevision: mode.version,
+      dashboardActive: Boolean(row.IsActive), enabled: true, parameters, refreshSeconds: Number(row.RefreshSeconds),
+      pageSeconds: Number(row.PageSeconds), pageSize: Number(row.PageSize), maxRows: row.QuerySourceMaxRows == null ? 1000 : Number(row.QuerySourceMaxRows) };
+  }
   // Read only this source's parameters: an invalid sibling cannot break its execution.
   const result = await pool.request().input("dashboardId", sql.BigInt, id).input("key", sql.NVarChar(64), key).query(`
     SELECT d.IsActive AS DashboardActive,d.QuerySourceMaxRows,s.* FROM uqp.Dashboard d
@@ -19,7 +34,10 @@ export async function loadQueryExecutionBinding(id: number, key: string): Promis
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
     parameters = parsed as Record<string, unknown>;
   } catch { throw new QuerySourceError("QUERY_SOURCE_SAVED_CONFIG_INVALID"); }
-  return { dashboardId: id, sourceId: Number(row.Id), sourceKey: key, queryDefinitionId: row.QueryDefinitionId == null ? null : Number(row.QueryDefinitionId),
+  const layout = await getDashboardLayout(id);
+  const referenced = layout.profiles.some(p => p.widgets.some(w => (w.widgetType === "FIELD" || w.widgetType === "TABLE") && w.config.dataSourceKey === key));
+  return { dashboardId: id, sourceId: Number(row.Id), sourceKey: key, mode: mode.mode, modeRevision: mode.version, referenced,
+    queryDefinitionId: row.QueryDefinitionId == null ? null : Number(row.QueryDefinitionId),
     bindingRevision: Number(row.QueryBindingRevision), managed: row.QuerySourceMaxRows != null,
     dashboardActive: Boolean(row.DashboardActive), enabled: Boolean(row.IsEnabled), parameters,
     refreshSeconds: Number(row.RefreshSeconds), pageSize: Number(row.PageSize), pageSeconds: Number(row.PageSeconds),

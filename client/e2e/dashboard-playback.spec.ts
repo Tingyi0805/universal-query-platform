@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 async function setup(page: Page, single = false) {
-  const state = { failA: false, failAStatus: 503, failPrimary: false, revoked: false,
+  const state = { failA: false, failAStatus: 503, failPrimary: false, failPrimaryStatus: 503, revoked: false,
     sql: { PRIMARY: 0, A: 0, B: 0 }, pages: { PRIMARY: [] as number[], A: [] as number[], B: [] as number[] } };
   await page.clock.install({ time: new Date("2026-10-12T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-10-12T00:00:01Z"));
@@ -19,7 +19,7 @@ async function setup(page: Page, single = false) {
     }
     const key = (url.pathname.includes("/data-sources/A/") ? "A" : url.pathname.includes("/data-sources/B/") ? "B" : "PRIMARY") as keyof typeof state.sql;
     if ((key === "A" && state.failA) || (key === "PRIMARY" && state.failPrimary)) {
-      await route.fulfill({ status: key === "A" ? state.failAStatus : 503, json: { error: { code: "DASHBOARD_DELIVERY_FAILED" } } }); return;
+      await route.fulfill({ status: key === "A" ? state.failAStatus : state.failPrimaryStatus, json: { error: { code: "DASHBOARD_DELIVERY_FAILED" } } }); return;
     }
     const body = route.request().postDataJSON() as { page: number; snapshotId?: string };
     if (!body.snapshotId) state.sql[key]++;
@@ -67,6 +67,16 @@ for (const status of [403, 400, 503]) test(`source ${status} shows a local error
   await expect(page.getByText("B○頁2", { exact: true })).toBeVisible();
   await page.clock.runFor(5000);
   await expect(page.getByText("PRIMARY○頁1", { exact: true })).toBeVisible();
+  await expect(page.getByText("B○頁1", { exact: true })).toBeVisible();
+});
+for (const status of [403, 400, 503]) test(`PRIMARY ${status} does not revoke healthy supplemental sources`, async ({ page }) => {
+  const state = await setup(page);
+  state.failPrimary = true; state.failPrimaryStatus = status;
+  await page.clock.runFor(5000);
+  await expect(page.getByText("PRIMARY○頁1", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("B○頁2", { exact: true })).toBeVisible();
+  await expect(page.getByRole("columnheader", { name: "A_NAME" })).toBeVisible();
+  await page.clock.runFor(5000);
   await expect(page.getByText("B○頁1", { exact: true })).toBeVisible();
 });
 test("offline clears every patient cell; reconnection reloads; revocation clears token and all sources", async ({ page }) => {

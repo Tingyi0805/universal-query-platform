@@ -1,3 +1,7 @@
+import { createQueryModeRouter } from "./dashboardQueryMode.routes.js";
+import { createQueryModeService } from "./dashboardQueryMode.service.js";
+import { queryModeStore, readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
+import { createQueryDeviceRouter } from "./dashboardQueryDevice.routes.js";
 import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
 import { loadQueryExecutionBinding, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
@@ -235,6 +239,11 @@ dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
       return;
     }
 
+    const mode = await readDashboardQueryMode(id.data);
+    if (mode.mode !== "LEGACY" && (mode.mode !== "QUERY_ONLY" || !env.DASHBOARD_QUERY_DEVICE_PLAYBACK ||
+      verification.device.queryModeGrantVersion !== mode.version || verification.device.delegatorTokenVersion !== verification.device.authorizationRevision)) {
+      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } }); return;
+    }
     res.json(await getDashboardLayout(id.data));
   } catch (error) {
     next(error);
@@ -292,16 +301,20 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
   }
 });
 
+const queryExecution = createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
+  getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
+  getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
+  getDataSource: getDataSourcePlaybackState, getSensitivity: getDatasetSensitivitySnapshot,
+  execute: executeSavedDataset, audit: auditPatientListIfConfigured }, device => device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
+dashboardRouter.use(createQueryDeviceRouter(queryExecution, { mode: readDashboardQueryMode, checkDevice: checkDashboardDisplayDevice, dashboard: getDashboard, reportColumns: listReportColumns }));
+
 dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
   getDataset, getDatasetSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
   auditPatientListIfConfigured, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound }));
 
 dashboardRouter.use(authenticateJwt);
-dashboardRouter.use(createQuerySourceExecutionRouter(createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
-  getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
-  getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
-  getDataSource: getDataSourcePlaybackState, getSensitivity: getDatasetSensitivitySnapshot,
-  execute: executeSavedDataset, audit: auditPatientListIfConfigured }, () => env.DASHBOARD_QUERY_SOURCE_EXECUTION)));
+dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
+dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
 dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {

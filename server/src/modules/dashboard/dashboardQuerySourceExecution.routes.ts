@@ -15,7 +15,7 @@ export function createQuerySourceExecutionRouter(service: ReturnType<typeof crea
     res.setHeader("Cache-Control", "no-store");
     try {
       const id = z.coerce.number().int().positive().safe().safeParse(req.params.id);
-      const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).refine(k => k.toUpperCase() !== "PRIMARY").safeParse(req.params.sourceKey);
+      const key = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).safeParse(req.params.sourceKey);
       const input = z.object({ page: z.number().int().min(1).max(100000), snapshotId: z.string().uuid().optional() }).strict().safeParse(req.body);
       if (!id.success || !key.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
       const token = req.header("Authorization")?.slice(7) ?? "";

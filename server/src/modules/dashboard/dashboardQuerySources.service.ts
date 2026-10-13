@@ -11,6 +11,7 @@ export type QuerySource = {
 };
 export type SourceState = {
   dashboard: { id: number; queryDefinitionId: number; isActive: boolean; parameters: Record<string, unknown>;
+    mode?: string; modeVersion?: number;
     updatedAtUtc: string; maxRows: number | null; refreshSeconds: number; pageSize: number; pageSeconds: number };
   sources: QuerySource[];
   references: string[];

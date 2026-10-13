@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { getTokenSessionState } from "../auth/auth.repository.js";
 import sql from "mssql";
+import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { getPlatformDbPool } from "../../config/database.js";
 import { matchesIpRestriction, normalizeClientIp } from "./dashboardDeviceIp.js";
 
@@ -26,6 +27,8 @@ function mapRow(row: any) {
     expiresAtUtc: row.ExpiresAtUtc ? new Date(row.ExpiresAtUtc).toISOString() : null,
     lastUsedAtUtc: row.LastUsedAtUtc ? new Date(row.LastUsedAtUtc).toISOString() : null,
     createdByUserId: Number(row.CreatedByUserId),
+    queryModeGrantVersion: row.QueryModeGrantVersion == null ? null : Number(row.QueryModeGrantVersion),
+    delegatorTokenVersion: row.DelegatorTokenVersion == null ? null : Number(row.DelegatorTokenVersion),
     createdAtUtc: row.CreatedAtUtc ? new Date(row.CreatedAtUtc).toISOString() : null,
     revokedAtUtc: row.RevokedAtUtc ? new Date(row.RevokedAtUtc).toISOString() : null,
     archivedAtUtc: row.ArchivedAtUtc ? new Date(row.ArchivedAtUtc).toISOString() : null,
@@ -160,8 +163,14 @@ export async function reissueDashboardDisplayDeviceToken(
   const pool = await requirePool();
   const token = crypto.randomBytes(32).toString("base64url");
   const tokenHash = hashToken(token);
-
-  const result = await pool.request()
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+  const dashboard = (await new sql.Request(tx).input("id", sql.BigInt, dashboardId)
+    .query("SELECT * FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@id")).recordset[0];
+  if (!dashboard) throw new QuerySourceError("DASHBOARD_NOT_FOUND", 404);
+  if (String(dashboard.QueryMode ?? "LEGACY") !== "LEGACY") throw new QuerySourceError("QUERY_MODE_DEVICE_CREDENTIAL_REQUIRED");
+  const result = await new sql.Request(tx)
     .input("dashboardId", sql.BigInt, dashboardId)
     .input("deviceId", sql.BigInt, deviceId)
     .input("tokenHash", sql.Char(64), tokenHash)
@@ -178,11 +187,12 @@ export async function reissueDashboardDisplayDeviceToken(
   if (!result.recordset[0]) {
     throw new Error("DASHBOARD_DEVICE_NOT_FOUND");
   }
-
+  await tx.commit();
   return {
     device: mapRow(result.recordset[0]),
     token,
   };
+  } catch (error) { await tx.rollback().catch(() => undefined); throw error; }
 }
 
 export async function renewDashboardDisplayDevice(
@@ -269,6 +279,7 @@ export async function checkDashboardDisplayDevice(
   // Device playback is delegated by a designer; removing that authority revokes the delegation.
   const owner = await getTokenSessionState(Number(row.CreatedByUserId));
   if (!owner?.isActive || !owner.permissions.includes("DESIGN_QUERY")) return { status: "DISABLED" as const };
+  if (row.DelegatorTokenVersion != null && Number(row.DelegatorTokenVersion) !== owner.tokenVersion) return { status: "DISABLED" as const };
 
   const normalizedClientIp = normalizeClientIp(clientIp);
   if (

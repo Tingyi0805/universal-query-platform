@@ -39,13 +39,15 @@ export async function querySourceSchemaReady(request: sql.Request) {
   return Boolean(result.recordset[0]?.Ready);
 }
 
-const defaultDependencies = {
+export const defaultQuerySourceDependencies = {
   getPool: getPlatformDbPool,
   createTransaction: (pool: sql.ConnectionPool) => new sql.Transaction(pool),
   createRequest: (transaction: sql.Transaction) => new sql.Request(transaction),
   getEffectiveQueryAccess, getDataset, listDatasetParameters, writeAuditEvent,
 };
-export function createQuerySourceStore(deps = defaultDependencies): SourceStore {
+export function createQuerySourceStore(deps: typeof defaultQuerySourceDependencies & {
+  extend?: (transaction: sql.Transaction, base: SourceTransaction) => SourceTransaction;
+} = defaultQuerySourceDependencies): SourceStore {
 return {
   async transaction(work) {
     const pool = await deps.getPool();
@@ -65,6 +67,7 @@ return {
           WHERE p.DashboardId=@dashboardId AND w.WidgetType IN ('FIELD','TABLE') ORDER BY w.Id`)).recordset;
         return {
           dashboard: { id, queryDefinitionId: Number(dashboard.QueryDefinitionId), isActive: Boolean(dashboard.IsActive),
+            mode: String(dashboard.QueryMode ?? "LEGACY"), modeVersion: Number(dashboard.QueryModeVersion ?? 0),
             parameters: parameters(dashboard.ParametersJson), updatedAtUtc: new Date(dashboard.UpdatedAtUtc).toISOString(),
             maxRows: dashboard.QuerySourceMaxRows == null ? null : Number(dashboard.QuerySourceMaxRows),
             refreshSeconds: Number(dashboard.RefreshSeconds), pageSize: Number(dashboard.PageSize), pageSeconds: Number(dashboard.PageSeconds) },
@@ -115,7 +118,7 @@ return {
           parameters: { dashboardId, changes } }, transaction);
       },
     };
-    try { const result = await work(tx); await transaction.commit(); return result; }
+    try { const result = await work(deps.extend?.(transaction, tx) ?? tx); await transaction.commit(); return result; }
     catch (error) { await transaction.rollback().catch(() => undefined); throw error; }
   },
 };

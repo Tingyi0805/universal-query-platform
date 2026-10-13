@@ -323,7 +323,7 @@ export function DashboardDisplayPage() {
         setDataWarning("資料筆數已變更，正在從第一頁重新載入。");
         return;
       }
-      if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
+      if (deviceMode && (e as { status?: number }).status === 401) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
         forgetDashboardToken(dashboardId);
