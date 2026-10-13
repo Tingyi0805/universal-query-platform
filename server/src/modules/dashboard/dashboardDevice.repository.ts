@@ -279,6 +279,7 @@ export async function checkDashboardDisplayDevice(
   // Device playback is delegated by a designer; removing that authority revokes the delegation.
   const owner = await getTokenSessionState(Number(row.CreatedByUserId));
   if (!owner?.isActive || !owner.permissions.includes("DESIGN_QUERY")) return { status: "DISABLED" as const };
+  if (row.QueryModeGrantVersion != null && !owner.permissions.includes("EXECUTE_QUERY")) return { status: "DISABLED" as const };
   if (row.DelegatorTokenVersion != null && Number(row.DelegatorTokenVersion) !== owner.tokenVersion) return { status: "DISABLED" as const };
 
   const normalizedClientIp = normalizeClientIp(clientIp);

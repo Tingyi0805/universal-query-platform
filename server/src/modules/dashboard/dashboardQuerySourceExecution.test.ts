@@ -120,7 +120,7 @@ test("capability is default off; active/unmanaged dashboards cannot bypass stagi
 });
 test("Query ACL cannot substitute for the existing global EXECUTE_QUERY permission", async () => {
   const f = fixture(); f.control.session.permissions = ["DESIGN_QUERY"];
-  await assert.rejects(f.service.page(1, "WARD", subject, { page: 1 }), { code: "QUERY_SOURCE_QUERY_FORBIDDEN", status: 403 });
+  await assert.rejects(f.service.page(1, "WARD", subject, { page: 1 }), { code: "QUERY_SOURCE_PERMISSION_REVOKED", status: 403 });
   assert.equal(f.control.executions.length, 0);
 });
 test("permissions changed during SQL or audit fail closed; failed executions do not poison healthy snapshots", async () => {
@@ -206,6 +206,8 @@ test("device PRIMARY and extra sources use stored delegator ACL, isolated snapsh
     modeVersion = 2; assert.equal((await request("ROOM", room.body.snapshotId)).status, 401);
     modeVersion = 1; grantVersion = 0; assert.equal((await request("PRIMARY")).status, 401);
     grantVersion = 1; f.control.session.tokenVersion = 2; assert.equal((await request("PRIMARY")).status, 401);
-    f.control.session.tokenVersion = 1; valid = false; assert.equal((await request("PRIMARY")).status, 401);
+    f.control.session.tokenVersion = 1; f.control.session.permissions = ["DESIGN_QUERY"];
+    assert.equal((await request("PRIMARY")).status,401);assert.equal((await request("ROOM")).status,401);
+    f.control.session.permissions = ["DESIGN_QUERY","EXECUTE_QUERY"]; valid = false; assert.equal((await request("PRIMARY")).status, 401);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });

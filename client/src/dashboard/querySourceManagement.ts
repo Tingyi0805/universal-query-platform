@@ -18,3 +18,8 @@ export function sourceSettings(source: QuerySourceSettings, parametersJson: stri
   return { queryDefinitionId: source.queryDefinitionId as number, parameters: parameters as Record<string, unknown>,
     refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds, maxRows: source.maxRows as number };
 }
+
+export function previewAuthorizationFailed(error:unknown):boolean {
+  const value=error as {status?:unknown;code?:unknown};
+  return value?.status===401 || (value?.status===403 && (value?.code==="FORBIDDEN" || value?.code==="QUERY_SOURCE_PERMISSION_REVOKED"));
+}

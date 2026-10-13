@@ -49,7 +49,7 @@ test("canvas survives preview errors and saves through versioned API",async({pag
   await expect(page.locator(".layout-canvas-inner")).toHaveCSS("width","1080px");
   await expect(page.locator(".layout-canvas-inner")).toHaveCSS("height","1920px");
   await page.getByRole("button",{name:"適合視窗",exact:true}).click();
-  await expect(page.getByRole("button",{name:"預覽此版型",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"預覽此版型",exact:true})).toBeEnabled();
   const canvas=await page.locator(".layout-canvas").boundingBox();
   const viewport=await page.locator(".layout-canvas-scroll").boundingBox();
   expect(canvas!.height).toBeLessThanOrEqual(viewport!.height);
@@ -61,4 +61,27 @@ test("canvas survives preview errors and saves through versioned API",async({pag
   await page.getByRole("button",{name:"儲存版面",exact:true}).click();
   await expect.poll(()=>state.writes.length).toBe(2);
   expect(state.writes[1]!.body.profiles[0].widgets[0].sortOrder).toBe(50);
+});
+test("Query-only independent preview uses JWT-only Query pages and preserves fixed layout",async({page})=>{
+  const state=await setup(page);state.config.sources=[];
+  const calls: {path:string;authorization:string|undefined}[]=[];
+  await page.context().route(url=>url.pathname.startsWith("/api/"),async route=>{
+    const path=new URL(route.request().url()).pathname;calls.push({path,authorization:route.request().headers().authorization});
+    if(path.endsWith("/configuration")){await route.fulfill({json:state.config});return;}
+    if(path.endsWith("/query-sources/v1/PRIMARY/page")){
+      expect(route.request().postDataJSON()).toEqual({page:1});
+      expect(route.request().headers()["x-dashboard-device-token"]).toBeUndefined();
+      await route.fulfill({json:{query:{id:20,name:"合成預覽",code:"Q20"},page:1,totalPages:1,snapshotId:"11111111-1111-4111-8111-111111111111",refreshSeconds:30,pageSeconds:15,pageSize:10,result:{columns:[{name:"NAME"}],rows:[{NAME:"合○測試"}]}}});return;
+    }
+    await route.fulfill({status:404,json:{error:{code:"UNEXPECTED_LEGACY_PATH"}}});
+  });
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByText("固定診間科別",{exact:true})).toBeVisible();
+  const pending=page.waitForEvent("popup");await page.getByRole("button",{name:"預覽此版型",exact:true}).click();const popup=await pending;
+  await expect(popup.getByText("固定診間科別",{exact:true})).toBeVisible();
+  await expect.poll(()=>calls.some(call=>call.path.endsWith("/query-sources/v1/PRIMARY/page"))).toBe(true);
+  expect(calls.filter(call=>call.path.endsWith("/page")).every(call=>call.authorization==="Bearer synthetic")).toBe(true);
+  expect(calls.some(call=>/\/preview$|\/device\//.test(call.path))).toBe(false);
+  expect(popup.url()).toContain("queryPreview=1");expect(popup.url()).not.toContain("synthetic");
+  await popup.close();
 });

@@ -26,17 +26,13 @@ export function forgetDashboardToken(id: number) {
 }
 export function readDashboardToken(id: number): string | null {
   if (tokens.has(id)) return tokens.get(id)!;
-  // One-time compatibility handoff; legacy persistent credentials are immediately removed.
-  let legacy: string | null = null;
+  // Persistent legacy secrets are not proof of a fresh authorization after restart.
+  // Erase them; only explicit activation or the trusted one-shot window handoff can fill memory.
   try {
-    legacy = localStorage.getItem(`uqp.dashboard.device.${id}`);
     localStorage.removeItem(`uqp.dashboard.device.${id}`);
     sessionStorage.removeItem(`uqp.dashboard.device.${id}`);
   } catch {}
-  if (legacy && /^[A-Za-z0-9_-]{43}$/.test(legacy)) {
-    rememberDashboardToken(id, legacy);
-    return legacy;
-  }
+
   return null;
 }
 export function prepareDashboardTokenHandoff(

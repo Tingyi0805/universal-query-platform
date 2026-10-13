@@ -1,11 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
 
-async function setup(page: Page, single = false) {
+async function setup(page: Page, single = false, hold = false) {
   const state = { failA: false, failAStatus: 503, failPrimary: false, failPrimaryStatus: 503, revoked: false,
     sql: { PRIMARY: 0, A: 0, B: 0 }, pages: { PRIMARY: [] as number[], A: [] as number[], B: [] as number[] } };
   await page.clock.install({ time: new Date("2026-10-12T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-10-12T00:00:01Z"));
-  await page.addInitScript(() => localStorage.setItem("uqp.dashboard.device.1", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"));
   const widget = (id: number, source: string, x: number) => ({ id, widgetType: "TABLE", x, y: 100, width: 350, height: 300,
     fontSize: 20, alignment: "LEFT", config: { dataSourceKey: source }, sortOrder: id, sourceKey: null });
   await page.context().route("**/api/dashboards/device/1/**", async route => {
@@ -26,14 +25,16 @@ async function setup(page: Page, single = false) {
     state.pages[key].push(body.page);
     const result = { columns: [{ name: `${key}_NAME` }], rows: [{ [`${key}_NAME`]: `${key}○頁${body.page}` }] };
     if (key === "PRIMARY") {
-      await route.fulfill({ json: { page: body.page, totalPages: 2, snapshotId: body.snapshotId ?? `PRIMARY-${state.sql.PRIMARY}`,
-        dashboard: { id: 1, name: "Synthetic", refreshSeconds: 30, pageSeconds: 5, pageSize: 1, parameters: {} }, reportColumns: [], result } });
+      await route.fulfill({ json: { page: body.page, totalPages: hold ? 1 : 2, snapshotId: body.snapshotId ?? `PRIMARY-${state.sql.PRIMARY}`,
+        dashboard: { id: 1, name: "Synthetic", refreshSeconds: hold ? 3600 : 30, pageSeconds: hold ? 3600 : 5, pageSize: 1, parameters: {} }, reportColumns: [], result } });
     } else {
       await route.fulfill({ json: { page: body.page, totalPages: 2, snapshotId: body.snapshotId ?? `${key}-${state.sql[key]}`,
         sourceKey: key, refreshSeconds: key === "A" ? 5 : 30, pageSeconds: key === "A" ? 15 : 5, pageSize: 1, result } });
     }
   });
   await page.goto("/display/dashboards/1");
+  await page.getByLabel("Device Token",{exact:true}).fill("A".repeat(43));
+  await page.getByRole("button",{name:"驗證並啟用播放",exact:true}).click();
   await expect(page.getByText("PRIMARY○頁1", { exact: true })).toBeVisible();
   if (!single) { await expect(page.getByText("A○頁1", { exact: true })).toBeVisible(); await expect(page.getByText("B○頁1", { exact: true })).toBeVisible(); }
   return state;
@@ -115,4 +116,28 @@ test("playback token is memory-only; trusted popup handoff works and refresh req
   await popup.reload();
   await expect(popup.getByRole("heading",{name:"啟用 Dashboard 播放裝置"})).toBeVisible();
   await popup.close();
+});
+for(const size of [{name:"Windows landscape",width:1920,height:1080},{name:"Android portrait",width:800,height:1280},{name:"iOS landscape",width:1024,height:768}]){
+  test(`representative ${size.name}: safe playback fits and reload/reboot awaits authorization`,async({page})=>{
+    await page.setViewportSize({width:size.width,height:size.height});await setup(page,true);
+    await page.clock.resume();
+    await page.getByRole("button",{name:"全螢幕",exact:true}).click();
+    await expect.poll(()=>page.evaluate(()=>Boolean(document.fullscreenElement))).toBe(true);
+    await page.evaluate(()=>document.exitFullscreen());
+    const bounds=await page.locator(".dashboard-display-profile-shell").boundingBox();
+    expect(bounds!.width).toBeLessThanOrEqual(size.width);expect(bounds!.height).toBeLessThanOrEqual(size.height);
+    await page.reload();await expect(page.getByRole("heading",{name:"啟用 Dashboard 播放裝置"})).toBeVisible();
+    await expect(page.getByText(/等待管理者授權/)).toBeVisible();
+    expect(await page.evaluate(()=>localStorage.getItem("uqp.dashboard.device.1"))).toBeNull();
+    const fresh=await page.context().newPage();await fresh.goto("/display/dashboards/1");
+    await expect(fresh.getByRole("heading",{name:"啟用 Dashboard 播放裝置"})).toBeVisible();await fresh.close();
+  });
+}
+
+test("device authorization pulse stops revoked playback despite hour-long source intervals",async({page})=>{
+  const state=await setup(page,true,true),queries=state.sql.PRIMARY;
+  state.revoked=true;await page.clock.runFor(15000);
+  await expect(page.getByRole("heading",{name:"啟用 Dashboard 播放裝置"})).toBeVisible();
+  await expect(page.getByText("PRIMARY○頁1",{exact:true})).toHaveCount(0);
+  expect(state.sql.PRIMARY).toBe(queries);
 });

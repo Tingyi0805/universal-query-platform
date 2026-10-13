@@ -36,7 +36,8 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       throw new QuerySourceError("DASHBOARD_DEVICE_UNAUTHORIZED", 401);
     const session = await deps.getSession(subject.userId);
     if (!session?.isActive || session.tokenVersion !== subject.tokenVersion) throw new QuerySourceError("TOKEN_REVOKED", 401);
-    if (!session.permissions.includes("DESIGN_QUERY") || !session.permissions.includes("EXECUTE_QUERY")) throw new QuerySourceError("QUERY_SOURCE_QUERY_FORBIDDEN", 403);
+    if (!session.permissions.includes("DESIGN_QUERY") || !session.permissions.includes("EXECUTE_QUERY"))
+      throw new QuerySourceError(subject.deviceId !== undefined ? "DASHBOARD_DEVICE_UNAUTHORIZED" : "QUERY_SOURCE_PERMISSION_REVOKED", subject.deviceId !== undefined ? 401 : 403);
     const binding = await deps.loadBinding(id, key);
     if (subject.deviceId !== undefined) {
       if (binding.mode !== "QUERY_ONLY" || !binding.modeRevision || !binding.dashboardActive || !binding.managed)

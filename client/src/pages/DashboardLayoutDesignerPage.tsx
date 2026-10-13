@@ -261,7 +261,7 @@ export function DashboardLayoutDesignerPage() {
     }
 
     popup.location.replace(
-      `/designer/dashboards/${dashboardId}/display?previewKey=${encodeURIComponent(previewKey)}`,
+      `/designer/dashboards/${dashboardId}/display?previewKey=${encodeURIComponent(previewKey)}${sourceVersion !== null ? "&queryPreview=1" : ""}`,
     );
   }
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
@@ -730,8 +730,8 @@ export function DashboardLayoutDesignerPage() {
               className="secondary-button"
               type="button"
               onClick={openPreview}
-              disabled={sourceVersion !== null}
-              title={sourceVersion !== null ? "Query-only 請使用畫布的安全來源預覽；獨立視窗預覽尚未接入新契約。" : undefined}
+              disabled={sourceVersion === undefined}
+              title={sourceVersion !== null ? "預覽尚無有效來源版本，請先重新載入。" : undefined}
             >
               預覽此版型
             </button>

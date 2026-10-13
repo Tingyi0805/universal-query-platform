@@ -37,6 +37,8 @@ function fixture() {
       switchMode: async (_id, enabled) => { staged.dashboard.mode = enabled ? "QUERY_ONLY" : "QUERY_ONLY_DISABLED"; staged.dashboard.modeVersion!++; staged.dashboard.isActive = enabled; token = "invalidated-token-hash"; },
       modeAudit: async (_user, _id, enabled) => { if (control.auditFailure) throw new Error("private audit SQL/bind"); control.audits.push(enabled ? "ENABLE" : "DISABLE"); },
       issueDevice: async (_id, _device, hash) => { token = hash; },
+      revokeDevice: async (_id, deviceId) => {if(deviceId!==7 || control.noDevices)throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);token="revoked-hash";},
+      revokeAudit: async () => {if(control.auditFailure)throw new Error("SYNTHETIC_PRIVATE_SQL");},
       issueAudit: async () => { if (control.auditFailure) throw new Error("private audit SQL/bind"); },
       upsert: async () => assert.fail(), remove: async () => assert.fail(), markManaged: async () => assert.fail(), audit: async () => assert.fail(),
     };
@@ -111,20 +113,62 @@ test("Mock mode HTTP enforces JWT/RBAC/TokenVersion, strict input and explicit c
   app.use(createQueryModeRouter(f.service));
   const server = createServer(app); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}/1/query-mode/v1`;
-  const request = async (body?: unknown, suffix = "", credential = token) => {
+  const request = async (body?: unknown, suffix = "", credential = token, method = "POST") => {
     const response = await fetch(base + suffix, { headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
-      ...(body ? { method: "POST", body: JSON.stringify(body) } : {}) });
+      ...(body ? { method, body: JSON.stringify(body) } : {}) });
     return { status: response.status, body: await response.json() };
   };
   try {
     assert.equal((await request(undefined, "", "invalid")).status, 401);
-    permissions = []; assert.equal((await request()).status, 403); permissions = ["DESIGN_QUERY"];
+    permissions = []; assert.equal((await request()).status, 403);
+    assert.equal((await request(undefined,"/preflight")).status,403);
+    assert.equal((await request({expectedVersion:sourceVersion(f.state())},"/devices/7/credential",token,"DELETE")).status,403);
+    permissions = ["DESIGN_QUERY"];
+    assert.equal((await request(undefined,"/preflight")).body.ready,true);
     assert.equal((await request({ expectedVersion: sourceVersion(f.state()), activate: true, ownerId: 1 })).status, 400);
     assert.equal((await request({ expectedVersion: sourceVersion(f.state()), activate: true })).body.mode, "QUERY_ONLY");
     const issued = await request({ expectedVersion: sourceVersion(f.state()) }, "/devices/7/credential");
     assert.equal(issued.status, 200); assert.match(issued.body.token, /^[A-Za-z0-9_-]{43}$/);
     assert.equal((await request({ expectedVersion: sourceVersion(f.state()), activate: false })).body.mode, "QUERY_ONLY_DISABLED");
     assert.equal((await request({ expectedVersion: sourceVersion(f.state()) }, "/devices/7/credential")).status, 409);
+    const revoked=await request({expectedVersion:sourceVersion(f.state())},"/devices/7/credential",token,"DELETE");assert.equal(revoked.status,200);
     f.control.actorVersion = 2; assert.equal((await request()).status, 401);
+    assert.equal((await request(undefined,"/preflight")).status,401);
   } finally { env.JWT_SECRET = oldSecret; await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test("preflight is read-only and reports safe per-source and independent delegator failures",async()=>{
+  const f=fixture(),before=structuredClone(f.state()),token=f.credentials();
+  const ready=await f.service.preflight(1,1,1);assert.equal(ready.ready,true);assert.equal(ready.sourceCount,2);
+  assert.deepEqual(f.state(),before);assert.equal(f.credentials(),token);assert.deepEqual(f.control.audits,[]);
+  f.state().sources[0]!.parameters={};f.control.deniedOwner=true;
+  const failed=await f.service.preflight(1,1,1);
+  assert.equal(failed.ready,false);assert.equal(failed.queries[0]!.ok,true);
+  assert.equal(failed.queries[1]!.code,"PARAMETER_REQUIRED");assert.equal(failed.delegators[0]!.code,"QUERY_SOURCE_QUERY_FORBIDDEN");
+  assert.doesNotMatch(JSON.stringify(failed),/SYNTHETIC|ParametersJson|token|sqlText/);
+});
+test("preflight capacity, pending, references, workstation and policy remain fail-closed",async()=>{
+  for(const kind of ["pending","references","station","policy","capacity","devices"]){
+    const f=fixture();
+    if(kind==="pending")f.state().sources[0]!.queryDefinitionId=null;
+    if(kind==="references")f.state().sources[0]!.isEnabled=false;
+    if(kind==="station")f.control.stationRevoked=true;
+    if(kind==="policy")f.control.policyReady=false;
+    if(kind==="devices")f.control.noDevices=true;
+    if(kind==="capacity")f.state().sources=Array.from({length:8},(_,i)=>({...f.state().sources[0]!,sourceKey:`KEY${i}`,id:i+10}));
+    assert.equal((await f.service.preflight(1,1,1)).ready,false,kind);
+  }
+});
+test("revoke requires current mode/version but remains available after delegation is revoked, audit failure rolls back",async()=>{
+  const f=fixture();await f.service.change(1,1,1,sourceVersion(f.state()),true);
+  await f.service.issue(1,7,1,1,sourceVersion(f.state()));const token=f.credentials();
+  f.control.deniedOwner=true;f.control.stationRevoked=true;
+  await assert.rejects(f.service.revoke(1,7,1,1,"0".repeat(64)),{code:"QUERY_SOURCE_VERSION_CONFLICT"});
+  f.control.auditFailure=true;await assert.rejects(f.service.revoke(1,7,1,1,sourceVersion(f.state())));assert.equal(f.credentials(),token);
+  f.control.auditFailure=false;assert.equal((await f.service.revoke(1,7,1,1,sourceVersion(f.state()))).revoked,true);
+  assert.equal(f.credentials(),"revoked-hash");
+});
+test("activation rejects a disabled source still referenced by a widget",async()=>{
+  const f=fixture();f.state().sources[0]!.isEnabled=false;
+  await assert.rejects(f.service.change(1,1,1,sourceVersion(f.state()),true),{code:"QUERY_SOURCE_REFERENCE_INVALID"});
 });

@@ -1,3 +1,4 @@
+import { DashboardQueryPlaybackManager } from "../components/DashboardQueryPlaybackManager";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { rememberDashboardToken,prepareDashboardTokenHandoff } from "../security/dashboardToken";
@@ -1316,6 +1317,7 @@ export function DashboardDesignerPage() {
           </section>
 
           {form.id && <DashboardDataSourcesEditor key={form.id} dashboardId={form.id} accessToken={accessToken} />}
+          {form.id && <DashboardQueryPlaybackManager key={`playback-${form.id}`} dashboardId={form.id} accessToken={accessToken} />}
 
           <section className="dashboard-list-card">
             <h2>Dashboard 清單</h2>
@@ -1787,7 +1789,7 @@ export function DashboardDesignerPage() {
                                   type="button"
                                   onClick={() => void reissueDeviceToken(device)}
                                 >
-                                  重新核發 Token
+                                  舊版模式重新核發 Token
                                 </button>
                                 <button
                                   className="secondary-button"

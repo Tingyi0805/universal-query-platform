@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 import { managementError, sourceSettings, type QuerySourceConfiguration, type QuerySourceSettings } from "../dashboard/querySourceManagement";
 type Query = { id: number; name: string; code: string; canExecute: boolean };
@@ -11,40 +11,53 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [remove, setRemove] = useState<QuerySourceSettings | null>(null);
+  const epoch=useRef(0), configurationRead=useRef(0);
   const base = `/dashboards/${dashboardId}/query-sources/v1`;
   async function reload() {
+    const requestEpoch=epoch.current,requestRead=++configurationRead.current;
     setBusy(true);
-    try { setConfiguration(await apiRequest<QuerySourceConfiguration>(`${base}/configuration`, {}, accessToken)); }
-    catch (error) { setMessage(managementError(error)); }
-    finally { setBusy(false); }
+    try { const result=await apiRequest<QuerySourceConfiguration>(`${base}/configuration`, {}, accessToken);if(requestEpoch===epoch.current && requestRead===configurationRead.current)setConfiguration(result); }
+    catch (error) { if(requestEpoch===epoch.current && requestRead===configurationRead.current)setMessage(managementError(error)); }
+    finally { if(requestEpoch===epoch.current && requestRead===configurationRead.current)setBusy(false); }
   }
   useEffect(() => {
+    ++epoch.current;
+    const readVersion=++configurationRead.current;
     let cancelled = false;
     setConfiguration(null); setDraft(initial); setParametersJson("{}"); setMessage(""); setRemove(null);
     void apiRequest<QuerySourceConfiguration>(`${base}/configuration`, {}, accessToken).then(value => {
-      if (!cancelled) setConfiguration(value);
+      if (!cancelled && readVersion===configurationRead.current) setConfiguration(value);
     }).catch(error => { if (!cancelled) setMessage(managementError(error)); });
     void apiRequest<{ queries: Query[] }>("/queries", {}, accessToken).then(value => {
       if (!cancelled) setQueries(value.queries.filter(query => query.canExecute));
     }).catch(error => { if (!cancelled) setMessage(managementError(error)); });
-    return () => { cancelled = true; };
+    return () => { cancelled = true;++epoch.current; };
   }, [base, accessToken]);
   async function disableQueryMode() {
     if (!configuration || busy) return;
+    const requestEpoch=epoch.current;
     setBusy(true);
     try {
       await apiRequest(`/dashboards/${dashboardId}/query-mode/v1`, { method: "POST",
         body: JSON.stringify({ expectedVersion: configuration.version, activate: false }) }, accessToken);
+      if(requestEpoch!==epoch.current)return;
       setMessage("Query-only 已安全停用；原裝置憑證已失效。重新啟用須依完整安全流程簽發新憑證。");
       await reload();
-    } catch (error) { setMessage(managementError(error)); }
-    finally { setBusy(false); }
+      window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId,origin:"sources"}}));
+    } catch (error) { if(requestEpoch===epoch.current)setMessage(managementError(error)); }
+    finally { if(requestEpoch===epoch.current)setBusy(false); }
   }
+  useEffect(() => {
+    const changed=(event:Event)=>{if((event as CustomEvent<{dashboardId:number;origin:string}>).detail?.dashboardId===dashboardId && (event as CustomEvent<{origin:string}>).detail.origin!=="sources")void reload();};
+    window.addEventListener("uqp.dashboard.configuration.changed",changed);
+    return ()=>window.removeEventListener("uqp.dashboard.configuration.changed",changed);
+  },[dashboardId,accessToken]);
   function edit(source: QuerySourceSettings) {
     setDraft({ ...source, maxRows: source.maxRows ?? 1000 }); setParametersJson(JSON.stringify(source.parameters ?? {}, null, 2));
     setMessage(source.parameters === undefined ? "此來源參數無法安全讀取；儲存將明確替換參數，請填寫完整設定。" : "");
   }
   async function save(removal?: QuerySourceSettings) {
+    const requestEpoch=epoch.current;
     if (!configuration?.editable || busy) return;
     let settings: ReturnType<typeof sourceSettings> | undefined;
     try {
@@ -66,10 +79,12 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
       };
       // One explicit mutation; omitted sources are never removed.
       await apiRequest(base + (primary ? "/primary" : ""), { method: "PATCH", body: JSON.stringify(body) }, accessToken);
+      if(requestEpoch!==epoch.current)return;
       setRemove(null); setDraft(initial); setParametersJson("{}"); setMessage("設定已儲存。");
       await reload();
-    } catch (error) { setMessage(managementError(error)); }
-    finally { setBusy(false); }
+      window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId,origin:"sources"}}));
+    } catch (error) { if(requestEpoch===epoch.current)setMessage(managementError(error)); }
+    finally { if(requestEpoch===epoch.current)setBusy(false); }
   }
   return <section className="dashboard-editor-card">
     <h2>Query-only 資料來源</h2>

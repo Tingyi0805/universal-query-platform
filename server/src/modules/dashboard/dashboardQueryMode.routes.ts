@@ -35,5 +35,17 @@ export function createQueryModeRouter(service: ReturnType<typeof createQueryMode
       res.json(await service.issue(c.id, device.data, c.user, c.version, body.data.expectedVersion));
     } catch (error) { failure(error, res, req.id); }
   });
+  router.get("/:id/query-mode/v1/preflight", async (req,res) => {
+    try { const c = context(req); res.json(await service.preflight(c.id,c.user,c.version)); }
+    catch (error) { failure(error,res,req.id); }
+  });
+  router.delete("/:id/query-mode/v1/devices/:deviceId/credential",async (req,res) => {
+    try {
+      const c = context(req), device = idSchema.safeParse(req.params.deviceId);
+      const body = z.object({expectedVersion:z.string().regex(/^[a-f0-9]{64}$/)}).strict().safeParse(req.body);
+      if (!device.success || !body.success) throw new QuerySourceError("VALIDATION_ERROR",400);
+      res.json(await service.revoke(c.id,device.data,c.user,c.version,body.data.expectedVersion));
+    } catch (error) { failure(error,res,req.id); }
+  });
   return router;
 }

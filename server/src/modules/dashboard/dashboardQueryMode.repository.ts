@@ -89,6 +89,16 @@ export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDepe
             INNER JOIN uqp.Dashboard d ON d.Id=v.DashboardId WHERE d.Id=@id AND v.Id=@deviceId AND v.IsActive=1 AND d.QueryMode='QUERY_ONLY'`);
         if (result.rowsAffected[0] !== 1) throw new QuerySourceError("QUERY_DEVICE_CREDENTIAL_CONFLICT");
       },
+      async revokeDevice(id, deviceId) {
+        const result = await scoped(id).input("deviceId", sql.BigInt, deviceId).query(`UPDATE uqp.DashboardDisplayDevice
+          SET IsActive=0,RevokedAtUtc=SYSUTCDATETIME(),QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL,
+          TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2)
+          WHERE DashboardId=@id AND Id=@deviceId AND IsActive=1`);
+        if (result.rowsAffected[0] !== 1) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+      },
+      async revokeAudit(userId,id,deviceId) {
+        await writeAuditEvent({eventType:"DASHBOARD_QUERY_DEVICE_REVOKED",userId,parameters:{dashboardId:id,deviceId}},transaction);
+      },
       async issueAudit(userId, id, deviceId) {
         const grant = (await scoped(id).input("deviceId", sql.BigInt, deviceId).query(
           "SELECT QueryModeGrantVersion,CreatedByUserId FROM uqp.DashboardDisplayDevice WHERE DashboardId=@id AND Id=@deviceId")).recordset[0];
