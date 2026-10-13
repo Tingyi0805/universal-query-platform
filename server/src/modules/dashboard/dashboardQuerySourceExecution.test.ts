@@ -15,6 +15,7 @@ const subject = { userId: 1, tokenVersion: 1, tokenHash: "synthetic-session" };
 function fixture() {
   const binding = (key: string, queryDefinitionId: number): ExecutionBinding => ({ dashboardId: 1, sourceId: queryDefinitionId + 100, sourceKey: key,
     queryDefinitionId, bindingRevision: 1, managed: true, dashboardActive: false, enabled: true,
+    deviceMasks: { NAME: "INHERIT", MRN: "INHERIT" }, sourceMasks: { WARD: { NAME: "INHERIT", MRN: "INHERIT" }, ROOM: { NAME: "INHERIT", MRN: "INHERIT" } },
     parameters: { WARD: "SYNTHETIC" }, refreshSeconds: 30, pageSeconds: 5, pageSize: 1, maxRows: 10 });
   const control = {
     enabled: true, schema: true, session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] },
@@ -164,6 +165,10 @@ test("Mock HTTP uses real JWT/TokenVersion middleware and never exposes private 
 });
 test("device PRIMARY and extra sources use stored delegator ACL, isolated snapshots and mandatory audit", async () => {
   const f = fixture();
+  f.deps.getSensitivity = async () => ({ version: f.control.policyVersion, columns: [
+    { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "CUSTOM", customMask: { prefix: 1, suffix: 1, symbol: "#" } },
+    { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "OMIT" },
+  ] });
   f.control.bindings.PRIMARY = { ...f.control.bindings.WARD!, sourceKey: "PRIMARY", sourceId: 1 };
   for (const binding of Object.values(f.control.bindings)) Object.assign(binding, { dashboardActive: true, mode: "QUERY_ONLY", modeRevision: 1, referenced: true });
   let valid = true, modeVersion = 1, grantVersion = 1;
@@ -189,6 +194,9 @@ test("device PRIMARY and extra sources use stored delegator ACL, isolated snapsh
   try {
     const primary = await request("PRIMARY"), room = await request("ROOM");
     assert.equal(primary.status, 200); assert.equal(room.status, 200);
+    assert.deepEqual(primary.body.result.rows, [{ NAME: "測###甲" }]);
+    assert.deepEqual(room.body.result.rows, [{ NAME: "測###甲" }]);
+    assert.ok(!JSON.stringify([primary.body, room.body]).includes("測試患者甲"));
     assert.equal(primary.body.dashboard.parameters, undefined);
     assert.ok(owners.length && owners.every(id => id === 2)); // Never inherits requester/designer 1.
     assert.equal(f.control.audits[0]!.dashboardDeviceId, 7); assert.equal(f.control.audits[0]!.userId, null);
@@ -237,4 +245,25 @@ test("Query-only missing policy rejects before execution, never treating it as a
   const f = fixture(); f.deps.getSensitivity = async () => ({ version: 0, columns: [] });
   await assert.rejects(f.service.page(1, "WARD", subject, { page: 1 }), { code: "QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED", status: 503 });
   assert.deepEqual(f.control.executions, []);
+});
+for (const key of ["PRIMARY", "WARD"]) test(`Query-only ${key}: CUSTOM inheritance, explicit approvals and policy revision guard snapshots`, async () => {
+  const f = fixture(); if (key === "PRIMARY") f.control.bindings.PRIMARY = { ...f.control.bindings.WARD!, sourceKey: "PRIMARY", sourceId: 1 };
+  f.deps.getSensitivity = async () => ({ version: f.control.policyVersion, columns: [
+    { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "CUSTOM", customMask: { prefix: 1, suffix: 1, symbol: "#" } },
+    { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "OMIT" },
+  ] });
+  const select = (mode: string) => { const binding = f.control.bindings[key]!;
+    if (key === "PRIMARY") binding.deviceMasks = { NAME: mode, MRN: "FULL" };
+    else binding.sourceMasks = { WARD: { NAME: mode, MRN: "FULL" } };
+  };
+  select("INHERIT"); const first = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(first.result.rows, [{ NAME: "測###甲" }]);
+  select("FULL"); const full = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(full.result.rows, [{ NAME: "○○○○" }]);
+  select("OMIT"); assert.deepEqual((await f.service.page(1, key, subject, { page: 1 })).result.columns, []);
+  select("INHERIT"); f.control.policyVersion++; await assert.rejects(f.service.page(1, key, subject, { page: 1, snapshotId: first.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
+  f.deps.getSensitivity = async () => ({ version: f.control.policyVersion, columns: [{ columnName: "RENAMED", sensitivityType: "NAME", deviceMaskMode: "FULL" }] });
+  assert.deepEqual((await f.service.page(1, key, subject, { page: 1 })).result.columns, []);
+});
+test("Query-only Dataset policy alone and PRIMARY approvals never authorize additional sources", async () => {
+  const f = fixture(); delete f.control.bindings.WARD!.sourceMasks;
+  assert.deepEqual((await f.service.page(1, "WARD", subject, { page: 1 })).result.rows, [{}]);
 });

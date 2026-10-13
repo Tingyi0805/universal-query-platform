@@ -18,3 +18,13 @@ test("source diagnostics never expose driver messages or unsafe identifiers", ()
   assert.match(sourcePreviewFailure(secret, { code: secret, message: secret }), /UNKNOWN：REQUEST_FAILED/);
   assert.ok(!sourcePreviewFailure("PRIMARY", new Error(secret)).includes(secret));
 });
+test("Dataset CUSTOM offers inheritance without duplicating custom data; OMIT can never be approved", async () => {
+  const { datasetApprovalAllowed, inheritedMaskSample } = await import("./dataSettings");
+  const rule = { sensitivityType: "MRN", deviceMaskMode: "CUSTOM", customMask: { prefix: 1, suffix: 2, symbol: "#" } };
+  for (const mode of ["INHERIT", "FULL", "OMIT"]) assert.equal(datasetApprovalAllowed(mode, rule), true);
+  for (const mode of ["NONE", "NAME", "MRN", "PHONE"]) assert.equal(datasetApprovalAllowed(mode, rule), false);
+  assert.equal(inheritedMaskSample(rule), "0#######56");
+  assert.equal(datasetApprovalAllowed("INHERIT", undefined), false);
+  for (const mode of ["INHERIT", "FULL", "NONE"]) assert.equal(datasetApprovalAllowed(mode, { sensitivityType: "HEALTH", deviceMaskMode: "OMIT" }), false);
+  assert.equal(maskAtLeastAsStrong("INHERIT", "CUSTOM"), true);
+});

@@ -17,6 +17,7 @@ import { dashboardSourcesSchema } from "./dashboardDataSource.schema.js";
 import { isIP } from "node:net";
 import { listDashboardDataSources, replaceDashboardDataSources } from "./dashboardDataSource.repository.js";
 import { validateWidgetDataSources } from "./dashboardWidgetSource.js";
+import { validDashboardColumnMasks, validSourceColumnMasks } from "./dashboardDeviceMasking.js";
 import { createDashboardPreviewRouter } from "./dashboardPreview.routes.js";
 import { createDashboardDevicePageRouter } from "./dashboardDevicePage.routes.js";
 import { listDatasetParameters } from "../dataset/parameter.repository.js";
@@ -164,6 +165,7 @@ const dashboardSchema = z.object({
   showPageNumber: z.boolean().default(true),
   showCountdown: z.boolean().default(true),
   parameters: z.record(z.unknown()).refine((value) => {
+    if (!validSourceColumnMasks(value.deviceSourceColumnMasks)) return false;
     const classifications = value.deviceColumnTypes;
     if (classifications !== undefined) {
       if (!classifications || typeof classifications !== "object" || Array.isArray(classifications)) return false;
@@ -171,9 +173,7 @@ const dashboardSchema = z.object({
     }
     const masks = value.deviceColumnMasks;
     if (masks === undefined) return classifications === undefined || Object.keys(classifications as Record<string, unknown>).length === 0;
-    if (!masks || typeof masks !== "object" || Array.isArray(masks)) return false;
-    const entries = Object.entries(masks);
-    if (entries.length > 300 || !entries.every(([key, mode]) => key.trim().length > 0 && key.length <= 256 && ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"].includes(String(mode)))) return false;
+    if (!validDashboardColumnMasks(masks)) return false;
     if (!classifications) return true;
     const types = classifications as Record<string, string>;
     return Object.keys(types).every((key) => Object.prototype.hasOwnProperty.call(masks, key)) && Object.entries(types).every(([key, category]) => category === "OTHER" || (masks as Record<string, unknown>)[key] !== "NONE");

@@ -2,7 +2,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { getClientIp } from "../../utils/clientIp.js";
-import { assertDatasetSensitivityPolicy, enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks, resolveSupplementalDeviceRules } from "./dashboardDeviceMasking.js";
+import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, dashboardQueryParameters, resolveDashboardDisclosureMasks, maskDeviceRows, resolveDeviceColumnMask } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 
@@ -92,7 +92,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         return;
       }
       if (!snapshot) {
-        const { snapshotKind: _snapshotKind, snapshotSeconds: _snapshotSeconds, deviceColumnMasks: _deviceColumnMasks, deviceColumnTypes: _deviceColumnTypes, ...queryParameters } = dashboard.parameters;
+        const queryParameters = dashboardQueryParameters(dashboard.parameters);
         const result = await dashboardQueryExecutor.run(`${verification.device.id}:PRIMARY:${state.fingerprint}`,
           () => executeSavedDataset(query.datasetId, queryParameters));
         await stillCurrent(state, id.data, token, getRequestSourceIp(req));
@@ -124,9 +124,9 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE", message: "頁碼超出資料範圍。" } });
         return;
       }
+      assertDashboardResultColumns(snapshot.columns);
       const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
-      const dashboardMasks = enforceClassifiedDeviceMasks(resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, layout.profiles), dashboard.parameters.deviceColumnTypes);
-      const masks = enforceDatasetDeviceMasks(dashboardMasks, sensitivity.columns);
+      const masks = resolveDashboardDisclosureMasks(dashboard.parameters, "PRIMARY", sensitivity.columns);
       const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
       const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
       const disclosureId = await auditPatientListIfConfigured({
@@ -171,7 +171,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
       const state = await readState(id.data, token, getRequestSourceIp(req), key.data);
       const { verification, dataset, sensitivity: policy } = state;
       const source = state.source!;
-      const allowed = resolveSupplementalDeviceRules(policy.columns);
+      const masks = resolveDashboardDisclosureMasks(state.dashboard.parameters, source.sourceKey, policy.columns);
       const sourceScope = `datasource:${dataset.dataSourceId}:dashboard-source:${source.sourceKey}`;
       let snapshot = input.data.snapshotId
         ? getDashboardPageSnapshot(input.data.snapshotId, verification.device.id, id.data) : null;
@@ -194,17 +194,15 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
           sourceScope, columns: result.columns, rows: result.rows,
         });
       }
-      const columns = snapshot.columns.filter((column) => allowed.has(column.name.toUpperCase()));
+      assertDashboardResultColumns(snapshot.columns);
+      const columns = snapshot.columns.filter(column => resolveDeviceColumnMask(column.name, masks) !== "OMIT");
       const pageSize = source.pageSize;
       const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / pageSize));
       if (input.data.page > totalPages) {
         res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE" } }); return;
       }
       const rawRows = snapshot.rows.slice((input.data.page - 1) * pageSize, input.data.page * pageSize);
-      const rows = rawRows.map((row) => Object.fromEntries(columns.map((column) => {
-        const rule = allowed.get(column.name.toUpperCase())!;
-        return [column.name, maskDeviceValue(row[column.name], rule.deviceMaskMode, rule.customMask)];
-      })));
+      const rows = maskDeviceRows(rawRows, masks, policy.columns);
       const disclosureId = await auditPatientListIfConfigured({
         datasetId: source.datasetId, dashboardDeviceId: verification.device.id, userId: null,
         sourceScope, deliveryType: "PAGE",
@@ -228,7 +226,7 @@ class DeliveryError extends Error {
 function deliveryFailure(error: unknown, res: import("express").Response, _next: import("express").NextFunction) {
   // Database errors can contain SQL/bind values. Device responses and logs must never expose them.
   const code = error instanceof DeliveryError ? error.code
-    : error instanceof Error && ["DASHBOARD_QUERY_BUSY", "DASHBOARD_QUERY_TIMEOUT", "DASHBOARD_SNAPSHOT_TOO_LARGE", "DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"].includes(error.message)
+    : error instanceof Error && ["DASHBOARD_QUERY_BUSY", "DASHBOARD_QUERY_TIMEOUT", "DASHBOARD_SNAPSHOT_TOO_LARGE", "DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED", "DASHBOARD_COLUMNS_AMBIGUOUS"].includes(error.message)
       ? error.message : "DASHBOARD_DELIVERY_FAILED";
   const status = error instanceof DeliveryError ? error.status : code === "DASHBOARD_QUERY_BUSY" ? 429 : code === "DASHBOARD_QUERY_TIMEOUT" ? 504 : 503;
   res.setHeader("Cache-Control", "no-store");

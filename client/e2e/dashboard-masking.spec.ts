@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const rawName = "合成患者甲", rawMrn = "SYNTHETIC987654";
-async function setup(page: Page) {
-  const state = { authFail: false, fail: false, primaryFail: false, extraFail: false, saved: null as any };
+async function setup(page: Page, managed = false) {
+  const state = { approval: null as any, conflict: false, version: "a".repeat(64), authFail: false, fail: false, primaryFail: false, extraFail: false, saved: null as any };
   const dashboard = { id: 1, code: "SYNTHETIC", name: "合成保護看板", queryDefinitionId: 2, refreshSeconds: 30, displayMode: "TABLE", pageSize: 5, pageSeconds: 10,
     showClock: false, showPageNumber: false, showCountdown: false, isActive: true,
     parameters: { WARD: "OR01", LIST: [1, 2], LEGACY: { keep: true }, deviceColumnMasks: { NAME: "NAME", MRN: "FULL", ROOM: "NONE" }, deviceColumnTypes: { NAME: "NAME", MRN: "MRN", ROOM: "OTHER" }, snapshotKind: "OTHER", snapshotSeconds: 60 } };
@@ -9,7 +9,16 @@ async function setup(page: Page) {
   await page.addInitScript(() => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic-token", user: { id: 5, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] } })));
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const path = new URL(route.request().url()).pathname;
-    if (path === "/api/dashboards/1" && route.request().method() === "PUT") { state.saved = route.request().postDataJSON(); await route.fulfill({ json: { status: "OK" } }); return; }
+    if (path === "/api/dashboards/1" && route.request().method() === "PUT") { state.saved = route.request().postDataJSON(); dashboard.parameters = state.saved.parameters; await route.fulfill({ json: { status: "OK" } }); return; }
+    if (path.endsWith("/query-sources/v1/configuration") && managed) {
+      await route.fulfill({ json: { version: state.version, editable: true, dashboardMode: "QUERY_ONLY_DISABLED", primary: { sourceKey: "PRIMARY", queryDefinitionId: 2, parameters: {}, pageSize: 5, pageSeconds: 10, refreshSeconds: 30, maxRows: 100 }, sources: [] } }); return;
+    }
+    if (path.endsWith("/query-sources/v1/disclosure")) {
+      const body = route.request().postDataJSON();
+      if (state.conflict || body.expectedVersion !== state.version) { await route.fulfill({ status: 409, json: { error: { code: "QUERY_SOURCE_VERSION_CONFLICT" } } }); return; }
+      state.approval = body; state.version = "b".repeat(64); dashboard.parameters.deviceColumnMasks = body.masks;
+      await route.fulfill({ json: { version: state.version } }); return;
+    }
     if (path.endsWith("/query-sources/v1/configuration") || path.endsWith("/query-mode/v1")) { await route.fulfill({ status: 503, json: { error: { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" } } }); return; }
     if (path === "/api/dashboards") { await route.fulfill({ json: { dashboards: [dashboard], total: 1, totalPages: 1 } }); return; }
     if (path === "/api/query-definitions") { await route.fulfill({ json: { queryDefinitions: [{ id: 2, datasetId: 3, name: "合成 Query", code: "Q", isPublished: true, isActive: true, isArchived: false }] } }); return; }
@@ -17,7 +26,7 @@ async function setup(page: Page) {
     if (path === "/api/query-definitions/2/report-columns") { await route.fulfill({ json: { columns: ["NAME", "MRN", "ROOM"].map(columnName => ({ columnName })) } }); return; }
     if (path === "/api/datasets/3/parameters") { await route.fulfill({ json: { parameters: [{ name: "WARD", label: "合成病區", dataType: "STRING", defaultValue: "OR01", isRequired: true }], preview: { detected: ["WARD"] } } }); return; }
     if (path === "/api/datasets/3/sensitive-columns") { await route.fulfill({ json: { version: 1, columns: [{ columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "FULL" }, { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM", customMask: { prefix: 0, suffix: 2, symbol: "*" } }] } }); return; }
-    if (path.endsWith("/data-sources")) { await route.fulfill({ json: { sources: [{ sourceKey: "WARD", isEnabled: true, refreshSeconds: 30 }] } }); return; }
+    if (path.endsWith("/data-sources")) { await route.fulfill({ json: { sources: [{ sourceKey: "WARD", datasetId: 3, isEnabled: true, refreshSeconds: 30 }] } }); return; }
     if (path.endsWith("/layout")) { await route.fulfill({ json: { profiles: [{ id: 1, dashboardId: 1, name: "合成版型", isDefault: true, sortOrder: 0, canvasWidth: 1920, canvasHeight: 1080, config: {}, widgets: [
       { id: 1, widgetType: "TABLE", title: null, x: 0, y: 0, width: 800, height: 500, fontSize: 20, alignment: "LEFT", config: { dataSourceKey: "PRIMARY" }, sortOrder: 0, sourceKey: null },
       { id: 2, widgetType: "TEXT", title: null, x: 0, y: 500, width: 800, height: 60, fontSize: 20, alignment: "LEFT", config: {}, sortOrder: 1, sourceKey: null, staticText: "固定合成標題" },
@@ -100,4 +109,43 @@ test("Legacy JWT preview stops the entire frame after global permission loss", a
   await expect(page.getByText("*************54", { exact: true })).toHaveCount(0);
   await expect(page.getByText("固定合成標題", { exact: true })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("private Bind patient");
+});
+
+test("CUSTOM inheritance and source approvals save/reload without copying custom configuration or changing other JSON", async ({ page }) => {
+  const state = await setup(page); page.on("dialog", dialog => void dialog.accept());
+  await page.goto("/designer/dashboards"); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
+  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
+  const modes = page.getByRole("combobox", { name: /^欄位遮蔽模式/ });
+  await expect(modes.locator('option[value="INHERIT"]')).not.toHaveAttribute("disabled", "");
+  await expect(modes.locator('option[value="MRN"]')).toHaveAttribute("disabled", "");
+  await modes.selectOption("INHERIT"); await expect(page.getByText(/合成資料預覽：\*{8}56/)).toBeVisible();
+  await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
+  await page.getByLabel("遮蔽核准來源", { exact: true }).selectOption("WARD");
+  await expect(page.getByText(/Dataset 最低保護規則（WARD）/)).toBeVisible();
+  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
+  await modes.selectOption("INHERIT"); await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
+  await page.getByRole("button", { name: "儲存修改", exact: true }).click();
+  await expect.poll(() => state.saved).not.toBeNull();
+  expect(state.saved.parameters.deviceColumnMasks).toEqual({ NAME: "NAME", MRN: "INHERIT", ROOM: "NONE" });
+  expect(state.saved.parameters.deviceSourceColumnMasks).toEqual({ WARD: { MRN: "INHERIT" } });
+  expect(state.saved.parameters.LIST).toEqual([1, 2]); expect(state.saved.parameters.LEGACY).toEqual({ keep: true });
+  expect(JSON.stringify(state.saved.parameters)).not.toContain("prefix"); expect(JSON.stringify(state.saved.parameters)).not.toContain("suffix");
+  await page.reload(); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
+  await expect(page.getByRole("row").filter({ hasText: /MRN沿用 Dataset 遮蔽規則/ })).toBeVisible();
+  await page.getByLabel("遮蔽核准來源", { exact: true }).selectOption("WARD");
+  await expect(page.getByRole("row").filter({ hasText: /MRN沿用 Dataset 遮蔽規則/ })).toBeVisible();
+});
+
+test("managed Query-only approval uses expectedVersion, keeps conflict draft and avoids the Legacy writer", async ({ page }) => {
+  const state = await setup(page, true); page.on("dialog", dialog => void dialog.accept());
+  await page.goto("/designer/dashboards"); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
+  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
+  const modes = page.getByRole("combobox", { name: /^欄位遮蔽模式/ }); await modes.selectOption("INHERIT");
+  state.conflict = true; await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
+  await expect(page.getByText(/QUERY_SOURCE_VERSION_CONFLICT/)).toBeVisible();
+  await expect(modes).toHaveValue("INHERIT"); expect(state.approval).toBeNull(); expect(state.saved).toBeNull();
+  state.conflict = false; await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
+  await expect(page.getByText(/本來源欄位核准已安全儲存/)).toBeVisible();
+  expect(state.approval).toEqual({ expectedVersion: "a".repeat(64), sourceKey: "PRIMARY", masks: { NAME: "NAME", MRN: "INHERIT", ROOM: "NONE" } });
+  expect(state.saved).toBeNull();
 });

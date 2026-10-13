@@ -1,3 +1,4 @@
+import { dashboardQueryParameters } from "./dashboardDeviceMasking.js";
 import { QuerySourceError, sourceVersion, type SourceStore, type SourceTransaction } from "./dashboardQuerySources.service.js";
 import { randomBytes, createHash } from "node:crypto";
 
@@ -42,7 +43,7 @@ export function createQueryModeService(store: SourceStore, enabled: () => boolea
         try { await work(); return {ok:true,code:null}; }
         catch (error) { if (!(error instanceof QuerySourceError)) throw error; return {ok:false,code:error.code}; }
       };
-      const {snapshotKind: _kind,snapshotSeconds: _sec,deviceColumnMasks: _masks,deviceColumnTypes: _types,...parameters} = state.dashboard.parameters;
+      const parameters = dashboardQueryParameters(state.dashboard.parameters);
       const sources = [{sourceKey:"PRIMARY",queryDefinitionId:state.dashboard.queryDefinitionId,parameters},...state.sources];
       const queryChecks = [];
       for (const source of sources) queryChecks.push({sourceKey:source.sourceKey,...await inspect(async () => {
@@ -77,7 +78,7 @@ export function createQueryModeService(store: SourceStore, enabled: () => boolea
       const device = (await tx.devices(id)).find(d => d.id === deviceId);
       if (!device) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND", 404);
       await tx.delegation(device);
-      const { snapshotKind: _kind, snapshotSeconds: _sec, deviceColumnMasks: _masks, deviceColumnTypes: _types, ...parameters } = state.dashboard.parameters;
+      const parameters = dashboardQueryParameters(state.dashboard.parameters);
       for (const source of [{ queryDefinitionId: state.dashboard.queryDefinitionId, parameters }, ...state.sources]) {
         if (source.queryDefinitionId === null) throw new QuerySourceError("QUERY_SOURCE_PENDING_CONVERSION");
         const datasetId = await tx.validateQuery(user, source.queryDefinitionId, source.parameters);
@@ -104,7 +105,7 @@ export function createQueryModeService(store: SourceStore, enabled: () => boolea
           throw new QuerySourceError("QUERY_SOURCE_LEGACY_KEY_CONFLICT");
         if (state.references.some(key => key !== "PRIMARY" && !state.sources.some(s => s.sourceKey === key && s.isEnabled)))
           throw new QuerySourceError("QUERY_SOURCE_REFERENCE_INVALID");
-        const { snapshotKind: _kind, snapshotSeconds: _seconds, deviceColumnMasks: _masks, deviceColumnTypes: _types, ...primaryParameters } = state.dashboard.parameters;
+        const primaryParameters = dashboardQueryParameters(state.dashboard.parameters);
         const sources = [{ queryDefinitionId: state.dashboard.queryDefinitionId, parameters: primaryParameters }, ...state.sources];
         for (const source of state.sources) if (source.queryDefinitionId === null || source.maxRows === null || source.queryBindingRevision < 1)
           throw new QuerySourceError("QUERY_SOURCE_PENDING_CONVERSION");

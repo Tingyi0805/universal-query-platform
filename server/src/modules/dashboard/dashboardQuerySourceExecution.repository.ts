@@ -4,6 +4,7 @@ import { querySourceSchemaReady } from "./dashboardQuerySources.repository.js";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import type { ExecutionBinding } from "./dashboardQuerySourceExecution.js";
 import { readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
+import { dashboardQueryParameters } from "./dashboardDeviceMasking.js";
 import { getDashboardLayout } from "./dashboardLayout.repository.js";
 
 export async function loadQueryExecutionBinding(id: number, key: string): Promise<ExecutionBinding> {
@@ -16,15 +17,15 @@ export async function loadQueryExecutionBinding(id: number, key: string): Promis
     let values: Record<string, unknown>;
     try { values = JSON.parse(String(row.ParametersJson)); if (!values || typeof values !== "object" || Array.isArray(values)) throw new Error(); }
     catch { throw new QuerySourceError("QUERY_SOURCE_SAVED_CONFIG_INVALID"); }
-    const { snapshotKind: _kind, snapshotSeconds: _seconds, deviceColumnMasks: _masks, deviceColumnTypes: _types, ...parameters } = values;
+    const parameters = dashboardQueryParameters(values);
     return { dashboardId: id, sourceId: id, sourceKey: "PRIMARY", queryDefinitionId: Number(row.QueryDefinitionId),
       bindingRevision: Math.max(1, mode.version), managed: row.QuerySourceMaxRows != null, mode: mode.mode, modeRevision: mode.version,
-      dashboardActive: Boolean(row.IsActive), enabled: true, parameters, deviceMasks: _masks, deviceTypes: _types, refreshSeconds: Number(row.RefreshSeconds),
+      dashboardActive: Boolean(row.IsActive), enabled: true, parameters, deviceMasks: values.deviceColumnMasks, deviceTypes: values.deviceColumnTypes, refreshSeconds: Number(row.RefreshSeconds),
       pageSeconds: Number(row.PageSeconds), pageSize: Number(row.PageSize), maxRows: row.QuerySourceMaxRows == null ? 1000 : Number(row.QuerySourceMaxRows) };
   }
   // Read only this source's parameters: an invalid sibling cannot break its execution.
   const result = await pool.request().input("dashboardId", sql.BigInt, id).input("key", sql.NVarChar(64), key).query(`
-    SELECT d.IsActive AS DashboardActive,d.QuerySourceMaxRows,s.* FROM uqp.Dashboard d
+    SELECT d.IsActive AS DashboardActive,d.QuerySourceMaxRows,d.ParametersJson AS DashboardParametersJson,s.* FROM uqp.Dashboard d
     INNER JOIN uqp.DashboardDataSource s ON s.DashboardId=d.Id WHERE d.Id=@dashboardId AND s.SourceKey=@key`);
   const row = result.recordset[0];
   if (!row || String(row.SourceKey) !== key) throw new QuerySourceError("DASHBOARD_SOURCE_NOT_FOUND", 404);
@@ -39,7 +40,11 @@ export async function loadQueryExecutionBinding(id: number, key: string): Promis
   return { dashboardId: id, sourceId: Number(row.Id), sourceKey: key, mode: mode.mode, modeRevision: mode.version, referenced,
     queryDefinitionId: row.QueryDefinitionId == null ? null : Number(row.QueryDefinitionId),
     bindingRevision: Number(row.QueryBindingRevision), managed: row.QuerySourceMaxRows != null,
-    dashboardActive: Boolean(row.DashboardActive), enabled: Boolean(row.IsEnabled), parameters,
+    dashboardActive: Boolean(row.DashboardActive), enabled: Boolean(row.IsEnabled), parameters, sourceMasks: (() => {
+      try { const policies = JSON.parse(String(row.DashboardParametersJson)).deviceSourceColumnMasks;
+        return { [key]: policies?.[key] }; }
+      catch { throw new QuerySourceError("QUERY_SOURCE_SAVED_CONFIG_INVALID"); }
+    })(),
     refreshSeconds: Number(row.RefreshSeconds), pageSize: Number(row.PageSize), pageSeconds: Number(row.PageSeconds),
     maxRows: row.MaxRows == null ? null : Number(row.MaxRows) };
 }

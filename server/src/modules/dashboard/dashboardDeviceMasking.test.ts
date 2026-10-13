@@ -143,3 +143,35 @@ test("simplified editor OTHER rules still enforce CUSTOM and FULL over raw dashb
   const masks = enforceDatasetDeviceMasks({ MRN: "NONE", NAME: "NONE" }, rules);
   assert.deepEqual(maskDeviceRows([{ MRN: "00000123", NAME: "合成患者" }], masks, rules), [{ MRN: "******23", NAME: "○○○○" }]);
 });
+
+test("dual policies inherit original CUSTOM settings, never weaken OMIT and never grant unapproved sources", async () => {
+  const { resolveDashboardDisclosureMasks, validDashboardColumnMasks, validSourceColumnMasks } = await import("./dashboardDeviceMasking.js");
+  const rules = [
+    { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM" as const, customMask: { prefix: 1, suffix: 2, symbol: "#" } },
+    { columnName: "SECRET", sensitivityType: "HEALTH", deviceMaskMode: "OMIT" as const },
+  ];
+  const raw = [{ MRN: "SYNTHETIC987654", SECRET: "synthetic-diagnosis", UNAPPROVED: "synthetic-private" }];
+  for (const key of ["PRIMARY", "WARD"]) {
+    for (const mode of ["INHERIT", "CUSTOM", "FULL", "OMIT"] as const) {
+      const approval = { MRN: mode, SECRET: "INHERIT" };
+      const config = key === "PRIMARY" ? { deviceColumnMasks: approval } : { deviceSourceColumnMasks: { WARD: approval } };
+      const masks = resolveDashboardDisclosureMasks(config, key, rules);
+      const rows = maskDeviceRows(raw, masks, rules);
+      assert.deepEqual(rows, mode === "OMIT" ? [{}] : [{ MRN: mode === "FULL" ? "○○○○" : "S############54" }]);
+      assert.ok(!JSON.stringify(rows).includes("SYNTHETIC987654"));
+    }
+  }
+  assert.deepEqual(resolveDashboardDisclosureMasks({ deviceColumnMasks: { MRN: "INHERIT" } }, "WARD", rules), {});
+  assert.equal(resolveDashboardDisclosureMasks({ deviceColumnMasks: { MRN: "INHERIT" } }, "PRIMARY", []).MRN, "OMIT");
+  assert.equal(resolveDashboardDisclosureMasks({ deviceColumnMasks: { SECRET: "FULL" } }, "PRIMARY", rules).SECRET, "OMIT");
+  assert.equal(validDashboardColumnMasks({ MRN: "INHERIT" }), true);
+  assert.equal(validSourceColumnMasks({ WARD: { MRN: "INHERIT" } }), true);
+  assert.equal(validSourceColumnMasks({ PRIMARY: { MRN: "INHERIT" } }), false);
+  assert.equal(validSourceColumnMasks({ WARD: { MRN: "INHERIT" }, ward: {} }), false);
+});
+test("ambiguous result aliases cannot borrow a case-insensitive column approval", async () => {
+  const { assertDashboardResultColumns } = await import("./dashboardDeviceMasking.js");
+  assert.throws(() => assertDashboardResultColumns([{ name: "ROOM" }, { name: "room" }]), /DASHBOARD_COLUMNS_AMBIGUOUS/);
+  assert.throws(() => assertDashboardResultColumns([{ name: "ROOM" }, { name: "ROOM" }]), /DASHBOARD_COLUMNS_AMBIGUOUS/);
+  assert.doesNotThrow(() => assertDashboardResultColumns([{ name: "ROOM" }, { name: "MRN" }]));
+});

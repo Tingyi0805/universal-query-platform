@@ -18,7 +18,7 @@ async function openFixture() {
   const state = {
     valid: true, queryManaged: false, accessRevision: "acl-v1", sqlCalls: 0, audits: [] as Parameters<DevicePageDependencies["auditPatientListIfConfigured"]>[0][],
     dashboard: { id: 1, queryDefinitionId: 2, isActive: true, pageSize: 1, pageSeconds: 5, refreshSeconds: 10,
-      parameters: { deviceColumnMasks: { NAME: "NAME", MRN: "CUSTOM", ROOM: "NONE" } } } as unknown as Dashboard,
+      parameters: { deviceColumnMasks: { NAME: "NAME", MRN: "CUSTOM", ROOM: "NONE" }, deviceSourceColumnMasks: { ORACLE: { NAME: "INHERIT", MRN: "INHERIT" } } } } as unknown as Dashboard,
     dataset: { id: 3, dataSourceId: 4, sqlText: "SELECT NAME, MRN, ROOM FROM synthetic", isActive: true, isArchived: false } as Dataset,
     query: { id: 2, datasetId: 3, isPublished: true, isActive: true, isArchived: false, code: "SYNTHETIC", name: "Synthetic" } as Query,
     layout: { profiles: [{ isDefault: true, widgets: [{ widgetType: "TABLE", config: { dataSourceKey: "ORACLE" } }] }] } as unknown as Layout,
@@ -26,6 +26,7 @@ async function openFixture() {
     policy: { version: 1, columns: [
       { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "NAME" as const },
       { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM" as const, customMask: { prefix: 0, suffix: 2, symbol: "*" } },
+      { columnName: "ROOM", sensitivityType: "OTHER", deviceMaskMode: "NONE" as const },
       { columnName: "SECRET", sensitivityType: "HEALTH", deviceMaskMode: "OMIT" as const },
     ] },
     sources: [{ id: 10, dashboardId: 1, sourceKey: "ORACLE", datasetId: 3, refreshSeconds: 10, pageSize: 1, pageSeconds: 5, parameters: { WARD: "TEST" }, isEnabled: true }],
@@ -152,4 +153,24 @@ for (const path of [primary, supplemental]) test(`${path}: a never-reviewed empt
   f.state.policy = { version: 0, columns: [] };
   const r = await f.request(path, { page: 1 }); assert.equal(r.status, 503); assert.equal(r.body.error.code, "DASHBOARD_SENSITIVITY_POLICY_REQUIRED");
   assert.equal(f.state.sqlCalls, 0);
+}));
+for (const path of [primary, supplemental]) test(`${path}: explicit CUSTOM inheritance, FULL, OMIT and policy rename invalidate old grants`, () => fixture(async f => {
+  for (const mode of ["INHERIT", "FULL", "OMIT"]) {
+    if (path === primary) f.state.dashboard.parameters.deviceColumnMasks = { NAME: "INHERIT", MRN: mode, SECRET: "FULL" };
+    else f.state.dashboard.parameters.deviceSourceColumnMasks = { ORACLE: { NAME: "INHERIT", MRN: mode, SECRET: "FULL" } };
+    const r = await f.request(path, { page: 1 }); assert.equal(r.status, 200);
+    assert.equal(r.body.result.rows[0].MRN, mode === "INHERIT" ? "******23" : mode === "FULL" ? "○○○○" : undefined);
+    assert.equal(r.body.result.rows[0].SECRET, undefined);
+    for (const value of ["00000123", "測試患者甲"]) assert.ok(!JSON.stringify(r.body).includes(value));
+  }
+  if (path === primary) f.state.dashboard.parameters.deviceColumnMasks = { MRN: "INHERIT" };
+  else f.state.dashboard.parameters.deviceSourceColumnMasks = { ORACLE: { MRN: "INHERIT" } };
+  const first = await f.request(path, { page: 1 }); assert.equal(first.status, 200);
+  const rule = f.state.policy.columns.find(c => c.columnName === "MRN")!; rule.columnName = "RENAMED"; f.state.policy.version++;
+  assert.equal((await f.request(path, { page: 1, snapshotId: first.body.snapshotId })).status, 409);
+  const current = await f.request(path, { page: 1 }); assert.equal(current.status, 200); assert.deepEqual(current.body.result.columns, []);
+}));
+test("Legacy extra sources never inherit PRIMARY's approvals or Dataset grants alone", () => fixture(async f => {
+  delete f.state.dashboard.parameters.deviceSourceColumnMasks;
+  const r = await f.request(supplemental, { page: 1 }); assert.equal(r.status, 200); assert.deepEqual(r.body.result.columns, []); assert.deepEqual(r.body.result.rows, [{}]);
 }));

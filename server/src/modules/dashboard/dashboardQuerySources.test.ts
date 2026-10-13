@@ -231,6 +231,13 @@ test("Mock HTTP boundary: RBAC, safe errors, disabled/missing schema and sibling
     const primary = await fetch(`${base}/1/query-sources/v1/primary`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(primaryInput(f))});
     assert.equal(primary.status,200);
     assert.equal((await request(f.patch())).status, 200);
+    const approvalPayload = { expectedVersion: sourceVersion(f.state()), sourceKey: "PRIMARY", masks: { MRN: "INHERIT" } };
+    const wrong = await fetch(`${base}/1/query-sources/v1/disclosure`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...approvalPayload, datasetId: 3 }) });
+    assert.equal(wrong.status, 400);
+    const approved = await fetch(`${base}/1/query-sources/v1/disclosure`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(approvalPayload) });
+    assert.equal(approved.status, 200);
+    const staleApproval = await fetch(`${base}/1/query-sources/v1/disclosure`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(approvalPayload) });
+    assert.equal(staleApproval.status, 409);
     const layout = await fetch(`${base}/1/query-sources/v1/layout`,{method:"PUT",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({expectedVersion:sourceVersion(f.state()),profiles:profiles()})});
     assert.equal(layout.status,200);
@@ -367,4 +374,25 @@ test("layout fingerprint catches geometry-only concurrent edits despite unchange
   const version = sourceVersion(f.state());
   f.state().layoutFingerprint = "new geometry fingerprint";
   await assert.rejects(f.service.layout(1,1,{expectedVersion:version,profiles:profiles()}),{code:"QUERY_SOURCE_VERSION_CONFLICT"});
+});
+test("versioned disclosure update preserves source identity, custom settings and other policies", async () => {
+  const f = fixture(); await f.service.patch(1, 7, f.patch());
+  const before = structuredClone(f.state());
+  const v = sourceVersion(f.state());
+  await f.service.disclosure(1, 7, { expectedVersion: v, sourceKey: "WARD", masks: { MRN: "INHERIT" } });
+  assert.deepEqual(f.state().sources, before.sources);
+  assert.deepEqual(f.state().dashboard.parameters.deviceColumnMasks, before.dashboard.parameters.deviceColumnMasks);
+  assert.deepEqual(f.state().dashboard.parameters.deviceSourceColumnMasks, { WARD: { MRN: "INHERIT" } });
+  await assert.rejects(f.service.disclosure(1, 7, { expectedVersion: v, sourceKey: "WARD", masks: {} }), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
+  f.control.auditFailure = true; const saved = structuredClone(f.state());
+  await assert.rejects(f.service.disclosure(1, 7, { expectedVersion: sourceVersion(saved), sourceKey: "PRIMARY", masks: { NAME: "INHERIT" } }));
+  assert.deepEqual(f.state(), saved);
+});
+test("disclosure management retains staging, schema and ACL guards", async () => {
+  const f = fixture(); await f.service.patch(1, 7, f.patch());
+  const input = () => ({ expectedVersion: sourceVersion(f.state()), sourceKey: "WARD", masks: { MRN: "INHERIT" } });
+  f.control.enabled = false; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" }); f.control.enabled = true;
+  f.control.schema = false; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_SCHEMA_REQUIRED" }); f.control.schema = true;
+  f.state().dashboard.isActive = true; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE" }); f.state().dashboard.isActive = false;
+  f.control.queries.get(21)!.allowed = false; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_QUERY_FORBIDDEN" });
 });

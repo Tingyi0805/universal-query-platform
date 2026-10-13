@@ -31,6 +31,15 @@ export function createQuerySourceRouter(service: ReturnType<typeof createQuerySo
       res.json(await service.configuration(parsed.data, req.authUser!.id));
     } catch (error) { failure(error, res, req.id); }
   });
+  router.patch("/:id/query-sources/v1/disclosure", async (req, res) => {
+    try {
+      const parsed = id.safeParse(req.params.id);
+      const input = z.object({ expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),
+        sourceKey: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/), masks: z.record(z.unknown()) }).strict().safeParse(req.body);
+      if (!parsed.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
+      res.json(await service.disclosure(parsed.data, req.authUser!.id, input.data));
+    } catch (error) { failure(error, res, req.id); }
+  });
   router.patch("/:id/query-sources/v1/primary", async (req, res) => {
     try {
       const parsed = id.safeParse(req.params.id);

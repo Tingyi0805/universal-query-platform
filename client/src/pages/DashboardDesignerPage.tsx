@@ -132,6 +132,7 @@ type FormState = {
   estimatedRows: string;
   deviceColumnMasksJson: string;
   deviceColumnTypesJson: string;
+  deviceSourceColumnMasksJson: string;
   isActive: boolean;
 };
 
@@ -155,6 +156,7 @@ const emptyForm: FormState = {
   estimatedRows: "25",
   deviceColumnMasksJson: "{}",
   deviceColumnTypesJson: "{}",
+  deviceSourceColumnMasksJson: "{}",
   isActive: true,
 };
 
@@ -343,6 +345,7 @@ export function DashboardDesignerPage() {
       snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
       estimatedRows: "25",
       deviceColumnMasksJson: JSON.stringify(item.parameters?.deviceColumnMasks === undefined ? {} : item.parameters.deviceColumnMasks, null, 2),
+      deviceSourceColumnMasksJson: JSON.stringify(item.parameters?.deviceSourceColumnMasks === undefined ? {} : item.parameters.deviceSourceColumnMasks, null, 2),
       deviceColumnTypesJson: JSON.stringify(item.parameters?.deviceColumnTypes === undefined ? {} : item.parameters.deviceColumnTypes, null, 2),
       isActive: item.isActive,
     });
@@ -383,13 +386,18 @@ export function DashboardDesignerPage() {
       try {
         const parsed = JSON.parse(form.deviceColumnMasksJson || "{}");
         if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("INVALID");
-        const modes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT"];
+        const modes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM", "INHERIT"];
         if (Object.entries(parsed).some(([column, mode]) => !column || column.length > 256 || !modes.includes(String(mode)))) throw new Error("INVALID");
         deviceColumnMasks = parsed as Record<string, string>;
       } catch {
-        setError("敏感欄位規則須為 JSON 物件，欄位值限 NONE、NAME、MRN、PHONE、GENERIC、FULL、OMIT。");
+        setError("敏感欄位規則须為 JSON 物件；沿用 Dataset 請使用 INHERIT，另可使用 FULL／OMIT。既有合法模式保留。");
         return;
       }
+      try {
+        const sources: unknown = JSON.parse(form.deviceSourceColumnMasksJson || "{}");
+        if (!sources || typeof sources !== "object" || Array.isArray(sources)) throw new Error();
+        parameters.deviceSourceColumnMasks = sources;
+      } catch { setError("來源別欄位核准 JSON 無法安全解析，原內容保留。"); return; }
       parameters.deviceColumnMasks = deviceColumnMasks;
       try {
         const types = JSON.parse(form.deviceColumnTypesJson || "{}");
@@ -1199,8 +1207,8 @@ export function DashboardDesignerPage() {
                 {effectiveSnapshotSeconds < estimatedCycleSeconds && <p role="alert">目前快照時間短於一輪播放時間，可能中途過期。</p>}
               </div>
 
-              <DashboardDataSettingsEditor key={form.queryDefinitionId} queryId={Number(form.queryDefinitionId)} accessToken={accessToken}
-                parametersJson={form.parametersJson} masksJson={form.deviceColumnMasksJson} typesJson={form.deviceColumnTypesJson}
+              <DashboardDataSettingsEditor key={form.queryDefinitionId} dashboardId={form.id} queryId={Number(form.queryDefinitionId)} accessToken={accessToken}
+                parametersJson={form.parametersJson} masksJson={form.deviceColumnMasksJson} typesJson={form.deviceColumnTypesJson} sourceMasksJson={form.deviceSourceColumnMasksJson}
                 onChange={patch => setForm(current => ({ ...current, ...patch }))} />
 
               <div className="dashboard-display-options wide">

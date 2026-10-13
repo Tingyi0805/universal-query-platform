@@ -5,11 +5,11 @@ import { runtimeParameterDefinitions } from "../dataset/parameterSync.js";
 import { coerceRuntimeParameters } from "../dataset/parameter.service.js";
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot } from "./dashboardPageSnapshot.js";
-import { assertDatasetSensitivityPolicy, enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, resolveConfiguredDeviceMasks, resolveDeviceColumnMask, resolveSupplementalDeviceRules } from "./dashboardDeviceMasking.js";
+import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, resolveDashboardDisclosureMasks, maskDeviceRows, resolveDeviceColumnMask } from "./dashboardDeviceMasking.js";
 
 export type ExecutionBinding = {
   dashboardId: number; sourceId: number; sourceKey: string; queryDefinitionId: number | null; bindingRevision: number;
-  deviceMasks?: unknown; deviceTypes?: unknown;
+  deviceMasks?: unknown; deviceTypes?: unknown; sourceMasks?: unknown;
   managed: boolean; dashboardActive: boolean; enabled: boolean; parameters: Record<string, unknown>;
   mode?: string; modeRevision?: number; referenced?: boolean;
   refreshSeconds: number; pageSeconds: number; pageSize: number; maxRows: number | null;
@@ -107,21 +107,9 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / binding.pageSize));
       if (input.page > totalPages) throw new QuerySourceError("DASHBOARD_PAGE_OUT_OF_RANGE", 400);
       const rawRows = snapshot.rows.slice((input.page - 1) * binding.pageSize, input.page * binding.pageSize);
-      const allowed = resolveSupplementalDeviceRules(sensitivity.columns);
-      // Dataset approvals remain the allowlist. PRIMARY's saved Dashboard policy
-      // may strengthen or omit those fields; it cannot grant an unapproved field.
-      const base = Object.fromEntries([...allowed.values()].map(rule => [rule.columnName, rule.deviceMaskMode]));
-      if (key === "PRIMARY" && binding.deviceMasks !== undefined) {
-        if (!binding.deviceMasks || typeof binding.deviceMasks !== "object" || Array.isArray(binding.deviceMasks))
-          throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MASKS_INVALID", 503);
-        const configured = enforceClassifiedDeviceMasks(resolveConfiguredDeviceMasks(binding.deviceMasks), binding.deviceTypes);
-        if (Object.keys(configured).length !== Object.keys(binding.deviceMasks).length)
-          throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MASKS_INVALID", 503);
-        for (const name of Object.keys(base)) {
-          if (Object.keys(configured).some(c => c.toUpperCase() === name.toUpperCase())) base[name] = resolveDeviceColumnMask(name, configured);
-        }
-      }
-      const masks = enforceDatasetDeviceMasks(base, sensitivity.columns);
+      const masks = resolveDashboardDisclosureMasks({ deviceColumnMasks: binding.deviceMasks,
+        deviceColumnTypes: binding.deviceTypes, deviceSourceColumnMasks: binding.sourceMasks }, key, sensitivity.columns);
+      assertDashboardResultColumns(snapshot.columns);
       const columns = snapshot.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
       const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
       let disclosureId: number | null;

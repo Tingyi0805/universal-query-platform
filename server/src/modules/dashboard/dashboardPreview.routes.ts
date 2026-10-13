@@ -3,8 +3,8 @@ import { Router, type Request } from "express";
 import jwt from "jsonwebtoken";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { assertDatasetSensitivityPolicy, enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks,
-  maskDeviceRows, resolveDeviceColumnMask, resolveEffectiveDeviceMasks, resolveSupplementalDeviceRules, maskDeviceValue } from "./dashboardDeviceMasking.js";
+import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, dashboardQueryParameters, resolveDashboardDisclosureMasks,
+  maskDeviceRows, resolveDeviceColumnMask } from "./dashboardDeviceMasking.js";
 
 type Repositories = typeof import("./dashboard.repository.js");
 export type DashboardPreviewDependencies = {
@@ -59,22 +59,14 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
       const id = z.coerce.number().int().positive().safe().parse(req.params.id);
       const initial = await readState(req, id, key);
       const { dashboard, query, source, dataset, policy } = initial;
-      const { snapshotKind: _kind, snapshotSeconds: _seconds, deviceColumnMasks: _masks, deviceColumnTypes: _types, ...parameters } = dashboard.parameters;
+      const parameters = dashboardQueryParameters(dashboard.parameters);
       // No raw-result cache/fallback; shared paging runtime remains unchanged.
       const raw = await deps.execute(dataset.id, source?.parameters ?? parameters, source ? 100 : undefined);
       if ((await readState(req, id, key)).fingerprint !== initial.fingerprint) throw new PreviewFailure("DASHBOARD_PREVIEW_STATE_CHANGED", 409);
-      const masks = enforceDatasetDeviceMasks(enforceClassifiedDeviceMasks(
-        resolveEffectiveDeviceMasks(dashboard.parameters.deviceColumnMasks, []), dashboard.parameters.deviceColumnTypes), policy.columns);
-      let columns = raw.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
-      let rows = maskDeviceRows(raw.rows, masks, policy.columns);
-      if (source) {
-        const allowed = resolveSupplementalDeviceRules(policy.columns);
-        columns = raw.columns.filter(c => allowed.has(c.name.toUpperCase()));
-        rows = raw.rows.map(row => Object.fromEntries(columns.map(c => {
-          const rule = allowed.get(c.name.toUpperCase())!;
-          return [c.name, maskDeviceValue(row[c.name], rule.deviceMaskMode, rule.customMask)];
-        })));
-      }
+      assertDashboardResultColumns(raw.columns);
+      const masks = resolveDashboardDisclosureMasks(dashboard.parameters, key ?? "PRIMARY", policy.columns);
+      const columns = raw.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
+      const rows = maskDeviceRows(raw.rows, masks, policy.columns);
       let disclosureId: number | null;
       try { disclosureId = await deps.audit({ datasetId: dataset.id, queryDefinitionId: query.id, userId: req.authUser!.id,
         sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "DASHBOARD", masked: true, rows: raw.rows }); }
@@ -93,7 +85,7 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
     } catch (error) {
       const parameter = error instanceof Error && /^PARAMETER_[A-Z_]+(?::|$)/.test(error.message);
       const code = error instanceof PreviewFailure || error instanceof QuerySourceError ? error.code : parameter ? "DASHBOARD_PARAMETERS_INVALID" :
-        error instanceof z.ZodError ? "VALIDATION_ERROR" : error instanceof Error && ["DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"].includes(error.message) ? error.message : "DASHBOARD_PREVIEW_FAILED";
+        error instanceof z.ZodError ? "VALIDATION_ERROR" : error instanceof Error && ["DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED", "DASHBOARD_COLUMNS_AMBIGUOUS"].includes(error.message) ? error.message : "DASHBOARD_PREVIEW_FAILED";
       const status = error instanceof PreviewFailure || error instanceof QuerySourceError ? error.status : parameter || error instanceof z.ZodError ? 400 : 503;
       res.status(status).json({ error: { code, message: "Dashboard 來源預覽未完成；請檢查授權、參數與保護設定。", requestId: req.id } });
     }

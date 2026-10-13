@@ -1,4 +1,7 @@
 export type DeviceMaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC" | "FULL" | "OMIT" | "CUSTOM";
+export type DashboardMaskMode = DeviceMaskMode | "INHERIT";
+export const dashboardMaskModes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM", "INHERIT"] as const;
+const dashboardModes = new Set<string>(dashboardMaskModes);
 const allowedModes = new Set<DeviceMaskMode>(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM"]);
 export type CustomMaskConfig = { prefix: number; suffix: number; symbol: string };
 /** Invalid/overlapping custom settings fail closed rather than returning original text. */
@@ -59,13 +62,13 @@ export function resolveDeviceColumnMasks(profiles: Array<{ isDefault: boolean; w
 }
 
 /** A case-insensitive ambiguous approval is denied rather than choosing an arbitrary mask. */
-export function resolveDeviceColumnMask(column: string, masks: Record<string, DeviceMaskMode>): DeviceMaskMode {
+export function resolveDeviceColumnMask(column: string, masks: Record<string, DashboardMaskMode>): DeviceMaskMode {
   const matches = Object.entries(masks).filter(([name]) => name.toUpperCase() === column.toUpperCase());
   if (matches.length !== 1) return "OMIT";
-  return matches[0]![1];
+  return matches[0]![1] === "INHERIT" ? "OMIT" : matches[0]![1];
 }
 
-export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DeviceMaskMode>,
+export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<string, DashboardMaskMode>,
   datasetRules: Array<{ columnName: string; customMask?: CustomMaskConfig | null }> = []): Record<string, unknown>[] {
   return rows.map((row) => Object.fromEntries(Object.entries(row).flatMap(([key, value]) => {
     const mode = resolveDeviceColumnMask(key, masks);
@@ -76,12 +79,12 @@ export function maskDeviceRows(rows: Record<string, unknown>[], masks: Record<st
 }
 
 /** Explicit dashboard-level column policies. Unlisted fields are never sent to device clients. */
-export function resolveConfiguredDeviceMasks(value: unknown): Record<string, DeviceMaskMode> {
+export function resolveConfiguredDeviceMasks(value: unknown): Record<string, DashboardMaskMode> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const result: Record<string, DeviceMaskMode> = {};
+  const result: Record<string, DashboardMaskMode> = {};
   for (const [column, mode] of Object.entries(value)) {
-    if (column.length > 0 && column.length <= 256 && allowedModes.has(mode as DeviceMaskMode)) {
-      result[column] = mode as DeviceMaskMode;
+    if (column.length > 0 && column.length <= 256 && dashboardModes.has(String(mode))) {
+      result[column] = mode as DashboardMaskMode;
     }
   }
   return result;
@@ -91,14 +94,14 @@ export function resolveConfiguredDeviceMasks(value: unknown): Record<string, Dev
 export function resolveEffectiveDeviceMasks(
   configured: unknown,
   _profiles: Array<{ isDefault: boolean; widgets: Array<{ widgetType: string; sourceKey: string | null; config: Record<string, unknown> }> }>,
-): Record<string, DeviceMaskMode> {
+): Record<string, DashboardMaskMode> {
   return resolveConfiguredDeviceMasks(configured);
 }
 
 /** Classified fields may never be disclosed raw, even if an older saved dashboard bypassed write validation. */
-export function enforceClassifiedDeviceMasks(masks: Record<string, DeviceMaskMode>, classifications: unknown): Record<string, DeviceMaskMode> {
+export function enforceClassifiedDeviceMasks<T extends DashboardMaskMode>(masks: Record<string, T>, classifications: unknown): Record<string, T | "OMIT"> {
   if (!classifications || typeof classifications !== "object" || Array.isArray(classifications)) return masks;
-  const safe = { ...masks };
+  const safe: Record<string, T | "OMIT"> = { ...masks };
   for (const [column, category] of Object.entries(classifications)) {
     if (category !== "OTHER" && typeof category === "string" && category.length > 0) {
       for (const key of Object.keys(safe)) {
@@ -111,34 +114,58 @@ export function enforceClassifiedDeviceMasks(masks: Record<string, DeviceMaskMod
 
 /** Dataset policy is authoritative; a dashboard cannot weaken it. */
 export function enforceDatasetDeviceMasks(
-  dashboardMasks: Record<string, DeviceMaskMode>,
+  dashboardMasks: Record<string, DashboardMaskMode>,
   datasetRules: Array<{ columnName: string; sensitivityType: string; deviceMaskMode: DeviceMaskMode }>,
 ): Record<string, DeviceMaskMode> {
-  const result = { ...dashboardMasks };
-  for (const rule of datasetRules) {
-    // SQL Server column names are commonly case-insensitive; use the approved
-    // Dashboard spelling so a differently-cased Dataset rule cannot be bypassed.
-    const approvedColumn = Object.keys(result).find((key) => key.toUpperCase() === rule.columnName.toUpperCase());
-    if (approvedColumn === undefined) continue;
-    const column = approvedColumn;
-    if (rule.deviceMaskMode === "OMIT" || (rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
-      result[column] = "OMIT";
-    } else if (rule.deviceMaskMode !== "NONE") {
-      // The simplified editor uses OTHER for new fields. Its explicit masking policy
-      // remains authoritative even when no semantic sensitivity label is supplied.
-      // Dataset policy restricts existing dashboard approvals; it does not grant new fields.
-      if (result[column] !== undefined && result[column] !== "OMIT") {
-        // FULL is stronger than any partial mask; different partial masks are not safely comparable.
-        const current = result[column];
-        result[column] = current === "FULL" || rule.deviceMaskMode === "FULL"
-          ? "FULL"
-          : current === "NONE" || current === rule.deviceMaskMode
-            ? rule.deviceMaskMode
-            : "FULL";
-      }
-    }
+  return Object.fromEntries(Object.entries(dashboardMasks).map(([column, approval]) => {
+    const matches = datasetRules.filter(rule => rule.columnName.toUpperCase() === column.toUpperCase());
+    const rule = matches.length === 1 ? matches[0] : undefined;
+    let mode: DeviceMaskMode = "OMIT";
+    if (matches.length > 1 || approval === "OMIT" || rule?.deviceMaskMode === "OMIT") return [column, mode];
+    if (approval === "INHERIT") mode = rule?.deviceMaskMode ?? "OMIT";
+    // Historical CUSTOM means the Dataset's CUSTOM, never an independent configuration.
+    else if (approval === "CUSTOM") mode = rule?.deviceMaskMode === "CUSTOM" ? "CUSTOM" : "OMIT";
+    else if (!rule || rule.deviceMaskMode === "NONE") mode = approval;
+    else mode = approval === "FULL" || rule.deviceMaskMode === "FULL" ? "FULL"
+      : approval === "NONE" || approval === rule.deviceMaskMode ? rule.deviceMaskMode : "FULL";
+    if (rule && rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE") mode = "OMIT";
+    return [column, mode];
+  }));
+}
+
+/** Explicit source-scoped approvals. Dataset rules never implicitly grant a column. */
+export function resolveDashboardDisclosureMasks(parameters: Record<string, unknown>, sourceKey: string,
+  rules: Array<{ columnName: string; sensitivityType: string; deviceMaskMode: DeviceMaskMode }>): Record<string, DeviceMaskMode> {
+  const scoped = parameters.deviceSourceColumnMasks;
+  const value = sourceKey === "PRIMARY" ? parameters.deviceColumnMasks
+    : scoped && typeof scoped === "object" && !Array.isArray(scoped) && Object.hasOwn(scoped, sourceKey)
+      ? (scoped as Record<string, unknown>)[sourceKey] : undefined;
+  const types = sourceKey === "PRIMARY" ? parameters.deviceColumnTypes : undefined;
+  const effective = enforceDatasetDeviceMasks(enforceClassifiedDeviceMasks(resolveConfiguredDeviceMasks(value), types), rules);
+  // No current Dataset rule means a field has no reliable first-layer approval.
+  // Keep historical JSON intact, but never reuse that grant after a rule was removed/renamed.
+  for (const column of Object.keys(effective)) {
+    if (rules.filter(rule => rule.columnName.toUpperCase() === column.toUpperCase()).length !== 1) effective[column] = "OMIT";
   }
-  return result;
+  return enforceClassifiedDeviceMasks(effective, types);
+}
+
+export function validDashboardColumnMasks(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= 300 && new Set(entries.map(([key]) => key.toUpperCase())).size === entries.length
+    && entries.every(([key, mode]) => key.trim().length > 0 && key.length <= 256 && typeof mode === "string" && dashboardModes.has(mode));
+}
+export function validSourceColumnMasks(value: unknown): boolean {
+  if (value === undefined) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const entries = Object.entries(value);
+  return entries.length <= 7 && new Set(entries.map(([key]) => key.toUpperCase())).size === entries.length
+    && entries.every(([key, masks]) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) && key.toUpperCase() !== "PRIMARY" && validDashboardColumnMasks(masks));
+}
+export const dashboardReservedParameters = ["snapshotKind", "snapshotSeconds", "deviceColumnMasks", "deviceColumnTypes", "deviceSourceColumnMasks"];
+export function dashboardQueryParameters(parameters: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(parameters).filter(([key]) => !dashboardReservedParameters.includes(key)));
 }
 
 /** Supplemental approvals require a unique Dataset rule; ambiguous or raw rules never grant fields. */
@@ -169,4 +196,10 @@ export function assertDatasetSensitivityPolicy(policy: { version: number; column
         || typeof config.symbol !== "string" || Array.from(config.symbol).length !== 1 || /[\r\n\t]/u.test(config.symbol)) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
     }
   }
+}
+
+/** Case-insensitive policy matching cannot safely authorize ambiguous result aliases. */
+export function assertDashboardResultColumns(columns: Array<{ name: string }>) {
+  const names = columns.map(column => column.name.toUpperCase());
+  if (new Set(names).size !== names.length) throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
 }
