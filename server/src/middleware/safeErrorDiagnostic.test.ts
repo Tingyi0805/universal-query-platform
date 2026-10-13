@@ -48,3 +48,35 @@ test("native error classes are distinguished without trusting error.name or mess
     assert.ok(!JSON.stringify(safeErrorDiagnostic(error)).includes("synthetic_secret"));
   }
 });
+
+test("Oracle structured and legacy codes are safe; arbitrary messages and error numbers are omitted", () => {
+  const secret = "SELECT synthetic_patient bind password Token connection";
+  for (const code of ["ORA-00942", "NJS-011", "DPI-1047"]) {
+    const error = Object.assign(new Error(`${code}: ${secret}`), { errorNum: 942 });
+    assert.deepEqual(safeErrorDiagnostic(error), { module: "request", errorType: "DATABASE", oracleCode: code, oracleErrorNum: 942 });
+    assert.equal(safeAuditErrorCode(error), code);
+  }
+  assert.deepEqual(safeErrorDiagnostic({ code: "ORA-00942", message: secret }), { module: "request", errorType: "DATABASE", oracleCode: "ORA-00942" });
+  for (const value of [0, -1, Infinity, NaN, 1.2, 100000, secret]) {
+    assert.deepEqual(safeErrorDiagnostic({ errorNum: value, code: secret, message: `synthetic ${secret} ORA-00942:` }), { module: "request", errorType: "UNEXPECTED" });
+  }
+});
+test("Oracle bind faults have safe hints while SQL/connection failures remain general failures", async t => {
+  const logs: unknown[] = [];
+  t.mock.method(logger, "error", (fields: unknown) => logs.push(fields));
+  for (const [error, expectedStatus, expectedCode] of [
+    [new Error("ORACLE_BIND_INVALID"), 400, "ORACLE_BIND_INVALID"],
+    [Object.assign(new Error("NJS-011: synthetic_patient SQL password"), { code: "NJS-011" }), 500, "ORACLE_BIND_ERROR"],
+    [Object.assign(new Error("ORA-01722: synthetic_patient SQL password"), { errorNum: 1722 }), 500, "INTERNAL_SERVER_ERROR"],
+    [Object.assign(new Error("ORA-01017: synthetic_patient SQL password"), { code: "ORA-01017" }), 500, "INTERNAL_SERVER_ERROR"],
+  ] as const) {
+    await assert.rejects(withErrorModule("dataset.query.execute", async () => { throw error; }));
+    let status = 0; let body: any;
+    const res = { status: (s: number) => { status = s; return res; }, json: (b: unknown) => { body = b; return res; } };
+    errorHandler(error, { id: "synthetic-request", method: "POST" } as Request, res as unknown as Response, () => {});
+    assert.equal(status, expectedStatus); assert.equal(body.error.code, expectedCode);
+    assert.equal(body.error.requestId, "synthetic-request");
+    assert.ok(!JSON.stringify(body).includes("synthetic_patient"));
+  }
+  for (const secret of ["synthetic_patient", "SQL", "password"]) assert.ok(!JSON.stringify(logs).includes(secret));
+});

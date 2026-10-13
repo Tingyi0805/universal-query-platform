@@ -147,10 +147,12 @@ export function DatasetParametersEditor({
   datasetId,
   datasets,
   onChanged,
+  sqlSaveRevision = 0,
 }: {
   datasetId: number;
   datasets: DatasetOption[];
   onChanged?: () => void | Promise<void>;
+  sqlSaveRevision?: number;
 }) {
   const { accessToken } = useAuth();
   const [parameters, setParameters] = useState<ParameterRow[]>([]);
@@ -164,7 +166,7 @@ export function DatasetParametersEditor({
   const [dirty, setDirty] = useState(false);
   const loadSequence = useRef(0);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (differencesOnly = false) => {
     const sequence = ++loadSequence.current;
     setLoading(true);
     setLoadFailed(false);
@@ -179,6 +181,7 @@ export function DatasetParametersEditor({
       if (sequence !== loadSequence.current) return;
       setPreview(result.preview);
       setRemoveNames([]);
+      if (differencesOnly) return; // Keep unsaved metadata edits when SQL was saved.
       setDirty(false);
       setParameters(result.parameters.map((parameter) => ({
         ...parameter,
@@ -189,7 +192,7 @@ export function DatasetParametersEditor({
     } catch (e) {
       if (sequence !== loadSequence.current) return;
       setLoadFailed(true);
-      setParameters([]);
+      if (!differencesOnly) setParameters([]);
       setError(e instanceof Error ? e.message : "載入參數設定失敗。");
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
@@ -197,6 +200,13 @@ export function DatasetParametersEditor({
   }, [accessToken, datasetId]);
 
   useEffect(() => { void load(); return () => { loadSequence.current++; }; }, [load]);
+
+  const previousSqlSave = useRef({ datasetId, revision: sqlSaveRevision });
+  useEffect(() => {
+    const previous = previousSqlSave.current;
+    previousSqlSave.current = { datasetId, revision: sqlSaveRevision };
+    if (previous.datasetId === datasetId && previous.revision !== sqlSaveRevision) void load(true);
+  }, [datasetId, sqlSaveRevision, load]);
 
   function update(index: number, patch: Partial<ParameterRow>) {
     setDirty(true);

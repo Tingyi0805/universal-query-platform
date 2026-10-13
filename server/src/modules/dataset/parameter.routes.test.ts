@@ -53,3 +53,15 @@ test("production parameter routes retain DESIGN_QUERY gate; dataset create/save 
   assert.ok(source.indexOf('requirePermission("DESIGN_QUERY")') < source.indexOf("datasetRouter.use(createDatasetParameterRouter())"));
   assert.ok(!source.includes("syncDatasetParameters"));
 });
+test("renamed SQL token is an addition plus unused setting, not a metadata rename", () => fixture(async (request, f) => {
+  f.state.rows[0]!.Name = "REGNO_NAME";
+  f.state.sqlText = "SELECT {{REGNO}}";
+  const result = await request("/2/parameters");
+  assert.deepEqual(result.body.preview.added, ["REGNO"]);
+  assert.deepEqual(result.body.preview.unused, ["REGNO_NAME"]);
+  const original = structuredClone(f.state.rows[0]);
+  const sync = await request("/2/parameters/sync", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ previewToken: result.body.preview.previewToken, removeNames: [] }) });
+  assert.equal(sync.status, 200);
+  assert.deepEqual(f.state.rows[0], original);
+  assert.equal(f.state.rows[1]!.Name, "REGNO");
+}));

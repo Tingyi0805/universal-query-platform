@@ -90,8 +90,9 @@ export async function updateDataset(id: number, input: DatasetInput, userId?: nu
 
   try {
     // SQL or data-source changes may introduce new sensitive columns before
-    // preview metadata is refreshed. Require clearing/reviewing existing policy
-    // before allowing a query shape change; ordinary display edits remain allowed.
+    // preview metadata is refreshed. Without a trusted semantic review contract,
+    // confirmation/alias equality cannot authorize this change. Keep policies intact;
+    // ordinary display edits remain allowed.
     const existing = await new sql.Request(tx).input("id", sql.BigInt, id)
       .query("SELECT SqlText, DataSourceId FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
     if (existing.recordset.length &&

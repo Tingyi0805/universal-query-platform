@@ -89,6 +89,10 @@ export function DatasetDesignerPage() {
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceOption[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [savedSql, setSavedSql] = useState("");
+  const [savedDataSourceId, setSavedDataSourceId] = useState<number | "">("");
+  const [sqlSaveRevision, setSqlSaveRevision] = useState(0);
+  const [sensitivityDirty, setSensitivityDirty] = useState(false);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
   const previewParameterSequence = useRef(0);
   const [previewParametersLoading, setPreviewParametersLoading] = useState(false);
@@ -189,6 +193,8 @@ export function DatasetDesignerPage() {
 
   function resetForm() {
     setForm(emptyForm);
+    setSavedSql("");
+    setSavedDataSourceId("");
     setParameterValues({});
     setPreviewParameters([]);
     setPreviewOptions({});
@@ -198,6 +204,8 @@ export function DatasetDesignerPage() {
   }
 
   function selectDataset(dataset: DatasetRow) {
+    setSavedSql(dataset.sqlText);
+    setSavedDataSourceId(dataset.dataSourceId);
     setForm({
       id: dataset.id,
       code: dataset.code,
@@ -245,26 +253,32 @@ export function DatasetDesignerPage() {
         return;
       }
 
+      const submitted = payload();
+      let savedId = form.id;
       if (form.id) {
         await apiRequest(`/datasets/${form.id}`, {
           method: "PUT",
-          body: JSON.stringify(payload()),
+          body: JSON.stringify(submitted),
         }, accessToken);
-        setNotice("Dataset 已更新。");
+        setNotice(sensitivityDirty ? "Dataset 基本設定已更新；敏感欄位規則尚未儲存，請使用獨立的儲存規則按鈕。" : "Dataset 已更新（不包含敏感欄位規則）。");
       } else {
         const created = await apiRequest<{ id: number; parameterNames: string[] }>("/datasets", {
           method: "POST",
-          body: JSON.stringify(payload()),
+          body: JSON.stringify(submitted),
         }, accessToken);
+        savedId = created.id;
         setForm((current) => ({ ...current, id: created.id }));
         setNotice("Dataset 已建立。");
       }
 
+      setSavedSql(submitted.sqlText);
+      setSavedDataSourceId(submitted.dataSourceId);
+      setSqlSaveRevision((current) => current + 1);
       await load();
-      await loadPreviewParameterDefinitions(form.id);
+      await loadPreviewParameterDefinitions(savedId);
       setVersionRefreshKey((current) => current + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "儲存 Dataset 失敗。");
+      setError(`Dataset 儲存失敗；未儲存內容已保留。${e instanceof Error ? e.message : "請稍後重試。"}`);
     } finally {
       setBusy(false);
     }
@@ -620,6 +634,10 @@ export function DatasetDesignerPage() {
                 onChange={(e) => setForm({ ...form, sqlText: e.target.value })} />
             </label>
 
+            <p role="status">{form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId
+              ? "編輯中 SQL／資料來源尚未儲存。下方 Parameter Designer 差異依已儲存 SQL 計算；本區參數依編輯中 SQL 偵測。"
+              : "SQL／資料來源與已儲存設定一致。Parameter Designer 差異依已儲存 SQL 計算。"}</p>
+            <p>儲存 Dataset 僅儲存基本設定與 SQL；敏感欄位規則須使用下方獨立按鈕儲存。</p>
             <div className="parameter-panel">
               <div>
                 <strong>偵測到的參數</strong>
@@ -696,6 +714,7 @@ export function DatasetDesignerPage() {
           {form.id && !form.isArchived && (
             <DatasetParametersEditor
               datasetId={form.id}
+              sqlSaveRevision={sqlSaveRevision}
               datasets={datasets
                 .filter((dataset) => !dataset.isArchived)
                 .map((dataset) => ({ id: dataset.id, code: dataset.code, name: dataset.name }))}
@@ -706,7 +725,7 @@ export function DatasetDesignerPage() {
             />
           )}
 
-          {form.id && !form.isArchived && <DatasetSensitivityEditor datasetId={form.id} accessToken={accessToken} previewColumns={preview?.columns.map((column) => column.name) ?? []} />}
+          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} previewColumns={preview?.columns.map((column) => column.name) ?? []} />}
 
           {preview && (
             <section className="preview-panel">

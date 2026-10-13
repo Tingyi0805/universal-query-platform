@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 
 type CustomMask = { prefix: number; suffix: number; symbol: string };
 type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: CustomMask | null };
 
 
-export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumns }: {
-  datasetId: number; accessToken: string | null; previewColumns: string[];
+export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumns, onDirtyChanged }: {
+  datasetId: number; accessToken: string | null; previewColumns: string[]; onDirtyChanged?: (dirty: boolean) => void;
 }) {
+  const scope = useRef(0);
   const [rules, setRules] = useState<Rule[]>([]);
   const [column, setColumn] = useState("");
   const [action, setAction] = useState<"CUSTOM" | "FULL" | "OMIT">("CUSTOM");
@@ -42,8 +43,11 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   const [message, setMessage] = useState("");
   const [conflict, setConflict] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
+  useEffect(() => { onDirtyChanged?.(dirty); }, [dirty, onDirtyChanged]);
   useEffect(() => {
+    scope.current++;
     let active = true;
+    setBusy(false);
     setRules([]);
     setLoaded(false);
     setVersion(null);
@@ -53,7 +57,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     void apiRequest<{ columns: Rule[]; version: number }>(`/datasets/${datasetId}/sensitive-columns`, {}, accessToken)
       .then((result) => { if (active) { setRules(result.columns); setVersion(result.version); setLoaded(true); } })
       .catch((error: unknown) => { if (active) setMessage(error instanceof Error ? error.message : "無法載入敏感欄位設定"); });
-    return () => { active = false; };
+    return () => { active = false; scope.current++; onDirtyChanged?.(false); };
   }, [datasetId, accessToken, reloadKey]);
   const reload = () => {
     if (dirty && !window.confirm("重新載入將捨棄目前尚未儲存的變更，確定繼續？")) return;
@@ -80,15 +84,18 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
       setMessage("敏感資料不可設定為原樣顯示。"); return;
     }
     if (!loaded || version === null) { setMessage("尚未成功載入原有規則，為避免覆蓋設定，請先重新載入頁面。"); return; }
+    const sequence = scope.current;
     setBusy(true); setMessage("");
     try {
       const result = await apiRequest<{ columns: Rule[]; version: number }>(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: rules, expectedVersion: version }) }, accessToken);
+      if (sequence !== scope.current) return;
       setRules(result.columns);
       setVersion(result.version);
       setDirty(false);
       setConflict(false);
       setMessage("敏感欄位規則已儲存，並記錄異動稽核。");
     } catch (error) {
+      if (sequence !== scope.current) return;
       const detail = error instanceof Error ? error.message : "儲存失敗";
       const apiError = error as { code?: string; status?: number } | null;
       if (apiError?.code === "SENSITIVITY_VERSION_CONFLICT" && apiError.status === 409) {
@@ -96,10 +103,11 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
         setMessage("規則已由其他管理者更新。為避免覆蓋，已停止儲存；請重新載入並確認差異。");
       } else setMessage(detail);
     }
-    finally { setBusy(false); }
+    finally { if (sequence === scope.current) setBusy(false); }
   };
   return <section className="preview-panel">
     <h2>Dataset 敏感資料欄位管理</h2>
+    <p>此處使用獨立 API 儲存規則；「儲存 Dataset」不會儲存本區變更。移除只修改編輯清單，須按「儲存 Dataset 敏感欄位規則」才生效。啟用中的 Dashboard 安全限制仍適用。</p>
     <p>選擇欄位後設定遮蔽位置及符號，無需選擇英文模式或敏感資料分類。原有敏感分類與既有規則會保留；未核准欄位不會傳送到播放裝置。</p>
     <label>查詢結果欄位 <select value={column} onChange={(event) => editRule(event.target.value)}>
       <option value="">請選擇欄位</option>
@@ -123,7 +131,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     </div>}
     {action === "FULL" && <p role="status">全部遮蔽，例如：王小明 → ○○○○</p>}
     {action === "OMIT" && <p role="status">完全不傳送：此欄位不會出現在播放裝置的資料中。</p>}
-    <button type="button" disabled={!column || busy || (action === "CUSTOM" && !validSettings)} onClick={add}>加入／更新欄位規則</button>
+    <button type="button" disabled={!loaded || conflict || !column || busy || (action === "CUSTOM" && !validSettings)} onClick={add}>加入／更新欄位規則</button>
     <table className="preview-table"><thead><tr><th>欄位</th><th>資料處理方式</th><th>操作</th></tr></thead>
       <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td>
         <td>{rule.deviceMaskMode === "CUSTOM" && rule.customMask
@@ -132,7 +140,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
           : rule.deviceMaskMode === "FULL" ? "全部遮蔽"
           : `舊版規則：${rule.deviceMaskMode}（仍有效，選取欄位可調整）`}</td>
         <td><button type="button" disabled={busy} onClick={() => editRule(rule.columnName)}>編輯</button>
-          <button type="button" disabled={busy} onClick={() => { setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName)); setDirty(true); }}>移除</button></td></tr>)}</tbody></table>
+          <button type="button" disabled={!loaded || conflict || busy} onClick={() => { setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName)); setDirty(true); }}>移除</button></td></tr>)}</tbody></table>
     <button type="button" disabled={busy || !dirty || !loaded || version === null || conflict} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
     {!loaded && <p role="status">原有規則尚未載入完成，暫停儲存以避免誤覆蓋。</p>}
     {dirty && <p role="status">尚有未儲存的敏感欄位規則變更。</p>}

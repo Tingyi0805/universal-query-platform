@@ -468,7 +468,7 @@ datasetRouter.put("/:id", async (req, res, next) => {
       return;
     }
     if (error instanceof Error && error.message === "DATASET_SENSITIVITY_REVIEW_REQUIRED") {
-      res.status(409).json({ error: { code: "DATASET_SENSITIVITY_REVIEW_REQUIRED", message: "此 Dataset 已設定敏感欄位保護；變更 SQL 或資料來源前，請先由管理者檢視並調整敏感欄位規則，避免新欄位未受保護。" } });
+      res.status(409).json({ error: { code: "DATASET_SENSITIVITY_REVIEW_REQUIRED", message: "SQL／資料來源未儲存：此 Dataset 有敏感欄位規則，目前無法可靠驗證變更後的欄位語意與遮蔽適用性。請具備 DESIGN_QUERY 權限的管理者審查資料來源、欄位語意、遮蔽及相關 Dashboard；不可只確認同名別名或清空規則來放行。現有設定已保留。" } });
       return;
     }
     if (error instanceof Error && error.message === "DATASET_ARCHIVED") {
