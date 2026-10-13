@@ -1,3 +1,4 @@
+import { sourcePreviewFailure } from "../dashboard/dataSettings";
 import { displayFormats, formatDashboardValue } from "../dashboard/displayFormat";
 import { managementError, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
@@ -270,21 +271,29 @@ export function DashboardLayoutDesignerPage() {
   const [customScale, setCustomScale] = useState(0.5);
 
   const [sourceVersion, setSourceVersion] = useState<string | null | undefined>(undefined);
+  const loadSequence = useRef(0);
   const load = useCallback(async () => {
+    const sequence = ++loadSequence.current;
     if (!Number.isFinite(dashboardId)) return;
     setLoading(true);
     setError("");
+    setPreview(null);
+    setSupplementalPreviews({});
+    const failures: string[] = [];
 
     try {
       // Load the saved layout first; a query failure must not erase design state.
       const layoutResult = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & {
         widgets: Omit<LayoutWidget, "clientKey">[] }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken);
+      if (sequence !== loadSequence.current) return;
       let configuration: QuerySourceConfiguration | null = null;
       let legacy = false;
       try {
         configuration = await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken);
+        if (sequence !== loadSequence.current) return;
         setSourceVersion(configuration.editable ? configuration.version : undefined);
       } catch (error) {
+        if (sequence !== loadSequence.current) return;
         legacy = (error as { code?: string }).code === "QUERY_SOURCE_MANAGEMENT_DISABLED";
         setSourceVersion(legacy ? null : undefined);
         if (!legacy) setError(managementError(error));
@@ -295,7 +304,7 @@ export function DashboardLayoutDesignerPage() {
         .then(value => configuration ? { ...value, reportColumns: [], dashboard: {
           id: dashboardId, name: "Query-only", code: "", parameters: configuration.primary.parameters ?? {},
           pageSize: configuration.primary.pageSize, pageSeconds: configuration.primary.pageSeconds } } : value)
-        .catch(error => { setError(managementError(error)); return null; });
+        .catch(error => { failures.push(sourcePreviewFailure("PRIMARY", error)); return null; });
       let supplemental: SupplementalSource[] = [];
       if (configuration) supplemental = configuration.sources.filter(source => source.isEnabled).map(source => ({
         sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled) }));
@@ -303,6 +312,7 @@ export function DashboardLayoutDesignerPage() {
         `/dashboards/${dashboardId}/data-sources`, {}, accessToken).then(value => value.sources).catch(error => {
           setError(managementError(error)); return [];
         });
+      if (sequence !== loadSequence.current) return;
       setSupplementalSources(supplemental.filter(source => source.isEnabled));
       const sourceResults = await Promise.allSettled(supplemental.filter(source => source.isEnabled).map(async source => ({
         key: source.sourceKey,
@@ -311,7 +321,11 @@ export function DashboardLayoutDesignerPage() {
           : `/dashboards/${dashboardId}/data-sources/${encodeURIComponent(source.sourceKey)}/preview`,
           { method: "POST", ...(configuration ? { body: JSON.stringify({ page: 1 }) } : {}) }, accessToken),
       })));
-      if (sourceResults.some(result => result.status === "rejected")) setError("部分來源預覽失敗；版面保留，遮蔽由後端執行。");
+      if (sequence !== loadSequence.current) return;
+      sourceResults.forEach((result, index) => {
+        if (result.status === "rejected") failures.push(sourcePreviewFailure(supplemental.filter(source => source.isEnabled)[index]!.sourceKey, result.reason));
+      });
+      if (failures.length) setError(failures.join("\n"));
       setSupplementalPreviews(Object.fromEntries(sourceResults.filter(
         (item): item is PromiseFulfilledResult<{ key: string; preview: SupplementalPreview }> => item.status === "fulfilled",
       ).map(item => [item.value.key, item.value.preview])));
@@ -324,13 +338,13 @@ export function DashboardLayoutDesignerPage() {
       );
       setPreview(previewResult);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "載入 Dashboard 版面失敗。");
+      if (sequence === loadSequence.current) setError(managementError(e));
     } finally {
-      setLoading(false);
+      if (sequence === loadSequence.current) setLoading(false);
     }
   }, [accessToken, dashboardId]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { void load(); return () => { loadSequence.current++; }; }, [load]);
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.clientKey === activeProfileKey) ?? null,

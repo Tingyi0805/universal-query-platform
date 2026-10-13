@@ -19,7 +19,7 @@ export async function loadQueryExecutionBinding(id: number, key: string): Promis
     const { snapshotKind: _kind, snapshotSeconds: _seconds, deviceColumnMasks: _masks, deviceColumnTypes: _types, ...parameters } = values;
     return { dashboardId: id, sourceId: id, sourceKey: "PRIMARY", queryDefinitionId: Number(row.QueryDefinitionId),
       bindingRevision: Math.max(1, mode.version), managed: row.QuerySourceMaxRows != null, mode: mode.mode, modeRevision: mode.version,
-      dashboardActive: Boolean(row.IsActive), enabled: true, parameters, refreshSeconds: Number(row.RefreshSeconds),
+      dashboardActive: Boolean(row.IsActive), enabled: true, parameters, deviceMasks: _masks, deviceTypes: _types, refreshSeconds: Number(row.RefreshSeconds),
       pageSeconds: Number(row.PageSeconds), pageSize: Number(row.PageSize), maxRows: row.QuerySourceMaxRows == null ? 1000 : Number(row.QuerySourceMaxRows) };
   }
   // Read only this source's parameters: an invalid sibling cannot break its execution.

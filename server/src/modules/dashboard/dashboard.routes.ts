@@ -17,9 +17,8 @@ import { dashboardSourcesSchema } from "./dashboardDataSource.schema.js";
 import { isIP } from "node:net";
 import { listDashboardDataSources, replaceDashboardDataSources } from "./dashboardDataSource.repository.js";
 import { validateWidgetDataSources } from "./dashboardWidgetSource.js";
-import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks, resolveSupplementalDeviceRules } from "./dashboardDeviceMasking.js";
+import { createDashboardPreviewRouter } from "./dashboardPreview.routes.js";
 import { createDashboardDevicePageRouter } from "./dashboardDevicePage.routes.js";
-import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 import { listDatasetParameters } from "../dataset/parameter.repository.js";
 import { getDataSourcePlaybackState } from "../datasource/datasource.repository.js";
 import { Router, type Request } from "express";
@@ -851,44 +850,6 @@ dashboardRouter.put("/:id/data-sources", requirePermission("DESIGN_QUERY"), asyn
 });
 
 
-// Designer-only masked preview of a supplemental Dataset. Never return raw values.
-dashboardRouter.post("/:id/data-sources/:sourceKey/preview", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const sourceKey = z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/).safeParse(req.params.sourceKey);
-    if (!id.success || !sourceKey.success || !req.authUser) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return;
-    }
-    const dashboard = await getDashboard(id.data);
-    if (!dashboard) { res.status(404).json({ error: { code: "DASHBOARD_NOT_FOUND" } }); return; }
-    await assertLegacySourcePreview(id.data);
-    const sources = await listDashboardDataSources(id.data);
-    const source = sources.find((item) => item.sourceKey === sourceKey.data && item.isEnabled);
-    if (!source) { res.status(404).json({ error: { code: "DASHBOARD_SOURCE_NOT_FOUND" } }); return; }
-    const dataset = await getDataset(source.datasetId);
-    if (!dataset || !dataset.isActive || dataset.isArchived) {
-      res.status(409).json({ error: { code: "DATASET_NOT_AVAILABLE" } }); return;
-    }
-    const policy = await getDatasetSensitivitySnapshot(source.datasetId);
-    const result = await dashboardQueryExecutor.run(`preview:${req.authUser.id}:${source.id}:${JSON.stringify(source.parameters)}`,
-      () => executeSavedDataset(source.datasetId, source.parameters, 100));
-    const allowed = resolveSupplementalDeviceRules(policy.columns);
-    const columns = result.columns.filter((column) => allowed.has(column.name.toUpperCase()));
-    const rows = result.rows.map((row) => Object.fromEntries(columns.map((column) => {
-      const rule = allowed.get(column.name.toUpperCase())!;
-      return [column.name, maskDeviceValue(row[column.name], rule.deviceMaskMode, rule.customMask)];
-    })));
-    // Audit the disclosure before transmitting masked patient rows.
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: source.datasetId, userId: req.authUser.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "DASHBOARD",
-      masked: true, rows: result.rows,
-    });
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds,
-      sensitivityVersion: policy.version, result: { columns, rows }, disclosureId });
-  } catch (error) { next(error); }
-});
 dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
@@ -962,90 +923,11 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
   }
 });
 
-dashboardRouter.post("/:id/preview", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success || !req.authUser) {
-      res.status(400).json({
-        error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" },
-      });
-      return;
-    }
-
-    const dashboard = await getDashboard(id.data);
-    if (!dashboard) {
-      res.status(404).json({
-        error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" },
-      });
-      return;
-    }
-
-    const canDesign = req.authUser.permissions.includes("DESIGN_QUERY");
-    if (!canDesign) {
-      if (!req.authUser.permissions.includes("EXECUTE_QUERY") || !dashboard.isActive) {
-        res.status(403).json({ error: { code: "FORBIDDEN", message: "沒有播放此 Dashboard 的權限。" } });
-        return;
-      }
-      const access = await getEffectiveQueryAccess(req.authUser.id, dashboard.queryDefinitionId);
-      if (!access?.canExecute) {
-        res.status(403).json({ error: { code: "DASHBOARD_EXECUTE_FORBIDDEN", message: "沒有播放此 Dashboard 的權限。" } });
-        return;
-      }
-    }
-
-    const query = await getQueryDefinition(dashboard.queryDefinitionId);
-    if (!query || !query.isPublished || !query.isActive || query.isArchived) {
-      res.status(409).json({
-        error: {
-          code: "DASHBOARD_QUERY_NOT_AVAILABLE",
-          message: "Dashboard 使用的 Query 目前不可執行。",
-        },
-      });
-      return;
-    }
-
-    const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    // Every preview/refresh request is a new disclosure; persist before returning rows.
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: req.authUser!.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "DASHBOARD",
-      masked: false,
-      rows: result.rows,
-    });
-    const reportColumns = await listReportColumns(query.id);
-
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      dashboard,
-      query: {
-        id: query.id,
-        code: query.code,
-        name: query.name,
-      },
-      reportColumns,
-      result,
-      disclosureId,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
-      res.status(400).json({
-        error: {
-          code: error.message.split(":")[0],
-          message: "Dashboard 預設參數不完整或格式不正確，請檢查設定。",
-        },
-      });
-      return;
-    }
-
-    next(error);
-  }
-});
-
+dashboardRouter.use(createDashboardPreviewRouter({ getDashboard, getSession: getTokenSessionState,
+  getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess, getDataset,
+  getPolicy: getDatasetSensitivitySnapshot, getSources: listDashboardDataSources,
+  getReportColumns: listReportColumns, legacyGuard: assertLegacySourcePreview,
+  execute: executeSavedDataset, audit: auditPatientListIfConfigured }));
 // Preserve explicit management error classifications for guarded legacy writers.
 dashboardRouter.use(((error, req, res, next) => {
   if (error instanceof QuerySourceError) querySourceFailure(error, res, req.id);

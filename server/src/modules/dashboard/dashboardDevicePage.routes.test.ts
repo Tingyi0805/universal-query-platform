@@ -141,3 +141,15 @@ test("supplemental parameter, page settings and source replacement invalidate sn
     change(); assert.equal((await f.request(supplemental, { page: 1, snapshotId: first.body.snapshotId })).status, 409);
   }
 }));
+for (const path of [primary, supplemental]) test(`${path}: conflicting policy rejects fresh or previously cached pages`, () => fixture(async f => {
+  const first = await f.request(path, { page: 1 }); assert.equal(first.status, 200);
+  f.state.policy.columns.push({ columnName: "name", sensitivityType: "NAME", deviceMaskMode: "NAME" });
+  const denied = await f.request(path, { page: 1, snapshotId: first.body.snapshotId });
+  assert.equal(denied.status, 503); assert.equal(denied.body.error.code, "DASHBOARD_SENSITIVITY_POLICY_INVALID");
+  assert.equal(denied.body.result, undefined); assert.equal(f.state.sqlCalls, 1);
+}));
+for (const path of [primary, supplemental]) test(`${path}: a never-reviewed empty Dataset policy cannot authorize playback`, () => fixture(async f => {
+  f.state.policy = { version: 0, columns: [] };
+  const r = await f.request(path, { page: 1 }); assert.equal(r.status, 503); assert.equal(r.body.error.code, "DASHBOARD_SENSITIVITY_POLICY_REQUIRED");
+  assert.equal(f.state.sqlCalls, 0);
+}));

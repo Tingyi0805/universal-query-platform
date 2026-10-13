@@ -1,5 +1,7 @@
+import { DashboardDataSettingsEditor } from "../components/DashboardDataSettingsEditor";
+import { queryParameterValues, sourcePreviewFailure } from "../dashboard/dataSettings";
 import { DashboardQueryPlaybackManager } from "../components/DashboardQueryPlaybackManager";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { rememberDashboardToken,prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
@@ -125,7 +127,7 @@ type FormState = {
   showPageNumber: boolean;
   showCountdown: boolean;
   parametersJson: string;
-  snapshotKind: "SURGERY" | "OUTPATIENT" | "EXAM" | "STATISTICS" | "OTHER";
+  snapshotKind: string;
   snapshotSeconds: string;
   estimatedRows: string;
   deviceColumnMasksJson: string;
@@ -202,9 +204,6 @@ export function DashboardDesignerPage() {
   const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
   const [queries, setQueries] = useState<QueryDefinitionRow[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
-  const [sensitiveColumn, setSensitiveColumn] = useState("");
-  const [sensitiveType, setSensitiveType] = useState("OTHER");
-  const [sensitiveMode, setSensitiveMode] = useState("FULL");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewDashboardId, setPreviewDashboardId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -288,7 +287,9 @@ export function DashboardDesignerPage() {
     [queries],
   );
 
+  const previewSequence = useRef(0);
   const loadPreview = useCallback(async (dashboardId: number, silent = false) => {
+    const sequence = ++previewSequence.current;
     if (!silent) setPreviewLoading(true);
     setError("");
     try {
@@ -297,12 +298,14 @@ export function DashboardDesignerPage() {
         { method: "POST" },
         accessToken,
       );
+      if (sequence !== previewSequence.current) return;
       setPreview(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dashboard 預覽失敗。");
-      if (!silent) setPreview(null);
+      if (sequence !== previewSequence.current) return;
+      setError(sourcePreviewFailure("PRIMARY", e));
+      setPreview(null);
     } finally {
-      if (!silent) setPreviewLoading(false);
+      if (sequence === previewSequence.current) setPreviewLoading(false);
     }
   }, [accessToken]);
 
@@ -320,19 +323,6 @@ export function DashboardDesignerPage() {
     return () => window.clearInterval(timer);
   }, [dashboards, loadPreview, previewDashboardId]);
 
-  function addSensitiveColumnRule() {
-    if (!sensitiveColumn) return;
-    try {
-      const existing = JSON.parse(form.deviceColumnMasksJson || "{}") as Record<string, string>;
-      if (!existing || typeof existing !== "object" || Array.isArray(existing)) throw new Error("INVALID");
-      const existingTypes = JSON.parse(form.deviceColumnTypesJson || "{}") as Record<string, string>;
-      setForm((current) => ({ ...current, deviceColumnMasksJson: JSON.stringify({ ...existing, [sensitiveColumn]: sensitiveMode }, null, 2), deviceColumnTypesJson: JSON.stringify({ ...existingTypes, [sensitiveColumn]: sensitiveType }, null, 2) }));
-      setNotice(`已設定欄位 ${sensitiveColumn}（${sensitiveType}），請儲存 Dashboard 以套用。`);
-    } catch {
-      setError("敏感欄位 JSON 格式不正確，請先修正。");
-    }
-  }
-
   function editDashboard(item: DashboardRow) {
     setForm({
       id: item.id,
@@ -348,12 +338,12 @@ export function DashboardDesignerPage() {
       showClock: item.showClock,
       showPageNumber: item.showPageNumber,
       showCountdown: item.showCountdown,
-      parametersJson: JSON.stringify(Object.fromEntries(Object.entries(item.parameters ?? {}).filter(([key]) => key !== "snapshotKind" && key !== "snapshotSeconds")), null, 2),
-      snapshotKind: (["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS"].includes(String(item.parameters?.snapshotKind)) ? item.parameters.snapshotKind : "OTHER") as FormState["snapshotKind"],
+      parametersJson: JSON.stringify(queryParameterValues(item.parameters ?? {}), null, 2),
+      snapshotKind: typeof item.parameters?.snapshotKind === "string" ? item.parameters.snapshotKind : "OTHER",
       snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
       estimatedRows: "25",
-      deviceColumnMasksJson: JSON.stringify(item.parameters?.deviceColumnMasks ?? {}, null, 2),
-      deviceColumnTypesJson: JSON.stringify(item.parameters?.deviceColumnTypes ?? {}, null, 2),
+      deviceColumnMasksJson: JSON.stringify(item.parameters?.deviceColumnMasks === undefined ? {} : item.parameters.deviceColumnMasks, null, 2),
+      deviceColumnTypesJson: JSON.stringify(item.parameters?.deviceColumnTypes === undefined ? {} : item.parameters.deviceColumnTypes, null, 2),
       isActive: item.isActive,
     });
     setNotice("");
@@ -408,6 +398,10 @@ export function DashboardDesignerPage() {
       } catch {
         setError("敏感資料分類格式不正確。");
         return;
+      }
+      const storedKind = dashboards.find(item => item.id === form.id)?.parameters?.snapshotKind;
+      if (storedKind !== undefined && typeof storedKind !== "string") {
+        setError("舊快照用途格式無法安全轉換，原設定保留；請管理者審查。"); return;
       }
       parameters.snapshotKind = form.snapshotKind;
       if (form.snapshotSeconds.trim() !== "") parameters.snapshotSeconds = Number(form.snapshotSeconds);
@@ -1110,6 +1104,7 @@ export function DashboardDesignerPage() {
                 </select>
               </label>
 
+              <h3 className="wide">Dashboard 播放設定</h3>
               <label>
                 <span>資料更新秒數</span>
                 <input
@@ -1168,6 +1163,7 @@ export function DashboardDesignerPage() {
               <label>
                 <span>Dashboard 用途（快照預設）</span>
                 <select value={form.snapshotKind} onChange={(e) => setForm({ ...form, snapshotKind: e.target.value as FormState["snapshotKind"] })}>
+                  {!["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS", "OTHER"].includes(form.snapshotKind) && <option value={form.snapshotKind}>舊用途（保留原設定）</option>}
                   <option value="SURGERY">手術狀態（20 秒）</option>
                   <option value="OUTPATIENT">診間候診（60 秒）</option>
                   <option value="EXAM">檢查進度（60 秒）</option>
@@ -1203,52 +1199,9 @@ export function DashboardDesignerPage() {
                 {effectiveSnapshotSeconds < estimatedCycleSeconds && <p role="alert">目前快照時間短於一輪播放時間，可能中途過期。</p>}
               </div>
 
-              <div className="wide">
-                <strong>敏感資料欄位設定（依查詢結果選擇）</strong>
-                <p><small>先在下方預覽 Dashboard 取得欄位清單，再選擇欄位及處理方式。</small></p>
-                <label><span>Dataset 查詢結果欄位</span>
-                  <select value={sensitiveColumn} onChange={(e) => setSensitiveColumn(e.target.value)}>
-                    <option value="">請選擇欄位</option>
-                    {(previewDashboardId === form.id ? preview?.result.columns ?? [] : []).map((column) => (
-                      <option key={column.name} value={column.name}>{column.name}</option>
-                    ))}
-                  </select>
-                </label>
-                <label><span>敏感資料類型（管理辨識用途）</span>
-                  <select value={sensitiveType} onChange={(e) => setSensitiveType(e.target.value)}>
-                    <option value="OTHER">其他／自訂</option><option value="NAME">姓名</option>
-                    <option value="NATIONAL_ID">身分證字號</option><option value="MRN">病歷號</option>
-                    <option value="PHONE">電話</option><option value="BIRTH_DATE">出生日期</option>
-                    <option value="ADDRESS">地址</option><option value="DIAGNOSIS">診斷</option>
-                    <option value="HEALTH">健康狀況</option><option value="LAB">檢驗結果</option>
-                  </select>
-                </label>
-                <label><span>播放裝置資料處理方式</span>
-                  <select value={sensitiveMode} onChange={(e) => setSensitiveMode(e.target.value)}>
-                    <option value="OMIT">不傳送（最安全）</option><option value="FULL">全部遮蔽</option>
-                    <option value="NAME">姓名部分遮蔽</option><option value="MRN">病歷號部分遮蔽</option>
-                    <option value="PHONE">電話部分遮蔽</option><option value="GENERIC">一般部分遮蔽</option>
-                    <option value="NONE">原樣顯示（僅核准非敏感資料）</option>
-                  </select>
-                </label>
-                <button type="button" disabled={!sensitiveColumn} onClick={addSensitiveColumnRule}>加入／更新欄位規則</button>
-              </div>
-
-              <label className="wide">
-                <span>固定播放裝置：自訂敏感欄位規則（JSON）</span>
-                <textarea rows={5} value={form.deviceColumnMasksJson}
-                  placeholder={'{"NationalId":"FULL","HealthStatus":"OMIT","Room":"NONE"}'}
-                  onChange={(e) => setForm({ ...form, deviceColumnMasksJson: e.target.value })} />
-                <small>這裡設定「固定播放裝置」允許收到哪些查詢結果欄位，以及各欄位的遮蔽方式。左邊必須填 Dataset 查詢結果的實際欄位名稱（含 SQL AS 別名），不是固定的 NationalId；右邊填處理方式。未列出的欄位預設不傳送。</small>
-                <details>
-                  <summary>查看 JSON 填寫說明與範例</summary>
-                  <p>範例：查詢結果有 PAT_ID、PAT_NAME、HEALTH_STATUS、ROOM_NO 四個欄位，可填入：</p>
-                  <pre>{'{\\n  "PAT_ID": "FULL",\\n  "PAT_NAME": "NAME",\\n  "HEALTH_STATUS": "OMIT",\\n  "ROOM_NO": "NONE"\\n}'}</pre>
-                  <p>FULL：全部遮蔽；NAME：姓名部分遮蔽；MRN：病歷號部分遮蔽；PHONE：電話部分遮蔽；GENERIC：一般部分遮蔽；OMIT：完全不傳送；NONE：原樣顯示（僅適用已核准的非敏感資料）。</p>
-                  <p>格式提醒：使用英文雙引號、每組規則以逗號分隔，最後一組後面不可加逗號；欄位名稱區分大小寫。可以先使用上方欄位選擇功能自動產生規則。</p>
-                  <button type="button" onClick={() => setForm((current) => ({ ...current, deviceColumnMasksJson: JSON.stringify({ PAT_ID: "FULL", PAT_NAME: "NAME", HEALTH_STATUS: "OMIT", ROOM_NO: "NONE" }, null, 2) }))}>填入範例（會取代目前 JSON）</button>
-                </details>
-              </label>
+              <DashboardDataSettingsEditor key={form.queryDefinitionId} queryId={Number(form.queryDefinitionId)} accessToken={accessToken}
+                parametersJson={form.parametersJson} masksJson={form.deviceColumnMasksJson} typesJson={form.deviceColumnTypesJson}
+                onChange={patch => setForm(current => ({ ...current, ...patch }))} />
 
               <div className="dashboard-display-options wide">
                 <label>
@@ -1276,25 +1229,6 @@ export function DashboardDesignerPage() {
                   <span>顯示換頁倒數</span>
                 </label>
               </div>
-
-              <label className="wide">
-                <span>預設參數 JSON</span>
-                <textarea
-                  rows={5}
-                  value={form.parametersJson}
-                  spellCheck={false}
-                  placeholder={'{\n  "ROOM_CODE": "OR01"\n}'}
-                  onChange={(e) => setForm({ ...form, parametersJson: e.target.value })}
-                />
-                <small>設定 Dashboard 執行查詢時使用的預設參數。左邊是查詢定義的參數名稱，右邊是參數值；例如依手術室代碼 ROOM_CODE 篩選。請勿在此填入密碼、Token 或其他機密資訊。</small>
-                <details>
-                  <summary>查看預設參數 JSON 說明與範例</summary>
-                  <p>單一參數：{'{ "ROOM_CODE": "OR01" }'}。多個參數範例：</p>
-                  <pre>{'{\\n  "ROOM_CODE": "OR01",\\n  "DEPARTMENT": "SURGERY",\\n  "IS_ACTIVE": true,\\n  "LIMIT": 20\\n}'}</pre>
-                  <p>文字值要加英文雙引號；數字及 true/false 不加引號。參數名稱須與查詢定義一致；最後一項不可加逗號。沒有預設參數時請填 {'{}'}。</p>
-                  <button type="button" onClick={() => setForm((current) => ({ ...current, parametersJson: JSON.stringify({ ROOM_CODE: "OR01", DEPARTMENT: "SURGERY", IS_ACTIVE: true, LIMIT: 20 }, null, 2) }))}>填入預設參數範例（會取代目前 JSON）</button>
-                </details>
-              </label>
 
               <label className="dashboard-active-field">
                 <input

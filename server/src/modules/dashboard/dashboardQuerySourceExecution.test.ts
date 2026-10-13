@@ -211,3 +211,30 @@ test("device PRIMARY and extra sources use stored delegator ACL, isolated snapsh
     f.control.session.permissions = ["DESIGN_QUERY","EXECUTE_QUERY"]; valid = false; assert.equal((await request("PRIMARY")).status, 401);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
 });
+test("Query-only malformed/conflicting policy cannot disclose cached data or poison another source", async () => {
+  const f = fixture(); const first = await f.service.page(1, "WARD", subject, { page: 1 });
+  const original = f.deps.getSensitivity;
+  f.deps.getSensitivity = async id => id === 99 ? { version: 1, columns: [
+    { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "NAME" },
+    { columnName: "name", sensitivityType: "OTHER", deviceMaskMode: "NONE" },
+  ] } : original(id);
+  await assert.rejects(f.service.page(1, "WARD", subject, { page: 1, snapshotId: first.snapshotId }), { code: "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", status: 503 });
+  const healthy = await f.service.page(1, "ROOM", subject, { page: 1 });
+  assert.ok(!JSON.stringify(healthy).includes("00000123"));
+  f.deps.getSensitivity = async () => null as any;
+  await assert.rejects(f.service.page(1, "ROOM", subject, { page: 1 }), { code: "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", status: 503 });
+});
+test("Query-only PRIMARY strengthens Dashboard masks without granting unapproved fields or affecting extra sources", async () => {
+  const f = fixture(); f.control.bindings.PRIMARY = { ...f.control.bindings.WARD!, sourceKey: "PRIMARY", sourceId: 1, deviceMasks: { NAME: "FULL", MRN: "NONE", UNAPPROVED: "NONE" } };
+  const page = await f.service.page(1, "PRIMARY", subject, { page: 1 });
+  assert.deepEqual(page.result.rows[0], { NAME: "○○○○" });
+  const extra = await f.service.page(1, "WARD", subject, { page: 1 }); assert.equal(extra.result.rows[0]!.NAME, "測○○○甲");
+  f.control.bindings.PRIMARY.deviceMasks = { NAME: "NONE" };
+  await assert.rejects(f.service.page(1, "PRIMARY", subject, { page: 1, snapshotId: page.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
+  const refreshed = await f.service.page(1, "PRIMARY", subject, { page: 1 }); assert.equal(refreshed.result.rows[0]!.NAME, "測○○○甲");
+});
+test("Query-only missing policy rejects before execution, never treating it as a nonsensitive Dataset", async () => {
+  const f = fixture(); f.deps.getSensitivity = async () => ({ version: 0, columns: [] });
+  await assert.rejects(f.service.page(1, "WARD", subject, { page: 1 }), { code: "QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED", status: 503 });
+  assert.deepEqual(f.control.executions, []);
+});

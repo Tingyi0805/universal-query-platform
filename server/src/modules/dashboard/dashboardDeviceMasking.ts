@@ -152,3 +152,21 @@ export function resolveSupplementalDeviceRules<T extends { columnName: string; d
     && allowedModes.has(rule.deviceMaskMode) && rule.deviceMaskMode !== "NONE" && rule.deviceMaskMode !== "OMIT")
     .map(rule => [rule.columnName.toUpperCase(), rule]));
 }
+
+/** A failed/malformed/conflicting policy must never be treated as an empty policy. */
+export function assertDatasetSensitivityPolicy(policy: { version: number; columns: Array<{ columnName: string; sensitivityType: string; deviceMaskMode: DeviceMaskMode; customMask?: CustomMaskConfig | null }> }): void {
+  if (!policy || !Number.isSafeInteger(policy.version) || policy.version < 0 || !Array.isArray(policy.columns)) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
+  if (policy.version === 0 && policy.columns.length === 0) throw new Error("DASHBOARD_SENSITIVITY_POLICY_REQUIRED");
+  const names = new Set<string>();
+  for (const rule of policy.columns) {
+    if (!rule || typeof rule.columnName !== "string" || !rule.columnName || !allowedModes.has(rule.deviceMaskMode)
+      || typeof rule.sensitivityType !== "string" || !/^[A-Z0-9_]{1,64}$/.test(rule.sensitivityType)
+      || names.has(rule.columnName.toUpperCase()) || (rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
+    names.add(rule.columnName.toUpperCase());
+    if (rule.deviceMaskMode === "CUSTOM") {
+      const config = rule.customMask;
+      if (!config || !Number.isInteger(config.prefix) || !Number.isInteger(config.suffix) || config.prefix < 0 || config.suffix < 0 || config.prefix > 100 || config.suffix > 100
+        || typeof config.symbol !== "string" || Array.from(config.symbol).length !== 1 || /[\r\n\t]/u.test(config.symbol)) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
+    }
+  }
+}

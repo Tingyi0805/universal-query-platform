@@ -228,7 +228,11 @@ export function DashboardDisplayPage() {
         let cached = previewCache.get(key);
         if (!cached || !snapshotId || cached.id !== snapshotId) {
           const data = await apiRequest<SupplementalPage>(`/dashboards/${dashboardId}/data-sources/${encodeURIComponent(key)}/preview`,
-            { method: "POST", signal }, accessToken);
+            { method: "POST", signal }, accessToken).catch(error => {
+              previewCache.delete(key);
+              if (previewAuthorizationFailed(error)) throw Object.assign(new Error("PREVIEW_AUTHORIZATION_FAILED"), { status: 401 });
+              throw error;
+            });
           cached = { id: `preview-${++previewRevision}`, data };
           previewCache.set(key, cached);
         }
@@ -254,7 +258,7 @@ export function DashboardDisplayPage() {
       },
       unauthorized: () => {
         if (!deviceMode) {
-          if(queryPreview){++latestDataRequest.current;++latestLayoutRequest.current;++supplementalRequestGeneration.current;pageSnapshotId.current=null;setPreviewAuthorized(false);setPreview(null);setProfiles([]);setSupplementalPages({});setError("預覽授權失效，請重新登入後開啟預覽。");}
+          {++latestDataRequest.current;++latestLayoutRequest.current;++supplementalRequestGeneration.current;pageSnapshotId.current=null;setPreviewAuthorized(false);setPreview(null);setProfiles([]);setSupplementalPages({});setError("預覽授權失效，請重新登入後開啟預覽。");}
           return;
         }
         ++supplementalRequestGeneration.current;
@@ -291,7 +295,7 @@ export function DashboardDisplayPage() {
         return;
       }
 
-      if(queryPreview && !previewAuthorized)return;
+      if(!previewAuthorized)return;
       const configuration = queryPreview && !deviceMode ? await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`,{},accessToken) : null;
       const response = await apiRequest<PreviewResult & {query?:{name:string;code:string}}>(
         deviceMode
@@ -344,7 +348,7 @@ export function DashboardDisplayPage() {
         setDataWarning("資料筆數已變更，正在從第一頁重新載入。");
         return;
       }
-      if(queryPreview && !deviceMode && previewAuthorizationFailed(e)){
+      if(!deviceMode && previewAuthorizationFailed(e)){
         ++latestDataRequest.current;++latestLayoutRequest.current;++supplementalRequestGeneration.current;pageSnapshotId.current=null;
         setPreviewAuthorized(false);setPreview(null);setProfiles([]);setSupplementalPages({});setError("預覽授權失效，請重新登入後開啟預覽。");return;
       }
@@ -364,7 +368,7 @@ export function DashboardDisplayPage() {
         setError("");
         setActivationError("裝置授權失效，請由管理者重新核發憑證。");
       } else {
-        if (deviceMode || queryPreview) {
+        {
           pageSnapshotId.current = null;
           setPreview(null);
           setCountdown(0);

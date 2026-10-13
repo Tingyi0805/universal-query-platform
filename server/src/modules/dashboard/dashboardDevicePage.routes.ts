@@ -2,7 +2,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { getClientIp } from "../../utils/clientIp.js";
-import { enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks, resolveSupplementalDeviceRules } from "./dashboardDeviceMasking.js";
+import { assertDatasetSensitivityPolicy, enforceClassifiedDeviceMasks, enforceDatasetDeviceMasks, maskDeviceRows, maskDeviceValue, resolveDeviceColumnMask, resolveEffectiveDeviceMasks, resolveSupplementalDeviceRules } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 
@@ -52,6 +52,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
     const dataSource = await getDataSourcePlaybackState(dataset.dataSourceId);
     if (!dataSource?.isActive) throw new DeliveryError(409, "DATASOURCE_DISABLED");
     const sensitivity = await getDatasetSensitivitySnapshot(dataset.id);
+    assertDatasetSensitivityPolicy(sensitivity);
     const definitions = await listDatasetParameters(dataset.id);
     const reportColumns = source ? [] : await listReportColumns(query.id);
     const accessRevision = await getQueryAccessRevision(query.id);
@@ -227,7 +228,7 @@ class DeliveryError extends Error {
 function deliveryFailure(error: unknown, res: import("express").Response, _next: import("express").NextFunction) {
   // Database errors can contain SQL/bind values. Device responses and logs must never expose them.
   const code = error instanceof DeliveryError ? error.code
-    : error instanceof Error && ["DASHBOARD_QUERY_BUSY", "DASHBOARD_QUERY_TIMEOUT", "DASHBOARD_SNAPSHOT_TOO_LARGE"].includes(error.message)
+    : error instanceof Error && ["DASHBOARD_QUERY_BUSY", "DASHBOARD_QUERY_TIMEOUT", "DASHBOARD_SNAPSHOT_TOO_LARGE", "DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"].includes(error.message)
       ? error.message : "DASHBOARD_DELIVERY_FAILED";
   const status = error instanceof DeliveryError ? error.status : code === "DASHBOARD_QUERY_BUSY" ? 429 : code === "DASHBOARD_QUERY_TIMEOUT" ? 504 : 503;
   res.setHeader("Cache-Control", "no-store");
