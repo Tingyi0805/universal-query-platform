@@ -1,3 +1,4 @@
+import type { DashboardProfileInput } from "./dashboardLayout.repository.js";
 import { createHash } from "node:crypto";
 import type { QuerySourcePatch } from "./dashboardQuerySources.schema.js";
 
@@ -15,6 +16,7 @@ export type SourceState = {
     updatedAtUtc: string; maxRows: number | null; refreshSeconds: number; pageSize: number; pageSeconds: number };
   sources: QuerySource[];
   references: string[];
+  layoutFingerprint?: string;
 };
 export interface SourceTransaction {
   schemaReady(): Promise<boolean>;
@@ -23,8 +25,11 @@ export interface SourceTransaction {
   upsert(dashboardId: number, source: Omit<QuerySource, "id"> & { id: number | null }): Promise<void>;
   remove(dashboardId: number, id: number): Promise<void>;
   markManaged(dashboardId: number): Promise<void>;
+  writeLayout?(id: number, profiles: DashboardProfileInput[]): Promise<void>;
+  updatePrimary?(id: number, input: PrimarySettings): Promise<void>;
   audit(userId: number, dashboardId: number, changes: { sourceKey: string; queryDefinitionId?: number; action: string }[]): Promise<void>;
 }
+export type PrimarySettings = { queryDefinitionId: number; parameters: Record<string, unknown>; refreshSeconds: number; pageSize: number; pageSeconds: number; maxRows: number };
 export interface SourceStore {
   transaction<T>(work: (tx: SourceTransaction) => Promise<T>): Promise<T>;
 }
@@ -56,6 +61,65 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
     await tx.validateQuery(userId, state.dashboard.queryDefinitionId, parameters);
   };
   return {
+    configuration: (id: number, userId: number) => run(id, async (tx, state) => {
+      // A failed validation is local to its source. Never return unauthorized parameter values.
+      const inspect = async (queryId: number | null, values: Record<string, unknown>) => {
+        if (queryId === null) return { parameters: undefined, errorCode: "PENDING_CONVERSION" };
+        try { await tx.validateQuery(userId, queryId, values); return { parameters: values, errorCode: null }; }
+        catch (error) {
+          if (!(error instanceof QuerySourceError)) throw error;
+          const parameterError = error.code.startsWith("PARAMETER_") || error.code === "QUERY_SOURCE_PARAMETER_VALIDATION_FAILED";
+          return { parameters: parameterError ? values : undefined, errorCode: error.code };
+        }
+      };
+      const { snapshotKind, snapshotSeconds, deviceColumnMasks, deviceColumnTypes, ...primaryParameters } = state.dashboard.parameters;
+      const view = projection(state);
+      const sources = [];
+      for (const source of view.sources) sources.push({ ...source,
+        ...await inspect(source.queryDefinitionId, state.sources.find(s => s.id === source.id)!.parameters) });
+      return { ...view, dashboardMode: state.dashboard.mode ?? "LEGACY", isActive: state.dashboard.isActive, editable: !state.dashboard.isActive && state.dashboard.mode !== "QUERY_ONLY",
+        primary: { ...view.primary, readOnly: false, ...await inspect(state.dashboard.queryDefinitionId, primaryParameters) },
+        sources };
+    }),
+    layout: (id: number, userId: number, input: { expectedVersion: string; profiles: DashboardProfileInput[] }) => run(id, async (tx, state) => {
+      if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
+      if (sourceVersion(state) !== input.expectedVersion) throw new QuerySourceError("QUERY_SOURCE_VERSION_CONFLICT");
+      if (!tx.writeLayout) throw new QuerySourceError("QUERY_SOURCE_STORAGE_UNAVAILABLE", 503);
+      await validatePrimary(tx, state, userId);
+      if (state.sources.length + 1 > 8) throw new QuerySourceError("QUERY_SOURCE_LIMIT", 400);
+      for (const source of state.sources) {
+        if (source.queryDefinitionId === null) throw new QuerySourceError("QUERY_SOURCE_PENDING_CONVERSION");
+        await tx.validateQuery(userId, source.queryDefinitionId, source.parameters);
+      }
+      if (input.profiles.filter(p => p.isDefault).length > 1) throw new QuerySourceError("DASHBOARD_MULTIPLE_DEFAULT_PROFILES", 400);
+      for (const profile of input.profiles) for (const widget of profile.widgets) {
+        if (widget.x + widget.width > profile.canvasWidth || widget.y + widget.height > profile.canvasHeight)
+          throw new QuerySourceError("DASHBOARD_WIDGET_OUT_OF_BOUNDS", 400);
+        if (widget.widgetType === "FIELD" || widget.widgetType === "TABLE") {
+          const key = widget.config.dataSourceKey ?? "PRIMARY";
+          if (typeof key !== "string" || (key !== "PRIMARY" && !state.sources.some(s => s.sourceKey === key && s.isEnabled)))
+            throw new QuerySourceError("DASHBOARD_WIDGET_SOURCE_NOT_AVAILABLE", 400);
+        }
+      }
+      await tx.writeLayout(id, input.profiles);
+      await tx.markManaged(id);
+      await tx.audit(userId, id, [{ sourceKey: "PRIMARY", action: "LAYOUT_UPDATE" }]);
+      return projection(await tx.readState(id));
+    }),
+    primary: (id: number, userId: number, input: PrimarySettings & { expectedVersion: string }) => run(id, async (tx, state) => {
+      if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
+      if (sourceVersion(state) !== input.expectedVersion) throw new QuerySourceError("QUERY_SOURCE_VERSION_CONFLICT");
+      if (!tx.updatePrimary) throw new QuerySourceError("QUERY_SOURCE_STORAGE_UNAVAILABLE", 503);
+      if (state.sources.length + 1 > 8) throw new QuerySourceError("QUERY_SOURCE_LIMIT", 400);
+      if (["snapshotKind", "snapshotSeconds", "deviceColumnMasks", "deviceColumnTypes"].some(key => key in input.parameters))
+        throw new QuerySourceError("VALIDATION_ERROR", 400);
+      await tx.validateQuery(userId, input.queryDefinitionId, input.parameters);
+      const reserved = Object.fromEntries(Object.entries(state.dashboard.parameters).filter(([key]) =>
+        ["snapshotKind", "snapshotSeconds", "deviceColumnMasks", "deviceColumnTypes"].includes(key)));
+      await tx.updatePrimary(id, { ...input, parameters: { ...input.parameters, ...reserved } });
+      await tx.audit(userId, id, [{ sourceKey: "PRIMARY", queryDefinitionId: input.queryDefinitionId, action: "UPDATE" }]);
+      return projection(await tx.readState(id));
+    }),
     read: (id: number, userId: number) => run(id, async (tx, state) => {
       await validatePrimary(tx, state, userId);
       for (const source of state.sources) if (source.queryDefinitionId !== null)
@@ -63,7 +127,7 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       return projection(state);
     }),
     patch: (id: number, userId: number, input: QuerySourcePatch) => run(id, async (tx, state) => {
-      if (state.dashboard.isActive) throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
+      if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
       if (sourceVersion(state) !== input.expectedVersion) throw new QuerySourceError("QUERY_SOURCE_VERSION_CONFLICT");
       await validatePrimary(tx, state, userId);
       const canonical = (key: string) => key.toUpperCase();

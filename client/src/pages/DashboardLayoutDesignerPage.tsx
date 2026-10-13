@@ -1,3 +1,5 @@
+import { displayFormats, formatDashboardValue } from "../dashboard/displayFormat";
+import { managementError, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -30,7 +32,7 @@ type PreviewResult = {
   };
 };
 
-type SupplementalSource = { sourceKey: string; datasetId: number; refreshSeconds: number; isEnabled: boolean };
+type SupplementalSource = { sourceKey: string; datasetId?: number; refreshSeconds: number; isEnabled: boolean };
 type SupplementalPreview = { result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
 
 type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
@@ -267,35 +269,52 @@ export function DashboardLayoutDesignerPage() {
   const [zoomMode, setZoomMode] = useState<"FIT" | "CUSTOM">("FIT");
   const [customScale, setCustomScale] = useState(0.5);
 
+  const [sourceVersion, setSourceVersion] = useState<string | null | undefined>(undefined);
   const load = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
     setLoading(true);
     setError("");
 
     try {
-      const [layoutResult, previewResult] = await Promise.all([
-        apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & {
-          widgets: Omit<LayoutWidget, "clientKey">[];
-        }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken),
-        apiRequest<PreviewResult>(
-          `/dashboards/${dashboardId}/preview`,
-          { method: "POST" },
-          accessToken,
-        ),
-      ]);
-
-      const supplemental = await apiRequest<{ sources: SupplementalSource[] }>(
-        `/dashboards/${dashboardId}/data-sources`, {}, accessToken);
-      setSupplementalSources(supplemental.sources.filter((source) => source.isEnabled));
-      const sourceResults = await Promise.allSettled(supplemental.sources.filter((source) => source.isEnabled).map(async (source) => ({
+      // Load the saved layout first; a query failure must not erase design state.
+      const layoutResult = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & {
+        widgets: Omit<LayoutWidget, "clientKey">[] }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken);
+      let configuration: QuerySourceConfiguration | null = null;
+      let legacy = false;
+      try {
+        configuration = await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken);
+        setSourceVersion(configuration.editable ? configuration.version : undefined);
+      } catch (error) {
+        legacy = (error as { code?: string }).code === "QUERY_SOURCE_MANAGEMENT_DISABLED";
+        setSourceVersion(legacy ? null : undefined);
+        if (!legacy) setError(managementError(error));
+      }
+      const previewResult = !configuration && !legacy ? null : await apiRequest<PreviewResult>(configuration
+        ? `/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page` : `/dashboards/${dashboardId}/preview`,
+        { method: "POST", ...(configuration ? { body: JSON.stringify({ page: 1 }) } : {}) }, accessToken)
+        .then(value => configuration ? { ...value, reportColumns: [], dashboard: {
+          id: dashboardId, name: "Query-only", code: "", parameters: configuration.primary.parameters ?? {},
+          pageSize: configuration.primary.pageSize, pageSeconds: configuration.primary.pageSeconds } } : value)
+        .catch(error => { setError(managementError(error)); return null; });
+      let supplemental: SupplementalSource[] = [];
+      if (configuration) supplemental = configuration.sources.filter(source => source.isEnabled).map(source => ({
+        sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled) }));
+      else if (legacy) supplemental = await apiRequest<{ sources: SupplementalSource[] }>(
+        `/dashboards/${dashboardId}/data-sources`, {}, accessToken).then(value => value.sources).catch(error => {
+          setError(managementError(error)); return [];
+        });
+      setSupplementalSources(supplemental.filter(source => source.isEnabled));
+      const sourceResults = await Promise.allSettled(supplemental.filter(source => source.isEnabled).map(async source => ({
         key: source.sourceKey,
-        preview: await apiRequest<SupplementalPreview>(
-          `/dashboards/${dashboardId}/data-sources/${encodeURIComponent(source.sourceKey)}/preview`,
-          { method: "POST" }, accessToken),
+        preview: await apiRequest<SupplementalPreview>(configuration
+          ? `/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/page`
+          : `/dashboards/${dashboardId}/data-sources/${encodeURIComponent(source.sourceKey)}/preview`,
+          { method: "POST", ...(configuration ? { body: JSON.stringify({ page: 1 }) } : {}) }, accessToken),
       })));
+      if (sourceResults.some(result => result.status === "rejected")) setError("部分來源預覽失敗；版面保留，遮蔽由後端執行。");
       setSupplementalPreviews(Object.fromEntries(sourceResults.filter(
         (item): item is PromiseFulfilledResult<{ key: string; preview: SupplementalPreview }> => item.status === "fulfilled",
-      ).map((item) => [item.value.key, item.value.preview])));
+      ).map(item => [item.value.key, item.value.preview])));
       const loadedProfiles = layoutResult.profiles.map(withClientKeys);
       setProfiles(loadedProfiles);
       setActiveProfileKey(
@@ -329,8 +348,8 @@ export function DashboardLayoutDesignerPage() {
 
     const updateSize = () => {
       setCanvasViewport({
-        width: Math.max(240, element.clientWidth - 8),
-        height: Math.max(240, element.clientHeight - 8),
+        width: Math.max(1, element.clientWidth - 8),
+        height: Math.max(1, element.clientHeight - 8),
       });
     };
 
@@ -343,7 +362,7 @@ export function DashboardLayoutDesignerPage() {
       observer.disconnect();
       window.removeEventListener("resize", updateSize);
     };
-  }, []);
+  }, [loading, activeProfile?.clientKey]);
 
   const fitScale = useMemo(() => {
     if (!activeProfile) return 1;
@@ -357,7 +376,7 @@ export function DashboardLayoutDesignerPage() {
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
     const requested = zoomMode === "FIT" ? fitScale : customScale;
-    return Math.max(0.1, Math.min(1.5, requested));
+    return Math.max(zoomMode === "FIT" ? 0.01 : 0.1, Math.min(1.5, requested));
   }, [activeProfile, customScale, fitScale, zoomMode]);
 
   const visibleColumns = useMemo(() => {
@@ -610,7 +629,7 @@ export function DashboardLayoutDesignerPage() {
               {rows.map((row, index) => (
                 <tr key={index}>
                   {widgetColumns.map((column) => (
-                    <td key={column.columnName}>{maskText(row[column.columnName], getColumnMask(widget, column.columnName))}</td>
+                    <td key={column.columnName}>{formatDashboardValue(maskText(row[column.columnName], getColumnMask(widget, column.columnName)), (widget.config.columnFormats as Record<string, unknown> | undefined)?.[column.columnName])}</td>
                   ))}
                 </tr>
               ))}
@@ -630,7 +649,7 @@ export function DashboardLayoutDesignerPage() {
         break;
       case "FIELD":
         value = widget.sourceKey
-          ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode)
+          ? formatDashboardValue(maskText(firstRow[widget.sourceKey], widget.config?.maskMode), widget.config.displayFormat)
           : "選擇資料欄位";
         break;
       case "CLOCK":
@@ -653,6 +672,7 @@ export function DashboardLayoutDesignerPage() {
   }
 
   async function saveLayout() {
+    if (sourceVersion === undefined) { setError("來源版本不可用或看板仍啟用，禁止儲存。請先安全停用並重新載入。"); return; }
     setSaving(true);
     setError("");
     setNotice("");
@@ -664,6 +684,11 @@ export function DashboardLayoutDesignerPage() {
         })),
       };
 
+      if (sourceVersion !== null) {
+        const result = await apiRequest<{ version: string }>(`/dashboards/${dashboardId}/query-sources/v1/layout`,
+          { method: "PUT", body: JSON.stringify({ ...payload, expectedVersion: sourceVersion }) }, accessToken);
+        setSourceVersion(result.version); setNotice("Dashboard 版面已儲存。"); return;
+      }
       const result = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & {
         widgets: Omit<LayoutWidget, "clientKey">[];
       }> }>(
@@ -680,7 +705,7 @@ export function DashboardLayoutDesignerPage() {
       setSelectedWidgetKey("");
       setNotice("Dashboard 版面已儲存。");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "儲存 Dashboard 版面失敗。");
+      setError(managementError(e));
     } finally {
       setSaving(false);
     }
@@ -705,11 +730,13 @@ export function DashboardLayoutDesignerPage() {
               className="secondary-button"
               type="button"
               onClick={openPreview}
+              disabled={sourceVersion !== null}
+              title={sourceVersion !== null ? "Query-only 請使用畫布的安全來源預覽；獨立視窗預覽尚未接入新契約。" : undefined}
             >
               預覽此版型
             </button>
           )}
-          <button className="primary-button" type="button" disabled={saving} onClick={() => void saveLayout()}>
+          <button className="primary-button" type="button" disabled={saving || sourceVersion === undefined} onClick={() => void saveLayout()}>
             {saving ? "儲存中…" : "儲存版面"}
           </button>
         </div>
@@ -862,7 +889,7 @@ export function DashboardLayoutDesignerPage() {
                       transform: `scale(${scale})`,
                     }}
                   >
-                    {activeProfile.widgets.map((widget) => (
+                    {[...activeProfile.widgets].sort((a,b) => a.sortOrder-b.sortOrder).map((widget) => (
                       <div
                         key={widget.clientKey}
                         className={`layout-widget ${selectedWidgetKey === widget.clientKey ? "selected" : ""}`}
@@ -973,7 +1000,7 @@ export function DashboardLayoutDesignerPage() {
               {selectedWidget.widgetType === "TABLE" && (
                 <div className="layout-mask-settings">
                   <strong>表格欄位遮蔽</strong>
-                  <p className="layout-hint">可個別設定姓名、病歷號、電話等欄位的顯示方式。</p>
+                  <p className="layout-hint">顯示設定僅能增加遮蔽；患者資料的實際遮蔽與欄位授權由後端執行。</p>
                   {(String(selectedWidget.config?.dataSourceKey ?? "PRIMARY") === "PRIMARY"
                     ? visibleColumns
                     : (supplementalPreviews[String(selectedWidget.config?.dataSourceKey)]?.result.columns ?? []).map((column, index) => ({
@@ -983,6 +1010,11 @@ export function DashboardLayoutDesignerPage() {
                   ).map((column) => (
                     <label key={column.columnName}>
                       {column.displayLabel}
+                      <select aria-label={`${column.displayLabel} 顯示格式`} value={String((selectedWidget.config.columnFormats as Record<string,unknown> | undefined)?.[column.columnName] ?? "TEXT")}
+                        onChange={event => updateSelectedWidget({config:{...selectedWidget.config,columnFormats:{
+                          ...(selectedWidget.config.columnFormats as Record<string,unknown> ?? {}),[column.columnName]:event.target.value}}})}>
+                        {Object.entries(displayFormats).map(([key,label]) => <option key={key} value={key}>{label}</option>)}
+                      </select>
                       <select
                         value={getColumnMask(selectedWidget, column.columnName)}
                         onChange={(e) => {
@@ -1019,6 +1051,12 @@ export function DashboardLayoutDesignerPage() {
                 <label>高<input type="number" min={30} value={selectedWidget.height} onChange={(e) => updateSelectedWidget({ height: Number(e.target.value) })} /></label>
               </div>
 
+              <label>元件排序<input type="number" min={-10000} max={10000} value={selectedWidget.sortOrder}
+                onChange={event => updateSelectedWidget({sortOrder:Number(event.target.value)})}/></label>
+              {selectedWidget.widgetType === "FIELD" && <label>欄位顯示格式<select value={String(selectedWidget.config.displayFormat ?? "TEXT")}
+                onChange={event => updateSelectedWidget({config:{...selectedWidget.config,displayFormat:event.target.value}})}>
+                {Object.entries(displayFormats).map(([key,label]) => <option key={key} value={key}>{label}</option>)}
+              </select></label>}
               <label>
                 字體大小
                 <input type="number" min={8} max={240} value={selectedWidget.fontSize}

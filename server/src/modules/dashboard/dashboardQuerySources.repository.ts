@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { writeDashboardLayout } from "./dashboardLayout.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { getEffectiveQueryAccess } from "../queryDefinition/queryDefinition.repository.js";
@@ -62,9 +64,13 @@ return {
         const dashboard = (await scoped(id).query("SELECT * FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@dashboardId")).recordset[0];
         if (!dashboard) throw new QuerySourceError("DASHBOARD_NOT_FOUND", 404);
         const sources = (await scoped(id).query("SELECT * FROM uqp.DashboardDataSource WITH (UPDLOCK,HOLDLOCK) WHERE DashboardId=@dashboardId ORDER BY Id")).recordset;
-        const widgets = (await scoped(id).query(`SELECT w.ConfigJson FROM uqp.DashboardDisplayProfile p WITH (UPDLOCK,HOLDLOCK)
-          INNER JOIN uqp.DashboardWidget w WITH (UPDLOCK,HOLDLOCK) ON w.ProfileId=p.Id
-          WHERE p.DashboardId=@dashboardId AND w.WidgetType IN ('FIELD','TABLE') ORDER BY w.Id`)).recordset;
+        const widgets = (await scoped(id).query(`SELECT w.ConfigJson,w.Id AS WidgetId,w.WidgetType,w.Title,w.SourceKey,w.StaticText,
+          w.X,w.Y,w.Width,w.Height,w.FontSize,w.Alignment,w.SortOrder AS WidgetOrder,
+          p.Id AS ProfileId,p.Name AS ProfileName,p.CanvasWidth,p.CanvasHeight,p.IsDefault,
+          p.SortOrder AS ProfileOrder,p.ConfigJson AS ProfileConfig
+          FROM uqp.DashboardDisplayProfile p WITH (UPDLOCK,HOLDLOCK)
+          LEFT JOIN uqp.DashboardWidget w WITH (UPDLOCK,HOLDLOCK) ON w.ProfileId=p.Id
+          WHERE p.DashboardId=@dashboardId ORDER BY p.Id,w.Id`)).recordset;
         return {
           dashboard: { id, queryDefinitionId: Number(dashboard.QueryDefinitionId), isActive: Boolean(dashboard.IsActive),
             mode: String(dashboard.QueryMode ?? "LEGACY"), modeVersion: Number(dashboard.QueryModeVersion ?? 0),
@@ -75,7 +81,8 @@ return {
             queryDefinitionId: s.QueryDefinitionId == null ? null : Number(s.QueryDefinitionId), queryBindingRevision: Number(s.QueryBindingRevision),
             parameters: parameters(s.ParametersJson), refreshSeconds: Number(s.RefreshSeconds), pageSize: Number(s.PageSize),
             pageSeconds: Number(s.PageSeconds), isEnabled: Boolean(s.IsEnabled), maxRows: s.MaxRows == null ? null : Number(s.MaxRows) })),
-          references: widgets.map(w => {
+          layoutFingerprint: createHash("sha256").update(JSON.stringify(widgets)).digest("hex"),
+          references: widgets.filter(w => w.WidgetType === "FIELD" || w.WidgetType === "TABLE").map(w => {
             const key = parameters(w.ConfigJson).dataSourceKey;
             if (key !== undefined && typeof key !== "string") throw new QuerySourceError("QUERY_SOURCE_SAVED_CONFIG_INVALID");
             return key as string | undefined ?? "PRIMARY";
@@ -109,6 +116,16 @@ return {
         else await query.query(`UPDATE uqp.DashboardDataSource SET QueryDefinitionId=@queryId,QueryBindingRevision=@revision,MaxRows=@maxRows,
           RefreshSeconds=@refreshSeconds,PageSize=@pageSize,PageSeconds=@pageSeconds,ParametersJson=@parameters,IsEnabled=@enabled,UpdatedAtUtc=SYSUTCDATETIME()
           WHERE Id=@id AND DashboardId=@dashboardId AND SourceKey=@sourceKey`);
+      },
+      writeLayout: (id, profiles) => writeDashboardLayout(transaction, id, profiles, deps.createRequest),
+      async updatePrimary(id, source) {
+        await scoped(id).input("queryId", sql.BigInt, source.queryDefinitionId)
+          .input("parameters", sql.NVarChar(sql.MAX), JSON.stringify(source.parameters))
+          .input("refreshSeconds", sql.Int, source.refreshSeconds).input("pageSize", sql.Int, source.pageSize)
+          .input("pageSeconds", sql.Int, source.pageSeconds).input("maxRows", sql.Int, source.maxRows)
+          .query(`UPDATE uqp.Dashboard SET QueryDefinitionId=@queryId,ParametersJson=@parameters,
+            RefreshSeconds=@refreshSeconds,PageSize=@pageSize,PageSeconds=@pageSeconds,
+            QuerySourceMaxRows=@maxRows,UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@dashboardId`);
       },
       async remove(id, sourceId) { await scoped(id).input("id", sql.BigInt, sourceId)
         .query("DELETE FROM uqp.DashboardDataSource WHERE DashboardId=@dashboardId AND Id=@id"); },

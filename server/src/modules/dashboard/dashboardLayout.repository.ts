@@ -129,7 +129,18 @@ export async function replaceDashboardLayout(
       .query("SELECT Id FROM uqp.Dashboard WITH (UPDLOCK, HOLDLOCK) WHERE Id=@dashboardId");
     if (!dashboard.recordset[0]) throw new Error("DASHBOARD_NOT_FOUND");
 
-    await new sql.Request(tx)
+    await writeDashboardLayout(tx, dashboardId, profiles);
+
+    await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
+}
+
+// Internal transaction helper: callers must hold the Dashboard lock and validate their writer contract.
+export async function writeDashboardLayout(tx: sql.Transaction, dashboardId: number, profiles: DashboardProfileInput[], createRequest: (tx: sql.Transaction) => sql.Request = tx => new sql.Request(tx)) {
+    await createRequest(tx)
       .input("dashboardId", sql.BigInt, dashboardId)
       .query(`
         DELETE w
@@ -146,7 +157,7 @@ export async function replaceDashboardLayout(
       const isDefault = profile.isDefault && !defaultUsed;
       if (isDefault) defaultUsed = true;
 
-      const profileResult = await new sql.Request(tx)
+      const profileResult = await createRequest(tx)
         .input("dashboardId", sql.BigInt, dashboardId)
         .input("name", sql.NVarChar(100), profile.name)
         .input("canvasWidth", sql.Int, profile.canvasWidth)
@@ -167,7 +178,7 @@ export async function replaceDashboardLayout(
       const profileId = Number(profileResult.recordset[0].Id);
 
       for (const widget of profile.widgets) {
-        await new sql.Request(tx)
+        await createRequest(tx)
           .input("profileId", sql.BigInt, profileId)
           .input("widgetType", sql.NVarChar(30), widget.widgetType)
           .input("title", sql.NVarChar(200), widget.title)
@@ -195,7 +206,7 @@ export async function replaceDashboardLayout(
     }
 
     if (profiles.length > 0 && !defaultUsed) {
-      await new sql.Request(tx)
+      await createRequest(tx)
         .input("dashboardId", sql.BigInt, dashboardId)
         .query(`
           UPDATE uqp.DashboardDisplayProfile
@@ -209,11 +220,6 @@ export async function replaceDashboardLayout(
         `);
     }
 
-    await tx.commit();
-  } catch (error) {
-    await tx.rollback();
-    throw error;
-  }
 }
 
 

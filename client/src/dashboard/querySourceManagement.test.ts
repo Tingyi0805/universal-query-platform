@@ -1,0 +1,16 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { managementError, sourceSettings, type QuerySourceSettings } from "./querySourceManagement";
+const source: QuerySourceSettings = { sourceKey:"A",queryDefinitionId:2,refreshSeconds:30,pageSeconds:15,pageSize:10,maxRows:100 };
+test("payload retains parameters but excludes identity and error metadata",()=>{
+  const result=sourceSettings({...source,id:3,errorCode:"SYNTHETIC"},'{"FILTER":"SYNTHETIC"}');
+  assert.deepEqual(result.parameters,{FILTER:"SYNTHETIC"}); assert.equal("id" in result,false); assert.equal("errorCode" in result,false);
+});
+test("invalid parameters and numeric settings are rejected",()=>{
+  for(const json of ['null','[]','bad','1']) assert.throws(()=>sourceSettings(source,json));
+  for(const patch of [{queryDefinitionId:null},{refreshSeconds:4},{pageSize:101},{pageSeconds:3601},{maxRows:10001}]) assert.throws(()=>sourceSettings({...source,...patch},'{}'));
+});
+test("safe errors exclude SQL and tokens",()=>{
+  assert.match(managementError({code:"QUERY_SOURCE_VERSION_CONFLICT",message:"SQL SECRET Token=synthetic"}),/QUERY_SOURCE_VERSION_CONFLICT/);
+  assert.doesNotMatch(managementError({code:"SQL SECRET",message:"Token=synthetic"}),/SECRET|Token=/);
+});

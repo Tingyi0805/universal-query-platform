@@ -1,3 +1,4 @@
+import { formatDashboardValue } from "../dashboard/displayFormat";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { readDashboardToken,rememberDashboardToken,forgetDashboardToken,requestDashboardTokenHandoff } from "../security/dashboardToken";
@@ -727,7 +728,7 @@ export function DashboardDisplayPage() {
                       key={column.columnName}
                       style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}
                     >
-                      {sourceKey === "PRIMARY" ? maskText(row[column.columnName], tableColumnMask(widget, column.columnName)) : textValue(row[column.columnName])}
+                      {formatDashboardValue(maskText(row[column.columnName], tableColumnMask(widget, column.columnName)), (widget.config.columnFormats as Record<string,unknown> | undefined)?.[column.columnName])}
                     </td>
                   ))}
                 </tr>
@@ -750,7 +751,7 @@ export function DashboardDisplayPage() {
       case "FIELD":
         if (supplementalErrors[sourceKey]) { value = supplementalErrors[sourceKey]; break; }
         value = widget.sourceKey
-          ? sourceKey === "PRIMARY" ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode) : textValue(firstRow[widget.sourceKey])
+          ? formatDashboardValue(maskText(firstRow[widget.sourceKey], widget.config?.maskMode), widget.config.displayFormat)
           : "";
         break;
       case "CLOCK":

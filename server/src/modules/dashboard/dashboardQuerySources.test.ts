@@ -45,6 +45,8 @@ function fixture() {
           if (source.id === null) staged.sources.push({ ...structuredClone(source), id: Math.max(0, ...staged.sources.map(s => s.id)) + 1 });
           else staged.sources[staged.sources.findIndex(s => s.id === source.id)] = structuredClone(source) as SourceState["sources"][number];
         },
+        updatePrimary: async (_id, input) => { control.writes++; Object.assign(staged.dashboard, input); staged.dashboard.updatedAtUtc = "2026-10-13T00:00:02Z"; },
+        writeLayout: async (_id, profiles) => { control.writes++; staged.references = profiles.flatMap(p => p.widgets.filter(w => w.widgetType === "FIELD" || w.widgetType === "TABLE").map(w => String(w.config.dataSourceKey ?? "PRIMARY"))); },
         remove: async (_dashboardId, id) => { control.writes++; staged.sources = staged.sources.filter(s => s.id !== id); },
         markManaged: async () => { staged.dashboard.maxRows ??= 1000; staged.dashboard.updatedAtUtc = "2026-10-13T00:00:01Z"; },
         audit: async (_user, dashboardId, changes) => {
@@ -202,6 +204,12 @@ test("Mock HTTP boundary: RBAC, safe errors, disabled/missing schema and sibling
   };
   try {
     permissions = [];
+    for (const [path, method, body] of [["configuration", "GET", undefined], ["primary", "PATCH", primaryInput(f)],
+      ["layout", "PUT", {expectedVersion:sourceVersion(f.state()),profiles:profiles()}]] as const) {
+      const response = await fetch(`${base}/1/query-sources/v1/${path}`, {method,headers:{"Content-Type":"application/json"},
+        ...(body ? {body:JSON.stringify(body)} : {})});
+      assert.equal(response.status,403);
+    }
     assert.equal((await request()).status, 403);
     assert.equal((await fetch(`${base}/unrelated`)).status, 200);
     permissions = ["DESIGN_QUERY"]; f.control.enabled = false;
@@ -215,7 +223,17 @@ test("Mock HTTP boundary: RBAC, safe errors, disabled/missing schema and sibling
     assert.equal(failed.body.error.requestId, "synthetic-request"); assert.equal(failed.cache, "no-store");
     assert.equal(JSON.stringify(failed.body).includes("connection-string"), false);
     f.control.auditFailure = false;
+    const configuration = await fetch(`${base}/1/query-sources/v1/configuration`);
+    assert.equal(configuration.status,200); assert.equal(configuration.headers.get("cache-control"),"no-store");
+    const invalidPrimary = await fetch(`${base}/1/query-sources/v1/primary`,{method:"PATCH",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({...primaryInput(f),sql:"SYNTHETIC_SQL"})});
+    assert.equal(invalidPrimary.status,400);
+    const primary = await fetch(`${base}/1/query-sources/v1/primary`,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(primaryInput(f))});
+    assert.equal(primary.status,200);
     assert.equal((await request(f.patch())).status, 200);
+    const layout = await fetch(`${base}/1/query-sources/v1/layout`,{method:"PUT",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({expectedVersion:sourceVersion(f.state()),profiles:profiles()})});
+    assert.equal(layout.status,200);
   } finally { await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); }
 });
 
@@ -237,7 +255,8 @@ for (const auditFailure of [false, true]) {
           if (text.includes("END AS Ready")) return { recordset: [{ Ready: 1 }] };
           if (text.startsWith("SELECT * FROM uqp.Dashboard WITH")) return { recordset: [columns] };
           if (text.startsWith("SELECT * FROM uqp.DashboardDataSource")) return { recordset: [source] };
-          if (text.includes("SELECT w.ConfigJson")) return { recordset: [{ ConfigJson: '{"dataSourceKey":"WARD"}' }] };
+          if (text.includes("INSERT INTO uqp.DashboardDisplayProfile")) return { recordset: [{Id: 101}] };
+          if (text.includes("SELECT w.ConfigJson")) return { recordset: [{ WidgetType: 'TABLE', ConfigJson: '{"dataSourceKey":"WARD"}' }] };
           if (text.includes("FROM uqp.QueryDefinition WHERE")) return { recordset: [{ Id: 21, DatasetId: 999, IsPublished: true, IsActive: true, IsArchived: false }] };
           return { recordset: [] };
         } } as unknown as sql.Request;
@@ -265,5 +284,87 @@ for (const auditFailure of [false, true]) {
     assert.equal(statements.some(s => s.startsWith("DELETE FROM uqp.DashboardDataSource")), false);
     assert.match(statements.find(s => s.includes("SELECT w.ConfigJson"))!, /UPDLOCK,HOLDLOCK/);
     assert.equal(JSON.stringify(audits).includes("SYNTHETIC_SECRET"), false);
+    committed = false; rolledBack = false;
+    const primary = { expectedVersion: read.version,queryDefinitionId:20,parameters:{},refreshSeconds:45,pageSize:10,pageSeconds:15,maxRows:100 };
+    if (auditFailure) await assert.rejects(service.primary(1,1,primary)); else await service.primary(1,1,primary);
+    assert.equal(committed,!auditFailure); assert.equal(rolledBack,auditFailure);
+    assert.ok(statements.some(s => s.includes("UPDATE uqp.Dashboard SET QueryDefinitionId=@queryId")));
+    committed = false; rolledBack = false;
+    if (auditFailure) await assert.rejects(service.layout(1,1,{expectedVersion:read.version,profiles:profiles()}));
+    else await service.layout(1,1,{expectedVersion:read.version,profiles:profiles()});
+    assert.equal(committed,!auditFailure); assert.equal(rolledBack,auditFailure);
+    assert.ok(statements.some(s => s.includes("INSERT INTO uqp.DashboardWidget")));
+    assert.equal(statements.some(s => /DELETE FROM uqp.DashboardDataSource/.test(s)),false);
   });
 }
+
+const primaryInput = (f: ReturnType<typeof fixture>) => ({ expectedVersion: sourceVersion(f.state()), queryDefinitionId: 20,
+  parameters: {}, refreshSeconds: 45, pageSize: 5, pageSeconds: 20, maxRows: 100 });
+test("configuration isolates source parameter failure and never discloses unauthorized or pending values", async () => {
+  const f = fixture();
+  let result = await f.service.configuration(1, 1);
+  assert.equal(result.sources[0]!.parameters, undefined);
+  await f.service.patch(1, 1, f.patch());
+  f.control.queries.get(21)!.allowed = false;
+  result = await f.service.configuration(1, 1);
+  assert.equal(result.sources[0]!.errorCode, "QUERY_SOURCE_QUERY_FORBIDDEN");
+  assert.equal(result.sources[0]!.parameters, undefined);
+  assert.equal(result.primary.queryDefinitionId, 20);
+  f.control.queries.get(21)!.allowed = true;
+  f.state().sources[0]!.parameters = {};
+  result = await f.service.configuration(1, 1);
+  assert.equal(result.sources[0]!.errorCode, "PARAMETER_REQUIRED");
+  assert.deepEqual(result.sources[0]!.parameters, {});
+});
+test("PRIMARY safe update preserves reserved server policy and all supplemental identities", async () => {
+  const f = fixture(); f.state().dashboard.parameters = { deviceColumnMasks: { NAME: "FULL" }, snapshotSeconds: 30 };
+  const history = structuredClone(f.state().sources);
+  await f.service.primary(1, 1, primaryInput(f));
+  assert.deepEqual(f.state().dashboard.parameters, { deviceColumnMasks: { NAME: "FULL" }, snapshotSeconds: 30 });
+  assert.deepEqual(f.state().sources, history);
+  assert.doesNotMatch(JSON.stringify(f.control.audits), /NAME|FULL|SYNTHETIC_PRIVATE/);
+  await assert.rejects(f.service.primary(1, 1, { ...primaryInput(f), parameters: { deviceColumnMasks: {} } }), {code:"VALIDATION_ERROR"});
+});
+test("PRIMARY enforces optimistic version, inactive mode, ACL and mandatory audit rollback", async () => {
+  const f = fixture(); const before = structuredClone(f.state());
+  await assert.rejects(f.service.primary(1, 1, { ...primaryInput(f), expectedVersion: "0".repeat(64) }), {code:"QUERY_SOURCE_VERSION_CONFLICT"});
+  f.state().dashboard.mode = "QUERY_ONLY";
+  await assert.rejects(f.service.primary(1, 1, primaryInput(f)), {code:"QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE"});
+  delete f.state().dashboard.mode;
+  f.control.queries.get(20)!.allowed = false;
+  await assert.rejects(f.service.primary(1, 1, primaryInput(f)), {code:"QUERY_SOURCE_QUERY_FORBIDDEN"});
+  f.control.queries.get(20)!.allowed = true; f.control.auditFailure = true;
+  await assert.rejects(f.service.primary(1, 1, primaryInput(f)));
+  assert.deepEqual(f.state(), before);
+});
+const profiles = () => [{name:"Synthetic",canvasWidth:1080,canvasHeight:1920,isDefault:true,sortOrder:0,config:{},widgets:[{
+  widgetType:"TEXT" as const,title:null,sourceKey:null,staticText:"固定診間",x:0,y:0,width:200,height:40,fontSize:20,
+  alignment:"LEFT" as const,config:{},sortOrder:0}]}];
+test("versioned layout refuses pending, unknown references, bounds and stale edits", async () => {
+  const f = fixture();
+  await assert.rejects(f.service.layout(1,1,{expectedVersion:sourceVersion(f.state()),profiles:profiles()}),{code:"QUERY_SOURCE_PENDING_CONVERSION"});
+  await f.service.patch(1,1,f.patch());
+  const out = profiles(); out[0]!.widgets[0]!.x = 1080;
+  await assert.rejects(f.service.layout(1,1,{expectedVersion:sourceVersion(f.state()),profiles:out}),{code:"DASHBOARD_WIDGET_OUT_OF_BOUNDS"});
+  const bad = profiles(); bad[0]!.widgets[0] = {...bad[0]!.widgets[0]!,widgetType:"TABLE",config:{dataSourceKey:"UNKNOWN"}} as any;
+  await assert.rejects(f.service.layout(1,1,{expectedVersion:sourceVersion(f.state()),profiles:bad}),{code:"DASHBOARD_WIDGET_SOURCE_NOT_AVAILABLE"});
+  await assert.rejects(f.service.layout(1,1,{expectedVersion:"0".repeat(64),profiles:profiles()}),{code:"QUERY_SOURCE_VERSION_CONFLICT"});
+});
+test("layout source references and audit are atomic and preserve source bindings", async () => {
+  const f = fixture(); await f.service.patch(1,1,f.patch()); const sources = structuredClone(f.state().sources);
+  const input = profiles(); input[0]!.widgets[0] = {...input[0]!.widgets[0]!,widgetType:"TABLE",config:{dataSourceKey:"WARD"}} as any;
+  f.control.auditFailure = true;
+  await assert.rejects(f.service.layout(1,1,{expectedVersion:sourceVersion(f.state()),profiles:profiles()}));
+  assert.deepEqual(f.state().references,["WARD"]);
+  f.control.auditFailure = false;
+  await f.service.layout(1,1,{expectedVersion:sourceVersion(f.state()),profiles:input});
+  assert.deepEqual(f.state().sources,sources);
+  await assert.rejects(f.service.patch(1,1,{expectedVersion:sourceVersion(f.state()),upserts:[],removals:[{id:10,sourceKey:"WARD"}]}),{code:"QUERY_SOURCE_IN_USE"});
+});
+
+test("layout fingerprint catches geometry-only concurrent edits despite unchanged timestamps and references", async () => {
+  const f = fixture(); await f.service.patch(1,1,f.patch());
+  const version = sourceVersion(f.state());
+  f.state().layoutFingerprint = "new geometry fingerprint";
+  await assert.rejects(f.service.layout(1,1,{expectedVersion:version,profiles:profiles()}),{code:"QUERY_SOURCE_VERSION_CONFLICT"});
+});
