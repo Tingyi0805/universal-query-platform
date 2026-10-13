@@ -44,9 +44,9 @@ export async function listDatasets(): Promise<DatasetRecord[]> {
   return result.recordset.map(mapDataset);
 }
 
-export async function getDataset(id: number): Promise<DatasetRecord | null> {
-  const pool = await requirePool();
-  const result = await pool.request().input("id", sql.BigInt, id).query(`
+export async function getDataset(id: number, transaction?: sql.Transaction): Promise<DatasetRecord | null> {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
+  const result = await request.input("id", sql.BigInt, id).query(`
     SELECT d.Id, d.Code, d.Name, d.Description, d.DataSourceId, d.SqlText,
            d.MaxRows, d.QueryTimeoutSec, d.IsActive,
            d.IsArchived, d.ArchivedAtUtc, d.ArchivedByUserId,

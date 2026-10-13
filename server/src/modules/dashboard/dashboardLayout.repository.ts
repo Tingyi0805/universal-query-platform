@@ -1,3 +1,4 @@
+import { assertLegacyDashboardWriter } from "./dashboardSourceWriteGuard.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -122,6 +123,7 @@ export async function replaceDashboardLayout(
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
   try {
+    await assertLegacyDashboardWriter(tx, dashboardId);
     const dashboard = await new sql.Request(tx)
       .input("dashboardId", sql.BigInt, dashboardId)
       .query("SELECT Id FROM uqp.Dashboard WITH (UPDLOCK, HOLDLOCK) WHERE Id=@dashboardId");

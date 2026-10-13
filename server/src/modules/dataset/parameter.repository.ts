@@ -62,9 +62,9 @@ export function createParameterRepository(deps: ParameterRepositoryDependencies)
     return pool;
   }
 
-  async function listDatasetParameters(datasetId: number): Promise<DatasetParameterRecord[]> {
-    const pool = await requirePool();
-    const result = await pool.request()
+  async function listDatasetParameters(datasetId: number, transaction?: sql.Transaction): Promise<DatasetParameterRecord[]> {
+    const request = transaction ? deps.createRequest(transaction) : (await requirePool()).request();
+    const result = await request
       .input("datasetId", sql.BigInt, datasetId)
       .query(`
         SELECT *

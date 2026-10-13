@@ -1,3 +1,8 @@
+import { env } from "../../config/env.js";
+import { QuerySourceError, createQuerySourceManagement } from "./dashboardQuerySources.service.js";
+import { querySourceStore } from "./dashboardQuerySources.repository.js";
+import { createQuerySourceRouter, failure as querySourceFailure } from "./dashboardQuerySources.routes.js";
+import { assertLegacySourcePreview } from "./dashboardSourceWriteGuard.js";
 import { getQueryAccessRevision } from "../queryDefinition/queryAccess.repository.js";
 import { dashboardSourcesSchema } from "./dashboardDataSource.schema.js";
 import { isIP } from "node:net";
@@ -288,6 +293,7 @@ dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, ch
   auditPatientListIfConfigured, listReportColumns, listDatasetParameters, getDataSourcePlaybackState }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
 dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
@@ -861,6 +867,7 @@ dashboardRouter.post("/:id/data-sources/:sourceKey/preview", requirePermission("
     }
     const dashboard = await getDashboard(id.data);
     if (!dashboard) { res.status(404).json({ error: { code: "DASHBOARD_NOT_FOUND" } }); return; }
+    await assertLegacySourcePreview(id.data);
     const sources = await listDashboardDataSources(id.data);
     const source = sources.find((item) => item.sourceKey === sourceKey.data && item.isEnabled);
     if (!source) { res.status(404).json({ error: { code: "DASHBOARD_SOURCE_NOT_FOUND" } }); return; }
@@ -1044,3 +1051,9 @@ dashboardRouter.post("/:id/preview", async (req, res, next) => {
     next(error);
   }
 });
+
+// Preserve explicit management error classifications for guarded legacy writers.
+dashboardRouter.use(((error, req, res, next) => {
+  if (error instanceof QuerySourceError) querySourceFailure(error, res, req.id);
+  else next(error);
+}) as import("express").ErrorRequestHandler);

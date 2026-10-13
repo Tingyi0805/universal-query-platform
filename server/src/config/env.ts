@@ -28,6 +28,7 @@ const envSchema = z.object({
   TRUST_PROXY_ENABLED: envBoolean(false),
   TRUST_PROXY_ADDRESSES: z.string().default("127.0.0.1,::1"),
   CLIENT_IP_DIAGNOSTICS: envBoolean(false),
+  DASHBOARD_QUERY_SOURCE_MANAGEMENT: envBoolean(false),
 
   PLATFORM_DB_SERVER: optionalString,
   PLATFORM_DB_PORT: z.coerce.number().int().min(1).max(65535).default(1433),

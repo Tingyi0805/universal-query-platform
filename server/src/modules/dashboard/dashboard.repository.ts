@@ -1,3 +1,4 @@
+import { assertLegacyDashboardWriter } from "./dashboardSourceWriteGuard.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -193,6 +194,7 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
   const tx = new sql.Transaction(pool);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
+    await assertLegacyDashboardWriter(tx, id);
     if (input.isActive) await assertSensitivityReadyForActivation(tx, input.queryDefinitionId);
 
   const result = await new sql.Request(tx)
