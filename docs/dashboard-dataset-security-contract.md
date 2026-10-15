@@ -1,3 +1,19 @@
+## 恢復階段 2：Dataset 患者揭露稽核（目前實作）
+
+基準 a4caca51aa29c07d0292db930c381bb5c3b263b1；本次依保存文件重新實作，沒有還原原 Commit。
+
+- GET/PUT patient-audit-config 保留 JWT/TokenVersion 與 DESIGN_QUERY；嚴格 PUT 要求字串 expectedVersion、isEnabled=true、identifierConfirmed=true 與精確 alias。GET 回 config/version/status/metadataStatus/columns，不回 SQL 或定義 hash。
+- 每次新契約交易先讀 sys catalog，檢查 907/919 欄位、版本 DEFAULT/CHECK、rowversion、metadata 型別與主鍵/外鍵/可信約束。缺少或衝突以 SECURITY_SCHEMA_REQUIRED 拒絕；不執行 DDL，不依 feature flag 推定已安裝。
+- SERIALIZABLE、Dataset UPDLOCK/HOLDLOCK、設定/metadata 範圍鎖；版本以 SQL VARCHAR(20) 讀寫並轉換 BIGINT，設定寫入與 writeAuditEvent(..., sameTransaction) 同成敗，禁止停用及溢位。沒有吞掉管理稽核錯誤的成功路徑。
+- 只有 /datasets/preview/run 實際成功結果可建立證明；一般 DatasetColumn 同步不會建立或覆寫證明。執行失敗不建立新證明；成功但未儲存/來源不符/alias 歧義會移除證明。建立時在交易鎖下逐值比較已儲存 SQL/DataSourceId，僅保存 SHA-256 與 alias。無 DatasetId 的預覽不建立任何 Dataset 證明。
+- Dataset 定義改變及版本還原，在原交易內清除既有證明；變回舊 SQL 也必須重新成功預覽。metadata 內容改變時同步推進已存在設定的 ConfigurationVersion，並強制管理稽核，避免證明 A→缺少→A 復活舊快照。這不代表 metadata 能證明業務唯一性，穩定識別碼仍須由管理者與資料負責人確認。
+- Dashboard 的 PRIMARY、額外來源、管理預覽及 Query-only 使用專用政策包裝器和稽核函式。患者設定版本、定義/metadata/分類/金鑰可用狀態納入既有指紋，執行與稽核後重新確認；非空資料必須通過可信 alias、設定啟用、可用金鑰與實際列識別欄位/HMAC 驗證。原雙層遮蔽不變。
+- 一般查詢、Dataset execute 與 Excel/CSV 仍使用原 auditPatientListIfConfigured；沒有切換新 Dashboard 契約。舊敏感政策寫入與 SQL 變更保護維持。
+- 此階段尚未實作 Legacy column-approvals API、核准 rowversion 快照整合或管理 UI。患者設定/metadata 的快照失效已接入；完整核准設定 A→B→A 防護屬階段 3，不宣稱完成。
+- 本機僅使用 Mock/合成資料；尚未驗證真實 SQL Server DDL、鎖競爭或裝置。未執行 Migration、連接共用資料庫、修改 .env 或啟用旗標。未安裝 919 或未建立可信患者設定時，Dashboard 預期 fail-closed；部署仍須先安排隔離驗證及停用/排空舊寫入者。
+
+以下保留階段 1 註記及原始完整交付目標，不能將原文件測試數量當成本次測試成果。
+
 > 恢復階段 1 狀態：以下原始文件描述的是遺失 Commit 的完整交付目標，並非目前已實作功能或本次測試成果。原始附件正文保留於下方。階段 1 尚未接入患者設定寫入、核准 API 或新播放驗證。現有揭露稽核維持不變。
 >
 > 本次依附件重新實作，不宣稱還原 3490674。Schema 輔助程式不會自動探測或宣稱資料庫已安裝 919；階段 2 必須在交易內取得目前 catalog 證據。沒有完整證據一律回 SECURITY_SCHEMA_REQUIRED。

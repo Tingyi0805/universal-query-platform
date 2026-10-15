@@ -22,7 +22,7 @@ function fixture() {
     bindings: { WARD: binding("WARD", 21), ROOM: binding("ROOM", 22) } as Record<string, ExecutionBinding>,
     queries: new Map([[21, { id: 21, datasetId: 99, isActive: true, isPublished: true, isArchived: false }],
       [22, { id: 22, datasetId: 100, isActive: true, isPublished: true, isArchived: false }]]),
-    denied: new Set<number>(), revision: "acl-v1", policyVersion: 1, datasourceActive: true,
+    patientVersion: "1", metadataProof: "proof-v1", denied: new Set<number>(), revision: "acl-v1", policyVersion: 1, datasourceActive: true,
     executions: [] as number[], audits: [] as Parameters<ExecutionDependencies["audit"]>[0][],
     failExecute: false, failAudit: false, missingAudit: false,
     afterExecute: () => {}, afterAudit: () => {},
@@ -41,7 +41,7 @@ function fixture() {
       sqlText: "SELECT {{WARD}}" } as NonNullable<Awaited<ReturnType<ExecutionDependencies["getDataset"]>>>),
     getParameters: async () => [{ name: "WARD", dataType: "STRING", controlType: "TEXT", isRequired: true, defaultValue: null } as Awaited<ReturnType<ExecutionDependencies["getParameters"]>>[number]],
     getDataSource: async () => ({ isActive: control.datasourceActive, revision: "source-v1" }),
-    getSensitivity: async () => ({ version: control.policyVersion, columns: [
+    getSensitivity: async () => ({ version: control.policyVersion, patientAudit: { version: control.patientVersion, fingerprint: control.metadataProof }, columns: [
       { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "NAME" },
       { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "OMIT" },
     ] }),
@@ -266,4 +266,12 @@ for (const key of ["PRIMARY", "WARD"]) test(`Query-only ${key}: CUSTOM inheritan
 test("Query-only Dataset policy alone and PRIMARY approvals never authorize additional sources", async () => {
   const f = fixture(); delete f.control.bindings.WARD!.sourceMasks;
   assert.deepEqual((await f.service.page(1, "WARD", subject, { page: 1 })).result.rows, [{}]);
+});
+
+for (const changed of ["patientVersion", "metadataProof"] as const) test(`Query-only ${changed} invalidates cached pages`, async () => {
+  const f = fixture();
+  const first = await f.service.page(1, "WARD", subject, { page: 1 });
+  f.control[changed] = "changed";
+  await assert.rejects(f.service.page(1, "WARD", subject, { page: 1, snapshotId: first.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
+  assert.equal(f.control.executions.length, 1);
 });

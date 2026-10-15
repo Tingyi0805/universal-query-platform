@@ -1,3 +1,4 @@
+import { patientAuditService } from "./patientAuditContract.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import type { DeviceMaskMode, CustomMaskConfig } from "../dashboard/dashboardDeviceMasking.js";
@@ -111,4 +112,11 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
     await transaction.rollback();
     throw error;
   }
+}
+
+/** Dashboard-only extension: ordinary query/export policy contracts are unchanged. */
+export async function getDashboardSensitivitySnapshot(datasetId: number) {
+  const sensitivity = await getDatasetSensitivitySnapshot(datasetId);
+  const patientAudit = await patientAuditService.dashboardState(datasetId);
+  return { ...sensitivity, patientAudit };
 }

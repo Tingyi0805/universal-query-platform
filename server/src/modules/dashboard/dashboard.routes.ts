@@ -28,8 +28,8 @@ import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
 import { getDataset } from "../dataset/dataset.repository.js";
-import { getDatasetSensitivitySnapshot } from "../dataset/datasetSensitiveColumn.repository.js";
-import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
+import { getDashboardSensitivitySnapshot } from "../dataset/datasetSensitiveColumn.repository.js";
+import { auditDashboardPatientList } from "../audit/patientDisclosure.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import { getEffectiveQueryAccess, getQueryDefinition } from "../queryDefinition/queryDefinition.repository.js";
@@ -275,13 +275,13 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
 const queryExecution = createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
   getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
   getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
-  getDataSource: getDataSourcePlaybackState, getSensitivity: getDatasetSensitivitySnapshot,
-  execute: executeSavedDataset, audit: auditPatientListIfConfigured }, device => device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
+  getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
+  execute: executeSavedDataset, audit: auditDashboardPatientList }, device => device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 dashboardRouter.use(createQueryDeviceRouter(queryExecution, { mode: readDashboardQueryMode, checkDevice: checkDashboardDisplayDevice, dashboard: getDashboard, reportColumns: listReportColumns }));
 
 dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
-  getDataset, getDatasetSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
-  auditPatientListIfConfigured, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound }));
+  getDataset, getDatasetSensitivitySnapshot: getDashboardSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
+  auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound }));
 
 dashboardRouter.use(authenticateJwt);
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
@@ -925,9 +925,9 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
 
 dashboardRouter.use(createDashboardPreviewRouter({ getDashboard, getSession: getTokenSessionState,
   getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess, getDataset,
-  getPolicy: getDatasetSensitivitySnapshot, getSources: listDashboardDataSources,
+  getPolicy: getDashboardSensitivitySnapshot, getSources: listDashboardDataSources,
   getReportColumns: listReportColumns, legacyGuard: assertLegacySourcePreview,
-  execute: executeSavedDataset, audit: auditPatientListIfConfigured }));
+  execute: executeSavedDataset, audit: auditDashboardPatientList }));
 // Preserve explicit management error classifications for guarded legacy writers.
 dashboardRouter.use(((error, req, res, next) => {
   if (error instanceof QuerySourceError) querySourceFailure(error, res, req.id);

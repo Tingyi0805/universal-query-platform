@@ -1,7 +1,9 @@
+import { createPatientAuditPreview } from "./patientAuditPreview.js";
 import { Router } from "express";
 import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { getDatasetSensitivitySnapshot, listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
-import { getDatasetPatientAuditConfig, saveDatasetPatientAuditConfig } from "./patientAuditConfig.repository.js";
+import { patientAuditService } from "./patientAuditContract.repository.js";
+import { createPatientAuditConfigRouter } from "./patientAuditConfig.routes.js";
 import { z } from "zod";
 import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
@@ -261,6 +263,8 @@ datasetRouter.get("/", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
+const runPatientAuditPreview = createPatientAuditPreview({ execute: previewDataset, sync: syncDatasetColumns, record: patientAuditService.recordPreview });
+
 datasetRouter.post("/preview/run", async (req, res, next) => {
   try {
     const parsed = previewSchema.safeParse(req.body);
@@ -268,10 +272,7 @@ datasetRouter.post("/preview/run", async (req, res, next) => {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "預覽參數格式不正確。" } });
       return;
     }
-    const result = await previewDataset(parsed.data);
-    if (parsed.data.datasetId) {
-      await withErrorModule("dataset.columns.sync", () => syncDatasetColumns(parsed.data.datasetId!, result.columns));
-    }
+    const result = await runPatientAuditPreview(parsed.data, req.authUser!.id, auditRequestContext(req));
     res.json({
       parameterNames: extractParameterNames(parsed.data.sqlText),
       result,
@@ -666,38 +667,7 @@ datasetRouter.delete("/:id", async (req, res, next) => {
   }
 });
 
-const patientAuditConfigSchema = z.object({
-  isEnabled: z.boolean(),
-  patientKeyColumn: z.string().trim().min(1).max(128).regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
-});
-
-datasetRouter.get("/:id/patient-audit-config", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
-    if (!await getDataset(id.data)) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
-    res.json({ config: await getDatasetPatientAuditConfig(id.data) });
-  } catch (error) { next(error); }
-});
-
-datasetRouter.put("/:id/patient-audit-config", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const parsed = patientAuditConfigSchema.safeParse(req.body);
-    if (!id.success || !parsed.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
-    const dataset = await getDataset(id.data);
-    if (!dataset) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
-    await saveDatasetPatientAuditConfig(id.data, parsed.data);
-    await tryWriteAuditEvent({
-      eventType: "DATASET_PATIENT_AUDIT_CONFIG_UPDATED",
-      userId: req.authUser?.id ?? null,
-      datasetId: id.data,
-      parameters: { isEnabled: parsed.data.isEnabled, patientKeyColumn: parsed.data.patientKeyColumn },
-      ...auditRequestContext(req),
-    });
-    res.json({ status: "OK", config: parsed.data });
-  } catch (error) { next(error); }
-});
+datasetRouter.use(createPatientAuditConfigRouter(patientAuditService));
 
 const sensitiveColumnSchema = z.object({
   columnName: z.string().trim().min(1).max(256),

@@ -1,3 +1,4 @@
+import { invalidatePatientMetadata } from "./patientAuditContract.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
@@ -100,6 +101,7 @@ export async function updateDataset(id: number, input: DatasetInput, userId?: nu
       const protectedRules = await new sql.Request(tx).input("id", sql.BigInt, id)
         .query("SELECT TOP (1) ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@id");
       if (protectedRules.recordset.length) throw new Error("DATASET_SENSITIVITY_REVIEW_REQUIRED");
+      await invalidatePatientMetadata(tx, id);
     }
     if (userId) {
       await snapshotDatasetVersion(tx, id, userId, "DATASET_UPDATE");

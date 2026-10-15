@@ -23,7 +23,7 @@ async function openFixture() {
     query: { id: 2, datasetId: 3, isPublished: true, isActive: true, isArchived: false, code: "SYNTHETIC", name: "Synthetic" } as Query,
     layout: { profiles: [{ isDefault: true, widgets: [{ widgetType: "TABLE", config: { dataSourceKey: "ORACLE" } }] }] } as unknown as Layout,
     dataSource: { isActive: true, revision: "SQLSERVER-v1" },
-    policy: { version: 1, columns: [
+    policy: { version: 1, patientAudit: { fingerprint: "patient-v1" }, columns: [
       { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "NAME" as const },
       { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM" as const, customMask: { prefix: 0, suffix: 2, symbol: "*" } },
       { columnName: "ROOM", sensitivityType: "OTHER", deviceMaskMode: "NONE" as const },
@@ -150,7 +150,7 @@ for (const path of [primary, supplemental]) test(`${path}: conflicting policy re
   assert.equal(denied.body.result, undefined); assert.equal(f.state.sqlCalls, 1);
 }));
 for (const path of [primary, supplemental]) test(`${path}: a never-reviewed empty Dataset policy cannot authorize playback`, () => fixture(async f => {
-  f.state.policy = { version: 0, columns: [] };
+  f.state.policy = { version: 0, patientAudit: { fingerprint: "patient-v1" }, columns: [] };
   const r = await f.request(path, { page: 1 }); assert.equal(r.status, 503); assert.equal(r.body.error.code, "DASHBOARD_SENSITIVITY_POLICY_REQUIRED");
   assert.equal(f.state.sqlCalls, 0);
 }));
@@ -173,4 +173,13 @@ for (const path of [primary, supplemental]) test(`${path}: explicit CUSTOM inher
 test("Legacy extra sources never inherit PRIMARY's approvals or Dataset grants alone", () => fixture(async f => {
   delete f.state.dashboard.parameters.deviceSourceColumnMasks;
   const r = await f.request(supplemental, { page: 1 }); assert.equal(r.status, 200); assert.deepEqual(r.body.result.columns, []); assert.deepEqual(r.body.result.rows, [{}]);
+}));
+
+for (const path of [primary, supplemental]) test(`${path}: patient config or metadata proof invalidates cached pages`, () => fixture(async f => {
+  const first = await f.request(path, { page: 1 });
+  assert.equal(first.status, 200);
+  f.state.policy.patientAudit.fingerprint = "patient-v2-metadata-changed";
+  const stale = await f.request(path, { page: 1, snapshotId: first.body.snapshotId });
+  assert.equal(stale.status, 409); assert.equal(stale.body.error.code, "DASHBOARD_SNAPSHOT_EXPIRED");
+  assert.equal(f.state.sqlCalls, 1);
 }));
