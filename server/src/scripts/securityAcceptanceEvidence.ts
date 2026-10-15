@@ -18,20 +18,21 @@ export function validateEvidence(data: unknown, manifest: Awaited<ReturnType<typ
       d.inventoryFingerprint !== manifest.pinnedInventoryFingerprint || typeof d.runId !== "string" || !run.test(d.runId)) fail("IDENTITY");
   if (!d.environment || d.environment.sqlMajor !== 15 || d.environment.compatibilityLevel !== 150 ||
       typeof d.environment.instanceId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(d.environment.instanceId)) fail("ENVIRONMENT");
-  if (!Array.isArray(d.cases) || d.cases.length !== manifest.cases.length) fail("CASE_COUNT");
+  const cases = d.cases;
+  if (!Array.isArray(cases) || cases.length !== manifest.cases.length) fail("CASE_COUNT");
   const required = new Set(manifest.cases.map(c => c.id));
   const seen = new Set<string>();
-  for (const c of d.cases) {
+  for (const c of cases) {
     if (!c || typeof c.id !== "string" || !required.has(c.id) || seen.has(c.id)) fail("CASE_ID");
     seen.add(c.id);
     if (!["PASS", "FAIL", "NOT_RUN", "BLOCKED"].includes(c.status)) fail("CASE_STATUS");
     if (c.status === "PASS" && (!c.evidenceRef || !evidenceRef.test(c.evidenceRef) || c.evidenceRef.includes(".."))) fail("MISSING_EVIDENCE");
     if (c.evidenceRef !== undefined && (!evidenceRef.test(c.evidenceRef) || c.evidenceRef.includes(".."))) fail("UNSAFE_EVIDENCE_REF");
   }
-  const passed = d.cases.filter(c => c.status === "PASS").length;
-  const failed = d.cases.filter(c => c.status === "FAIL").length;
-  const blocked = d.cases.filter(c => c.status === "BLOCKED").length;
-  const notRun = d.cases.filter(c => c.status === "NOT_RUN").length;
+  const passed = cases.filter(c => c.status === "PASS").length;
+  const failed = cases.filter(c => c.status === "FAIL").length;
+  const blocked = cases.filter(c => c.status === "BLOCKED").length;
+  const notRun = cases.filter(c => c.status === "NOT_RUN").length;
   return { acceptedForReview: true, verifiedByDatabase: false, eligibleForSignoff: false, // Offline self-reported records can never authorize signoff.
     counts: { passed, failed, blocked, notRun }, warning: "Schema, environment and evidence must be independently verified; this is not a database test." };
 }
