@@ -48,3 +48,15 @@ test("rehearsal refuses an isolation checklist for another migration profile", a
   input.isolation.profile = "coexistence";
   await assert.rejects(reviewMigrationRehearsal(input), /REHEARSAL_PROFILE_MISMATCH/);
 });
+
+test("rehearsal never accepts a descriptor that differs from the pinned isolated target rules", async () => {
+  const input = fixture("legacy");
+  input.isolation.target.database = "UQP_ACCEPT_fedcba987654";
+  await assert.rejects(reviewMigrationRehearsal(input), /ISOLATION_TARGET_INVALID/);
+});
+
+test("rehearsal refuses a non-isolated network address even with all self-reported checks true", async () => {
+  const input = fixture("coexistence");
+  input.isolation.target.host = "10.0.0.1";
+  await assert.rejects(reviewMigrationRehearsal(input), /ISOLATION_TARGET_INVALID/);
+});
