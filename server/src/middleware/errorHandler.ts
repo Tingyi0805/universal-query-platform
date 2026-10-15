@@ -1,9 +1,15 @@
 import type { ErrorRequestHandler } from "express";
 import { safeErrorDiagnostic } from "./safeErrorDiagnostic.js";
 import { logger } from "../config/logger.js";
+import { SecurityContractError } from "../modules/securityContract/securityContract.js";
 
 export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
   const requestId = req.id;
+  if (error instanceof SecurityContractError) {
+    res.status(error.status).json({ error: { code: error.code,
+      message: "安全契約驗證未通過，請確認 Schema 與版本。", requestId } });
+    return;
+  }
 
   const diagnostic = safeErrorDiagnostic(error);
   const invalidBind = diagnostic.applicationCode === "ORACLE_BIND_INVALID";
