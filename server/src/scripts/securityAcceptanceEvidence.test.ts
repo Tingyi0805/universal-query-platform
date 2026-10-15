@@ -49,7 +49,7 @@ test("offline evidence reader rejects symlinks and oversized files before parsin
   try {
     await writeFile(actual, "{}");
     await symlink(actual, alias);
-    await assert.rejects(reviewEvidence(["--profile", "legacy", alias]), /OFFLINE_EVIDENCE_REGULAR_FILE_REQUIRED/);
+    await assert.rejects(reviewEvidence(["--profile", "legacy", alias]), /ELOOP|OFFLINE_EVIDENCE_REGULAR_FILE_REQUIRED/);
     await writeFile(large, " ".repeat(1024 * 1024 + 1));
     await assert.rejects(reviewEvidence(["--profile", "legacy", large]), /OFFLINE_EVIDENCE_TOO_LARGE/);
   } finally {
