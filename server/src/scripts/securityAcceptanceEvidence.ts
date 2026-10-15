@@ -1,5 +1,6 @@
 /** Offline, read-only acceptance evidence validator. Never opens a database or writes evidence. */
-import { readFile, lstat } from "node:fs/promises";
+import { open } from "node:fs/promises";
+import { constants } from "node:fs";
 import { prepareAcceptance } from "./securityAcceptanceManifest.js";
 
 type Evidence = {
@@ -41,12 +42,18 @@ export async function reviewEvidence(args: string[]) {
   const filename = args[2]!;
   if (!/^\/tmp\/uqp-acceptance\/[a-zA-Z0-9_-]+\.json$/.test(filename)) throw new Error("OFFLINE_EVIDENCE_PATH_REQUIRED");
   const manifest = await prepareAcceptance(["--profile", args[1]!]);
-  const metadata = await lstat(filename);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("OFFLINE_EVIDENCE_REGULAR_FILE_REQUIRED");
-  if (metadata.size > 1024 * 1024) throw new Error("OFFLINE_EVIDENCE_TOO_LARGE");
-  const raw = await readFile(filename, "utf8");
-  if (Buffer.byteLength(raw, "utf8") > 1024 * 1024) throw new Error("OFFLINE_EVIDENCE_TOO_LARGE");
-  return validateEvidence(JSON.parse(raw), manifest);
+  // Open with O_NOFOLLOW to block symlink substitution between metadata validation and read.
+  const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile()) throw new Error("OFFLINE_EVIDENCE_REGULAR_FILE_REQUIRED");
+    if (metadata.size > 1024 * 1024) throw new Error("OFFLINE_EVIDENCE_TOO_LARGE");
+    const raw = await handle.readFile({ encoding: "utf8" });
+    if (Buffer.byteLength(raw, "utf8") > 1024 * 1024) throw new Error("OFFLINE_EVIDENCE_TOO_LARGE");
+    return validateEvidence(JSON.parse(raw), manifest);
+  } finally {
+    await handle.close();
+  }
 }
 if (process.argv[1] && /(?:^|[\\/])securityAcceptanceEvidence\.(?:ts|js)$/.test(process.argv[1])) {
   reviewEvidence(process.argv.slice(2)).then(value => process.stdout.write(JSON.stringify(value, null, 2) + "\n"))
