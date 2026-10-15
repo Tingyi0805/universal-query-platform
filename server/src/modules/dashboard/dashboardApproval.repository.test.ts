@@ -147,3 +147,33 @@ test("915 catalog mismatch rejects approval evidence before any 919-column query
   await assert.rejects(read(10), { code: "SECURITY_SCHEMA_REQUIRED" });
   assert.deepEqual(events, ["begin", "schema", "rollback"]);
 });
+
+test("915 legacy writer allows missing 917/918 columns, blocks partial migration and converted mode", async () => {
+  for (const scenario of [
+    { marker: null, binding: null, mode: null, expected: "allow" },
+    { marker: 4, binding: null, mode: null, expected: "QUERY_SOURCE_SCHEMA_REQUIRED" },
+    { marker: null, binding: 8, mode: null, expected: "QUERY_SOURCE_SCHEMA_REQUIRED" },
+    { marker: 4, binding: 8, mode: "QUERY_ONLY", expected: "QUERY_SOURCE_LEGACY_WRITER_DISABLED" },
+  ] as const) {
+    const queries: string[] = [];
+    const request = () => ({
+      input() { return this; },
+      async query(statement: string) {
+        queries.push(statement);
+        if (statement.includes("SELECT COL_LENGTH('uqp.Dashboard','QueryMode') AS Mode"))
+          return { recordset: [{ Mode: scenario.mode === null ? null : 24 }] };
+        if (statement.includes("SELECT QueryMode FROM uqp.Dashboard"))
+          return { recordset: [{ QueryMode: scenario.mode }] };
+        if (statement.includes(" AS Marker")) return { recordset: [{ Marker: scenario.marker, Binding: scenario.binding }] };
+        if (statement.includes("SELECT Id FROM uqp.Dashboard WHERE"))
+          return { recordset: [] };
+        return { recordset: [{ Id: 1 }] };
+      },
+    }) as unknown as sql.Request;
+    const call = assertLegacyDashboardWriter({} as sql.Transaction, 1, request, false);
+    if (scenario.expected === "allow") await assert.doesNotReject(call);
+    else await assert.rejects(call, { code: scenario.expected });
+    if (scenario.marker === null && scenario.binding === null)
+      assert.equal(queries.some(q => q.includes("QuerySourceMaxRows IS NOT NULL")), false);
+  }
+});
