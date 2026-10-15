@@ -124,3 +124,26 @@ for (const fail of ["none", "audit", "schema", "acl", "token", "rowversion", "ti
     assert.ok(!events.some(e => /DELETE|INSERT INTO uqp.DashboardDataSource/.test(e)));
     assert.ok(events.includes("SET LOCK_TIMEOUT 0")); assert.ok(events.includes("SET LOCK_TIMEOUT -1"));
   });
+
+test("915 catalog mismatch rejects approval evidence before any 919-column query", async () => {
+  const events: string[] = [];
+  const tx = {
+    begin: async () => { events.push("begin"); },
+    commit: async () => { events.push("commit"); },
+    rollback: async () => { events.push("rollback"); },
+  } as unknown as sql.Transaction;
+  const read = createDashboardApprovalEvidenceReader({
+    getPool: async () => ({}) as sql.ConnectionPool,
+    createTransaction: () => tx,
+    schema: async () => {
+      events.push("schema");
+      throw new SecurityContractError("SECURITY_SCHEMA_REQUIRED");
+    },
+    createRequest: () => ({
+      input() { return this; },
+      async query() { events.push("query"); throw new Error("unexpected query after missing schema"); },
+    }) as unknown as sql.Request,
+  });
+  await assert.rejects(read(10), { code: "SECURITY_SCHEMA_REQUIRED" });
+  assert.deepEqual(events, ["begin", "schema", "rollback"]);
+});
