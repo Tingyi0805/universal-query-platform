@@ -135,7 +135,7 @@ test("Legacy JWT preview stops the entire frame after global permission loss", a
 test("CUSTOM inheritance and source approvals save/reload without copying custom configuration or changing other JSON", async ({ page }) => {
   const state = await setup(page); page.on("dialog", dialog => void dialog.accept());
   await page.goto("/designer/dashboards"); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
-  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
+  // Wait for the asynchronously fetched, fail-closed Dataset policy and approvals before asserting modes.\n  await expect(page.getByText("MRN：沿用 Dataset CUSTOM（既有設定）", { exact: false })).toBeVisible();\n  await expect(page.getByRole("button", { name: "重新載入核准版本" })).toBeEnabled();\n  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
   const modes = page.getByRole("combobox", { name: /^欄位遮蔽模式/ });
   await expect(modes.locator('option[value="INHERIT"]')).not.toHaveAttribute("disabled", "");
   await expect(modes.locator('option[value="MRN"]')).toHaveAttribute("disabled", "");
