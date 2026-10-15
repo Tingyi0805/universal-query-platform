@@ -1,4 +1,5 @@
 import { PatientAuditError } from "../modules/dataset/patientAuditConfig.service.js";
+import { DashboardApprovalError } from "../modules/dashboard/dashboardApproval.service.js";
 import type { ErrorRequestHandler } from "express";
 import { safeErrorDiagnostic } from "./safeErrorDiagnostic.js";
 import { logger } from "../config/logger.js";
@@ -6,7 +7,7 @@ import { SecurityContractError } from "../modules/securityContract/securityContr
 
 export const errorHandler: ErrorRequestHandler = (error, req, res, _next) => {
   const requestId = req.id;
-  if (error instanceof SecurityContractError || error instanceof PatientAuditError) {
+  if (error instanceof SecurityContractError || error instanceof PatientAuditError || error instanceof DashboardApprovalError) {
     res.status(error.status).json({ error: { code: error.code,
       message: "安全契約驗證未通過，請確認 Schema 與版本。", requestId } });
     return;

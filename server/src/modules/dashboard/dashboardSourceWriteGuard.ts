@@ -10,6 +10,11 @@ export async function assertLegacyDashboardWriter(tx: sql.Transaction, dashboard
   const request = createRequest(tx).input("dashboardId", sql.BigInt, dashboardId);
   const dashboard = await request.query("SELECT Id FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@dashboardId");
   if (!dashboard.recordset.length) throw new QuerySourceError("DASHBOARD_NOT_FOUND", 404);
+  const modeSchema = await createRequest(tx).query("SELECT COL_LENGTH('uqp.Dashboard','QueryMode') AS Mode");
+  if (modeSchema.recordset[0]?.Mode) {
+    const mode = await createRequest(tx).input("dashboardId", sql.BigInt, dashboardId).query("SELECT QueryMode FROM uqp.Dashboard WHERE Id=@dashboardId");
+    if (mode.recordset[0]?.QueryMode !== "LEGACY") throw new QuerySourceError("QUERY_SOURCE_LEGACY_WRITER_DISABLED");
+  }
   // Safe before 917. Never compile statements using missing columns.
   const schema = await createRequest(tx).query("SELECT COL_LENGTH('uqp.Dashboard','QuerySourceMaxRows') AS Marker, COL_LENGTH('uqp.DashboardDataSource','QueryDefinitionId') AS Binding");
   const columns = schema.recordset[0];

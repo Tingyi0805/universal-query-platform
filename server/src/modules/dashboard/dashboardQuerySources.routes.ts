@@ -1,3 +1,4 @@
+import { DashboardApprovalError } from "./dashboardApproval.service.js";
 import { layoutSchema } from "./dashboardLayout.schema.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -63,7 +64,7 @@ export function createQuerySourceRouter(service: ReturnType<typeof createQuerySo
 }
 export function failure(error: unknown, res: import("express").Response, requestId?: unknown) {
   // No raw database/parameter text in responses or logs. Existing middleware keeps Request ID.
-  const known = error instanceof QuerySourceError;
+  const known = error instanceof QuerySourceError || error instanceof DashboardApprovalError;
   res.status(known ? error.status : 503).json({ error: {
     requestId,
     code: known ? error.code : "QUERY_SOURCE_STORAGE_UNAVAILABLE",

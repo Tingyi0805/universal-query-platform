@@ -7,7 +7,7 @@ import { createDashboardPreviewRouter, type DashboardPreviewDependencies } from 
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 const rawName = "合成患者甲", rawMrn = "SYNTHETIC987654";
 async function fixture(run: (f: { state: any; request: (path: string) => Promise<{ status: number; body: any; cache: string | null }> }) => Promise<void>) {
-  const state = { session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] }, allowed: true, published: true,
+  const state = { approvalEpoch: "rowversion-1", session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] }, allowed: true, published: true,
     mrnMode: undefined as string | undefined, failSupplemental: false, managed: false, sqlFailure: false, policyFailure: false, auditFailure: false, missingAudit: false, calls: 0, afterExecute: () => {}, afterAudit: () => {}, audits: [] as any[],
     policy: { version: 1, columns: [
       { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "FULL" },
@@ -16,6 +16,7 @@ async function fixture(run: (f: { state: any; request: (path: string) => Promise
       { columnName: "SECRET", sensitivityType: "HEALTH", deviceMaskMode: "OMIT" },
     ] } };
   const deps: DashboardPreviewDependencies = {
+    getApprovalEvidence: async () => state.approvalEpoch,
     getSession: async () => structuredClone(state.session),
     getDashboard: async () => ({ id: 1, queryDefinitionId: 2, isActive: true, parameters: { REGNO: "synthetic-bind", deviceSourceColumnMasks: { WARD: { NAME: "INHERIT", MRN: state.mrnMode ?? "INHERIT" } }, deviceColumnMasks: { NAME: "NONE", MRN: state.mrnMode ?? "NONE", SECRET: "NONE", ROOM: "NONE" } } }) as any,
     getQuery: async () => ({ id: 2, datasetId: 3, isActive: true, isPublished: state.published, isArchived: false }) as any,

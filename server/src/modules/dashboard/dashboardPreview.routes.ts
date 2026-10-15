@@ -8,6 +8,7 @@ import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, dashboard
 
 type Repositories = typeof import("./dashboard.repository.js");
 export type DashboardPreviewDependencies = {
+  getApprovalEvidence: (id: number) => Promise<string>;
   getDashboard: Repositories["getDashboard"];
   getSession: typeof import("../auth/auth.repository.js").getTokenSessionState;
   getQuery: typeof import("../queryDefinition/queryDefinition.repository.js").getQueryDefinition;
@@ -47,10 +48,11 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
     if (key && !source) throw new PreviewFailure("DASHBOARD_SOURCE_NOT_FOUND", 404);
     const dataset = await deps.getDataset(source?.datasetId ?? query.datasetId);
     if (!dataset?.isActive || dataset.isArchived) throw new PreviewFailure("DATASET_NOT_AVAILABLE", 409);
+    const approvalEvidence = await deps.getApprovalEvidence(id);
     const policy = await deps.getPolicy(dataset.id);
     assertDatasetSensitivityPolicy(policy);
     const reportColumns = key ? [] : await deps.getReportColumns(query.id);
-    const fingerprint = createHash("sha256").update(JSON.stringify({ session, dashboard, query, access, source, dataset, policy, reportColumns })).digest("hex");
+    const fingerprint = createHash("sha256").update(JSON.stringify({ approvalEvidence, session, dashboard, query, access, source, dataset, policy, reportColumns })).digest("hex");
     return { fingerprint, dashboard, query, source, dataset, policy, reportColumns };
   };
   const deliver = async (req: Request, res: import("express").Response, key?: string) => {

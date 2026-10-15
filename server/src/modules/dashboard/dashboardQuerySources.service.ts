@@ -1,4 +1,5 @@
 import { dashboardQueryParameters, dashboardReservedParameters, validDashboardColumnMasks, validSourceColumnMasks } from "./dashboardDeviceMasking.js";
+import { hasPrimaryApprovals, sourceApprovals, DashboardApprovalError } from "./dashboardApproval.service.js";
 import type { DashboardProfileInput } from "./dashboardLayout.repository.js";
 import { createHash } from "node:crypto";
 import type { QuerySourcePatch } from "./dashboardQuerySources.schema.js";
@@ -136,6 +137,8 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
       if (sourceVersion(state) !== input.expectedVersion) throw new QuerySourceError("QUERY_SOURCE_VERSION_CONFLICT");
       if (!tx.updatePrimary) throw new QuerySourceError("QUERY_SOURCE_STORAGE_UNAVAILABLE", 503);
+      if (input.queryDefinitionId !== state.dashboard.queryDefinitionId && hasPrimaryApprovals(state.dashboard.parameters))
+        throw new DashboardApprovalError("DASHBOARD_APPROVAL_BINDING_CHANGED");
       if (state.sources.length + 1 > 8) throw new QuerySourceError("QUERY_SOURCE_LIMIT", 400);
       if (dashboardReservedParameters.some(key => key in input.parameters))
         throw new QuerySourceError("VALIDATION_ERROR", 400);
@@ -165,6 +168,8 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       for (const item of input.removals) {
         const saved = state.sources.find(s => s.sourceKey === item.sourceKey && s.id === item.id);
         if (!saved) throw new QuerySourceError("QUERY_SOURCE_IDENTITY_CONFLICT");
+        if (Object.keys(sourceApprovals(state.dashboard.parameters, item.sourceKey)).length)
+          throw new DashboardApprovalError("DASHBOARD_APPROVAL_BINDING_CHANGED");
         if (state.references.some(ref => canonical(ref) === canonical(item.sourceKey)))
           throw new QuerySourceError("QUERY_SOURCE_IN_USE");
         removed.add(saved.id);
@@ -177,6 +182,9 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
         if ((saved && (saved.id !== item.id || saved.sourceKey !== item.sourceKey)) || (!saved && item.id !== null))
           throw new QuerySourceError("QUERY_SOURCE_IDENTITY_CONFLICT");
         const datasetId = await tx.validateQuery(userId, item.queryDefinitionId, item.parameters);
+        if ((!saved || saved.queryDefinitionId !== item.queryDefinitionId || saved.datasetId !== datasetId) &&
+          Object.keys(sourceApprovals(state.dashboard.parameters, item.sourceKey)).length)
+          throw new DashboardApprovalError("DASHBOARD_APPROVAL_BINDING_CHANGED");
         if (saved?.queryDefinitionId === null && saved.datasetId !== datasetId)
           throw new QuerySourceError("QUERY_SOURCE_CONVERSION_DATASET_MISMATCH");
         const write = { ...item, datasetId: saved?.datasetId ?? datasetId, queryBindingRevision: (saved?.queryBindingRevision ?? 0) + 1 };

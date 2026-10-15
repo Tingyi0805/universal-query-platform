@@ -178,6 +178,7 @@ test("legacy writer guard handles pre-917, partial schema, bound state and enabl
     let step = 0;
     const fake = () => ({ input() { return this; }, async query(text: string) {
       assert.doesNotMatch(text, /DELETE|INSERT|UPDATE\s+uqp/i);
+      if (text.includes(" AS Mode")) return { recordset: [] };
       return { recordset: step++ === 0 ? [{ Id: 1 }] : step === 2 ? [columns] : bound ? [{ Id: 1 }] : [] };
     } }) as unknown as sql.Request;
     if (code) await assert.rejects(assertLegacyDashboardWriter(tx, 1, fake, false), { code });
@@ -395,4 +396,15 @@ test("disclosure management retains staging, schema and ACL guards", async () =>
   f.control.schema = false; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_SCHEMA_REQUIRED" }); f.control.schema = true;
   f.state().dashboard.isActive = true; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE" }); f.state().dashboard.isActive = false;
   f.control.queries.get(21)!.allowed = false; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_QUERY_FORBIDDEN" });
+});
+
+test("Query binding routes cannot carry Legacy approvals to another primary or source binding", async () => {
+  const f = fixture();
+  f.state().dashboard.parameters = { deviceColumnMasks: { NAME: "FULL" } };
+  await assert.rejects(f.service.primary(1, 1, { ...primaryInput(f), queryDefinitionId: 21, parameters: { WARD: "SYNTHETIC_PRIVATE_VALUE" } }), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
+  f.state().dashboard.parameters = { deviceSourceColumnMasks: { WARD: { NAME: "INHERIT" } } };
+  await assert.rejects(f.service.patch(1, 1, f.patch()), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
+  f.state().references = [];
+  await assert.rejects(f.service.patch(1, 1, { expectedVersion: sourceVersion(f.state()), upserts: [], removals: [{ id: 10, sourceKey: "WARD" }] }), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
+  assert.equal(f.control.writes, 0);
 });

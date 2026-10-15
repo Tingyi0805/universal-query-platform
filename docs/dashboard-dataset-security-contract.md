@@ -1,3 +1,19 @@
+## 恢復階段 3：Legacy Dashboard 欄位核准（目前實作）
+
+基準 7986cd17f1a305321a727a708a344a76b4ccc36f。新增 GET/PATCH /api/dashboards/:id/column-approvals；不需開啟 Query-only 旗標，仍保留既有 management writer arbitration：management 開啟時拒絕 Legacy 寫入；已轉換/Query-only/Query-only-disabled 即使旗標關閉也不能回到 Legacy API。
+
+- JWT/TokenVersion、DESIGN_QUERY、目前已發布主 Query 的 canView/canExecute，在同一 SERIALIZABLE 交易重新驗證。GET 回版本摘要、來源身份及三種核准/分類設定；不回 SQL、Bind、患者資料或其他 Parameters。PATCH 要求停用 Dashboard，不會自動切換啟用狀態。
+- 無鎖前置讀取只用來發現 Dataset 集合，不構成授權。鎖順序為 Dataset IDs 升冪 → Dashboard UPDLOCK/HOLDLOCK → DashboardDataSource 全來源範圍鎖 → 鎖下重新比對綁定。新核准、舊基本設定與舊來源管理共用此順序；綁定漂移直接衝突，不追加順序外 Dataset 鎖。後續 ACL/政策/稽核鎖不等待（LOCK_TIMEOUT 0），競爭安全回滾；1205/1222 回 409，不自動重試或覆寫。結束前恢復 LOCK_TIMEOUT -1。實際 SQL Server 鎖與連線重設仍須隔離驗證。
+- expectedVersion 是父列與全部來源 ID/SourceKey/DatasetId/rowversion 的 SHA-256 摘要；來源獨立更新、集合變動及來源替換均令舊版本失效。只 UPDATE 父 Dashboard.ParametersJson，與 writeAuditEvent(..., sameTransaction) 同成敗；管理稽核僅記錄操作者、Dashboard、SourceKey。
+- PATCH 僅改指定來源的 upsert/remove。移除大小寫等價舊核准時全部刪除，重複/歧義輸入拒絕；保留 deviceColumnTypes、其他來源核准、一般參數與固定文字。分類不是傳送授權，無核准即不傳送。基本設定驗證允許保留沒有對應核准的分類。
+- 只有 Dataset 最低政策允許的模式可寫入：CUSTOM 為 INHERIT/CUSTOM/FULL/OMIT；OMIT 只能 INHERIT/OMIT；其他部分遮蔽不可任意互換。實際輸出仍使用原共用雙層遮蔽，不新增原始資料 fallback。
+- 建立時禁止附帶核准/分類，需先空核准建立並停用，再走新 API。基本設定 PUT 不能變更三種核准/分類 JSON（409 DASHBOARD_APPROVAL_WRITE_REQUIRED）。有核准時主 Query 更換、額外來源換綁/刪除/SourceKey 重用及 Query 轉換流程均拒絕（409 DASHBOARD_APPROVAL_BINDING_CHANGED）；必須先明確移除原核准。舊來源 PUT 保持完整清單語意，但既存來源採 UPDATE 保留 ID，不整批刪除重建。
+- Legacy PRIMARY/額外來源與管理預覽的既有狀態指紋加入同交易讀取的父/全來源 rowversion 摘要；傳送前重新檢查權限、政策與版本。核准 A→B→A 仍有不同 rowversion，不能復用原快照。Query-only 既有指紋與患者證明防護保留。
+- 階段 4 尚須接新核准 UI：以 GET 版本進行增量 PATCH、顯示停用/衝突/換綁錯誤、保留未儲存編輯與分類、先移除舊核准再換綁，不能繼續以基本設定 PUT 寫核准。
+- 本階段沒有執行任何 Migration 或連接共用資料庫，沒有修改 .env、啟用旗標、修改一般查詢/Excel、部署或合併 PR。Mock/合成資料/瀏覽器測試不能取代隔離 SQL Server 2019 的 DDL、實際並行鎖、ACL 撤銷、稽核失敗、rowversion/來源集合變動與回滾驗證；部署前仍須停用/排空舊寫入者。
+
+以下階段 2/1 與原附件正文為歷史交付說明；階段 3 完成範圍以上方為準。
+
 ## 恢復階段 2：Dataset 患者揭露稽核（目前實作）
 
 基準 a4caca51aa29c07d0292db930c381bb5c3b263b1；本次依保存文件重新實作，沒有還原原 Commit。

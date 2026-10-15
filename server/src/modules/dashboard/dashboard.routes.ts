@@ -1,3 +1,5 @@
+import { createDashboardApprovalRouter } from "./dashboardApproval.routes.js";
+import { dashboardApprovalService, getDashboardApprovalEvidence } from "./dashboardApproval.repository.js";
 import { layoutSchema } from "./dashboardLayout.schema.js";
 import { createQueryModeRouter } from "./dashboardQueryMode.routes.js";
 import { createQueryModeService } from "./dashboardQueryMode.service.js";
@@ -172,11 +174,11 @@ const dashboardSchema = z.object({
       if (Object.entries(classifications).length > 300 || Object.entries(classifications).some(([key, category]) => !key.trim() || key.length > 256 || typeof category !== "string" || !/^[A-Z0-9_]{1,64}$/.test(category))) return false;
     }
     const masks = value.deviceColumnMasks;
-    if (masks === undefined) return classifications === undefined || Object.keys(classifications as Record<string, unknown>).length === 0;
+    if (masks === undefined) return true;
     if (!validDashboardColumnMasks(masks)) return false;
     if (!classifications) return true;
     const types = classifications as Record<string, string>;
-    return Object.keys(types).every((key) => Object.prototype.hasOwnProperty.call(masks, key)) && Object.entries(types).every(([key, category]) => category === "OTHER" || (masks as Record<string, unknown>)[key] !== "NONE");
+    return Object.entries(types).every(([key, category]) => category === "OTHER" || (masks as Record<string, unknown>)[key] !== "NONE");
   }, "敏感欄位規則格式不正確").default({}),
   isActive: z.boolean().default(true),
 });
@@ -281,9 +283,10 @@ dashboardRouter.use(createQueryDeviceRouter(queryExecution, { mode: readDashboar
 
 dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
   getDataset, getDatasetSensitivitySnapshot: getDashboardSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
-  auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound }));
+  auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
@@ -927,7 +930,7 @@ dashboardRouter.use(createDashboardPreviewRouter({ getDashboard, getSession: get
   getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess, getDataset,
   getPolicy: getDashboardSensitivitySnapshot, getSources: listDashboardDataSources,
   getReportColumns: listReportColumns, legacyGuard: assertLegacySourcePreview,
-  execute: executeSavedDataset, audit: auditDashboardPatientList }));
+  execute: executeSavedDataset, audit: auditDashboardPatientList, getApprovalEvidence: getDashboardApprovalEvidence }));
 // Preserve explicit management error classifications for guarded legacy writers.
 dashboardRouter.use(((error, req, res, next) => {
   if (error instanceof QuerySourceError) querySourceFailure(error, res, req.id);

@@ -1,4 +1,6 @@
-import { assertLegacyDashboardWriter } from "./dashboardSourceWriteGuard.js";
+import { assertEmptyApprovalCreation, assertBasicApprovalWrite } from "./dashboardApproval.service.js";
+import { prepareLegacyLocks, lockLegacyBindings } from "./dashboardLegacyLocks.js";
+import { parseApprovalParameters } from "./dashboardApproval.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -141,6 +143,7 @@ async function assertSensitivityReadyForActivation(tx: sql.Transaction, queryDef
 }
 
 export async function createDashboard(input: DashboardInput, userId: number): Promise<number> {
+  assertEmptyApprovalCreation(input.parameters);
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
   const tx = new sql.Transaction(pool);
@@ -191,10 +194,12 @@ export async function createDashboard(input: DashboardInput, userId: number): Pr
 export async function updateDashboard(id: number, input: DashboardInput, userId: number): Promise<void> {
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
+  const seed = await prepareLegacyLocks(pool, id, input.queryDefinitionId);
   const tx = new sql.Transaction(pool);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
-    await assertLegacyDashboardWriter(tx, id);
+    const locked = await lockLegacyBindings(tx, id, seed);
+    assertBasicApprovalWrite(parseApprovalParameters(locked.parent.ParametersJson), input.parameters, Number(locked.parent.QueryDefinitionId), input.queryDefinitionId);
     if (input.isActive) await assertSensitivityReadyForActivation(tx, input.queryDefinitionId);
 
   const result = await new sql.Request(tx)

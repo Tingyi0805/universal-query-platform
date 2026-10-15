@@ -7,6 +7,7 @@ import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboard
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 
 export type DevicePageDependencies = {
+  getApprovalEvidence: (id: number) => Promise<string>;
   legacySourceIsQueryBound?: (id: number, key: string) => Promise<boolean>;
   getQueryAccessRevision: typeof import("../queryDefinition/queryAccess.repository.js").getQueryAccessRevision;
   checkDashboardDisplayDevice: typeof import("./dashboardDevice.repository.js").checkDashboardDisplayDevice;
@@ -51,6 +52,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
     if (!dataset?.isActive || dataset.isArchived) throw new DeliveryError(409, "DATASET_NOT_AVAILABLE");
     const dataSource = await getDataSourcePlaybackState(dataset.dataSourceId);
     if (!dataSource?.isActive) throw new DeliveryError(409, "DATASOURCE_DISABLED");
+    const approvalEvidence = await deps.getApprovalEvidence(dashboardId);
     const sensitivity = await getDatasetSensitivitySnapshot(dataset.id);
     assertDatasetSensitivityPolicy(sensitivity);
     const definitions = await listDatasetParameters(dataset.id);
@@ -58,7 +60,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
     const accessRevision = await getQueryAccessRevision(query.id);
     // LastUsedAt changes on every check; it is deliberately not a configuration revision.
     const { lastUsedAtUtc: _lastUsed, ...device } = verification.device;
-    const fingerprint = createHash("sha256").update(JSON.stringify({ dashboard, query, layout, source,
+    const fingerprint = createHash("sha256").update(JSON.stringify({ approvalEvidence, dashboard, query, layout, source,
       dataset, dataSource, sensitivity, definitions, reportColumns, accessRevision, device,
       tokenHash: createHash("sha256").update(token).digest("hex") })).digest("hex");
     return { fingerprint, verification, dashboard, query, layout, source, dataset, sensitivity, reportColumns };

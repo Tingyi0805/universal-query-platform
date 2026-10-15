@@ -15,7 +15,7 @@ async function fixture(run: (f: Awaited<ReturnType<typeof openFixture>>) => Prom
   try { await run(f); } finally { await new Promise<void>(resolve => f.server.close(() => resolve())); }
 }
 async function openFixture() {
-  const state = {
+  const state = { approvalEpoch: "rowversion-1",
     valid: true, queryManaged: false, accessRevision: "acl-v1", sqlCalls: 0, audits: [] as Parameters<DevicePageDependencies["auditPatientListIfConfigured"]>[0][],
     dashboard: { id: 1, queryDefinitionId: 2, isActive: true, pageSize: 1, pageSeconds: 5, refreshSeconds: 10,
       parameters: { deviceColumnMasks: { NAME: "NAME", MRN: "CUSTOM", ROOM: "NONE" }, deviceSourceColumnMasks: { ORACLE: { NAME: "INHERIT", MRN: "INHERIT" } } } } as unknown as Dashboard,
@@ -33,6 +33,7 @@ async function openFixture() {
     afterSql: () => {}, afterAudit: () => {}, sqlFailure: false, auditFailure: false, auditEnabled: true,
   };
   const deps: DevicePageDependencies = {
+    getApprovalEvidence: async () => state.approvalEpoch,
     legacySourceIsQueryBound: async () => state.queryManaged,
     getQueryAccessRevision: async () => state.accessRevision,
     checkDashboardDisplayDevice: async (_id, token) => state.valid && token === "synthetic-device-token"
@@ -71,6 +72,17 @@ async function openFixture() {
 }
 const primary = "/device/1/page";
 const supplemental = "/device/1/data-sources/ORACLE/page";
+for (const path of [primary, supplemental]) test(`${path}: rowversion prevents approval A→B→A cache resurrection`, () => fixture(async f => {
+  const first = await f.request(path, { page: 1 }); assert.equal(first.status, 200);
+  const parameters = structuredClone(f.state.dashboard.parameters);
+  f.state.dashboard.parameters = { ...parameters, deviceColumnMasks: {} };
+  f.state.approvalEpoch = "rowversion-2";
+  f.state.dashboard.parameters = parameters;
+  f.state.approvalEpoch = "rowversion-3";
+  const stale = await f.request(path, { page: 1, snapshotId: first.body.snapshotId });
+  assert.equal(stale.status, 409); assert.equal(stale.body.error.code, "DASHBOARD_SNAPSHOT_EXPIRED"); assert.equal(stale.body.result, undefined);
+  assert.equal(f.state.sqlCalls, 1);
+}));
 test("managed bindings cannot be played through legacy PRIMARY or Dataset fallback routes", () => fixture(async f => {
   f.state.queryManaged = true;
   for (const path of [primary, supplemental]) {
