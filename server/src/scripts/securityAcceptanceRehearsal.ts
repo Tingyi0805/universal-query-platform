@@ -30,8 +30,15 @@ const failureFields = ["independentCopiesForDestructiveCases","runnerOuterTransa
   "lateDdlRollbackCasePlanned","concurrentSessionsPlanned","noAutomaticRetryOrAdopt"] as const;
 export async function reviewMigrationRehearsal(input: RehearsalInput) {
   if (!input || (input.profile !== "legacy" && input.profile !== "coexistence")) throw new Error("REHEARSAL_PROFILE_INVALID");
-  const manifest = await prepareAcceptance(["--profile", input.profile]);
   const isolation = reviewIsolationChecklist(input.isolation);
+  const target = (input.isolation as { target: { host: string; port: number; database: string } }).target;
+  // Bind the pinned migration manifest to the exact reviewed target descriptor.
+  const manifest = await prepareAcceptance(["--profile", input.profile,
+    "--host", target.host, "--port", String(target.port), "--database", target.database]);
+  if (!manifest.target || manifest.target.host !== target.host ||
+      manifest.target.port !== target.port || manifest.target.database !== target.database) {
+    throw new Error("REHEARSAL_TARGET_MISMATCH");
+  }
   // A checklist prepared for another migration profile must never validate this rehearsal.
   if ((input.isolation as { profile?: string }).profile !== input.profile) {
     throw new Error("REHEARSAL_PROFILE_MISMATCH");
