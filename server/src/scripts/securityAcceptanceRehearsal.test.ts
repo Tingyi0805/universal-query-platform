@@ -42,3 +42,9 @@ test("run identity mismatch refuses review", async () => {
   input.backup.runId = "fedcba987654";
   await assert.rejects(reviewMigrationRehearsal(input), /REHEARSAL_RUN_ID_MISMATCH/);
 });
+
+test("rehearsal refuses an isolation checklist for another migration profile", async () => {
+  const input = fixture("legacy");
+  input.isolation.profile = "coexistence";
+  await assert.rejects(reviewMigrationRehearsal(input), /REHEARSAL_PROFILE_MISMATCH/);
+});
