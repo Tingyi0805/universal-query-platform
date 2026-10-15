@@ -1,5 +1,5 @@
 /** Offline, read-only acceptance evidence validator. Never opens a database or writes evidence. */
-import { readFile } from "node:fs/promises";
+import { readFile, lstat } from "node:fs/promises";
 import { prepareAcceptance } from "./securityAcceptanceManifest.js";
 
 type Evidence = {
@@ -41,6 +41,9 @@ export async function reviewEvidence(args: string[]) {
   const filename = args[2]!;
   if (!/^\/tmp\/uqp-acceptance\/[a-zA-Z0-9_-]+\.json$/.test(filename)) throw new Error("OFFLINE_EVIDENCE_PATH_REQUIRED");
   const manifest = await prepareAcceptance(["--profile", args[1]!]);
+  const metadata = await lstat(filename);
+  if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("OFFLINE_EVIDENCE_REGULAR_FILE_REQUIRED");
+  if (metadata.size > 1024 * 1024) throw new Error("OFFLINE_EVIDENCE_TOO_LARGE");
   const raw = await readFile(filename, "utf8");
   if (Buffer.byteLength(raw, "utf8") > 1024 * 1024) throw new Error("OFFLINE_EVIDENCE_TOO_LARGE");
   return validateEvidence(JSON.parse(raw), manifest);
