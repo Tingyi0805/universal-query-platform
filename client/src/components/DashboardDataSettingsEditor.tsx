@@ -1,3 +1,4 @@
+import { columnApprovals, securityGuidance, type ColumnApprovals } from "../security/securityContracts";
 import { managementError, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
@@ -5,7 +6,7 @@ import { datasetApprovalAllowed, inheritedMaskSample, maskAtLeastAsStrong, objec
 
 type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string } | null };
 type Parameter = { name: string; label: string; dataType: string; isRequired: boolean; defaultValue: string | null };
-const modes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "INHERIT"];
+const modes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "CUSTOM", "FULL", "OMIT", "INHERIT"];
 const modeNames: Record<string, string> = { NONE: "原樣顯示（非敏感欄位）", NAME: "姓名部分遮蔽", MRN: "病歷號部分遮蔽", PHONE: "電話部分遮蔽", GENERIC: "一般部分遮蔽", FULL: "全部遮蔽", OMIT: "不傳送", CUSTOM: "沿用 Dataset CUSTOM（既有設定）", INHERIT: "沿用 Dataset 遮蔽規則" };
 export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken, parametersJson, masksJson, typesJson, sourceMasksJson = "{}", onChange }: {
   dashboardId?: number | null; sourceMasksJson?: string; queryId: number; accessToken: string | null; parametersJson: string; masksJson: string; typesJson: string;
@@ -16,8 +17,25 @@ export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken,
   const [sources, setSources] = useState<Array<{ sourceKey: string; datasetId?: number; queryDefinitionId?: number | null }>>([]);
   const [managed, setManaged] = useState<QuerySourceConfiguration | null | undefined>(undefined);
   const [saving, setSaving] = useState(false);
+  const [approvals, setApprovals] = useState<ColumnApprovals | null>(null);
+  const [approvalReady, setApprovalReady] = useState(false);
+  const readSequence = useRef(0);
+  const showSafeError = (error: unknown) => { const safe = securityGuidance(error); setMessage(`來源 ${sourceKey}：${safe.code}。${safe.message}`); };
+  const syncApprovals = (value: ColumnApprovals) => {
+    if (value.dashboardId !== dashboardId) throw new Error("RESPONSE_INVALID");
+    setApprovalReady(true); setApprovals(value); setSources(value.sources.filter(source => source.sourceKey !== "PRIMARY"));
+    onChange({ deviceColumnMasksJson: JSON.stringify(value.deviceColumnMasks, null, 2), deviceColumnTypesJson: JSON.stringify(value.deviceColumnTypes, null, 2), deviceSourceColumnMasksJson: JSON.stringify(value.deviceSourceColumnMasks, null, 2) });
+  };
+  async function reloadApprovals() {
+    if (!dashboardId || saving) return;
+    const sequence = scope.current, read = ++readSequence.current; setApprovalReady(false); setSaving(true);
+    try { const value = columnApprovals(await apiRequest(`/dashboards/${dashboardId}/column-approvals`, {}, accessToken));
+      if (sequence !== scope.current || read !== readSequence.current) return; syncApprovals(value); setColumn(""); setMode("OMIT"); setMessage("已載入最新核准版本，請重新選擇欄位並確認修改。");
+    } catch (error) { if (sequence === scope.current && read === readSequence.current) showSafeError(error); }
+    finally { if (sequence === scope.current) setSaving(false); }
+  }
   useEffect(() => {
-    let alive = true; setManaged(undefined); setSources([]); setSourceKey("PRIMARY");
+    let alive = true; const read = ++readSequence.current; setApprovals(null); setApprovalReady(false); setManaged(undefined); setSources([]); setSourceKey("PRIMARY");
     if (!dashboardId) { setManaged(null); return () => { alive = false; }; }
     void apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken).then(value => {
       if (!Array.isArray(value.sources) || !value.primary || typeof value.version !== "string") throw new Error("CONFIGURATION_INVALID");
@@ -26,15 +44,15 @@ export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken,
       if (!alive) return;
       if ((error as { code?: string }).code !== "QUERY_SOURCE_MANAGEMENT_DISABLED") { setMessage(managementError(error)); return; }
       setManaged(null);
-      try { const value = await apiRequest<{ sources: Array<{ sourceKey: string; datasetId: number }> }>(`/dashboards/${dashboardId}/data-sources`, {}, accessToken);
-        if (alive) setSources(Array.isArray(value.sources) ? value.sources : []);
-      } catch { if (alive) setMessage("來源清單讀取失敗；原核准設定保留。"); }
+      try { const value = columnApprovals(await apiRequest(`/dashboards/${dashboardId}/column-approvals`, {}, accessToken));
+        if (alive && read === readSequence.current) syncApprovals(value);
+      } catch (error) { if (alive && read === readSequence.current) showSafeError(error); }
     });
     return () => { alive = false; };
   }, [dashboardId, accessToken]);
   const selectedSource = sources.find(source => source.sourceKey === sourceKey);
-  const selectedQueryId = sourceKey === "PRIMARY" ? managed?.primary.queryDefinitionId ?? queryId : selectedSource?.queryDefinitionId;
-  const legacyDatasetId = sourceKey === "PRIMARY" ? undefined : selectedSource?.datasetId;
+  const selectedQueryId = managed === null && dashboardId ? undefined : sourceKey === "PRIMARY" ? managed?.primary.queryDefinitionId ?? queryId : selectedSource?.queryDefinitionId;
+  const legacyDatasetId = managed === null ? approvals?.sources.find(source => source.sourceKey === sourceKey)?.datasetId : undefined;
   const [policy, setPolicy] = useState<Rule[]>([]);
   const [parameters, setParameters] = useState<Parameter[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
@@ -47,7 +65,7 @@ export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken,
     setSaving(false);
     let active = true;
     setLoaded(false); setPolicy([]); setColumns([]); setParameters([]); setColumn(""); setMessage("");
-    if (!selectedQueryId && !legacyDatasetId) return () => { active = false; scope.current++; };
+    if (managed === undefined || (!selectedQueryId && !legacyDatasetId)) return () => { active = false; scope.current++; };
     void (async () => {
       const q = legacyDatasetId ? { queryDefinition: { datasetId: legacyDatasetId } } : await apiRequest<{ queryDefinition: { datasetId: number } }>(`/query-definitions/${selectedQueryId}`, {}, accessToken);
       if (!Number.isSafeInteger(q.queryDefinition?.datasetId) || q.queryDefinition.datasetId < 1) throw new Error("QUERY_METADATA_UNAVAILABLE");
@@ -63,13 +81,13 @@ export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken,
       setLoaded(true);
     })().catch(() => { if (active) setMessage("無法確認 Query 參數或 Dataset 保護規則；已保留原設定，暫停欄位規則編輯。請重新載入。" ); });
     return () => { active = false; scope.current++; };
-  }, [dashboardId, selectedQueryId, legacyDatasetId, sourceKey, accessToken]);
+  }, [dashboardId, selectedQueryId, legacyDatasetId, sourceKey, accessToken, managed === undefined]);
   let values: Record<string, unknown> = {}; let masks: Record<string, unknown> = {}; let types: Record<string, unknown> = {}; let valid = true;
   try { values = queryParameterValues(objectJson(parametersJson)); masks = sourceKey === "PRIMARY" ? objectJson(masksJson) : objectJson(JSON.stringify(objectJson(sourceMasksJson)[sourceKey] ?? {})); types = sourceKey === "PRIMARY" ? objectJson(typesJson) : {}; } catch { valid = false; }
   const matching = policy.filter(rule => rule.columnName.toUpperCase() === column.toUpperCase());
   const existing = Object.entries(masks).filter(([key]) => key.toUpperCase() === column.toUpperCase());
   const classified = Object.entries(types).some(([key, type]) => key.toUpperCase() === column.toUpperCase() && type !== "OTHER");
-  const allowed = (candidate: string) => loaded && valid && managed !== undefined && !saving && (managed === null || managed.editable) && matching.length <= 1 && existing.length <= 1
+  const allowed = (candidate: string) => loaded && valid && managed !== undefined && !saving && (managed === null ? !!approvals && approvalReady && !approvals.isActive : managed.editable) && matching.length === 1 && existing.length <= 1
     && (existing[0]?.[1] === undefined || (typeof existing[0]?.[1] === "string" && Object.prototype.hasOwnProperty.call(modeNames, existing[0]![1] as string)))
     && (!classified || (candidate !== "NONE" && !(candidate === "INHERIT" && matching[0]?.deviceMaskMode === "NONE"))) && datasetApprovalAllowed(candidate, matching[0]);
   const names = [...new Set([...parameters.map(p => p.name), ...Object.keys(values)])];
@@ -86,7 +104,7 @@ export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken,
     const next = { ...masks, [name]: mode };
     const patch = sourceKey === "PRIMARY" ? {
       deviceColumnMasksJson: JSON.stringify(next, null, 2),
-      deviceColumnTypesJson: JSON.stringify({ ...types, [name]: types[name] ?? matching[0]?.sensitivityType ?? "OTHER" }, null, 2),
+      deviceColumnTypesJson: JSON.stringify(types, null, 2),
     } : { deviceSourceColumnMasksJson: JSON.stringify({ ...objectJson(sourceMasksJson), [sourceKey]: next }, null, 2) };
     if (managed && dashboardId) {
       const sequence = scope.current;
@@ -101,9 +119,30 @@ export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken,
         setMessage("本來源欄位核准已安全儲存；Dataset 遮蔽由後端執行。");
       } catch (error) { if (sequence === scope.current) setMessage(managementError(error)); }
       finally { if (sequence === scope.current) setSaving(false); }
-    } else { onChange(patch); setMessage("欄位規則已加入草稿；請儲存 Dashboard。實際遮蔽由後端執行。"); }
+    } else if (dashboardId && approvals) {
+      const sequence = scope.current; setSaving(true);
+      try {
+        const value = columnApprovals(await apiRequest(`/dashboards/${dashboardId}/column-approvals`, { method: "PATCH",
+          body: JSON.stringify({ expectedVersion: approvals.version, sourceKey, upsert: { [name]: mode }, remove: [] }) }, accessToken));
+        if (sequence !== scope.current) return; syncApprovals(value); setMessage(`來源 ${sourceKey}：欄位核准已儲存；一般設定仍須另外儲存。`);
+      } catch (error) { if (sequence === scope.current) { setApprovalReady(false); showSafeError(error); } }
+      finally { if (sequence === scope.current) setSaving(false); }
+    }
   };
-  return <div className="wide">
+  async function removeRule(name: string) {
+    if (!dashboardId || !approvals || !approvalReady || approvals.isActive || saving || !window.confirm(`移除來源 ${sourceKey} 的欄位「${name}」核准？此欄位將不再傳送；分類與 Dataset 最低政策保留。`)) return;
+    const sequence = scope.current; setSaving(true);
+    try { const value = columnApprovals(await apiRequest(`/dashboards/${dashboardId}/column-approvals`, { method: "PATCH",
+      body: JSON.stringify({ expectedVersion: approvals.version, sourceKey, upsert: {}, remove: [name] }) }, accessToken));
+      if (sequence !== scope.current) return; syncApprovals(value); setMessage(`來源 ${sourceKey}：已移除指定欄位核准，分類及其他來源保持不變。`);
+    } catch (error) { if (sequence === scope.current) { setApprovalReady(false); showSafeError(error); } }
+    finally { if (sequence === scope.current) setSaving(false); }
+  }
+  return <div className="wide" id="column-approvals">
+    {!dashboardId && <p role="status">新 Dashboard 沒有核准欄位；建立後先停用，再使用此區管理。</p>}
+    {managed === null && dashboardId && <><button type="button" disabled={saving} onClick={() => void reloadApprovals()}>重新載入核准版本</button>
+      {approvals?.isActive && <p role="alert">須先停用 Dashboard 才可修改。請由一般設定明確停用後重新載入；不會自動停用或重新啟用。</p>}
+      <p>本區管理已儲存的來源綁定。更換 Query／Dataset 前，須先明確移除原來源核准。</p></>}
     <label>遮蔽核准來源<select aria-label="遮蔽核准來源" value={sourceKey} onChange={e => setSourceKey(e.target.value)} disabled={saving}>
       <option value="PRIMARY">PRIMARY 主來源</option>{sources.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}</option>)}
     </select></label>
@@ -140,9 +179,10 @@ export function DashboardDataSettingsEditor({ dashboardId, queryId, accessToken,
       {modes.map(candidate => <option key={candidate} value={candidate} disabled={!allowed(candidate)}>{modeNames[candidate]}</option>)}
     </select></label>
     {column && matching.length === 0 && <p role="status">Dataset 尚未定義此欄位的政策；不可核准傳送，原 JSON 保留。</p>}
-    <p role="status">合成資料預覽：{mode === "INHERIT" ? inheritedMaskSample(matching[0]) : mode === "OMIT" ? "欄位不傳送" : mode === "FULL" ? "○○○○" : mode === "NONE" ? "合成非敏感文字" : ({ NAME: "測○料", MRN: "0000○○34", PHONE: "0912○○○678", GENERIC: "測○○料" } as Record<string, string>)[mode]}。Dataset 規則仍為最低要求。</p>
+    <p role="status">合成資料預覽：{(mode === "INHERIT" || mode === "CUSTOM") ? inheritedMaskSample(matching[0]) : mode === "OMIT" ? "欄位不傳送" : mode === "FULL" ? "○○○○" : mode === "NONE" ? "合成非敏感文字" : ({ NAME: "測○料", MRN: "0000○○34", PHONE: "0912○○○678", GENERIC: "測○○料" } as Record<string, string>)[mode]}。Dataset 規則仍為最低要求。</p>
     <button type="button" disabled={!column || !allowed(mode)} onClick={() => void addRule()}>加入／更新 Dashboard 欄位規則</button>
-    <table><thead><tr><th>欄位</th><th>已保存／編輯中的規則</th></tr></thead><tbody>{Object.entries(masks).map(([name, value]) => <tr key={name}><td>{name}</td><td>{modeNames[String(value)] ?? "未知舊規則：保留，需管理者審查"}</td></tr>)}</tbody></table>
+    <table><thead><tr><th>欄位</th><th>已儲存核准模式</th><th>Dataset 最低政策</th><th>操作</th></tr></thead><tbody>{Object.entries(masks).map(([name, value]) => <tr key={name}><td>{name}</td><td>{modeNames[String(value)] ?? "未知舊規則：保留，需管理者審查"}</td><td>{modeNames[policy.find(rule => rule.columnName.toUpperCase() === name.toUpperCase())?.deviceMaskMode ?? ""] ?? "尚未確認"}</td>
+      <td>{managed === null && <button type="button" disabled={!approvals || !approvalReady || approvals.isActive || saving} onClick={() => void removeRule(name)}>移除 {name} 核准</button>}</td></tr>)}</tbody></table>
     <details><summary>既有遮蔽 JSON（唯讀保留）</summary><pre>{sourceKey === "PRIMARY" ? masksJson : JSON.stringify(masks, null, 2)}</pre>{sourceKey === "PRIMARY" && <pre>{typesJson}</pre>}</details>
     {message && <p role="status">{message}</p>}
     {!valid && <p role="alert">舊 JSON 無法安全解析，未轉換或清除任何規則。請管理者審查。</p>}

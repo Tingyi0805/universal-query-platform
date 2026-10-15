@@ -1,3 +1,4 @@
+import { securityGuidance } from "../security/securityContracts";
 export type QuerySourceSettings = {
   id?: number; sourceKey: string; queryDefinitionId: number | null; parameters?: Record<string, unknown>;
   refreshSeconds: number; pageSize: number; pageSeconds: number; maxRows: number | null;
@@ -7,7 +8,8 @@ export type QuerySourceConfiguration = { version: string; dashboardMode?: string
   primary: QuerySourceSettings; sources: QuerySourceSettings[] };
 export function managementError(error: unknown) {
   const code = (error as { code?: unknown })?.code;
-  return `設定未完成：${typeof code === "string" && /^[A-Z][A-Z0-9_]{0,80}$/.test(code) ? code : "REQUEST_FAILED"}。原編輯內容保留；版本衝突時請先另行保存草稿，再重新載入。`;
+  const safe = securityGuidance(error);
+  return `${safe.code !== "REQUEST_FAILED" ? safe.message : ""} 設定未完成：${typeof code === "string" && /^[A-Z][A-Z0-9_]{0,80}$/.test(code) ? code : "REQUEST_FAILED"}。原編輯內容保留；版本衝突時請先另行保存草稿，再重新載入。`;
 }
 export function sourceSettings(source: QuerySourceSettings, parametersJson: string) {
   const parameters: unknown = JSON.parse(parametersJson);

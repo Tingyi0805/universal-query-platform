@@ -1,4 +1,4 @@
-import { assertEmptyApprovalCreation, assertBasicApprovalWrite } from "./dashboardApproval.service.js";
+import { assertEmptyApprovalCreation, assertBasicApprovalWrite, preserveApprovalSettings } from "./dashboardApproval.service.js";
 import { prepareLegacyLocks, lockLegacyBindings } from "./dashboardLegacyLocks.js";
 import { parseApprovalParameters } from "./dashboardApproval.repository.js";
 import sql from "mssql";
@@ -199,7 +199,9 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
     const locked = await lockLegacyBindings(tx, id, seed);
-    assertBasicApprovalWrite(parseApprovalParameters(locked.parent.ParametersJson), input.parameters, Number(locked.parent.QueryDefinitionId), input.queryDefinitionId);
+    const previous = parseApprovalParameters(locked.parent.ParametersJson);
+    const parameters = preserveApprovalSettings(previous, input.parameters);
+    assertBasicApprovalWrite(previous, parameters, Number(locked.parent.QueryDefinitionId), input.queryDefinitionId);
     if (input.isActive) await assertSensitivityReadyForActivation(tx, input.queryDefinitionId);
 
   const result = await new sql.Request(tx)
@@ -216,7 +218,7 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
     .input("showClock", sql.Bit, input.showClock)
     .input("showPageNumber", sql.Bit, input.showPageNumber)
     .input("showCountdown", sql.Bit, input.showCountdown)
-    .input("parametersJson", sql.NVarChar(sql.MAX), JSON.stringify(input.parameters))
+    .input("parametersJson", sql.NVarChar(sql.MAX), JSON.stringify(parameters))
     .input("isActive", sql.Bit, input.isActive)
     .input("userId", sql.BigInt, userId)
     .query(`

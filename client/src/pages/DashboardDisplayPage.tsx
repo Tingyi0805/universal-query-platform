@@ -1,3 +1,5 @@
+import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
+import { sourcePreviewFailure } from "../dashboard/dataSettings";
 import { dashboardFullscreenActive, dashboardFullscreenSupported, requestDashboardFullscreen } from "../dashboard/fullscreen";
 import { previewAuthorizationFailed, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
 import { formatDashboardValue } from "../dashboard/displayFormat";
@@ -251,10 +253,9 @@ export function DashboardDisplayPage() {
         if (generation !== supplementalRequestGeneration.current) return;
         setSupplementalPages(previous => previous[key] ? { ...previous, [key]: retainSourceColumns(previous[key]!) } : previous);
       },
-      failed: (status) => {
+      failed: (_status, error) => {
         if (generation !== supplementalRequestGeneration.current) return;
-        setSupplementalErrors(previous => ({ ...previous, [key]: status === 403 ? "此來源沒有查詢權限" :
-          status === 400 ? "此來源的查詢參數不完整或格式不正確" : "此來源暫時無法提供資料" }));
+        setSupplementalErrors(previous => ({ ...previous, [key]: sourcePreviewFailure(key, error) }));
       },
       unauthorized: () => {
         if (!deviceMode) {
@@ -374,7 +375,7 @@ export function DashboardDisplayPage() {
           setCountdown(0);
         }
         const status=(e as {status?:number}).status;
-        const message = status===403 ? "PRIMARY 沒有查詢權限" : status===400 ? "PRIMARY 查詢參數不完整或格式不正確" : "PRIMARY 暫時無法提供資料，稍後再試或聯絡管理者。";
+        const message = sourcePreviewFailure("PRIMARY", e);
         setDataWarning(message);
         setRetryDelaySeconds((previous) => Math.min(previous * 2, 60));
         setError(message);
@@ -749,6 +750,7 @@ export function DashboardDisplayPage() {
       : (supplemental?.result.columns ?? []).map((column) => ({
         columnName: column.name, displayLabel: column.name, alignment: "LEFT" as const,
       }));
+    const sourceFailure = sourceKey === "PRIMARY" ? dataWarning : supplementalErrors[sourceKey];
     const firstRow = widgetRows[0] ?? (sourceKey === "PRIMARY" && !deviceMode && !queryPreview ? preview?.result.rows[0] : undefined) ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
@@ -791,7 +793,7 @@ export function DashboardDisplayPage() {
               ))}
             </tbody>
           </table>
-          {widgetRows.length === 0 && <div className="dashboard-play-empty" role={supplementalErrors[sourceKey] ? "alert" : undefined}>{supplementalErrors[sourceKey] ?? "目前沒有資料"}</div>}
+          {widgetRows.length === 0 && <div className="dashboard-play-empty" role={sourceFailure ? "alert" : undefined}>{sourceFailure || "目前沒有資料"}</div>}
         </div>
       );
     }
@@ -805,7 +807,7 @@ export function DashboardDisplayPage() {
         value = widget.sourceKey ? textValue(parameters[widget.sourceKey]) : "";
         break;
       case "FIELD":
-        if (supplementalErrors[sourceKey]) { value = supplementalErrors[sourceKey]; break; }
+        if (sourceFailure) { value = sourceFailure; break; }
         value = widget.sourceKey
           ? formatDashboardValue(maskText(firstRow[widget.sourceKey], widget.config?.maskMode), widget.config.displayFormat)
           : "";
@@ -909,6 +911,7 @@ export function DashboardDisplayPage() {
         <div className="dashboard-display-error">
           <h1>Dashboard 無法顯示</h1>
           <p>{error}</p>
+          {!deviceMode && <SecurityManagementLinks dashboardId={dashboardId} />}
           {!deviceMode && <Link to="/dashboards">返回 Dashboard</Link>}
         </div>
       </main>
@@ -927,6 +930,7 @@ export function DashboardDisplayPage() {
 
   return (
     <main className="dashboard-display-screen">
+      {!deviceMode && (dataWarning || error) && <aside role="status">{dataWarning || error}<SecurityManagementLinks dashboardId={Number(dashboardId)} /></aside>}
       {deviceMode && (
         <div role="status" aria-live="polite" style={{
           position: "fixed", right: 12, bottom: 12, zIndex: 9999,
@@ -935,7 +939,7 @@ export function DashboardDisplayPage() {
           color: "#fff", fontSize: 12, maxWidth: "min(75vw, 480px)",
         }}>
           {!online ? "網路已中斷，已清除患者資料；連線恢復後會重新載入" :
-            dataWarning || layoutWarning ? "資料更新異常，正在安全重試" :
+            dataWarning || layoutWarning ? dataWarning || layoutWarning :
             "播放正常"}
           {lastUpdatedAt && " · 最後更新 " + lastUpdatedAt.toLocaleTimeString("zh-TW")}
         </div>

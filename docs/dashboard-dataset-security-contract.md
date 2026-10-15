@@ -1,3 +1,17 @@
+## 階段 4A：Dataset 稽核與 Legacy 核准管理介面（目前實作）
+
+基準 e8b3700048b1433265c5bdf39da007fa83a65cf2。本階段新增獨立 Dataset 患者稽核區，整合既有 DashboardDataSettingsEditor，沒有執行 Schema、修改旗標或部署。
+
+- Dataset 稽核區只讀 GET patient-audit-config 的 config/version/status/metadataStatus/columns。初次載入不選識別欄位、不寫入。PUT 僅由管理者選取後端清單精確 alias、勾選穩定識別碼確認並明確儲存後送出；expectedVersion 保留 GET 的原始字串，不轉成 Number。沒有姓名/電話推定、停用稽核或金鑰顯示。Schema/metadata/key 錯誤會禁止或拒絕儲存，409 後須重新載入與重新確認；SQL 定義儲存/成功預覽後重新讀取可信狀態。
+- Legacy 核准讀 GET column-approvals，PATCH 只送 GET expectedVersion、指定 sourceKey 的 upsert/remove。PRIMARY/額外來源各自管理；移除需確認，保留分類與其他 JSON。停用限制以後端 GET 狀態為準，不以未儲存 checkbox 推定，不會自動停用/啟用。CUSTOM/OMIT 模式依後端最低政策限制，後端仍是最終判斷者。衝突後禁止所有核准寫入，重新 GET 並重新選欄位才可送出。
+- 新 Dashboard 預設停用且無核准，建立後留在編輯畫面，需明確管理核准。舊唯讀核准 JSON 不能編輯；一般參數 JSON 若夾帶核准/分類欄位，前端明確拒絕，不默默忽略。
+- 基本設定 PUT 的最小相容補強：前端完全不送 deviceColumnMasks/deviceColumnTypes/deviceSourceColumnMasks；後端在原 Dataset→Dashboard→來源鎖下，只對「省略」欄位保留當前已儲存值，再執行原安全守衛。明確帶入異值仍回 DASHBOARD_APPROVAL_WRITE_REQUIRED；主 Query 換綁仍檢查鎖下現有核准並拒絕承接。一般欄位/更新秒數/分頁/快照與其他合法 JSON 保持原路徑。舊 client 若仍送舊核准值，仍可能收到衝突，不會覆蓋新核准。
+- Query-only 已轉換管理保留既有版本化 disclosure API；Legacy 分支只用 column-approvals，不回退到基本設定寫核准。沒有開啟三旗標，也沒有解除 arbitration 或轉換保護。
+- 預覽/播放保留既有授權/政策/快照重驗；僅允許既有安全錯誤類型與白名單 code/status 穿過錯誤邊界，不回傳 driver message/detail。中文指引顯示 PRIMARY/SourceKey、錯誤碼與管理建議；只有 DESIGN_QUERY 使用者看到管理入口，後端權限仍重新檢查。失敗來源清除舊列、保留固定版面與健康來源，與正常零筆資料區分；登入/裝置授權失效仍沿用原清除及重新授權流程，沒有原始資料 fallback。
+- 仍需隔離 SQL Server 2019 驗證首次/重複/失敗 Migration、版本與來源集合競爭、真實鎖與回滾、ACL/TokenVersion 撤銷、HMAC 設定及裝置驗收。本機 Mock/合成資料/Playwright 與 CI 均不取代這些驗證。
+
+以下各階段及原始附件內容保留作歷史交付說明。
+
 ## 恢復階段 3：Legacy Dashboard 欄位核准（目前實作）
 
 基準 7986cd17f1a305321a727a708a344a76b4ccc36f。新增 GET/PATCH /api/dashboards/:id/column-approvals；不需開啟 Query-only 旗標，仍保留既有 management writer arbitration：management 開啟時拒絕 Legacy 寫入；已轉換/Query-only/Query-only-disabled 即使旗標關閉也不能回到 Legacy API。

@@ -1,3 +1,4 @@
+import { SecurityContractError } from "../securityContract/securityContract.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
@@ -274,4 +275,9 @@ for (const changed of ["patientVersion", "metadataProof"] as const) test(`Query-
   f.control[changed] = "changed";
   await assert.rejects(f.service.page(1, "WARD", subject, { page: 1, snapshotId: first.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
   assert.equal(f.control.executions.length, 1);
+});
+
+test("Query-only retains safe Schema error codes without executing SQL or returning cached rows", async () => {
+  const f = fixture(); f.deps.getSensitivity = async () => { throw new SecurityContractError("SECURITY_SCHEMA_REQUIRED"); };
+  await assert.rejects(f.service.page(1, "WARD", subject, { page: 1 }), { code: "SECURITY_SCHEMA_REQUIRED", status: 503 }); assert.equal(f.control.executions.length, 0);
 });

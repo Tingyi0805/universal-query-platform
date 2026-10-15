@@ -18,7 +18,7 @@ async function setup(page: Page, single = false, hold = false) {
     }
     const key = (url.pathname.includes("/data-sources/A/") ? "A" : url.pathname.includes("/data-sources/B/") ? "B" : "PRIMARY") as keyof typeof state.sql;
     if ((key === "A" && state.failA) || (key === "PRIMARY" && state.failPrimary)) {
-      await route.fulfill({ status: key === "A" ? state.failAStatus : state.failPrimaryStatus, json: { error: { code: "DASHBOARD_DELIVERY_FAILED" } } }); return;
+      await route.fulfill({ status: key === "A" ? state.failAStatus : state.failPrimaryStatus, json: { error: { code: (key === "A" ? state.failAStatus : state.failPrimaryStatus) === 403 ? "DASHBOARD_EXECUTE_FORBIDDEN" : (key === "A" ? state.failAStatus : state.failPrimaryStatus) === 400 ? "PARAMETER_REQUIRED" : "DASHBOARD_DELIVERY_FAILED" } } }); return;
     }
     const body = route.request().postDataJSON() as { page: number; snapshotId?: string };
     if (!body.snapshotId) state.sql[key]++;
@@ -63,7 +63,7 @@ for (const status of [403, 400, 503]) test(`source ${status} shows a local error
   state.failA = true; state.failAStatus = status;
   await page.clock.runFor(5000);
   await expect(page.getByText("A○頁1", { exact: true })).toHaveCount(0);
-  await expect(page.getByText(status === 403 ? "此來源沒有查詢權限" : status === 400 ? "此來源的查詢參數不完整或格式不正確" : "此來源暫時無法提供資料", { exact: true })).toBeVisible();
+  await expect(page.getByText(new RegExp(`來源 A：${status === 403 ? "DASHBOARD_EXECUTE_FORBIDDEN" : status === 400 ? "PARAMETER_REQUIRED" : "DASHBOARD_DELIVERY_FAILED"}`)).first()).toBeVisible();
   await expect(page.getByText("PRIMARY○頁2", { exact: true })).toBeVisible();
   await expect(page.getByText("B○頁2", { exact: true })).toBeVisible();
   await page.clock.runFor(5000);

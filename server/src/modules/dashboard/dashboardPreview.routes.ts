@@ -1,3 +1,4 @@
+import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { Router, type Request } from "express";
 import jwt from "jsonwebtoken";
@@ -72,7 +73,7 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
       let disclosureId: number | null;
       try { disclosureId = await deps.audit({ datasetId: dataset.id, queryDefinitionId: query.id, userId: req.authUser!.id,
         sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "DASHBOARD", masked: true, rows: raw.rows }); }
-      catch { throw new PreviewFailure("PATIENT_AUDIT_FAILED", 503); }
+      catch (error) { const safe = dashboardSecurityFailure(error); if (safe) throw new PreviewFailure(safe.code, safe.status); throw new PreviewFailure("PATIENT_AUDIT_FAILED", 503); }
       if (raw.rows.length && disclosureId === null) throw new PreviewFailure("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       if ((await readState(req, id, key)).fingerprint !== initial.fingerprint) throw new PreviewFailure("DASHBOARD_PREVIEW_STATE_CHANGED", 409);
       const result = { ...raw, columns, rows };
@@ -85,10 +86,11 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
           result, disclosureId });
       }
     } catch (error) {
+      const safe = dashboardSecurityFailure(error);
       const parameter = error instanceof Error && /^PARAMETER_[A-Z_]+(?::|$)/.test(error.message);
-      const code = error instanceof PreviewFailure || error instanceof QuerySourceError ? error.code : parameter ? "DASHBOARD_PARAMETERS_INVALID" :
+      const code = error instanceof PreviewFailure || error instanceof QuerySourceError ? error.code : safe ? safe.code : parameter ? "DASHBOARD_PARAMETERS_INVALID" :
         error instanceof z.ZodError ? "VALIDATION_ERROR" : error instanceof Error && ["DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED", "DASHBOARD_COLUMNS_AMBIGUOUS"].includes(error.message) ? error.message : "DASHBOARD_PREVIEW_FAILED";
-      const status = error instanceof PreviewFailure || error instanceof QuerySourceError ? error.status : parameter || error instanceof z.ZodError ? 400 : 503;
+      const status = error instanceof PreviewFailure || error instanceof QuerySourceError ? error.status : safe ? safe.status : parameter || error instanceof z.ZodError ? 400 : 503;
       res.status(status).json({ error: { code, message: "Dashboard 來源預覽未完成；請檢查授權、參數與保護設定。", requestId: req.id } });
     }
   };

@@ -30,6 +30,12 @@ export function assertBasicApprovalWrite(previous: Record<string, unknown>, next
   if (approvalKeys.some(key => canonical(approvalObject(previous[key])) !== canonical(approvalObject(next[key]))))
     throw new DashboardApprovalError("DASHBOARD_APPROVAL_WRITE_REQUIRED");
 }
+/** Omission means retain the locked current setting; explicit changes still hit the guard. */
+export function preserveApprovalSettings(previous: Record<string, unknown>, incoming: Record<string, unknown>) {
+  const next = { ...incoming };
+  for (const key of approvalKeys) if (!Object.hasOwn(incoming, key) && Object.hasOwn(previous, key)) next[key] = previous[key];
+  return next;
+}
 export function assertSourceApprovalBindings(parameters: Record<string, unknown>, previous: Array<{ sourceKey: string; datasetId: number }>, next: Array<{ sourceKey: string; datasetId: number }>) {
   for (const [key, masks] of Object.entries(approvalObject(parameters.deviceSourceColumnMasks))) {
     if (!Object.keys(approvalObject(masks)).length) continue;

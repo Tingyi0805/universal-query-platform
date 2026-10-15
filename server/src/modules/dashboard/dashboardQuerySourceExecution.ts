@@ -1,3 +1,4 @@
+import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
 import { createHash } from "node:crypto";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { safeParameterFailure } from "./dashboardQuerySources.repository.js";
@@ -30,7 +31,7 @@ export type ExecutionDependencies = {
   audit: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
 };
 export function createQuerySourceExecution(deps: ExecutionDependencies, enabled: (device?: boolean) => boolean) {
-  const state = async (id: number, key: string, subject: ExecutionSubject) => {
+  const readState = async (id: number, key: string, subject: ExecutionSubject) => {
     if (!enabled(subject.deviceId !== undefined)) throw new QuerySourceError("QUERY_SOURCE_EXECUTION_DISABLED", 404);
     const proof = subject.deviceId !== undefined ? await subject.verifyDevice?.() : undefined;
     if (subject.deviceId !== undefined && (!proof || proof.deviceId !== subject.deviceId || proof.userId !== subject.userId || proof.tokenVersion !== subject.tokenVersion))
@@ -73,6 +74,10 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     const fingerprint = createHash("sha256").update(JSON.stringify({ modeVersion, proof, subject, binding, query,
       session, access, accessRevision, dataset, source, definitions, sensitivity })).digest("hex");
     return { fingerprint, binding, query, dataset, sensitivity, accessRevision, modeVersion };
+  };
+  const state: typeof readState = async (...args) => {
+    try { return await readState(...args); }
+    catch (error) { const safe = dashboardSecurityFailure(error); if (safe) throw new QuerySourceError(safe.code, safe.status); throw error; }
   };
   return {
     async page(id: number, key: string, subject: ExecutionSubject, input: { page: number; snapshotId?: string }) {
@@ -118,7 +123,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
           userId: subject.deviceId === undefined ? subject.userId : null, dashboardDeviceId: subject.deviceId,
           sourceScope: snapshot.sourceScope, deliveryType: "PAGE", pageNumber: input.page,
           masked: true, rows: rawRows });
-      } catch { throw new QuerySourceError("PATIENT_AUDIT_FAILED", 503); }
+      } catch (error) { const safe = dashboardSecurityFailure(error); throw new QuerySourceError(safe?.code ?? "PATIENT_AUDIT_FAILED", safe?.status ?? 503); }
       if (rawRows.length && disclosureId === null) throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       await current();
       if (!getDashboardPageSnapshot(snapshot.id, ownerId, id)) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");

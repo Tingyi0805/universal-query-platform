@@ -9,10 +9,19 @@ import { errorHandler } from "../../middleware/errorHandler.js";
 import { SecurityContractError } from "../securityContract/securityContract.js";
 import { createDashboardApprovalRouter } from "./dashboardApproval.routes.js";
 import { createDashboardApprovalService, approvalVersion, assertBasicApprovalWrite, assertEmptyApprovalCreation,
-  assertSourceApprovalBindings, type ApprovalStore, type ApprovalState, type ApprovalPatch } from "./dashboardApproval.service.js";
+  assertSourceApprovalBindings, preserveApprovalSettings, type ApprovalStore, type ApprovalState, type ApprovalPatch } from "./dashboardApproval.service.js";
 import { resolveDashboardDisclosureMasks, maskDeviceRows } from "./dashboardDeviceMasking.js";
 
 const actor = { userId: 1, tokenVersion: 1 };
+test("basic settings omission preserves latest locked approvals without accepting explicit rewrites", () => {
+  const current = { deviceColumnMasks: { MRN: "INHERIT" }, deviceColumnTypes: { MRN: "MRN" }, deviceSourceColumnMasks: { EXTRA: { MRN: "FULL" } }, WARD: "old" };
+  const ordinary = preserveApprovalSettings(current, { WARD: "new", snapshotSeconds: 60 });
+  assert.doesNotThrow(() => assertBasicApprovalWrite(current, ordinary, 2, 2));
+  assert.deepEqual(ordinary.deviceSourceColumnMasks, current.deviceSourceColumnMasks);
+  assert.equal(ordinary.WARD, "new");
+  assert.throws(() => assertBasicApprovalWrite(current, preserveApprovalSettings(current, { deviceColumnMasks: {} }), 2, 2), { code: "DASHBOARD_APPROVAL_WRITE_REQUIRED" });
+  assert.throws(() => assertBasicApprovalWrite(current, ordinary, 2, 3), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
+});
 function fixture() {
   const policy = { version: 1, columns: [
     { columnName: "姓名", sensitivityType: "NAME", deviceMaskMode: "CUSTOM" as const, customMask: { prefix: 1, suffix: 0, symbol: "*" } },

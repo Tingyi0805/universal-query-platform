@@ -1,3 +1,4 @@
+import { SecurityContractError } from "../securityContract/securityContract.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
@@ -7,7 +8,7 @@ import { createDashboardPreviewRouter, type DashboardPreviewDependencies } from 
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 const rawName = "合成患者甲", rawMrn = "SYNTHETIC987654";
 async function fixture(run: (f: { state: any; request: (path: string) => Promise<{ status: number; body: any; cache: string | null }> }) => Promise<void>) {
-  const state = { approvalEpoch: "rowversion-1", session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] }, allowed: true, published: true,
+  const state = { schemaMissing: false, approvalEpoch: "rowversion-1", session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] }, allowed: true, published: true,
     mrnMode: undefined as string | undefined, failSupplemental: false, managed: false, sqlFailure: false, policyFailure: false, auditFailure: false, missingAudit: false, calls: 0, afterExecute: () => {}, afterAudit: () => {}, audits: [] as any[],
     policy: { version: 1, columns: [
       { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "FULL" },
@@ -16,7 +17,7 @@ async function fixture(run: (f: { state: any; request: (path: string) => Promise
       { columnName: "SECRET", sensitivityType: "HEALTH", deviceMaskMode: "OMIT" },
     ] } };
   const deps: DashboardPreviewDependencies = {
-    getApprovalEvidence: async () => state.approvalEpoch,
+    getApprovalEvidence: async () => { if (state.schemaMissing) throw new SecurityContractError("SECURITY_SCHEMA_REQUIRED"); return state.approvalEpoch; },
     getSession: async () => structuredClone(state.session),
     getDashboard: async () => ({ id: 1, queryDefinitionId: 2, isActive: true, parameters: { REGNO: "synthetic-bind", deviceSourceColumnMasks: { WARD: { NAME: "INHERIT", MRN: state.mrnMode ?? "INHERIT" } }, deviceColumnMasks: { NAME: "NONE", MRN: state.mrnMode ?? "NONE", SECRET: "NONE", ROOM: "NONE" } } }) as any,
     getQuery: async () => ({ id: 2, datasetId: 3, isActive: true, isPublished: state.published, isArchived: false }) as any,
@@ -92,4 +93,9 @@ for (const path of ["/1/preview", "/1/data-sources/WARD/preview"]) test(`${path}
   f.state.mrnMode = "INHERIT"; f.state.policy.columns = f.state.policy.columns.filter((c: any) => c.columnName !== "MRN"); f.state.policy.version++;
   r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, undefined);
   assert.ok(!JSON.stringify(r.body).includes(rawMrn));
+}));
+
+test("preview Schema error exposes only safe code and guidance, never stale data", () => fixture(async f => {
+  f.state.schemaMissing = true; const response = await f.request("/1/preview");
+  assert.equal(response.status, 503); assert.equal(response.body.error.code, "SECURITY_SCHEMA_REQUIRED"); assert.equal(response.body.result, undefined); assert.equal(f.state.calls, 0);
 }));

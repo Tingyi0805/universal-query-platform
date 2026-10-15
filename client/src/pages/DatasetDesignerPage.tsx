@@ -1,5 +1,6 @@
+import { DatasetPatientAuditEditor } from "../components/DatasetPatientAuditEditor";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { DatasetSensitivityEditor } from "../components/DatasetSensitivityEditor";
@@ -86,12 +87,16 @@ function extractParameters(sqlText: string): string[] {
 
 export function DatasetDesignerPage() {
   const { accessToken } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedEditor = Number(searchParams.get("datasetId"));
+  const openedFromLink = useRef<number | null>(null);
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceOption[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [savedSql, setSavedSql] = useState("");
   const [savedDataSourceId, setSavedDataSourceId] = useState<number | "">("");
   const [sqlSaveRevision, setSqlSaveRevision] = useState(0);
+  const [auditRevision, setAuditRevision] = useState(0);
   const [sensitivityDirty, setSensitivityDirty] = useState(false);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
   const previewParameterSequence = useRef(0);
@@ -145,6 +150,10 @@ export function DatasetDesignerPage() {
   }, [accessToken, datasetFilter, listPage, listPageSize, listSearch]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const selected = datasets.find(item => item.id === requestedEditor);
+    if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; selectDataset(selected); }
+  }, [datasets, requestedEditor]);
   const loadPreviewParameterDefinitions = useCallback(async (datasetId?: number) => {
     const sequence = ++previewParameterSequence.current;
     setPreviewParameterError("");
@@ -406,7 +415,7 @@ export function DatasetDesignerPage() {
         }),
       }, accessToken);
 
-      setPreview(response.result);
+      setPreview(response.result); setAuditRevision(value => value + 1);
       setNotice(`預覽完成：${response.result.rowCount} 筆，${response.result.elapsedMs} ms${response.result.truncated ? "（結果已截斷）" : ""}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "查詢預覽失敗。");
@@ -724,6 +733,8 @@ export function DatasetDesignerPage() {
               }}
             />
           )}
+
+          {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
 
           {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} previewColumns={preview?.columns.map((column) => column.name) ?? []} />}
 

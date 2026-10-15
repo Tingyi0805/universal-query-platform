@@ -1,8 +1,10 @@
+import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
+import { basicDashboardParameters, securityGuidance } from "../security/securityContracts";
 import { DashboardDataSettingsEditor } from "../components/DashboardDataSettingsEditor";
 import { queryParameterValues, sourcePreviewFailure } from "../dashboard/dataSettings";
 import { DashboardQueryPlaybackManager } from "../components/DashboardQueryPlaybackManager";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { rememberDashboardToken,prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -157,7 +159,7 @@ const emptyForm: FormState = {
   deviceColumnMasksJson: "{}",
   deviceColumnTypesJson: "{}",
   deviceSourceColumnMasksJson: "{}",
-  isActive: true,
+  isActive: false,
 };
 
 function displayValue(value: unknown): string {
@@ -184,6 +186,9 @@ function deviceExpiryLabel(expiresAtUtc: string | null): string {
 
 export function DashboardDesignerPage() {
   const { accessToken } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedEditor = Number(searchParams.get("dashboardId"));
+  const openedFromLink = useRef<number | null>(null);
 
   function openPlayback(dashboardId: number) {
     const popup = window.open("about:blank", "_blank");
@@ -275,6 +280,10 @@ export function DashboardDesignerPage() {
   }, [accessToken, listDisplayMode, listPage, listPageSize, listSearch, listStatus]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const selected = dashboards.find(item => item.id === requestedEditor);
+    if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; editDashboard(selected); }
+  }, [dashboards, requestedEditor]);
 
   const snapshotDefaultSeconds: Record<FormState["snapshotKind"], number> = {
     SURGERY: 20, OUTPATIENT: 60, EXAM: 60, STATISTICS: 180, OTHER: 60,
@@ -382,31 +391,7 @@ export function DashboardDesignerPage() {
         setError("快照秒數必須為 10～3600 的整數，或留白使用建議值。");
         return;
       }
-      let deviceColumnMasks: Record<string, string>;
-      try {
-        const parsed = JSON.parse(form.deviceColumnMasksJson || "{}");
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("INVALID");
-        const modes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM", "INHERIT"];
-        if (Object.entries(parsed).some(([column, mode]) => !column || column.length > 256 || !modes.includes(String(mode)))) throw new Error("INVALID");
-        deviceColumnMasks = parsed as Record<string, string>;
-      } catch {
-        setError("敏感欄位規則须為 JSON 物件；沿用 Dataset 請使用 INHERIT，另可使用 FULL／OMIT。既有合法模式保留。");
-        return;
-      }
-      try {
-        const sources: unknown = JSON.parse(form.deviceSourceColumnMasksJson || "{}");
-        if (!sources || typeof sources !== "object" || Array.isArray(sources)) throw new Error();
-        parameters.deviceSourceColumnMasks = sources;
-      } catch { setError("來源別欄位核准 JSON 無法安全解析，原內容保留。"); return; }
-      parameters.deviceColumnMasks = deviceColumnMasks;
-      try {
-        const types = JSON.parse(form.deviceColumnTypesJson || "{}");
-        if (!types || typeof types !== "object" || Array.isArray(types)) throw new Error("INVALID");
-        parameters.deviceColumnTypes = types;
-      } catch {
-        setError("敏感資料分類格式不正確。");
-        return;
-      }
+      parameters = basicDashboardParameters(parameters);
       const storedKind = dashboards.find(item => item.id === form.id)?.parameters?.snapshotKind;
       if (storedKind !== undefined && typeof storedKind !== "string") {
         setError("舊快照用途格式無法安全轉換，原設定保留；請管理者審查。"); return;
@@ -436,19 +421,20 @@ export function DashboardDesignerPage() {
           method: "PUT",
           body: JSON.stringify(payload),
         }, accessToken);
-        setNotice("Dashboard 已更新。");
+        setNotice("Dashboard 一般設定已更新。若要修改核准，請重新載入核准版本。");
       } else {
-        await apiRequest("/dashboards", {
+        const created = await apiRequest<{ id: number }>("/dashboards", {
           method: "POST",
           body: JSON.stringify(payload),
         }, accessToken);
-        setNotice("Dashboard 已建立。");
+        if (!Number.isSafeInteger(created.id) || created.id < 1) throw new Error("RESPONSE_INVALID");
+        setForm(current => ({ ...current, id: created.id }));
+        setNotice("Dashboard 已建立，預設沒有核准欄位。請在下方明確管理核准。");
       }
 
-      setForm(emptyForm);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "儲存 Dashboard 失敗。");
+      const safe = securityGuidance(e); setError(`來源 PRIMARY：${safe.code}。${safe.message}`);
     } finally {
       setSaving(false);
     }
@@ -1056,7 +1042,7 @@ export function DashboardDesignerPage() {
       </div>
 
       {loading && <section className="notice">載入中…</section>}
-      {error && <section className="form-error">{error}</section>}
+      {error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={form.id} /></section>}
       {notice && <section className="notice">{notice}</section>}
 
       {!loading && (
@@ -1101,7 +1087,13 @@ export function DashboardDesignerPage() {
                 <span>資料 Query</span>
                 <select
                   value={form.queryDefinitionId}
-                  onChange={(e) => setForm({ ...form, queryDefinitionId: e.target.value })}
+                  onChange={(e) => {
+                    if (form.id && e.target.value !== form.queryDefinitionId) {
+                      try { if (Object.keys(JSON.parse(form.deviceColumnMasksJson)).length) { setError(sourcePreviewFailure("PRIMARY", { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" })); return; } }
+                      catch { setError("核准 JSON 尚未確認，請先重新載入核准版本；禁止換綁。"); return; }
+                    }
+                    setForm({ ...form, queryDefinitionId: e.target.value });
+                  }}
                 >
                   <option value="">請選擇已發佈 Query</option>
                   {usableQueries.map((query) => (

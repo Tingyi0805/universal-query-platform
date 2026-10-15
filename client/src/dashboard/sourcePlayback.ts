@@ -8,7 +8,7 @@ export function startSourcePlayback<T extends PlaybackPage>(options: {
   show(page: T): void;
   clear(): void;
   unauthorized(): void;
-  failed?(status?: number): void;
+  failed?(status?: number, error?: unknown): void;
   clock?: PlaybackClock;
 }) {
   const clock = options.clock ?? browserClock;
@@ -54,7 +54,7 @@ export function startSourcePlayback<T extends PlaybackPage>(options: {
       snapshot = null;
       rotateAt = 0;
       options.clear();
-      options.failed?.((error as { status?: number }).status);
+      options.failed?.((error as { status?: number }).status, error);
       // Query/source 403 is local. Only a revoked authentication credential stops all playback.
       if ((error as { status?: number }).status === 401) {
         stopped = true;

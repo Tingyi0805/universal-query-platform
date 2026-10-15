@@ -1,3 +1,4 @@
+import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -227,10 +228,11 @@ class DeliveryError extends Error {
 }
 function deliveryFailure(error: unknown, res: import("express").Response, _next: import("express").NextFunction) {
   // Database errors can contain SQL/bind values. Device responses and logs must never expose them.
+  const safe = dashboardSecurityFailure(error);
   const code = error instanceof DeliveryError ? error.code
-    : error instanceof Error && ["DASHBOARD_QUERY_BUSY", "DASHBOARD_QUERY_TIMEOUT", "DASHBOARD_SNAPSHOT_TOO_LARGE", "DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED", "DASHBOARD_COLUMNS_AMBIGUOUS"].includes(error.message)
+    : safe ? safe.code : error instanceof Error && ["DASHBOARD_QUERY_BUSY", "DASHBOARD_QUERY_TIMEOUT", "DASHBOARD_SNAPSHOT_TOO_LARGE", "DASHBOARD_SENSITIVITY_POLICY_INVALID", "DASHBOARD_SENSITIVITY_POLICY_REQUIRED", "DASHBOARD_COLUMNS_AMBIGUOUS"].includes(error.message)
       ? error.message : "DASHBOARD_DELIVERY_FAILED";
-  const status = error instanceof DeliveryError ? error.status : code === "DASHBOARD_QUERY_BUSY" ? 429 : code === "DASHBOARD_QUERY_TIMEOUT" ? 504 : 503;
+  const status = error instanceof DeliveryError ? error.status : safe ? safe.status : code === "DASHBOARD_QUERY_BUSY" ? 429 : code === "DASHBOARD_QUERY_TIMEOUT" ? 504 : 503;
   res.setHeader("Cache-Control", "no-store");
   res.status(status).json({ error: { code, message: "播放資料暫時無法提供，請重新驗證或稍後重試。" } });
 }

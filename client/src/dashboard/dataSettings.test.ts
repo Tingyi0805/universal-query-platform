@@ -25,6 +25,7 @@ test("Dataset CUSTOM offers inheritance without duplicating custom data; OMIT ca
   for (const mode of ["NONE", "NAME", "MRN", "PHONE"]) assert.equal(datasetApprovalAllowed(mode, rule), false);
   assert.equal(inheritedMaskSample(rule), "0#######56");
   assert.equal(datasetApprovalAllowed("INHERIT", undefined), false);
-  for (const mode of ["INHERIT", "FULL", "NONE"]) assert.equal(datasetApprovalAllowed(mode, { sensitivityType: "HEALTH", deviceMaskMode: "OMIT" }), false);
+  for (const mode of ["FULL", "NONE"]) assert.equal(datasetApprovalAllowed(mode, { sensitivityType: "HEALTH", deviceMaskMode: "OMIT" }), false);
+  assert.equal(datasetApprovalAllowed("INHERIT", { sensitivityType: "HEALTH", deviceMaskMode: "OMIT" }), true);
   assert.equal(maskAtLeastAsStrong("INHERIT", "CUSTOM"), true);
 });

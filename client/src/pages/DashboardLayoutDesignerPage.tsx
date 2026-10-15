@@ -1,3 +1,4 @@
+import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
 import { displayFormats, formatDashboardValue } from "../dashboard/displayFormat";
 import { managementError, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
@@ -756,7 +757,7 @@ export function DashboardLayoutDesignerPage() {
         </div>
       </div>
 
-      {error && <section className="form-error">{error}</section>}
+      {error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
       {notice && <section className="notice">{notice}</section>}
 
       <div className="dashboard-layout-workspace">
