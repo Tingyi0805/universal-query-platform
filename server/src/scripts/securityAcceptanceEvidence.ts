@@ -32,8 +32,7 @@ export function validateEvidence(data: unknown, manifest: Awaited<ReturnType<typ
   const failed = d.cases.filter(c => c.status === "FAIL").length;
   const blocked = d.cases.filter(c => c.status === "BLOCKED").length;
   const notRun = d.cases.filter(c => c.status === "NOT_RUN").length;
-  return { acceptedForReview: true, verifiedByDatabase: false, eligibleForSignoff: passed === required.size && failed === 0 && blocked === 0 &&
-    notRun === 0 && d.environment.isolationAttested === true && d.environment.restoreVerified === true,
+  return { acceptedForReview: true, verifiedByDatabase: false, eligibleForSignoff: false, // Offline self-reported records can never authorize signoff.
     counts: { passed, failed, blocked, notRun }, warning: "Schema, environment and evidence must be independently verified; this is not a database test." };
 }
 export async function reviewEvidence(args: string[]) {
