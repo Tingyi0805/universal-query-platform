@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { prepareAcceptance } from "./securityAcceptanceManifest.js";
-import { validateEvidence } from "./securityAcceptanceEvidence.js";
+import { reviewEvidence, validateEvidence } from "./securityAcceptanceEvidence.js";
 
 test("all cases start NOT_RUN and evidence does not certify a live SQL test", async () => {
   const manifest = await prepareAcceptance(["--profile", "legacy"]);
@@ -35,4 +37,22 @@ test("an asserted PASS is never accepted as proof of DB verification", async () 
   };
   const result = validateEvidence(sample, manifest);
   assert.equal(result.verifiedByDatabase, false);
+});
+
+test("offline evidence reader rejects symlinks and oversized files before parsing", async () => {
+  const directory = "/tmp/uqp-acceptance";
+  const id = randomUUID().replaceAll("-", "");
+  const actual = directory + "/" + id + "-actual.json";
+  const alias = directory + "/" + id + "-alias.json";
+  const large = directory + "/" + id + "-large.json";
+  await mkdir(directory, { recursive: true });
+  try {
+    await writeFile(actual, "{}");
+    await symlink(actual, alias);
+    await assert.rejects(reviewEvidence(["--profile", "legacy", alias]), /OFFLINE_EVIDENCE_REGULAR_FILE_REQUIRED/);
+    await writeFile(large, " ".repeat(1024 * 1024 + 1));
+    await assert.rejects(reviewEvidence(["--profile", "legacy", large]), /OFFLINE_EVIDENCE_TOO_LARGE/);
+  } finally {
+    await Promise.all([rm(alias, { force: true }), rm(actual, { force: true }), rm(large, { force: true })]);
+  }
 });
