@@ -217,6 +217,9 @@ test("active Dashboard blocks approval edits without any automatic disable", asy
 test("Legacy conflict blocks all writes until reload and explicit source reconfirmation", async ({ page }) => {
   const state = await setup(page);
   await page.goto("/designer/dashboards?dashboardId=1#column-approvals");
+  // The approval editor must leave its fail-closed loading state before any mutation.
+  await expect(page.getByText("尚未確認 Dataset 保護；暫停欄位規則編輯。")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則" })).toBeEnabled();
   await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("NAME");
   await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("FULL");
   state.conflict = true; await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則" }).click();
