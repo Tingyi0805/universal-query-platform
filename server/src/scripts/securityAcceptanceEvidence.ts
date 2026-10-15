@@ -19,7 +19,7 @@ export function validateEvidence(data: unknown, manifest: Awaited<ReturnType<typ
   if (!d.environment || d.environment.sqlMajor !== 15 || d.environment.compatibilityLevel !== 150 ||
       typeof d.environment.instanceId !== "string" || !/^[a-zA-Z0-9_-]{8,100}$/.test(d.environment.instanceId)) fail("ENVIRONMENT");
   const cases = d.cases;
-  if (!Array.isArray(cases) || cases.length !== manifest.cases.length) fail("CASE_COUNT");
+  if (!Array.isArray(cases) || cases.length !== manifest.cases.length) throw new Error("ACCEPTANCE_EVIDENCE_REJECTED:CASE_COUNT");
   const required = new Set(manifest.cases.map(c => c.id));
   const seen = new Set<string>();
   for (const c of cases) {
