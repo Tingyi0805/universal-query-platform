@@ -137,6 +137,17 @@ test("CUSTOM inheritance and source approvals save/reload without copying custom
   await page.goto("/designer/dashboards"); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
   // Wait for the asynchronously fetched, fail-closed Dataset policy and approvals before asserting modes.\n  await expect(page.getByText("MRN：沿用 Dataset CUSTOM（既有設定）", { exact: false })).toBeVisible();\n  await expect(page.getByRole("button", { name: "重新載入核准版本" })).toBeEnabled();\n  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
   const modes = page.getByRole("combobox", { name: /^欄位遮蔽模式/ });
+  // Safe CI diagnostics: record only UI readiness, no patient values, SQL, credentials or tokens.
+  const modeState = await page.evaluate(() => {
+    const field = Array.from(document.querySelectorAll("select")).find(s => s.labels?.[0]?.textContent?.includes("欄位遮蔽模式"));
+    const option = field?.querySelector('option[value="INHERIT"]');
+    return { selectedColumn: (document.querySelector('select')?.value ?? "").slice(0, 16),
+      modeDisabled: (option as HTMLOptionElement | null)?.disabled ?? null,
+      editButtonDisabled: Array.from(document.querySelectorAll("button")).find(b => b.textContent?.includes("加入／更新 Dashboard 欄位規則"))?.disabled ?? null,
+      policyVisible: document.body.textContent?.includes("MRN：沿用 Dataset CUSTOM") ?? false,
+      status: Array.from(document.querySelectorAll('[role="status"],[role="alert"]')).map(e => e.textContent?.slice(0, 100)).filter(Boolean) };
+  });
+  if (modeState.modeDisabled) console.log("CUSTOM_INHERIT_READINESS", JSON.stringify(modeState));
   await expect(modes.locator('option[value="INHERIT"]')).not.toHaveAttribute("disabled", "");
   await expect(modes.locator('option[value="MRN"]')).toHaveAttribute("disabled", "");
   await modes.selectOption("INHERIT"); await expect(page.getByText(/合成資料預覽：\*{8}56/)).toBeVisible();
