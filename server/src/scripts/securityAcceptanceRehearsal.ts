@@ -32,6 +32,10 @@ export async function reviewMigrationRehearsal(input: RehearsalInput) {
   if (!input || (input.profile !== "legacy" && input.profile !== "coexistence")) throw new Error("REHEARSAL_PROFILE_INVALID");
   const manifest = await prepareAcceptance(["--profile", input.profile]);
   const isolation = reviewIsolationChecklist(input.isolation);
+  // A checklist prepared for another migration profile must never validate this rehearsal.
+  if ((input.isolation as { profile?: string }).profile !== input.profile) {
+    throw new Error("REHEARSAL_PROFILE_MISMATCH");
+  }
   const b = input.backup, f = input.failure;
   if (!b || !f || typeof b.runId !== "string" || !/^[a-f0-9]{12}$/.test(b.runId) ||
       b.runId !== (input.isolation as {runId?: string})?.runId) throw new Error("REHEARSAL_RUN_ID_MISMATCH");
