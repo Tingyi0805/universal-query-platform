@@ -93,8 +93,9 @@ test("migration runner keeps ledger insert inside the outer transaction and atte
   const batches = runner.indexOf("new sql.Request(transaction).batch(", begin);
   const ledger = runner.indexOf('query("INSERT INTO uqp.SchemaMigration (FileName) VALUES (@fileName)")', batches);
   const commit = runner.indexOf("await transaction.commit()", ledger);
-  const rollback = runner.indexOf("await transaction.rollback()", commit);
+  const rollback = runner.indexOf("await rollbackMigrationSafely(transaction, file)", commit);
   assert.ok(begin >= 0 && batches > begin && ledger > batches && commit > ledger && rollback > commit);
+  assert.ok(runner.includes("await transaction.rollback()"));
   assert.ok(runner.includes("throw error;"));
   assert.ok(runner.includes("catch (rollbackError)"));
   const migration = await readFile(new URL("../../../database/migrations/919_dashboard_dataset_security_contract.sql", import.meta.url), "utf8");
