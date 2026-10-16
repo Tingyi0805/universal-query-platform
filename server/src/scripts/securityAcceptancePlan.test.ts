@@ -101,3 +101,20 @@ test("migration runner keeps ledger insert inside the outer transaction and atte
   assert.match(migration, /BEGIN TRANSACTION/);
   assert.match(migration, /IF @@TRANCOUNT>0 ROLLBACK TRANSACTION/);
 });
+
+test("scoped upgrade runner restricts 915->919 to exact four filenames and refuses baseline drift", async () => {
+  // Source-contract test; migrate.ts has an executable entrypoint and must not be imported in offline tests.
+  const source = await readFile(new URL("./migrate.ts", import.meta.url), "utf8");
+  for (const filename of [
+    "916_workstation_management.sql",
+    "917_dashboard_query_source_model.sql",
+    "918_dashboard_query_playback_mode.sql",
+    "919_dashboard_dataset_security_contract.sql",
+  ]) assert.ok(source.includes('"' + filename + '"'));
+  assert.match(source, /args\[0\] !== "apply-range"/);
+  assert.match(source, /args\.length !== 3 \|\| args\[1\] !== "916" \|\| args\[2\] !== "919"/);
+  assert.match(source, /MIGRATION_BASELINE_NOT_EXACT_915/);
+  assert.match(source, /MIGRATION_RANGE_FILES_OR_LEDGER_MISMATCH/);
+  assert.ok(source.indexOf("const scope = resolveMigrationScope(args, files, applied)") <
+    source.indexOf("for (const file of files) {\n    if (scope && !scope.has(file)) continue;"));
+});
