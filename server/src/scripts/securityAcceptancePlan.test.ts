@@ -118,3 +118,16 @@ test("scoped upgrade runner restricts 915->919 to exact four filenames and refus
   assert.ok(source.indexOf("const scope = resolveMigrationScope(args, files, applied)") <
     source.indexOf("for (const file of files) {\n    if (scope && !scope.has(file)) continue;"));
 });
+
+test("scoped upgrade validates target identity before any bootstrap and requires explicit attestation", async () => {
+  const runner = await readFile(new URL("./migrate.ts", import.meta.url), "utf8");
+  assert.ok(runner.includes("MIGRATION_TARGET_ATTESTATION_REQUIRED"));
+  assert.ok(runner.includes("MIGRATION_TARGET_MISMATCH"));
+  assert.ok(runner.includes('row.DatabaseName !== "UniversalQueryPlatform"'));
+  assert.ok(runner.includes("UQP_MIGRATION_EXPECTED_SERVER"));
+  assert.ok(runner.includes("UQP_MIGRATION_EXPECTED_LOGIN"));
+  assert.ok(runner.indexOf('if (command === "apply-range") await requireScopedTarget(pool)') <
+    runner.indexOf('if (command !== "apply-range") await pool.request().batch('));
+  assert.ok(runner.indexOf('if (command === "apply-range") await requireScopedTarget(pool)') <
+    runner.indexOf("SELECT FileName FROM uqp.SchemaMigration"));
+});
