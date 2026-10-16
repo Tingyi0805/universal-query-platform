@@ -28,7 +28,8 @@ test("runner source still auto-selects 916-919 and status bootstrap precedes com
   const runner = await readFile(new URL("./migrate.ts", import.meta.url), "utf8");
   assert.ok(runner.includes('.filter((file) => /^\\d+_.*\\.sql$/i.test(file))'));
   assert.ok(runner.includes('.sort((a, b) => a.localeCompare(b))'));
-  assert.ok(runner.indexOf("CREATE TABLE uqp.SchemaMigration") < runner.indexOf('const command ='));
+  assert.ok(runner.indexOf('const command =') < runner.indexOf("CREATE TABLE uqp.SchemaMigration"));
+  assert.ok(runner.includes('if (command !== "apply-range") await pool.request().batch('));
   assert.ok(runner.indexOf('const pool = await getPlatformDbPool()') < runner.indexOf('command === "status"'));
   const files = (await inventory()).map(row => row.file).filter(file => /^\d+_.*\.sql$/i.test(file));
   assert.deepEqual(files.filter(file => /^(916|917|918|919)_/.test(file)).map(file => Number(file.slice(0,3))), [916,917,918,919]);
