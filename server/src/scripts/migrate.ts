@@ -80,11 +80,29 @@ export function resolveMigrationScope(args: string[], files: string[], applied: 
   return new Set(expected);
 }
 
+/** Scoped upgrades must prove the intended database before any bootstrap or DDL. */
+export async function requireScopedTarget(pool: sql.ConnectionPool) {
+  const expectedServer = process.env.UQP_MIGRATION_EXPECTED_SERVER;
+  const expectedLogin = process.env.UQP_MIGRATION_EXPECTED_LOGIN;
+  if (!expectedServer || !expectedLogin) throw new Error("MIGRATION_TARGET_ATTESTATION_REQUIRED");
+  const result = await pool.request().query("SELECT @@SERVERNAME AS ServerName, DB_NAME() AS DatabaseName, ORIGINAL_LOGIN() AS LoginName, OBJECT_ID(N'uqp.SchemaMigration',N'U') AS LedgerId");
+  const row = result.recordset[0];
+  if (!row || row.DatabaseName !== "UniversalQueryPlatform" || row.ServerName !== expectedServer ||
+      row.LoginName !== expectedLogin || row.LedgerId == null)
+    throw new Error("MIGRATION_TARGET_MISMATCH");
+}
+
 async function main() {
+  const args = process.argv.slice(2);
+  const command = args[0] ?? "apply";
+  if (command === "apply-range" && (args.length !== 3 || args[1] !== "916" || args[2] !== "919"))
+    throw new Error("MIGRATION_RANGE_NOT_APPROVED");
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("Platform SQL Server is not configured.");
 
-  await pool.request().batch(`
+  if (command === "apply-range") await requireScopedTarget(pool);
+
+  if (command !== "apply-range") await pool.request().batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'uqp')
       EXEC('CREATE SCHEMA uqp');
 
@@ -106,8 +124,6 @@ async function main() {
   );
   const applied = new Set(appliedResult.recordset.map((row) => String(row.FileName)));
 
-  const args = process.argv.slice(2);
-  const command = args[0] ?? "apply";
   const scope = resolveMigrationScope(args, files, applied);
   if (!["apply", "status", "adopt", "apply-range"].includes(command)) throw new Error("Usage: db:migrate [status | adopt <exact-migration-file>]");
   if (command === "adopt" && (args.length !== 2 || !files.includes(args[1]!))) throw new Error("Specify an existing migration filename for adoption.");
