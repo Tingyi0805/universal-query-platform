@@ -6,7 +6,7 @@
 
 - 預檢 `SharedWorkstation`、`AppUser`、`SharedWorkstationSession`、`SharedWorkstationCredential`、`PatientListDisclosure`、`DashboardDisplayDevice`、`AuditLog`。
 - 4 個 SharedWorkstation 欄位、3 個 audience 表、DashboardDisplayDevice.SharedWorkstationId 與 FK 均採「缺少才新增」模式。
-- **阻擋 A：多個 GO 批次，無包住整個腳本的交易**。若某批失敗而先前 DDL 已提交，可能造成部分安裝；SchemaMigration 是否寫入依 runner 行為，不可假設零影響。
+- **阻擋 A（修正後）：916 腳本本身分多個 GO 且沒有自設跨批次交易；但現有 `server/src/scripts/migrate.ts` 在 Runner 層先建立 `sql.Transaction`，同一 transaction 依序執行每個 batch，再寫入 SchemaMigration 並提交。** 因此不能把 Runner 正常路徑描述為「無整體交易」。若由 SSMS 手工逐批執行則未受 Runner 交易保護；Runner 中 SQL Server DDL／錯誤／rollback 的實際結果仍須在獨立實例驗證。
 - **阻擋 B：存在性檢查不足以證明同名欄位／CK／FK／表的資料型別、語義及 trust 正確**。不能自動重跑或套用在結構漂移 DB。
 - CHECK `CK_Workstation_Retired` 對 `IsActive` 與 `PinLoginEnabled` 的既有資料有相容性要求；現場需測試已退役資料、現有裝置資料與索引影響。
 - 實施前要先在獨立實例測試成功安裝、故障注入、部分安裝修復路徑，並制定補救／還原規則。
