@@ -132,3 +132,13 @@ test("scoped upgrade validates target identity before any bootstrap and requires
   assert.ok(runner.indexOf('if (command === "apply-range") await requireScopedTarget(pool)') <
     runner.indexOf("SELECT FileName FROM uqp.SchemaMigration"));
 });
+
+test("migration rollback failure preserves original error and prohibits automatic retry", async () => {
+  const source = await readFile(new URL("./migrate.ts", import.meta.url), "utf8");
+  assert.match(source, /export async function rollbackMigrationSafely/);
+  assert.match(source, /await transaction\.rollback\(\)/);
+  assert.match(source, /await rollbackMigrationSafely\(transaction, file\);/);
+  assert.match(source, /No automatic retry/);
+  assert.ok(source.indexOf("await rollbackMigrationSafely(transaction, file);") <
+    source.indexOf("throw error;", source.indexOf("await rollbackMigrationSafely(transaction, file);")));
+});
