@@ -92,6 +92,16 @@ export async function requireScopedTarget(pool: sql.ConnectionPool) {
     throw new Error("MIGRATION_TARGET_MISMATCH");
 }
 
+/** Rollback is best-effort: an inner SQL ROLLBACK may have already aborted the outer transaction. */
+export async function rollbackMigrationSafely(transaction: sql.Transaction, file: string): Promise<void> {
+  try {
+    await transaction.rollback();
+  } catch (rollbackError) {
+    logger.warn({ err: rollbackError, migration: file },
+      "Migration rollback unavailable; inspect SQL transaction and migration ledger before retry");
+  }
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const command = args[0] ?? "apply";
@@ -182,15 +192,8 @@ async function main() {
     } catch (error) {
       logger.error({ err: error, migration: file }, "Migration failed");
 
-      try {
-        await transaction.rollback();
-      } catch (rollbackError) {
-        logger.warn(
-          { err: rollbackError, migration: file },
-          "Migration rollback was not required or could not be completed",
-        );
-      }
-
+      await rollbackMigrationSafely(transaction, file);
+      // No automatic retry: a previous migration may have committed already.
       throw error;
     }
   }
