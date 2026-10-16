@@ -84,3 +84,20 @@ test("synthetic HMAC has scope separation, stable normalization and key versions
   assert.notDeepEqual(hash.patientKeyHash, hashPatientForDisclosure("SYNTH-0001", "dataset:101", { ...keys, activeVersion: 2 }).patientKeyHash);
   assert.throws(() => parsePatientAuditKeyring(undefined, undefined));
 });
+
+test("migration runner keeps ledger insert inside the outer transaction and attempts rollback on failure", async () => {
+  // Static safety invariant only: does not execute migrations or simulate SQL Server's DDL rollback semantics.
+  const runner = await readFile(new URL("./migrate.ts", import.meta.url), "utf8");
+  const begin = runner.indexOf("await transaction.begin()");
+  const batches = runner.indexOf("new sql.Request(transaction).batch(", begin);
+  const ledger = runner.indexOf('query("INSERT INTO uqp.SchemaMigration (FileName) VALUES (@fileName)")', batches);
+  const commit = runner.indexOf("await transaction.commit()", ledger);
+  const rollback = runner.indexOf("await transaction.rollback()", commit);
+  assert.ok(begin >= 0 && batches > begin && ledger > batches && commit > ledger && rollback > commit);
+  assert.ok(runner.includes("throw error;"));
+  assert.ok(runner.includes("catch (rollbackError)"));
+  const migration = await readFile(new URL("../../../database/migrations/919_dashboard_dataset_security_contract.sql", import.meta.url), "utf8");
+  assert.match(migration, /SET XACT_ABORT ON/);
+  assert.match(migration, /BEGIN TRANSACTION/);
+  assert.match(migration, /IF @@TRANCOUNT>0 ROLLBACK TRANSACTION/);
+});
