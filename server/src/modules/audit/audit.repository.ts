@@ -1,3 +1,4 @@
+import { safeErrorDiagnostic } from "../../middleware/safeErrorDiagnostic.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { logger } from "../../config/logger.js";
@@ -34,15 +35,15 @@ async function requirePool() {
 export async function writeAuditEvent(input: AuditStartInput & {
   status?: "SUCCESS" | "FAILED";
   errorCode?: string | null;
-}): Promise<number> {
-  const pool = await requirePool();
+}, transaction?: sql.Transaction): Promise<number> {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
   const parametersJson = input.parameters == null
     ? null
     : JSON.stringify(input.parameters).slice(0, 20000);
   const classification = classifyEvent(input.eventType);
   const status = input.status ?? "SUCCESS";
 
-  const result = await pool.request()
+  const result = await request
     .input("eventType", sql.NVarChar(50), input.eventType)
     .input("eventCategory", sql.NVarChar(20), classification.category)
     .input("isImportant", sql.Bit, classification.important)
@@ -77,7 +78,7 @@ export async function tryWriteAuditEvent(input: AuditStartInput & {
     await writeAuditEvent(input);
   } catch (error) {
     logger.warn(
-      { err: error, eventType: input.eventType },
+      { ...safeErrorDiagnostic(error), eventType: input.eventType },
       "Failed to write management Audit event",
     );
   }

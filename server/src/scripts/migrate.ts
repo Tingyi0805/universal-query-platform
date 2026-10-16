@@ -60,11 +60,59 @@ async function isManuallyComplete(pool: sql.ConnectionPool, file: string): Promi
   return result.recordset[0]?.IsComplete === 1;
 }
 
+/** Strictly scoped range for the reviewed 915 -> 919 upgrade. Never defaults to execute. */
+export function resolveMigrationScope(args: string[], files: string[], applied: Set<string>) {
+  if (args[0] !== "apply-range") return null;
+  if (args.length !== 3 || args[1] !== "916" || args[2] !== "919")
+    throw new Error("MIGRATION_RANGE_NOT_APPROVED");
+  const expected = [
+    "916_workstation_management.sql",
+    "917_dashboard_query_source_model.sql",
+    "918_dashboard_query_playback_mode.sql",
+    "919_dashboard_dataset_security_contract.sql",
+  ];
+  if (expected.some(file => !files.includes(file) || applied.has(file)))
+    throw new Error("MIGRATION_RANGE_FILES_OR_LEDGER_MISMATCH");
+  const outside = files.filter(file => !expected.includes(file) && !applied.has(file));
+  if (outside.length || applied.size !== files.length - expected.length ||
+      [...applied].some(file => !files.includes(file)))
+    throw new Error("MIGRATION_BASELINE_NOT_EXACT_915");
+  return new Set(expected);
+}
+
+/** Scoped upgrades must prove the intended database before any bootstrap or DDL. */
+export async function requireScopedTarget(pool: sql.ConnectionPool) {
+  const expectedServer = process.env.UQP_MIGRATION_EXPECTED_SERVER;
+  const expectedLogin = process.env.UQP_MIGRATION_EXPECTED_LOGIN;
+  if (!expectedServer || !expectedLogin) throw new Error("MIGRATION_TARGET_ATTESTATION_REQUIRED");
+  const result = await pool.request().query("SELECT @@SERVERNAME AS ServerName, DB_NAME() AS DatabaseName, ORIGINAL_LOGIN() AS LoginName, OBJECT_ID(N'uqp.SchemaMigration',N'U') AS LedgerId");
+  const row = result.recordset[0];
+  if (!row || row.DatabaseName !== "UniversalQueryPlatform" || row.ServerName !== expectedServer ||
+      row.LoginName !== expectedLogin || row.LedgerId == null)
+    throw new Error("MIGRATION_TARGET_MISMATCH");
+}
+
+/** Rollback is best-effort: an inner SQL ROLLBACK may have already aborted the outer transaction. */
+export async function rollbackMigrationSafely(transaction: sql.Transaction, file: string): Promise<void> {
+  try {
+    await transaction.rollback();
+  } catch (rollbackError) {
+    logger.warn({ err: rollbackError, migration: file },
+      "Migration rollback unavailable; inspect SQL transaction and migration ledger before retry");
+  }
+}
+
 async function main() {
+  const args = process.argv.slice(2);
+  const command = args[0] ?? "apply";
+  if (command === "apply-range" && (args.length !== 3 || args[1] !== "916" || args[2] !== "919"))
+    throw new Error("MIGRATION_RANGE_NOT_APPROVED");
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("Platform SQL Server is not configured.");
 
-  await pool.request().batch(`
+  if (command === "apply-range") await requireScopedTarget(pool);
+
+  if (command !== "apply-range") await pool.request().batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'uqp')
       EXEC('CREATE SCHEMA uqp');
 
@@ -86,13 +134,13 @@ async function main() {
   );
   const applied = new Set(appliedResult.recordset.map((row) => String(row.FileName)));
 
-  const args = process.argv.slice(2);
-  const command = args[0] ?? "apply";
-  if (!["apply", "status", "adopt"].includes(command)) throw new Error("Usage: db:migrate [status | adopt <exact-migration-file>]");
+  const scope = resolveMigrationScope(args, files, applied);
+  if (!["apply", "status", "adopt", "apply-range"].includes(command)) throw new Error("Usage: db:migrate [status | adopt <exact-migration-file>]");
   if (command === "adopt" && (args.length !== 2 || !files.includes(args[1]!))) throw new Error("Specify an existing migration filename for adoption.");
-  if (command !== "adopt" && args.length > (command === "apply" ? 0 : 1)) throw new Error("Unexpected migration arguments.");
+  if (command !== "adopt" && command !== "apply-range" && args.length > (command === "apply" ? 0 : 1)) throw new Error("Unexpected migration arguments.");
 
   for (const file of files) {
+    if (scope && !scope.has(file)) continue;
     if (command === "adopt" && file !== args[1]) continue;
     if (command === "status") {
       const verified = applied.has(file) ? null : await isManuallyComplete(pool, file);
@@ -144,15 +192,8 @@ async function main() {
     } catch (error) {
       logger.error({ err: error, migration: file }, "Migration failed");
 
-      try {
-        await transaction.rollback();
-      } catch (rollbackError) {
-        logger.warn(
-          { err: rollbackError, migration: file },
-          "Migration rollback was not required or could not be completed",
-        );
-      }
-
+      await rollbackMigrationSafely(transaction, file);
+      // No automatic retry: a previous migration may have committed already.
       throw error;
     }
   }

@@ -1,17 +1,20 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
-import { DEFAULT_PIN_LENGTH, isAllowedPinLength } from "../auth/quickPin.service.js";
+import { isAllowedPinLength } from "../auth/quickPin.service.js";
 
-export async function readQuickPinPolicy() {
-  const pool = await getPlatformDbPool();
+export function createQuickPinPolicyRepository(getPool= getPlatformDbPool) {
+async function readQuickPinPolicy() {
+  const pool = await getPool();
   if (!pool) return null;
   const result = await pool.request().query("SELECT TOP (1) PinLength FROM uqp.QuickPinPolicy WHERE Id=1");
-  return { pinLength: Number(result.recordset[0]?.PinLength ?? DEFAULT_PIN_LENGTH) };
+  const pinLength=Number(result.recordset[0]?.PinLength);
+  if(!isAllowedPinLength(pinLength)) throw new Error("PIN_POLICY_INVALID");
+  return { pinLength };
 }
 
-export async function updateQuickPinPolicy(length: number): Promise<boolean> {
+async function updateQuickPinPolicy(length: number): Promise<boolean> {
   if (!isAllowedPinLength(length)) throw new Error("INVALID_PIN_LENGTH");
-  const pool = await getPlatformDbPool();
+  const pool = await getPool();
   if (!pool) return false;
   await pool.request().input("length", sql.Int, length).query(`
     SET XACT_ABORT ON;
@@ -29,3 +32,7 @@ export async function updateQuickPinPolicy(length: number): Promise<boolean> {
   `);
   return true;
 }
+
+return {readQuickPinPolicy,updateQuickPinPolicy};
+}
+export const {readQuickPinPolicy,updateQuickPinPolicy}=createQuickPinPolicyRepository();

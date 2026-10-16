@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { parameterPreview, validateParameterSync } from "./parameterSync.js";
 import { getPlatformDbPool } from "../../config/database.js";
 import { snapshotDatasetVersion } from "../version/version.repository.js";
 
@@ -24,12 +25,6 @@ export type DatasetParameterRecord = {
   lookupLabelField: string | null;
 };
 
-async function requirePool() {
-  const pool = await getPlatformDbPool();
-  if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
-  return pool;
-}
-
 function mapParameter(row: any): DatasetParameterRecord {
   return {
     id: Number(row.Id),
@@ -54,174 +49,166 @@ function mapParameter(row: any): DatasetParameterRecord {
   };
 }
 
-export async function listDatasetParameters(datasetId: number): Promise<DatasetParameterRecord[]> {
-  const pool = await requirePool();
-  const result = await pool.request()
-    .input("datasetId", sql.BigInt, datasetId)
-    .query(`
-      SELECT *
-      FROM uqp.DatasetParameter
-      WHERE DatasetId=@datasetId
-      ORDER BY DisplayOrder, Id
-    `);
-  return result.recordset.map(mapParameter);
-}
-
-export async function syncDatasetParameters(datasetId: number, names: string[]): Promise<void> {
-  const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin();
-
-  try {
-    const normalized = [...new Set(names)];
-    const existing = await new sql.Request(tx)
-      .input("datasetId", sql.BigInt, datasetId)
-      .query("SELECT Id, Name FROM uqp.DatasetParameter WHERE DatasetId=@datasetId");
-
-    const existingNames = new Set(existing.recordset.map((row) => String(row.Name)));
-
-    for (let index = 0; index < normalized.length; index += 1) {
-      const name = normalized[index]!;
-      if (existingNames.has(name)) {
-        await new sql.Request(tx)
-          .input("datasetId", sql.BigInt, datasetId)
-          .input("name", sql.NVarChar(100), name)
-          .input("displayOrder", sql.Int, index)
-          .query("UPDATE uqp.DatasetParameter SET DisplayOrder=@displayOrder WHERE DatasetId=@datasetId AND Name=@name");
-        continue;
-      }
-
-      await new sql.Request(tx)
-        .input("datasetId", sql.BigInt, datasetId)
-        .input("name", sql.NVarChar(100), name)
-        .input("label", sql.NVarChar(200), name)
-        .input("displayOrder", sql.Int, index)
-        .query(`
-          INSERT INTO uqp.DatasetParameter (
-            DatasetId, Name, Label, DataType, ControlType,
-            IsRequired, DisplayOrder, OptionMode
-          )
-          VALUES (
-            @datasetId, @name, @label, 'STRING', 'TEXT',
-            0, @displayOrder, 'NONE'
-          )
-        `);
-    }
-
-    if (normalized.length === 0) {
-      await new sql.Request(tx)
-        .input("datasetId", sql.BigInt, datasetId)
-        .query("DELETE FROM uqp.DatasetParameter WHERE DatasetId=@datasetId");
-    } else {
-      const request = new sql.Request(tx).input("datasetId", sql.BigInt, datasetId);
-      const placeholders: string[] = [];
-      normalized.forEach((name, index) => {
-        const key = `name${index}`;
-        request.input(key, sql.NVarChar(100), name);
-        placeholders.push(`@${key}`);
-      });
-      await request.query(`
-        DELETE FROM uqp.DatasetParameter
-        WHERE DatasetId=@datasetId
-          AND Name NOT IN (${placeholders.join(",")})
-      `);
-    }
-
-    await tx.commit();
-  } catch (error) {
-    await tx.rollback();
-    throw error;
+export type ParameterRepositoryDependencies = {
+  getPool: typeof getPlatformDbPool;
+  createTransaction: (pool: sql.ConnectionPool) => sql.Transaction;
+  createRequest: (tx: sql.Transaction) => sql.Request;
+  snapshotVersion: typeof snapshotDatasetVersion;
+};
+export function createParameterRepository(deps: ParameterRepositoryDependencies) {
+  async function requirePool() {
+    const pool = await deps.getPool();
+    if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
+    return pool;
   }
-}
 
-export async function replaceDatasetParameters(
-  datasetId: number,
-  parameters: Omit<DatasetParameterRecord, "id" | "datasetId">[],
-  userId?: number,
-): Promise<void> {
-  const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin();
-
-  try {
-    const dataset = await new sql.Request(tx)
-      .input("datasetId", sql.BigInt, datasetId)
-      .query("SELECT Id FROM uqp.Dataset WHERE Id=@datasetId");
-    if (!dataset.recordset[0]) throw new Error("DATASET_NOT_FOUND");
-
-    if (userId) {
-      await snapshotDatasetVersion(tx, datasetId, userId, "PARAMETER_UPDATE");
-    }
-
-    await new sql.Request(tx)
-      .input("datasetId", sql.BigInt, datasetId)
-      .query("DELETE FROM uqp.DatasetParameter WHERE DatasetId=@datasetId");
-
-    const lookupDatasetIds = [...new Set(
-      parameters
-        .filter((parameter) => parameter.optionMode === "DATASET" && parameter.lookupDatasetId)
-        .map((parameter) => parameter.lookupDatasetId as number),
-    )];
-
-    for (const lookupDatasetId of lookupDatasetIds) {
-      const lookup = await new sql.Request(tx)
-        .input("lookupDatasetId", sql.BigInt, lookupDatasetId)
-        .query("SELECT Id, IsArchived FROM uqp.Dataset WHERE Id=@lookupDatasetId");
-      if (!lookup.recordset[0] || lookup.recordset[0].IsArchived) {
-        throw new Error("PARAMETER_LOOKUP_DATASET_ARCHIVED");
-      }
-    }
-
-    for (const parameter of parameters) {
-      await new sql.Request(tx)
-        .input("datasetId", sql.BigInt, datasetId)
-        .input("name", sql.NVarChar(100), parameter.name)
-        .input("label", sql.NVarChar(200), parameter.label)
-        .input("dataType", sql.NVarChar(20), parameter.dataType)
-        .input("controlType", sql.NVarChar(30), parameter.controlType)
-        .input("isRequired", sql.Bit, parameter.isRequired)
-        .input("defaultValue", sql.NVarChar(1000), parameter.defaultValue)
-        .input("dateOutputMode", sql.NVarChar(20), parameter.dateOutputMode)
-        .input("dateCalendar", sql.NVarChar(20), parameter.dateCalendar)
-        .input("dateFormat", sql.NVarChar(100), parameter.dateFormat)
-        .input("displayOrder", sql.Int, parameter.displayOrder)
-        .input("placeholder", sql.NVarChar(200), parameter.placeholder)
-        .input("helpText", sql.NVarChar(500), parameter.helpText)
-        .input("optionMode", sql.NVarChar(20), parameter.optionMode)
-        .input("fixedOptionsJson", sql.NVarChar(sql.MAX), parameter.fixedOptionsJson)
-        .input("lookupDatasetId", sql.BigInt, parameter.lookupDatasetId)
-        .input("lookupValueField", sql.NVarChar(128), parameter.lookupValueField)
-        .input("lookupLabelField", sql.NVarChar(128), parameter.lookupLabelField)
-        .query(`
-          INSERT INTO uqp.DatasetParameter (
-            DatasetId, Name, Label, DataType, ControlType, IsRequired,
-            DefaultValue, DateOutputMode, DateCalendar, DateFormat,
-            DisplayOrder, Placeholder, HelpText, OptionMode,
-            FixedOptionsJson, LookupDatasetId, LookupValueField, LookupLabelField
-          )
-          VALUES (
-            @datasetId,@name,@label,@dataType,@controlType,@isRequired,
-            @defaultValue,@dateOutputMode,@dateCalendar,@dateFormat,
-            @displayOrder,@placeholder,@helpText,@optionMode,
-            @fixedOptionsJson,@lookupDatasetId,@lookupValueField,@lookupLabelField
-          )
-        `);
-    }
-
-    await new sql.Request(tx)
+  async function listDatasetParameters(datasetId: number, transaction?: sql.Transaction): Promise<DatasetParameterRecord[]> {
+    const request = transaction ? deps.createRequest(transaction) : (await requirePool()).request();
+    const result = await request
       .input("datasetId", sql.BigInt, datasetId)
       .query(`
-        UPDATE uqp.QueryDefinition
-        SET IsPublished=0,
-            PublishedAtUtc=NULL,
-            PublishedByUserId=NULL,
-            UpdatedAtUtc=SYSUTCDATETIME()
-        WHERE DatasetId=@datasetId AND IsPublished=1
+        SELECT *
+        FROM uqp.DatasetParameter
+        WHERE DatasetId=@datasetId
+        ORDER BY DisplayOrder, Id
       `);
-
-    await tx.commit();
-  } catch (error) {
-    await tx.rollback();
-    throw error;
+    return result.recordset.map(mapParameter);
   }
+
+  async function syncDatasetParameters(
+    datasetId: number, previewToken: string, removeNames: string[] = [], userId?: number,
+  ): Promise<void> {
+    const pool = await requirePool();
+    const tx = deps.createTransaction(pool);
+    await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+      const dataset = await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId)
+        .query("SELECT SqlText, IsArchived FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
+      if (!dataset.recordset[0]) throw new Error("DATASET_NOT_FOUND");
+      if (dataset.recordset[0].IsArchived) throw new Error("DATASET_ARCHIVED");
+      const existing = await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId)
+        .query("SELECT * FROM uqp.DatasetParameter WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId ORDER BY DisplayOrder, Id");
+      const parameters = existing.recordset.map(mapParameter);
+      const preview = parameterPreview(datasetId, String(dataset.recordset[0].SqlText), parameters);
+      validateParameterSync(preview, previewToken, removeNames);
+      const nextOrder = parameters.reduce((max, p) => Math.max(max, p.displayOrder), -1) + 1;
+      if (preview.added.length && nextOrder + preview.added.length - 1 > 10000) throw new Error("PARAMETER_SYNC_LIMIT");
+      if (userId && (preview.added.length || removeNames.length)) {
+        await deps.snapshotVersion(tx, datasetId, userId, "PARAMETER_UPDATE");
+      }
+      for (const [index, name] of preview.added.entries()) {
+        await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId)
+          .input("name", sql.NVarChar(100), name).input("displayOrder", sql.Int, nextOrder + index)
+          .query(`INSERT INTO uqp.DatasetParameter
+            (DatasetId, Name, Label, DataType, ControlType, IsRequired, DisplayOrder, OptionMode)
+            VALUES (@datasetId, @name, @name, 'STRING', 'TEXT', 0, @displayOrder, 'NONE')`);
+      }
+      for (const name of removeNames) {
+        await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId).input("name", sql.NVarChar(100), name)
+          .query("DELETE FROM uqp.DatasetParameter WHERE DatasetId=@datasetId AND Name=@name");
+      }
+      if (preview.added.length || removeNames.length) await unpublishParameterQueries(tx, datasetId);
+      await tx.commit();
+    } catch (error) {
+      await tx.rollback().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async function unpublishParameterQueries(tx: sql.Transaction, datasetId: number) {
+    await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId).query(`
+      UPDATE uqp.QueryDefinition SET IsPublished=0, PublishedAtUtc=NULL,
+        PublishedByUserId=NULL, UpdatedAtUtc=SYSUTCDATETIME()
+      WHERE DatasetId=@datasetId AND IsPublished=1`);
+  }
+
+  async function saveDatasetParameters(
+    datasetId: number,
+    parameters: Omit<DatasetParameterRecord, "id" | "datasetId">[],
+    userId: number,
+    previewToken: string,
+  ): Promise<void> {
+    const pool = await requirePool();
+    const tx = deps.createTransaction(pool);
+    await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+
+    try {
+      const dataset = await deps.createRequest(tx)
+        .input("datasetId", sql.BigInt, datasetId)
+        .query("SELECT Id, SqlText, IsArchived FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
+      if (!dataset.recordset[0]) throw new Error("DATASET_NOT_FOUND");
+      if (dataset.recordset[0].IsArchived) throw new Error("DATASET_ARCHIVED");
+      const saved = await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId)
+        .query("SELECT * FROM uqp.DatasetParameter WITH (UPDLOCK, HOLDLOCK) WHERE DatasetId=@datasetId ORDER BY DisplayOrder, Id");
+      const current = saved.recordset.map(mapParameter);
+      const preview = parameterPreview(datasetId, String(dataset.recordset[0].SqlText), current);
+      if (preview.previewToken !== previewToken) throw new Error("PARAMETER_PREVIEW_STALE");
+      const names = parameters.map(p => p.name);
+      if (new Set(names).size !== names.length || names.length !== current.length ||
+        current.some(p => !names.includes(p.name))) throw new Error("PARAMETER_DEFINITION_MISMATCH");
+
+      if (userId) {
+        await deps.snapshotVersion(tx, datasetId, userId, "PARAMETER_UPDATE");
+      }
+
+      const lookupDatasetIds = [...new Set(
+        parameters
+          .filter((parameter) => parameter.optionMode === "DATASET" && parameter.lookupDatasetId)
+          .map((parameter) => parameter.lookupDatasetId as number),
+      )];
+
+      for (const lookupDatasetId of lookupDatasetIds) {
+        const lookup = await deps.createRequest(tx)
+          .input("lookupDatasetId", sql.BigInt, lookupDatasetId)
+          .query("SELECT Id, IsArchived FROM uqp.Dataset WHERE Id=@lookupDatasetId");
+        if (!lookup.recordset[0] || lookup.recordset[0].IsArchived) {
+          throw new Error("PARAMETER_LOOKUP_DATASET_ARCHIVED");
+        }
+      }
+
+      for (const parameter of parameters) {
+        await deps.createRequest(tx)
+          .input("datasetId", sql.BigInt, datasetId)
+          .input("name", sql.NVarChar(100), parameter.name)
+          .input("label", sql.NVarChar(200), parameter.label)
+          .input("dataType", sql.NVarChar(20), parameter.dataType)
+          .input("controlType", sql.NVarChar(30), parameter.controlType)
+          .input("isRequired", sql.Bit, parameter.isRequired)
+          .input("defaultValue", sql.NVarChar(1000), parameter.defaultValue)
+          .input("dateOutputMode", sql.NVarChar(20), parameter.dateOutputMode)
+          .input("dateCalendar", sql.NVarChar(20), parameter.dateCalendar)
+          .input("dateFormat", sql.NVarChar(100), parameter.dateFormat)
+          .input("displayOrder", sql.Int, parameter.displayOrder)
+          .input("placeholder", sql.NVarChar(200), parameter.placeholder)
+          .input("helpText", sql.NVarChar(500), parameter.helpText)
+          .input("optionMode", sql.NVarChar(20), parameter.optionMode)
+          .input("fixedOptionsJson", sql.NVarChar(sql.MAX), parameter.fixedOptionsJson)
+          .input("lookupDatasetId", sql.BigInt, parameter.lookupDatasetId)
+          .input("lookupValueField", sql.NVarChar(128), parameter.lookupValueField)
+          .input("lookupLabelField", sql.NVarChar(128), parameter.lookupLabelField)
+          .query(`
+            UPDATE uqp.DatasetParameter SET
+              Label=@label, DataType=@dataType, ControlType=@controlType, IsRequired=@isRequired,
+              DefaultValue=@defaultValue, DateOutputMode=@dateOutputMode, DateCalendar=@dateCalendar,
+              DateFormat=@dateFormat, DisplayOrder=@displayOrder, Placeholder=@placeholder,
+              HelpText=@helpText, OptionMode=@optionMode, FixedOptionsJson=@fixedOptionsJson,
+              LookupDatasetId=@lookupDatasetId, LookupValueField=@lookupValueField, LookupLabelField=@lookupLabelField
+            WHERE DatasetId=@datasetId AND Name=@name
+          `);
+      }
+
+      await unpublishParameterQueries(tx, datasetId);
+
+      await tx.commit();
+    } catch (error) {
+      await tx.rollback().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  return { listDatasetParameters, syncDatasetParameters, saveDatasetParameters };
 }
+const repository = createParameterRepository({ getPool: getPlatformDbPool,
+  createTransaction: pool => new sql.Transaction(pool), createRequest: tx => new sql.Request(tx),
+  snapshotVersion: snapshotDatasetVersion });
+export const { listDatasetParameters, syncDatasetParameters, saveDatasetParameters } = repository;

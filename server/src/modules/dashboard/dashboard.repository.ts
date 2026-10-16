@@ -1,3 +1,6 @@
+import { assertEmptyApprovalCreation, assertBasicApprovalWrite, preserveApprovalSettings } from "./dashboardApproval.service.js";
+import { prepareLegacyLocks, lockLegacyBindings } from "./dashboardLegacyLocks.js";
+import { parseApprovalParameters } from "./dashboardApproval.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -117,11 +120,38 @@ export async function getDashboard(id: number) {
   return result.recordset[0] ? mapRow(result.recordset[0]) : null;
 }
 
+/** A previously classified Dataset must not be activated after its rules were cleared. */
+async function assertSensitivityReadyForActivation(tx: sql.Transaction, queryDefinitionId: number): Promise<void> {
+  // First resolve the Dataset, then lock its parent row. Sensitivity writes use
+  // the same Dataset lock before reading or replacing any policy records.
+  const query = await new sql.Request(tx).input("queryDefinitionId", sql.BigInt, queryDefinitionId)
+    .query("SELECT DatasetId FROM uqp.QueryDefinition WHERE Id=@queryDefinitionId");
+  if (!query.recordset.length) throw new Error("DASHBOARD_QUERY_NOT_AVAILABLE");
+  const datasetId = Number(query.recordset[0].DatasetId);
+  const dataset = await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId)
+    .query("SELECT Id FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
+  if (!dataset.recordset.length) throw new Error("DASHBOARD_QUERY_NOT_AVAILABLE");
+  const policy = await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId).query(`
+    SELECT v.VersionNumber,
+      (SELECT COUNT_BIG(*) FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@datasetId) AS RuleCount
+    FROM uqp.DatasetSensitivePolicyVersion v WITH (HOLDLOCK)
+    WHERE v.DatasetId=@datasetId
+  `);
+  if (policy.recordset.some((row) => Number(row.VersionNumber) > 0 && Number(row.RuleCount) === 0)) {
+    throw new Error("DASHBOARD_SENSITIVITY_REVIEW_REQUIRED");
+  }
+}
+
 export async function createDashboard(input: DashboardInput, userId: number): Promise<number> {
+  assertEmptyApprovalCreation(input.parameters);
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    if (input.isActive) await assertSensitivityReadyForActivation(tx, input.queryDefinitionId);
 
-  const result = await pool.request()
+  const result = await new sql.Request(tx)
     .input("code", sql.NVarChar(100), input.code)
     .input("name", sql.NVarChar(200), input.name)
     .input("description", sql.NVarChar(1000), input.description)
@@ -153,14 +183,28 @@ export async function createDashboard(input: DashboardInput, userId: number): Pr
       )
     `);
 
+  await tx.commit();
   return Number(result.recordset[0].Id);
+  } catch (error) {
+    await tx.rollback();
+    throw error;
+  }
 }
 
 export async function updateDashboard(id: number, input: DashboardInput, userId: number): Promise<void> {
   const pool = await requirePool();
   await assertUsablePublishedQuery(pool, input.queryDefinitionId);
+  const seed = await prepareLegacyLocks(pool, id, input.queryDefinitionId);
+  const tx = new sql.Transaction(pool);
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    const locked = await lockLegacyBindings(tx, id, seed);
+    const previous = parseApprovalParameters(locked.parent.ParametersJson);
+    const parameters = preserveApprovalSettings(previous, input.parameters);
+    assertBasicApprovalWrite(previous, parameters, Number(locked.parent.QueryDefinitionId), input.queryDefinitionId);
+    if (input.isActive) await assertSensitivityReadyForActivation(tx, input.queryDefinitionId);
 
-  const result = await pool.request()
+  const result = await new sql.Request(tx)
     .input("id", sql.BigInt, id)
     .input("code", sql.NVarChar(100), input.code)
     .input("name", sql.NVarChar(200), input.name)
@@ -174,7 +218,7 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
     .input("showClock", sql.Bit, input.showClock)
     .input("showPageNumber", sql.Bit, input.showPageNumber)
     .input("showCountdown", sql.Bit, input.showCountdown)
-    .input("parametersJson", sql.NVarChar(sql.MAX), JSON.stringify(input.parameters))
+    .input("parametersJson", sql.NVarChar(sql.MAX), JSON.stringify(parameters))
     .input("isActive", sql.Bit, input.isActive)
     .input("userId", sql.BigInt, userId)
     .query(`
@@ -201,6 +245,11 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
 
   if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
     throw new Error("DASHBOARD_NOT_FOUND");
+  }
+  await tx.commit();
+  } catch (error) {
+    await tx.rollback();
+    throw error;
   }
 }
 
