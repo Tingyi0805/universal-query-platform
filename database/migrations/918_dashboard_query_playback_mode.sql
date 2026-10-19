@@ -14,10 +14,16 @@ BEGIN TRY
       ALTER TABLE uqp.Dashboard ADD
         QueryMode VARCHAR(24) NOT NULL CONSTRAINT DF_Dashboard_QueryMode DEFAULT (''LEGACY''),
         QueryModeVersion BIGINT NOT NULL CONSTRAINT DF_Dashboard_QueryModeVersion DEFAULT (0);
+    ';
+    EXEC sys.sp_executesql N'
       ALTER TABLE uqp.Dashboard WITH CHECK ADD CONSTRAINT CK_Dashboard_QueryMode
         CHECK (QueryMode IN (''LEGACY'',''QUERY_ONLY'',''QUERY_ONLY_DISABLED'') AND
                QueryModeVersion >= 0 AND (QueryMode=''LEGACY'' OR QueryModeVersion > 0));
+    ';
+    EXEC sys.sp_executesql N'
       ALTER TABLE uqp.DashboardDisplayDevice ADD QueryModeGrantVersion BIGINT NULL, DelegatorTokenVersion BIGINT NULL;
+    ';
+    EXEC sys.sp_executesql N'
       ALTER TABLE uqp.DashboardDisplayDevice WITH CHECK ADD CONSTRAINT CK_DashboardDevice_QueryModeGrant
         CHECK ((QueryModeGrantVersion IS NULL AND DelegatorTokenVersion IS NULL) OR
           (QueryModeGrantVersion IS NOT NULL AND DelegatorTokenVersion IS NOT NULL AND QueryModeGrantVersion > 0 AND DelegatorTokenVersion > 0));
