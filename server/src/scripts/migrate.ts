@@ -62,21 +62,25 @@ async function isManuallyComplete(pool: sql.ConnectionPool, file: string): Promi
 
 /** Strictly scoped range for the reviewed 915 -> 919 upgrade. Never defaults to execute. */
 export function resolveMigrationScope(args: string[], files: string[], applied: Set<string>) {
-  if (args[0] !== "apply-range") return null;
-  if (args.length !== 3 || args[1] !== "916" || args[2] !== "919")
+  if (args[0] !== "apply-range" && args[0] !== "resume-916-to-919") return null;
+  const resuming = args[0] === "resume-916-to-919";
+  if (resuming ? args.length !== 1 : (args.length !== 3 || args[1] !== "916" || args[2] !== "919"))
     throw new Error("MIGRATION_RANGE_NOT_APPROVED");
-  const expected = [
-    "916_workstation_management.sql",
+  const baseline = "916_workstation_management.sql";
+  const remaining = [
     "917_dashboard_query_source_model.sql",
     "918_dashboard_query_playback_mode.sql",
     "919_dashboard_dataset_security_contract.sql",
   ];
+  const expected = resuming ? remaining : [baseline, ...remaining];
   if (expected.some(file => !files.includes(file) || applied.has(file)))
     throw new Error("MIGRATION_RANGE_FILES_OR_LEDGER_MISMATCH");
+  if (resuming && (!files.includes(baseline) || !applied.has(baseline)))
+    throw new Error("MIGRATION_RESUME_REQUIRES_RECORDED_916");
   const outside = files.filter(file => !expected.includes(file) && !applied.has(file));
   if (outside.length || applied.size !== files.length - expected.length ||
       [...applied].some(file => !files.includes(file)))
-    throw new Error("MIGRATION_BASELINE_NOT_EXACT_915");
+    throw new Error(resuming ? "MIGRATION_BASELINE_NOT_EXACT_916" : "MIGRATION_BASELINE_NOT_EXACT_915");
   return new Set(expected);
 }
 
@@ -110,9 +114,9 @@ async function main() {
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("Platform SQL Server is not configured.");
 
-  if (command === "apply-range") await requireScopedTarget(pool);
+  if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool);
 
-  if (command !== "apply-range") await pool.request().batch(`
+  if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'uqp')
       EXEC('CREATE SCHEMA uqp');
 
@@ -135,9 +139,9 @@ async function main() {
   const applied = new Set(appliedResult.recordset.map((row) => String(row.FileName)));
 
   const scope = resolveMigrationScope(args, files, applied);
-  if (!["apply", "status", "adopt", "apply-range"].includes(command)) throw new Error("Usage: db:migrate [status | adopt <exact-migration-file>]");
+  if (!["apply", "status", "adopt", "apply-range", "resume-916-to-919"].includes(command)) throw new Error("Usage: db:migrate [status | adopt <exact-migration-file>]");
   if (command === "adopt" && (args.length !== 2 || !files.includes(args[1]!))) throw new Error("Specify an existing migration filename for adoption.");
-  if (command !== "adopt" && command !== "apply-range" && args.length > (command === "apply" ? 0 : 1)) throw new Error("Unexpected migration arguments.");
+  if (command !== "adopt" && command !== "apply-range" && command !== "resume-916-to-919" && args.length > (command === "apply" ? 0 : 1)) throw new Error("Unexpected migration arguments.");
 
   for (const file of files) {
     if (scope && !scope.has(file)) continue;
