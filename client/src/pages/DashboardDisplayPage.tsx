@@ -1,6 +1,13 @@
+import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
+import { sourcePreviewFailure } from "../dashboard/dataSettings";
+import { dashboardFullscreenActive, dashboardFullscreenSupported, requestDashboardFullscreen } from "../dashboard/fullscreen";
+import { previewAuthorizationFailed, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
+import { formatDashboardValue } from "../dashboard/displayFormat";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
+import { readDashboardToken,rememberDashboardToken,forgetDashboardToken,requestDashboardTokenHandoff } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
+import { startSourcePlayback, retainSourceColumns } from "../dashboard/sourcePlayback";
 import { useAuth } from "../auth/AuthContext";
 import "./DashboardDisplayPage.css";
 
@@ -149,19 +156,34 @@ export function DashboardDisplayPage() {
   const requestedProfileId = Number(searchParams.get("profileId"));
   const previewKey = searchParams.get("previewKey");
   const autoFullscreenRequested = searchParams.get("autoFullscreen") === "1";
+  const queryPreview = searchParams.get("queryPreview") === "1";
+  const [previewAuthorized,setPreviewAuthorized] = useState(true);
   const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
-  const deviceStorageKey = `uqp.dashboard.device.${dashboardId}`;
-  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode ? localStorage.getItem(deviceStorageKey) : null);
+  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode ? readDashboardToken(dashboardId) : null);
   const [activationInput, setActivationInput] = useState("");
   const [activationBusy, setActivationBusy] = useState(false);
+  const activationAttempt = useRef(0);
   const [activationError, setActivationError] = useState("");
-  const [activationRequired, setActivationRequired] = useState(() => deviceMode && !localStorage.getItem(deviceStorageKey));
+  const [activationRequired, setActivationRequired] = useState(() => deviceMode && !readDashboardToken(dashboardId));
+  useEffect(()=>{
+    if(!deviceMode)return;
+    return requestDashboardTokenHandoff(dashboardId,token=>{setDeviceToken(token);setActivationRequired(false);});
+  },[dashboardId,deviceMode]);
   const { accessToken } = useAuth();
 
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const latestDataRequest = useRef(0);
+  const latestLayoutRequest = useRef(0);
   const pageSnapshotId = useRef<string | null>(null);
+  const pageSnapshotCreatedAt = useRef(0);
+  const lastVisibleColumns = useRef<ReportColumn[]>([]);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
+  type SupplementalPage = { sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; snapshotId: string; page: number;
+    totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
+  const [supplementalPages, setSupplementalPages] = useState<Record<string, SupplementalPage>>({});
+  const [supplementalErrors, setSupplementalErrors] = useState<Record<string, string>>({});
+  const supplementalRequestGeneration = useRef(0);
+
   const [error, setError] = useState("");
   const [dataWarning, setDataWarning] = useState("");
   const [layoutWarning, setLayoutWarning] = useState("");
@@ -170,6 +192,7 @@ export function DashboardDisplayPage() {
   const [retryDelaySeconds, setRetryDelaySeconds] = useState(5);
   const [online, setOnline] = useState(() => navigator.onLine);
   const [page, setPage] = useState(1);
+  const [snapshotReloadKey, setSnapshotReloadKey] = useState(0);
   const [countdown, setCountdown] = useState(0);
   const [now, setNow] = useState(new Date());
   const [viewport, setViewport] = useState({
@@ -177,10 +200,95 @@ export function DashboardDisplayPage() {
     height: window.innerHeight,
   });
   const [fullscreenNeedsClick, setFullscreenNeedsClick] = useState(false);
+  const [fullscreenActive,setFullscreenActive]=useState(()=>dashboardFullscreenActive(document));
+  const fullscreenSupported=dashboardFullscreenSupported(document);
+
+  // Supplemental sources refresh independently; never cache PHI across token/network changes.
+  useEffect(() => {
+    const generation = ++supplementalRequestGeneration.current;
+    setSupplementalPages({});
+    setSupplementalErrors({});
+    if (!previewAuthorized || !online || (deviceMode ? !deviceToken || activationRequired : !accessToken)) return;
+    const keys = [...new Set(profiles.flatMap((profile) => profile.widgets
+      .filter((widget) => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
+      .map((widget) => widget.config?.dataSourceKey)
+      .filter((key): key is string => typeof key === "string" && key !== "PRIMARY" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))))];
+    const previewCache = new Map<string, { id: string; data: SupplementalPage }>();
+    let previewRevision = 0;
+    const stops = keys.map((key) => startSourcePlayback<SupplementalPage>({
+      fetchPage: async (requestedPage, snapshotId, signal) => {
+        if (deviceMode) return apiRequest<SupplementalPage>(
+          `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
+          { method: "POST", signal, body: JSON.stringify({ page: requestedPage, ...(snapshotId ? { snapshotId } : {}) }),
+            headers: { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" } }, null);
+        if (queryPreview) return apiRequest<SupplementalPage>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(key)}/page`,
+          {method:"POST",signal,body:JSON.stringify({page:requestedPage,...(snapshotId?{snapshotId}: {})})},accessToken).catch(error=>{
+            if(previewAuthorizationFailed(error))throw Object.assign(new Error("PREVIEW_AUTHORIZATION_FAILED"),{status:401});
+            throw error;
+          });
+        // Designer playback previews reuse their masked, capped result for local pagination.
+        let cached = previewCache.get(key);
+        if (!cached || !snapshotId || cached.id !== snapshotId) {
+          const data = await apiRequest<SupplementalPage>(`/dashboards/${dashboardId}/data-sources/${encodeURIComponent(key)}/preview`,
+            { method: "POST", signal }, accessToken).catch(error => {
+              previewCache.delete(key);
+              if (previewAuthorizationFailed(error)) throw Object.assign(new Error("PREVIEW_AUTHORIZATION_FAILED"), { status: 401 });
+              throw error;
+            });
+          cached = { id: `preview-${++previewRevision}`, data };
+          previewCache.set(key, cached);
+        }
+        const size = Math.max(1, cached.data.pageSize);
+        const totalPages = Math.max(1, Math.ceil(cached.data.result.rows.length / size));
+        const currentPage = Math.min(requestedPage, totalPages);
+        return { ...cached.data, page: currentPage, totalPages, snapshotId: cached.id,
+          result: { ...cached.data.result, rows: cached.data.result.rows.slice((currentPage - 1) * size, currentPage * size) } };
+      },
+      show: (result) => {
+        if (generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
+        setSupplementalPages(previous => ({ ...previous, [key]: result }));
+        setSupplementalErrors(previous => { const next = { ...previous }; delete next[key]; return next; });
+      },
+      clear: () => {
+        if (generation !== supplementalRequestGeneration.current) return;
+        setSupplementalPages(previous => previous[key] ? { ...previous, [key]: retainSourceColumns(previous[key]!) } : previous);
+      },
+      failed: (_status, error) => {
+        if (generation !== supplementalRequestGeneration.current) return;
+        setSupplementalErrors(previous => ({ ...previous, [key]: sourcePreviewFailure(key, error) }));
+      },
+      unauthorized: () => {
+        if (!deviceMode) {
+          {++latestDataRequest.current;++latestLayoutRequest.current;++supplementalRequestGeneration.current;pageSnapshotId.current=null;setPreviewAuthorized(false);setPreview(null);setProfiles([]);setSupplementalPages({});setError("預覽授權失效，請重新登入後開啟預覽。");}
+          return;
+        }
+        ++supplementalRequestGeneration.current;
+        ++latestDataRequest.current;
+        ++latestLayoutRequest.current;
+        pageSnapshotId.current = null;
+        forgetDashboardToken(dashboardId);
+        setDeviceToken(null);
+        setActivationRequired(true);
+        setPreview(null);
+        setSupplementalPages({});
+        setProfiles([]);
+        setCountdown(0);
+        setActivationError("裝置授權失效，請重新驗證。");
+      },
+    }));
+    return () => { ++supplementalRequestGeneration.current; stops.forEach(stop => stop()); };
+  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken, queryPreview, previewAuthorized]);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
     const requestId = ++latestDataRequest.current;
+    if ((deviceMode || queryPreview) && !navigator.onLine) {
+      pageSnapshotId.current = null;
+      setPreview(null);
+      setCountdown(0);
+      setDataWarning("網路中斷，已清除患者資料；連線恢復後重新載入。");
+      return;
+    }
     try {
       if (deviceMode && !deviceToken) {
         setActivationRequired(true);
@@ -188,22 +296,31 @@ export function DashboardDisplayPage() {
         return;
       }
 
-      const result = await apiRequest<PreviewResult>(
+      if(!previewAuthorized)return;
+      const configuration = queryPreview && !deviceMode ? await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`,{},accessToken) : null;
+      const response = await apiRequest<PreviewResult & {query?:{name:string;code:string}}>(
         deviceMode
           ? `/dashboards/device/${dashboardId}/page`
-          : `/dashboards/${dashboardId}/preview`,
+          : queryPreview ? `/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page` : `/dashboards/${dashboardId}/preview`,
         {
           method: "POST",
-          body: deviceMode ? JSON.stringify({ page, ...(pageSnapshotId.current ? { snapshotId: pageSnapshotId.current } : {}) }) : undefined,
+          body: deviceMode || queryPreview ? JSON.stringify({ page, ...(pageSnapshotId.current ? { snapshotId: pageSnapshotId.current } : {}) }) : undefined,
           headers: deviceMode
             ? { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" }
             : undefined,
         },
         deviceMode ? null : accessToken,
       );
-      if (requestId !== latestDataRequest.current) return;
-      if (deviceMode && result.page !== page) return;
-      if (deviceMode) pageSnapshotId.current = result.snapshotId ?? null;
+      const result:PreviewResult = configuration ? {...response,dashboard:{
+        id:dashboardId,name:response.query?.name ?? "Query-only 預覽",code:response.query?.code ?? "",
+        parameters:configuration.primary.parameters ?? {},refreshSeconds:configuration.primary.refreshSeconds,
+        pageSeconds:configuration.primary.pageSeconds,pageSize:configuration.primary.pageSize},reportColumns:[]} : response;
+      if (requestId !== latestDataRequest.current || ((deviceMode || queryPreview) && !navigator.onLine)) return;
+      if ((deviceMode || queryPreview) && result.page !== page) return;
+      if (deviceMode || queryPreview) {
+        if (pageSnapshotId.current !== result.snapshotId) pageSnapshotCreatedAt.current = Date.now();
+        pageSnapshotId.current = result.snapshotId ?? null;
+      }
       setPreview(result);
       setLastUpdatedAt(new Date());
       setDataWarning("");
@@ -212,14 +329,19 @@ export function DashboardDisplayPage() {
       if (deviceMode) { setActivationRequired(false); setActivationError(""); }
     } catch (e) {
       if (requestId !== latestDataRequest.current) return;
-      if (deviceMode && (e as { code?: string }).code === "DASHBOARD_SNAPSHOT_EXPIRED") {
+      if ((deviceMode || queryPreview) && (e as { code?: string }).code === "DASHBOARD_SNAPSHOT_EXPIRED") {
         pageSnapshotId.current = null;
         setPreview(null);
         setPage(1);
+        setCountdown(0);
+        setError("");
         setDataWarning("播放資料版本已過期，正在重新載入。");
+        // Changing page to 1 is a no-op when already on page 1.
+        // A separate reload key guarantees the first page is fetched again.
+        setSnapshotReloadKey((key) => key + 1);
         return;
       }
-      if (deviceMode && (e as { code?: string }).code === "DASHBOARD_PAGE_OUT_OF_RANGE" && page !== 1) {
+      if ((deviceMode || queryPreview) && (e as { code?: string }).code === "DASHBOARD_PAGE_OUT_OF_RANGE" && page !== 1) {
         // The dataset shrank between page requests; restart from the first page.
         setPreview(null);
         setPage(1);
@@ -227,24 +349,43 @@ export function DashboardDisplayPage() {
         setDataWarning("資料筆數已變更，正在從第一頁重新載入。");
         return;
       }
+      if(!deviceMode && previewAuthorizationFailed(e)){
+        ++latestDataRequest.current;++latestLayoutRequest.current;++supplementalRequestGeneration.current;pageSnapshotId.current=null;
+        setPreviewAuthorized(false);setPreview(null);setProfiles([]);setSupplementalPages({});setError("預覽授權失效，請重新登入後開啟預覽。");return;
+      }
       if (deviceMode && (e as { status?: number }).status === 401) {
+        ++latestDataRequest.current;
+        pageSnapshotId.current = null;
+        forgetDashboardToken(dashboardId);
+        setDeviceToken(null);
         setActivationRequired(true);
         setPreview(null);
+        ++supplementalRequestGeneration.current;
+        setSupplementalPages({});
+        setProfiles([]);
+        setCountdown(0);
         setDataWarning("");
+        setLayoutWarning("");
         setError("");
-        setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
+        setActivationError("裝置授權失效，請由管理者重新核發憑證。");
       } else {
-        if (deviceMode) setPreview(null);
-        const message = e instanceof Error ? e.message : "Dashboard 載入失敗。";
+        {
+          pageSnapshotId.current = null;
+          setPreview(null);
+          setCountdown(0);
+        }
+        const status=(e as {status?:number}).status;
+        const message = sourcePreviewFailure("PRIMARY", e);
         setDataWarning(message);
         setRetryDelaySeconds((previous) => Math.min(previous * 2, 60));
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken, page]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, page, snapshotReloadKey, queryPreview, previewAuthorized]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId)) return;
+    const requestId = ++latestLayoutRequest.current;
 
     if (previewKey) {
       try {
@@ -280,23 +421,57 @@ export function DashboardDisplayPage() {
         },
         deviceMode ? null : accessToken,
       );
+      if (requestId !== latestLayoutRequest.current || ((deviceMode || queryPreview) && !navigator.onLine)) return;
       setProfiles(result.profiles);
       setLayoutWarning("");
     } catch (e) {
-      if (deviceMode && (e as { status?: number }).status === 401) {
+      if (requestId !== latestLayoutRequest.current) return;
+      if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
+        ++latestDataRequest.current;
+        pageSnapshotId.current = null;
+        forgetDashboardToken(dashboardId);
+        setDeviceToken(null);
         setActivationRequired(true);
+        setPreview(null);
+        ++supplementalRequestGeneration.current;
+        setSupplementalPages({});
         setProfiles([]);
+        setCountdown(0);
         setLayoutWarning("");
         setError("");
-        setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請聯絡管理員。");
+        setActivationError("裝置授權失效，請由管理者重新核發憑證。");
       } else {
-        const message = e instanceof Error ? e.message : "Dashboard 版面載入失敗。";
+        const message = "Dashboard 版面暫時無法讀取，請確認授權與服務狀態。";
         setLayoutWarning(message);
         setLayoutRetryCount((count) => count + 1);
         setError(message);
       }
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey]);
+
+  // Verify the device lease independently of long refresh/page intervals; no clinical Query runs here.
+  useEffect(()=>{
+    if(!deviceMode || !deviceToken || activationRequired)return;
+    let stopped=false,inFlight=false;
+    const controller=new AbortController();
+    const verify=async()=>{
+      if(stopped || inFlight || !navigator.onLine)return;
+      inFlight=true;
+      const deadline=window.setTimeout(()=>controller.abort(),5000);
+      try {await apiRequest(`/dashboards/device/${dashboardId}/layout`,{signal:controller.signal,headers:{"X-Dashboard-Device-Token":deviceToken}},null);}
+      catch {
+        if(stopped || !navigator.onLine)return;
+        ++latestDataRequest.current;++latestLayoutRequest.current;++supplementalRequestGeneration.current;
+        pageSnapshotId.current=null;forgetDashboardToken(dashboardId);setDeviceToken(null);setActivationRequired(true);
+        setPreview(null);setProfiles([]);setSupplementalPages({});setCountdown(0);
+        setActivationError("裝置授權檢查未通過或服務暫不可用，已停止播放；請由管理者確認並重新授權。");
+      } finally {window.clearTimeout(deadline);inFlight=false;}
+    };
+    const visible=()=>{if(document.visibilityState==="visible")void verify();};
+    const timer=window.setInterval(()=>void verify(),15000);
+    document.addEventListener("visibilitychange",visible);
+    return ()=>{stopped=true;controller.abort();window.clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
+  },[deviceMode,deviceToken,activationRequired,dashboardId]);
 
   useEffect(() => {
     void loadData();
@@ -364,7 +539,7 @@ export function DashboardDisplayPage() {
 
       if (settings.autoFullscreen || autoFullscreenRequested) {
         try {
-          await document.documentElement.requestFullscreen?.();
+          if(!await requestDashboardFullscreen(document)){setFullscreenNeedsClick(true);return;}
           setFullscreenNeedsClick(false);
         } catch {
           setFullscreenNeedsClick(true);
@@ -377,10 +552,12 @@ export function DashboardDisplayPage() {
 
   useEffect(() => {
     const handleFullscreen = () => {
-      if (document.fullscreenElement) setFullscreenNeedsClick(false);
+      const active=dashboardFullscreenActive(document);setFullscreenActive(active);
+      if (active) setFullscreenNeedsClick(false);
     };
     document.addEventListener("fullscreenchange", handleFullscreen);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreen);
+    document.addEventListener("webkitfullscreenchange",handleFullscreen);
+    return () => {document.removeEventListener("fullscreenchange", handleFullscreen);document.removeEventListener("webkitfullscreenchange",handleFullscreen);};
   }, []);
 
   useEffect(() => {
@@ -430,20 +607,20 @@ export function DashboardDisplayPage() {
   const pageSize = Math.max(1, preview?.dashboard.pageSize ?? 5);
   const pageSeconds = Math.max(5, preview?.dashboard.pageSeconds ?? 20);
   const refreshSeconds = Math.max(5, preview?.dashboard.refreshSeconds ?? 10);
-  const totalPages = deviceMode
+  const totalPages = deviceMode || queryPreview
     ? Math.max(1, preview?.totalPages ?? 1)
     : Math.max(1, Math.ceil((preview?.result.rows.length ?? 0) / pageSize));
   const safePage = Math.min(page, totalPages);
 
   const pageRows = useMemo(() => {
     if (!preview) return [];
-    if (deviceMode) return preview.page === safePage ? preview.result.rows : [];
+    if (deviceMode || queryPreview) return preview.page === safePage ? preview.result.rows : [];
     const start = (safePage - 1) * pageSize;
     return preview.result.rows.slice(start, start + pageSize);
-  }, [deviceMode, pageSize, preview, safePage]);
+  }, [deviceMode, queryPreview, pageSize, preview, safePage]);
 
   const visibleColumns = useMemo(() => {
-    if (!preview) return [];
+    if (!preview) return lastVisibleColumns.current;
     const resultNames = new Set(preview.result.columns.map((column) => column.name));
     const configured = preview.reportColumns
       .filter((column) => column.isVisible && resultNames.has(column.columnName))
@@ -460,15 +637,30 @@ export function DashboardDisplayPage() {
     }));
   }, [preview]);
 
+  useEffect(() => {
+    if (preview) lastVisibleColumns.current = visibleColumns;
+  }, [preview, visibleColumns]);
+
   // Continue retrying even when the first load fails; do not discard last successful data.
+  // SQL refresh uses snapshot creation time, independent of page rotation and cycle wrap.
+  useEffect(() => {
+    if (!(deviceMode || queryPreview) || !previewAuthorized || (deviceMode && (activationRequired || !deviceToken)) || !online || dataWarning ||
+        !preview) return;
+    const timer = window.setTimeout(() => {
+      pageSnapshotId.current = null;
+      setSnapshotReloadKey((key) => key + 1);
+    }, Math.max(1, refreshSeconds * 1000 - (Date.now() - pageSnapshotCreatedAt.current)));
+    return () => window.clearTimeout(timer);
+  }, [deviceMode, queryPreview, previewAuthorized, activationRequired, deviceToken, online, dataWarning, preview, totalPages, refreshSeconds]);
+
   useEffect(() => {
     if (deviceMode && activationRequired) return;
     // Device playback retains the same snapshot within a page; periodic refresh only retries failures.
-    if (deviceMode && !dataWarning) return;
+    if ((deviceMode || queryPreview) && !dataWarning) return;
     const delay = dataWarning ? retryDelaySeconds : refreshSeconds;
     const timer = window.setTimeout(() => void loadData(), delay * 1000);
     return () => window.clearTimeout(timer);
-  }, [loadData, refreshSeconds, dataWarning, retryDelaySeconds, lastUpdatedAt, deviceMode, activationRequired]);
+  }, [loadData, refreshSeconds, dataWarning, retryDelaySeconds, lastUpdatedAt, deviceMode, queryPreview, activationRequired]);
 
   useEffect(() => {
     if (deviceMode && activationRequired) return;
@@ -480,40 +672,67 @@ export function DashboardDisplayPage() {
   useEffect(() => {
     const onOnline = () => {
       setOnline(true);
-      if (!activationRequired) { void loadData(); void loadLayout(); }
+      if (deviceMode || queryPreview) {
+        pageSnapshotId.current = null;
+        setPreview(null);
+        setPage(1);
+        setCountdown(0);
+        setSnapshotReloadKey((key) => key + 1);
+      } else if (!activationRequired) {
+        void loadData();
+      }
+      if (!activationRequired) void loadLayout();
     };
-    const onOffline = () => setOnline(false);
+    const onOffline = () => {
+      ++activationAttempt.current;
+      ++latestLayoutRequest.current;
+      setActivationBusy(false);
+      ++latestDataRequest.current;
+      setOnline(false);
+      if (deviceMode || queryPreview) {
+        pageSnapshotId.current = null;
+        setPreview(null);
+        ++supplementalRequestGeneration.current;
+        setSupplementalPages({});
+        setCountdown(0);
+        setDataWarning("網路中斷，暫停顯示患者資料；連線恢復後重新載入。");
+      }
+    };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     return () => { window.removeEventListener("online", onOnline); window.removeEventListener("offline", onOffline); };
-  }, [loadData, loadLayout, activationRequired]);
+  }, [loadData, loadLayout, activationRequired, deviceMode, queryPreview]);
 
   useEffect(() => {
     setPage((current) => Math.min(Math.max(current, 1), totalPages));
   }, [totalPages]);
 
   useEffect(() => {
-    if (deviceMode && page === 1) pageSnapshotId.current = null;
-  }, [deviceMode, dashboardId, page]);
+    pageSnapshotId.current = null;
+    pageSnapshotCreatedAt.current = 0;
+  }, [deviceMode, dashboardId, deviceToken]);
+
+  // Do not run a page-advance timer for empty results or a single-page view.
+  const canAdvancePage = Boolean(preview && preview.result.rows.length > 0 && totalPages > 1) &&
+    (previewAuthorized && online && !dataWarning && (!(deviceMode || queryPreview) || preview?.page === safePage)) &&
+    (!deviceMode || (!activationRequired && Boolean(deviceToken) && online &&
+      !dataWarning && preview?.page === safePage));
 
   useEffect(() => {
-    if (!preview) return;
+    if (!canAdvancePage) { setCountdown(0); return; }
+    const deadline = Date.now() + pageSeconds * 1000;
     setCountdown(pageSeconds);
-  }, [dashboardId, pageSeconds, Boolean(preview)]);
-
-  useEffect(() => {
-    if (!preview || (deviceMode && (dataWarning || preview.page !== safePage))) return;
     const timer = window.setInterval(() => {
-      setCountdown((current) => {
-        if (current <= 1) {
-          setPage((currentPage) => currentPage >= totalPages ? 1 : currentPage + 1);
-          return pageSeconds;
-        }
-        return current - 1;
-      });
+      const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+      setCountdown(remaining);
+      if (remaining === 0) {
+        window.clearInterval(timer);
+        // React may invoke state updaters twice; page advancement must stay outside countdown updaters.
+        setPage(currentPage => currentPage >= totalPages ? 1 : currentPage + 1);
+      }
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [pageSeconds, totalPages, Boolean(preview), deviceMode, dataWarning, safePage, preview?.page]);
+  }, [dashboardId, pageSeconds, totalPages, canAdvancePage, safePage, preview?.page]);
 
   const scale = useMemo(() => {
     if (!activeProfile) return 1;
@@ -524,7 +743,15 @@ export function DashboardDisplayPage() {
   }, [activeProfile, viewport]);
 
   function renderWidget(widget: LayoutWidget) {
-    const firstRow = pageRows[0] ?? (!deviceMode ? preview?.result.rows[0] : undefined) ?? {};
+    const sourceKey = typeof widget.config?.dataSourceKey === "string" ? widget.config.dataSourceKey : "PRIMARY";
+    const supplemental = sourceKey !== "PRIMARY" ? supplementalPages[sourceKey] : undefined;
+    const widgetRows = sourceKey === "PRIMARY" ? pageRows : supplemental?.result.rows ?? [];
+    const widgetColumns = sourceKey === "PRIMARY" ? visibleColumns
+      : (supplemental?.result.columns ?? []).map((column) => ({
+        columnName: column.name, displayLabel: column.name, alignment: "LEFT" as const,
+      }));
+    const sourceFailure = sourceKey === "PRIMARY" ? dataWarning : supplementalErrors[sourceKey];
+    const firstRow = widgetRows[0] ?? (sourceKey === "PRIMARY" && !deviceMode && !queryPreview ? preview?.result.rows[0] : undefined) ?? {};
     const parameters = preview?.dashboard.parameters ?? {};
 
     if (widget.widgetType === "CONTAINER") {
@@ -546,27 +773,27 @@ export function DashboardDisplayPage() {
           <table>
             <thead>
               <tr>
-                {visibleColumns.map((column) => (
-                  <th key={column.columnName}>{column.displayLabel}</th>
+                {widgetColumns.map((column) => (
+                  <th scope="col" key={column.columnName}>{column.displayLabel}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {pageRows.map((row, rowIndex) => (
+              {widgetRows.map((row, rowIndex) => (
                 <tr key={rowIndex}>
-                  {visibleColumns.map((column) => (
+                  {widgetColumns.map((column) => (
                     <td
                       key={column.columnName}
                       style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}
                     >
-                      {maskText(row[column.columnName], tableColumnMask(widget, column.columnName))}
+                      {formatDashboardValue(maskText(row[column.columnName], tableColumnMask(widget, column.columnName)), (widget.config.columnFormats as Record<string,unknown> | undefined)?.[column.columnName])}
                     </td>
                   ))}
                 </tr>
               ))}
             </tbody>
           </table>
-          {pageRows.length === 0 && <div className="dashboard-play-empty">目前沒有資料</div>}
+          {widgetRows.length === 0 && <div className="dashboard-play-empty" role={sourceFailure ? "alert" : undefined}>{sourceFailure || "目前沒有資料"}</div>}
         </div>
       );
     }
@@ -580,8 +807,9 @@ export function DashboardDisplayPage() {
         value = widget.sourceKey ? textValue(parameters[widget.sourceKey]) : "";
         break;
       case "FIELD":
+        if (sourceFailure) { value = sourceFailure; break; }
         value = widget.sourceKey
-          ? maskText(firstRow[widget.sourceKey], widget.config?.maskMode)
+          ? formatDashboardValue(maskText(firstRow[widget.sourceKey], widget.config?.maskMode), widget.config.displayFormat)
           : "";
         break;
       case "CLOCK":
@@ -612,6 +840,7 @@ export function DashboardDisplayPage() {
       setActivationError("請輸入有效的裝置 Token。");
       return;
     }
+    const attempt = ++activationAttempt.current;
     setActivationBusy(true);
     setActivationError("");
     try {
@@ -622,8 +851,18 @@ export function DashboardDisplayPage() {
         { headers: { "X-Dashboard-Device-Token": token } },
         null,
       );
+      if (attempt !== activationAttempt.current || !navigator.onLine) return;
       pageSnapshotId.current = null;
-      localStorage.setItem(deviceStorageKey, token);
+      ++latestDataRequest.current;
+      ++latestLayoutRequest.current;
+      setPreview(null);
+      setProfiles([]);
+      setPage(1);
+      setCountdown(0);
+      setRetryDelaySeconds(5);
+      setDataWarning("");
+      setLayoutWarning("");
+      rememberDashboardToken(dashboardId, token);
       setDeviceToken(token);
       setActivationInput("");
       setActivationRequired(false);
@@ -631,11 +870,15 @@ export function DashboardDisplayPage() {
       setProfiles([]);
       setError("");
     } catch (e) {
-      setActivationError(e instanceof Error ? e.message : "裝置驗證失敗，請確認 Token。");
+      if (attempt === activationAttempt.current) setActivationError("裝置驗證未通過，請確認授權、到期與工作站狀態，或請管理者重新核發憑證。");
     } finally {
-      setActivationBusy(false);
+      if (attempt === activationAttempt.current) setActivationBusy(false);
     }
   }
+
+  if(queryPreview && !deviceMode && !previewAuthorized)return <main className="dashboard-display-screen"><div className="dashboard-display-error">
+    <h1>預覽授權失效</h1><p>已停止預覽，請重新登入或請管理者確認權限。</p><Link to="/designer/dashboards">返回 Dashboard 管理</Link>
+  </div></main>;
 
   if (deviceMode && activationRequired) {
     return (
@@ -645,6 +888,7 @@ export function DashboardDisplayPage() {
           <p>Dashboard #{dashboardId} 尚未在目前瀏覽器設定檔完成驗證，或原有憑證已失效。</p>
           <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
+            <p>Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>
             <input id="dashboard-device-activation-token" type="password" autoComplete="off" spellCheck={false} required
               value={activationInput} onChange={(event) => setActivationInput(event.target.value)}
@@ -654,25 +898,27 @@ export function DashboardDisplayPage() {
               {activationBusy ? "驗證中…" : "驗證並啟用播放"}
             </button>
           </form>
-          <p style={{ fontSize: 14, marginTop: 16 }}>Token 只儲存在這個瀏覽器設定檔；更換瀏覽器、網址來源或清除網站資料後需重新啟用。到期或停用的 Token 不會自動恢復。</p>
+          <p style={{ fontSize: 14, marginTop: 16 }}>等待管理者授權：憑證只保留於本次頁面記憶體。重新整理、關閉或裝置重啟後，請由管理者在 Dashboard 管理頁重新核發並透過可信流程交付；到期、撤銷或停用的憑證不能自動恢復。</p>
+          <Link to="/designer/dashboards">管理者登入並重新核發憑證</Link>
         </div>
       </main>
     );
   }
 
-  if (error && !preview) {
+  if (error && !preview && profiles.length === 0) {
     return (
       <main className="dashboard-display-screen">
         <div className="dashboard-display-error">
           <h1>Dashboard 無法顯示</h1>
           <p>{error}</p>
+          {!deviceMode && <SecurityManagementLinks dashboardId={dashboardId} />}
           {!deviceMode && <Link to="/dashboards">返回 Dashboard</Link>}
         </div>
       </main>
     );
   }
 
-  if (!preview || !activeProfile) {
+  if (!activeProfile) {
     return (
       <main className="dashboard-display-screen">
         <div className="dashboard-display-loading">
@@ -684,6 +930,7 @@ export function DashboardDisplayPage() {
 
   return (
     <main className="dashboard-display-screen">
+      {!deviceMode && (dataWarning || error) && <aside role="status">{dataWarning || error}<SecurityManagementLinks dashboardId={Number(dashboardId)} /></aside>}
       {deviceMode && (
         <div role="status" aria-live="polite" style={{
           position: "fixed", right: 12, bottom: 12, zIndex: 9999,
@@ -691,8 +938,8 @@ export function DashboardDisplayPage() {
           background: !online || dataWarning || layoutWarning ? "#7f1d1d" : "rgba(0,0,0,.65)",
           color: "#fff", fontSize: 12, maxWidth: "min(75vw, 480px)",
         }}>
-          {!online ? "網路已中斷，顯示最後成功資料；連線恢復後會自動重試" :
-            dataWarning || layoutWarning ? "資料更新異常，保留最後成功畫面並自動重試" :
+          {!online ? "網路已中斷，已清除患者資料；連線恢復後會重新載入" :
+            dataWarning || layoutWarning ? dataWarning || layoutWarning :
             "播放正常"}
           {lastUpdatedAt && " · 最後更新 " + lastUpdatedAt.toLocaleTimeString("zh-TW")}
         </div>
@@ -737,20 +984,22 @@ export function DashboardDisplayPage() {
         </div>
       </div>
 
-      {!document.fullscreenElement && (
+      {!fullscreenActive && (
         <button
           className={`dashboard-fullscreen-button${fullscreenNeedsClick ? " needs-click" : ""}`}
+          disabled={!fullscreenSupported}
+          title={!fullscreenSupported ? "此瀏覽器不支援網頁全螢幕；可使用加入主畫面或瀏覽器全螢幕功能。" : undefined}
           type="button"
           onClick={async () => {
             try {
-              await document.documentElement.requestFullscreen?.();
+              if(!await requestDashboardFullscreen(document)){setFullscreenNeedsClick(true);return;}
               setFullscreenNeedsClick(false);
             } catch {
               setFullscreenNeedsClick(true);
             }
           }}
         >
-          {fullscreenNeedsClick ? "點一下進入全螢幕" : "全螢幕"}
+          {!fullscreenSupported ? "請使用瀏覽器全螢幕／加入主畫面" : fullscreenNeedsClick ? "點一下進入全螢幕" : "全螢幕"}
         </button>
       )}
     </main>

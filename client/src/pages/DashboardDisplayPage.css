@@ -127,7 +127,7 @@
   position: fixed;
   right: 12px;
   bottom: 12px;
-  z-index: 20;
+  z-index: 10000;
   padding: 7px 11px;
   border: 1px solid rgba(255,255,255,.38);
   border-radius: 8px;

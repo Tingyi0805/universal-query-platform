@@ -1,0 +1,61 @@
+.workstation-list,
+.touch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin: 12px 0;
+}
+.workstation-management button,
+.pin-panel button {
+  min-height: 48px;
+  touch-action: manipulation;
+}
+.workstation-management label {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}
+.workstation-management input[type="checkbox"] {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.workstation-management input:not([type="checkbox"]),
+.workstation-management select {
+  max-width: 100%;
+  min-height: 44px;
+}
+.pin-panel {
+  max-width: 760px;
+}
+.pin-panel input,
+.pin-panel select {
+  min-height: 48px;
+  max-width: 100%;
+  font-size: 18px;
+}
+@media (max-width: 600px) {
+  .workstation-management .admin-section {
+    padding: 14px;
+  }
+  .workstation-management .check-grid {
+    grid-template-columns: 1fr;
+  }
+  .touch-actions > button {
+    flex: 1 1 130px;
+  }
+  .pin-panel .admin-form {
+    grid-template-columns: 1fr;
+  }
+}
+@media (orientation: landscape) and (max-height: 600px) {
+  .pin-panel .pin-layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: start;
+  }
+}

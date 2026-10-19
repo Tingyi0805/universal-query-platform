@@ -1,8 +1,15 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
+import { basicDashboardParameters, securityGuidance } from "../security/securityContracts";
+import { DashboardDataSettingsEditor } from "../components/DashboardDataSettingsEditor";
+import { queryParameterValues, sourcePreviewFailure } from "../dashboard/dataSettings";
+import { DashboardQueryPlaybackManager } from "../components/DashboardQueryPlaybackManager";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import { rememberDashboardToken,prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
+import { DashboardDataSourcesEditor } from "../components/DashboardDataSourcesEditor";
 import "./DashboardDesignerPage.css";
 
 type DashboardRow = {
@@ -122,9 +129,12 @@ type FormState = {
   showPageNumber: boolean;
   showCountdown: boolean;
   parametersJson: string;
-  snapshotKind: "SURGERY" | "OUTPATIENT" | "EXAM" | "STATISTICS" | "OTHER";
+  snapshotKind: string;
   snapshotSeconds: string;
   estimatedRows: string;
+  deviceColumnMasksJson: string;
+  deviceColumnTypesJson: string;
+  deviceSourceColumnMasksJson: string;
   isActive: boolean;
 };
 
@@ -146,7 +156,10 @@ const emptyForm: FormState = {
   snapshotKind: "OTHER",
   snapshotSeconds: "",
   estimatedRows: "25",
-  isActive: true,
+  deviceColumnMasksJson: "{}",
+  deviceColumnTypesJson: "{}",
+  deviceSourceColumnMasksJson: "{}",
+  isActive: false,
 };
 
 function displayValue(value: unknown): string {
@@ -173,6 +186,9 @@ function deviceExpiryLabel(expiresAtUtc: string | null): string {
 
 export function DashboardDesignerPage() {
   const { accessToken } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedEditor = Number(searchParams.get("dashboardId"));
+  const openedFromLink = useRef<number | null>(null);
 
   function openPlayback(dashboardId: number) {
     const popup = window.open("about:blank", "_blank");
@@ -264,6 +280,10 @@ export function DashboardDesignerPage() {
   }, [accessToken, listDisplayMode, listPage, listPageSize, listSearch, listStatus]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const selected = dashboards.find(item => item.id === requestedEditor);
+    if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; editDashboard(selected); }
+  }, [dashboards, requestedEditor]);
 
   const snapshotDefaultSeconds: Record<FormState["snapshotKind"], number> = {
     SURGERY: 20, OUTPATIENT: 60, EXAM: 60, STATISTICS: 180, OTHER: 60,
@@ -278,7 +298,9 @@ export function DashboardDesignerPage() {
     [queries],
   );
 
+  const previewSequence = useRef(0);
   const loadPreview = useCallback(async (dashboardId: number, silent = false) => {
+    const sequence = ++previewSequence.current;
     if (!silent) setPreviewLoading(true);
     setError("");
     try {
@@ -287,12 +309,14 @@ export function DashboardDesignerPage() {
         { method: "POST" },
         accessToken,
       );
+      if (sequence !== previewSequence.current) return;
       setPreview(result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Dashboard 預覽失敗。");
-      if (!silent) setPreview(null);
+      if (sequence !== previewSequence.current) return;
+      setError(sourcePreviewFailure("PRIMARY", e));
+      setPreview(null);
     } finally {
-      if (!silent) setPreviewLoading(false);
+      if (sequence === previewSequence.current) setPreviewLoading(false);
     }
   }, [accessToken]);
 
@@ -325,10 +349,13 @@ export function DashboardDesignerPage() {
       showClock: item.showClock,
       showPageNumber: item.showPageNumber,
       showCountdown: item.showCountdown,
-      parametersJson: JSON.stringify(Object.fromEntries(Object.entries(item.parameters ?? {}).filter(([key]) => key !== "snapshotKind" && key !== "snapshotSeconds")), null, 2),
-      snapshotKind: (["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS"].includes(String(item.parameters?.snapshotKind)) ? item.parameters.snapshotKind : "OTHER") as FormState["snapshotKind"],
+      parametersJson: JSON.stringify(queryParameterValues(item.parameters ?? {}), null, 2),
+      snapshotKind: typeof item.parameters?.snapshotKind === "string" ? item.parameters.snapshotKind : "OTHER",
       snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
       estimatedRows: "25",
+      deviceColumnMasksJson: JSON.stringify(item.parameters?.deviceColumnMasks === undefined ? {} : item.parameters.deviceColumnMasks, null, 2),
+      deviceSourceColumnMasksJson: JSON.stringify(item.parameters?.deviceSourceColumnMasks === undefined ? {} : item.parameters.deviceSourceColumnMasks, null, 2),
+      deviceColumnTypesJson: JSON.stringify(item.parameters?.deviceColumnTypes === undefined ? {} : item.parameters.deviceColumnTypes, null, 2),
       isActive: item.isActive,
     });
     setNotice("");
@@ -364,6 +391,11 @@ export function DashboardDesignerPage() {
         setError("快照秒數必須為 10～3600 的整數，或留白使用建議值。");
         return;
       }
+      parameters = basicDashboardParameters(parameters);
+      const storedKind = dashboards.find(item => item.id === form.id)?.parameters?.snapshotKind;
+      if (storedKind !== undefined && typeof storedKind !== "string") {
+        setError("舊快照用途格式無法安全轉換，原設定保留；請管理者審查。"); return;
+      }
       parameters.snapshotKind = form.snapshotKind;
       if (form.snapshotSeconds.trim() !== "") parameters.snapshotSeconds = Number(form.snapshotSeconds);
 
@@ -389,19 +421,20 @@ export function DashboardDesignerPage() {
           method: "PUT",
           body: JSON.stringify(payload),
         }, accessToken);
-        setNotice("Dashboard 已更新。");
+        setNotice("Dashboard 一般設定已更新。若要修改核准，請重新載入核准版本。");
       } else {
-        await apiRequest("/dashboards", {
+        const created = await apiRequest<{ id: number }>("/dashboards", {
           method: "POST",
           body: JSON.stringify(payload),
         }, accessToken);
-        setNotice("Dashboard 已建立。");
+        if (!Number.isSafeInteger(created.id) || created.id < 1) throw new Error("RESPONSE_INVALID");
+        setForm(current => ({ ...current, id: created.id }));
+        setNotice("Dashboard 已建立，預設沒有核准欄位。請在下方明確管理核准。");
       }
 
-      setForm(emptyForm);
       await load();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "儲存 Dashboard 失敗。");
+      const safe = securityGuidance(e); setError(`來源 PRIMARY：${safe.code}。${safe.message}`);
     } finally {
       setSaving(false);
     }
@@ -742,7 +775,7 @@ export function DashboardDesignerPage() {
       }
 
       if (popup) {
-      popup.localStorage.setItem(`uqp.dashboard.device.${setup.dashboard.id}`, result.token);
+      prepareDashboardTokenHandoff(popup, setup.dashboard.id, result.token);
       popup.localStorage.setItem(
         `uqp.dashboard.display-settings.${setup.dashboard.id}`,
         JSON.stringify({
@@ -901,15 +934,15 @@ export function DashboardDesignerPage() {
     if (!issuedToken) return;
     setTokenActionStatus("");
     try {
-      localStorage.setItem(`uqp.dashboard.device.${issuedToken.dashboardId}`, issuedToken.token);
-      if (localStorage.getItem(`uqp.dashboard.device.${issuedToken.dashboardId}`) !== issuedToken.token) {
-        throw new Error("Token 未能保存");
-      }
+      rememberDashboardToken(issuedToken.dashboardId, issuedToken.token);
+      const popup=window.open(`/display/dashboards/${issuedToken.dashboardId}`,"_blank");
+      if(!popup)throw new Error("播放視窗未能開啟");
+      prepareDashboardTokenHandoff(popup,issuedToken.dashboardId,issuedToken.token);
       setTokenActionStatus(
-        "已啟用於目前瀏覽器（" + window.location.host + "）。請在相同瀏覽器設定檔開啟播放頁面驗證；其他電腦及 Chrome／Edge 不會同步啟用。",
+        "本次播放頁面已開啟，Token 僅存於頁面記憶體。重新整理或關閉後需重新啟用；其他電腦與視窗不會自動啟用。",
       );
     } catch {
-      setTokenActionStatus("啟用失敗：瀏覽器禁止本機儲存。請確認未封鎖網站儲存空間，或改在播放電腦的啟用頁面輸入 Token。");
+      setTokenActionStatus("播放視窗未能開啟，請允許此網站的彈出視窗，或在播放電腦的啟用頁面輸入 Token。");
     }
   }
 
@@ -1009,7 +1042,7 @@ export function DashboardDesignerPage() {
       </div>
 
       {loading && <section className="notice">載入中…</section>}
-      {error && <section className="form-error">{error}</section>}
+      {error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={form.id} /></section>}
       {notice && <section className="notice">{notice}</section>}
 
       {!loading && (
@@ -1054,7 +1087,13 @@ export function DashboardDesignerPage() {
                 <span>資料 Query</span>
                 <select
                   value={form.queryDefinitionId}
-                  onChange={(e) => setForm({ ...form, queryDefinitionId: e.target.value })}
+                  onChange={(e) => {
+                    if (form.id && e.target.value !== form.queryDefinitionId) {
+                      try { if (Object.keys(JSON.parse(form.deviceColumnMasksJson)).length) { setError(sourcePreviewFailure("PRIMARY", { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" })); return; } }
+                      catch { setError("核准 JSON 尚未確認，請先重新載入核准版本；禁止換綁。"); return; }
+                    }
+                    setForm({ ...form, queryDefinitionId: e.target.value });
+                  }}
                 >
                   <option value="">請選擇已發佈 Query</option>
                   {usableQueries.map((query) => (
@@ -1065,6 +1104,7 @@ export function DashboardDesignerPage() {
                 </select>
               </label>
 
+              <h3 className="wide">Dashboard 播放設定</h3>
               <label>
                 <span>資料更新秒數</span>
                 <input
@@ -1123,6 +1163,7 @@ export function DashboardDesignerPage() {
               <label>
                 <span>Dashboard 用途（快照預設）</span>
                 <select value={form.snapshotKind} onChange={(e) => setForm({ ...form, snapshotKind: e.target.value as FormState["snapshotKind"] })}>
+                  {!["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS", "OTHER"].includes(form.snapshotKind) && <option value={form.snapshotKind}>舊用途（保留原設定）</option>}
                   <option value="SURGERY">手術狀態（20 秒）</option>
                   <option value="OUTPATIENT">診間候診（60 秒）</option>
                   <option value="EXAM">檢查進度（60 秒）</option>
@@ -1158,6 +1199,10 @@ export function DashboardDesignerPage() {
                 {effectiveSnapshotSeconds < estimatedCycleSeconds && <p role="alert">目前快照時間短於一輪播放時間，可能中途過期。</p>}
               </div>
 
+              <DashboardDataSettingsEditor key={form.queryDefinitionId} dashboardId={form.id} queryId={Number(form.queryDefinitionId)} accessToken={accessToken}
+                parametersJson={form.parametersJson} masksJson={form.deviceColumnMasksJson} typesJson={form.deviceColumnTypesJson} sourceMasksJson={form.deviceSourceColumnMasksJson}
+                onChange={patch => setForm(current => ({ ...current, ...patch }))} />
+
               <div className="dashboard-display-options wide">
                 <label>
                   <input
@@ -1185,18 +1230,6 @@ export function DashboardDesignerPage() {
                 </label>
               </div>
 
-              <label className="wide">
-                <span>預設參數 JSON</span>
-                <textarea
-                  rows={5}
-                  value={form.parametersJson}
-                  spellCheck={false}
-                  placeholder={'{\n  "ROOM_CODE": "OR01"\n}'}
-                  onChange={(e) => setForm({ ...form, parametersJson: e.target.value })}
-                />
-                <small>第一階段先使用 JSON；後續會改為參數預設表單並支援 Display Profile 覆寫。</small>
-              </label>
-
               <label className="dashboard-active-field">
                 <input
                   type="checkbox"
@@ -1216,6 +1249,9 @@ export function DashboardDesignerPage() {
               </div>
             </form>
           </section>
+
+          {form.id && <DashboardDataSourcesEditor key={form.id} dashboardId={form.id} accessToken={accessToken} />}
+          {form.id && <DashboardQueryPlaybackManager key={`playback-${form.id}`} dashboardId={form.id} accessToken={accessToken} />}
 
           <section className="dashboard-list-card">
             <h2>Dashboard 清單</h2>
@@ -1471,7 +1507,7 @@ export function DashboardDesignerPage() {
                 <div className="fixed-playback-hint" role="note">
                   <strong>單一 BAT 播放說明</strong>
                   <p>Windows 啟動腳本 (.bat) 已內含 PowerShell 螢幕定位功能，無需額外 PS1。請先建立固定播放裝置，之後可在裝置管理下載專屬 BAT。</p>
-                  <p>請在實體播放電腦本機執行，並使用已啟用 Device Token 的同一 Chrome／Edge 設定檔。若院內執行政策限制 PowerShell，請聯絡資訊室。</p>
+                  <p>請在實體播放電腦本機執行，腳本僅開啟播放頁面，請於頁面啟用 Device Token；重新整理或重啟後需重新啟用。若院內執行政策限制 PowerShell，請聯絡資訊室。</p>
                 </div>
 
                 <div className="fixed-playback-modal-actions">
@@ -1554,7 +1590,7 @@ export function DashboardDesignerPage() {
                   <div>
                     <strong>新 Device Token（只顯示一次）</strong>
                     <p>
-                      重新離開此頁後無法從 Server 查回原始 Token。請先複製保存。此處的啟用僅對目前瀏覽器有效；若播放電腦不同，請在播放電腦的啟用頁面輸入 Token。
+                      重新離開此頁後無法從 Server 查回原始 Token。請透過既定流程交付 Token。本次播放只在頁面記憶體保留啟用資訊；若播放電腦不同，請在播放電腦的啟用頁面輸入 Token。
                     </p>
                   </div>
                   <code style={{ userSelect: "all", overflowWrap: "anywhere" }}>{issuedToken.token}</code>
@@ -1572,7 +1608,7 @@ export function DashboardDesignerPage() {
                       type="button"
                       onClick={applyIssuedTokenToThisBrowser}
                     >
-                      在目前瀏覽器啟用
+                      開啟本次播放頁面
                     </button>
                     <button
                       className="secondary-button"
@@ -1687,7 +1723,7 @@ export function DashboardDesignerPage() {
                                   type="button"
                                   onClick={() => void reissueDeviceToken(device)}
                                 >
-                                  重新核發 Token
+                                  舊版模式重新核發 Token
                                 </button>
                                 <button
                                   className="secondary-button"

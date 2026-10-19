@@ -12,59 +12,62 @@ declare global {
   }
 }
 
-export const authenticateJwt: RequestHandler = async (req, res, next) => {
-  if (!env.JWT_SECRET) {
-    res.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "登入服務尚未設定。" } });
-    return;
-  }
-
-  const header = req.headers.authorization;
-  if (!header?.startsWith("Bearer ")) {
-    res.status(401).json({ error: { code: "UNAUTHORIZED", message: "需要登入。" } });
-    return;
-  }
-
-  try {
-    const payload = jwt.verify(header.slice(7), env.JWT_SECRET) as jwt.JwtPayload;
-    const userId = Number(payload.sub);
-    const tokenVersion = Number(payload.tokenVersion);
-
-    if (!Number.isFinite(userId) || !Number.isInteger(tokenVersion)) {
-      res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
-      return;
-    }
-
-    const session = await getTokenSessionState(userId);
-    if (session === undefined) {
+export function createAuthenticateJwt(getSession = getTokenSessionState): RequestHandler {
+  return async (req, res, next) => {
+    if (!env.JWT_SECRET) {
       res.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "登入服務尚未設定。" } });
       return;
     }
 
-    if (!session || !session.isActive || session.tokenVersion !== tokenVersion) {
-      res.status(401).json({
-        error: {
-          code: "TOKEN_REVOKED",
-          message: "登入狀態已失效，請重新登入。",
-        },
-      });
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) {
+      res.status(401).json({ error: { code: "UNAUTHORIZED", message: "需要登入。" } });
       return;
     }
 
-    req.authUser = {
-      id: userId,
-      username: String(payload.username),
-      displayName: String(payload.displayName),
-      permissions: Array.isArray(payload.permissions) ? payload.permissions.map(String) : [],
-    };
-    next();
-  } catch (error) {
-    if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
-      res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
-      return;
+    try {
+      const payload = jwt.verify(header.slice(7), env.JWT_SECRET) as jwt.JwtPayload;
+      const userId = Number(payload.sub);
+      const tokenVersion = Number(payload.tokenVersion);
+
+      if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(tokenVersion) || tokenVersion < 1) {
+        res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
+        return;
+      }
+
+      const session = await getSession(userId);
+      if (session === undefined) {
+        res.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "登入服務尚未設定。" } });
+        return;
+      }
+
+      if (!session || !session.isActive || session.tokenVersion !== tokenVersion) {
+        res.status(401).json({
+          error: {
+            code: "TOKEN_REVOKED",
+            message: "登入狀態已失效，請重新登入。",
+          },
+        });
+        return;
+      }
+
+      req.authUser = {
+        id: userId,
+        username: String(payload.username),
+        displayName: String(payload.displayName),
+        permissions: session.permissions,
+      };
+      next();
+    } catch (error) {
+      if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {
+        res.status(401).json({ error: { code: "INVALID_TOKEN", message: "登入憑證無效或已過期。" } });
+        return;
+      }
+      next(error);
     }
-    next(error);
-  }
-};
+  };
+}
+export const authenticateJwt = createAuthenticateJwt();
 
 export const requirePermission = (permission: string): RequestHandler => (req, res, next) => {
   if (!req.authUser?.permissions.includes(permission)) {

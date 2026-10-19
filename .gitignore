@@ -9,3 +9,8 @@ coverage/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Generated TypeScript and browser-test artifacts
+*.tsbuildinfo
+client/test-results/
+client/playwright-report/
