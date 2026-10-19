@@ -359,7 +359,7 @@
   {
     "id": 917,
     "file": "917_dashboard_query_source_model.sql",
-    "sha256": "68b6c9fc11243815dc10e6ae60ec03904059e0495b809f64c1955c820402b449",
+    "sha256": "54cdc861ff7c7eb95669085c8a054aebfbc063ba701b0c9b32c952d881b322bc",
     "requires": [
       5,
       20,
@@ -369,7 +369,7 @@
   {
     "id": 918,
     "file": "918_dashboard_query_playback_mode.sql",
-    "sha256": "bd0ecb1b87facbc67204ca1d2f0c8c73b63f80ae5ae82280c0239ba8122d9d2d",
+    "sha256": "cc7ad656ff726448a89e5e168f6dac5d5e3bf83e41b8684366e3b6b61855b813",
     "requires": [
       25,
       917
