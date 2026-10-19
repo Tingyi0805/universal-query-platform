@@ -27,21 +27,29 @@ BEGIN TRY
         THROW 51017, 'DASHBOARD_SOURCE_MODEL_ALREADY_OR_PARTIALLY_INSTALLED', 1;
 
     -- Nullable columns preserve legacy rows without assigning a Query or a limit.
-    -- Dynamic DDL avoids binding new column names before ALTER on SQL Server 2019.
+    -- Separate dynamic statements are required: SQL Server binds CHECK/computed references at compile time.
     EXEC sys.sp_executesql N'
         ALTER TABLE uqp.Dashboard ADD QuerySourceMaxRows INT NULL;
+    ';
+    EXEC sys.sp_executesql N'
         ALTER TABLE uqp.Dashboard WITH CHECK ADD
             CONSTRAINT CK_Dashboard_QuerySourceMaxRows
                 CHECK (QuerySourceMaxRows IS NULL OR QuerySourceMaxRows BETWEEN 1 AND 10000);
+    ';
+    EXEC sys.sp_executesql N'
         ALTER TABLE uqp.DashboardDataSource ADD
             QueryDefinitionId BIGINT NULL,
             QueryBindingRevision BIGINT NOT NULL
                 CONSTRAINT DF_DashboardDataSource_QueryBindingRevision DEFAULT (0),
             MaxRows INT NULL;
+    ';
+    EXEC sys.sp_executesql N'
         ALTER TABLE uqp.DashboardDataSource ADD
             QueryBindingState AS CONVERT(VARCHAR(20), CASE
                 WHEN QueryDefinitionId IS NULL THEN ''PENDING_CONVERSION''
                 ELSE ''QUERY_BOUND'' END);
+    ';
+    EXEC sys.sp_executesql N'
         ALTER TABLE uqp.DashboardDataSource WITH CHECK ADD
             CONSTRAINT FK_DashboardDataSource_QueryDefinition
                 FOREIGN KEY (QueryDefinitionId) REFERENCES uqp.QueryDefinition(Id),
