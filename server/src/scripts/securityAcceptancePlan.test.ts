@@ -29,7 +29,7 @@ test("runner source still auto-selects 916-919 and status bootstrap precedes com
   assert.ok(runner.includes('.filter((file) => /^\\d+_.*\\.sql$/i.test(file))'));
   assert.ok(runner.includes('.sort((a, b) => a.localeCompare(b))'));
   assert.ok(runner.indexOf('const command =') < runner.indexOf("CREATE TABLE uqp.SchemaMigration"));
-  assert.ok(runner.includes('if (command !== "apply-range") await pool.request().batch('));
+  assert.ok(runner.includes('if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
   assert.ok(runner.indexOf('const pool = await getPlatformDbPool()') < runner.indexOf('command === "status"'));
   const files = (await inventory()).map(row => row.file).filter(file => /^\d+_.*\.sql$/i.test(file));
   assert.deepEqual(files.filter(file => /^(916|917|918|919)_/.test(file)).map(file => Number(file.slice(0,3))), [916,917,918,919]);
@@ -128,10 +128,23 @@ test("scoped upgrade validates target identity before any bootstrap and requires
   assert.ok(runner.includes('row.DatabaseName !== "UniversalQueryPlatform"'));
   assert.ok(runner.includes("UQP_MIGRATION_EXPECTED_SERVER"));
   assert.ok(runner.includes("UQP_MIGRATION_EXPECTED_LOGIN"));
-  assert.ok(runner.indexOf('if (command === "apply-range") await requireScopedTarget(pool)') <
-    runner.indexOf('if (command !== "apply-range") await pool.request().batch('));
-  assert.ok(runner.indexOf('if (command === "apply-range") await requireScopedTarget(pool)') <
+  assert.ok(runner.indexOf('if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool)') <
+    runner.indexOf('if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
+  assert.ok(runner.indexOf('if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool)') <
     runner.indexOf("SELECT FileName FROM uqp.SchemaMigration"));
+});
+
+test("resume requires exact recorded 916 and restricts writes to 917-919", async () => {
+  const runner = await readFile(new URL("./migrate.ts", import.meta.url), "utf8");
+  assert.match(runner, /args\[0\] !== "resume-916-to-919"/);
+  assert.match(runner, /MIGRATION_RESUME_REQUIRES_RECORDED_916/);
+  assert.match(runner, /MIGRATION_BASELINE_NOT_EXACT_916/);
+  assert.ok(runner.includes('const expected = resuming ? remaining : [baseline, ...remaining]'));
+  assert.ok(runner.includes('expected.some(file => !files.includes(file) || applied.has(file))'));
+  assert.ok(runner.includes('const outside = files.filter(file => !expected.includes(file) && !applied.has(file))'));
+  assert.ok(runner.includes('applied.size !== files.length - expected.length'));
+  assert.ok(runner.includes('if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool)'));
+  assert.ok(runner.includes('if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
 });
 
 test("migration rollback failure preserves original error and prohibits automatic retry", async () => {
