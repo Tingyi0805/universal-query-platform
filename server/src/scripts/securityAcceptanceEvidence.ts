@@ -1,5 +1,5 @@
 /** Offline, read-only acceptance evidence validator. Never opens a database or writes evidence. */
-import { open } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { constants } from "node:fs";
 import { prepareAcceptance } from "./securityAcceptanceManifest.js";
 
@@ -42,7 +42,10 @@ export async function reviewEvidence(args: string[]) {
   const filename = args[2]!;
   if (!/^\/tmp\/uqp-acceptance\/[a-zA-Z0-9_-]+\.json$/.test(filename)) throw new Error("OFFLINE_EVIDENCE_PATH_REQUIRED");
   const manifest = await prepareAcceptance(["--profile", args[1]!]);
-  // Open with O_NOFOLLOW to block symlink substitution between metadata validation and read.
+  // Windows may ignore O_NOFOLLOW: reject symlinks explicitly before open as defense in depth.
+  const entry = await lstat(filename);
+  if (!entry.isFile() || entry.isSymbolicLink()) throw new Error("OFFLINE_EVIDENCE_REGULAR_FILE_REQUIRED");
+  // O_NOFOLLOW protects against symlink substitution between lstat and open on supporting OSes.
   const handle = await open(filename, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const metadata = await handle.stat();
