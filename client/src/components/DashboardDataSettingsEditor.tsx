@@ -14,6 +14,7 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
   const [saving, setSaving] = useState(false);
   const [approvals, setApprovals] = useState<ColumnApprovals | null>(null);
   const [approvalReady, setApprovalReady] = useState(false);
+  const [policyRevision, setPolicyRevision] = useState(0);
   const [policy, setPolicy] = useState<Rule[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -22,7 +23,7 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
   const [mode, setMode] = useState("OMIT");
   async function reloadApprovals() {
     const read = ++readSequence.current;
-    setApprovalReady(false); setSaving(true); setColumn(""); setMode("OMIT");
+    setApprovalReady(false); setLoaded(false); setSaving(true); setColumn(""); setMode("OMIT");
     try {
       // Read the write version BEFORE the masks, so concurrent updates can never
       // pair stale masks with a newer version. The server rejects intervening changes.
@@ -30,7 +31,7 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
       const value = columnApprovals(await apiRequest(`/dashboards/${dashboardId}/column-approvals`, {}, accessToken));
       if (value.dashboardId !== dashboardId) throw new Error("RESPONSE_INVALID");
       if (read !== readSequence.current) return;
-      setManaged(configuration); setApprovals(value); setApprovalReady(true);
+      setManaged(configuration); setApprovals(value); setApprovalReady(true); setPolicyRevision(previous => previous + 1);
       setMessage("已載入最新核准版本，請重新選擇欄位並確認修改。");
     } catch (error) { if (read === readSequence.current) setMessage(managementError(error)); }
     finally { if (read === readSequence.current) setSaving(false); }
@@ -48,6 +49,7 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
   const selectedQueryId = selected?.queryDefinitionId;
   useEffect(() => {
     ++scope.current;
+    const policyRead = readSequence.current;
     let active = true;
     setLoaded(false); setPolicy([]); setColumns([]); setColumn(""); setMode("OMIT");
     if (!selectedQueryId) return () => { active = false; ++scope.current; };
@@ -59,11 +61,11 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
         apiRequest<{ columns: Array<{ columnName: string }> }>(`/query-definitions/${selectedQueryId}/report-columns`, {}, accessToken),
       ]);
       if (!Array.isArray(s.columns) || !Number.isSafeInteger(s.version) || s.version < 0 || (s.version === 0 && s.columns.length === 0)) throw new Error("POLICY_UNAVAILABLE");
-      if (!active) return;
+      if (!active || policyRead !== readSequence.current) return;
       setPolicy(s.columns); setColumns(c.columns.map(c => c.columnName)); setLoaded(true);
-    })().catch(() => { if (active) setMessage("無法確認 Query 或 Dataset 保護規則；已保留原設定，暫停欄位規則編輯。請重新載入。"); });
+    })().catch(() => { if (active && policyRead === readSequence.current) setMessage("無法確認 Query 或 Dataset 保護規則；已保留原設定，暫停欄位規則編輯。請重新載入。"); });
     return () => { active = false; ++scope.current; };
-  }, [dashboardId, selectedQueryId, sourceKey, accessToken, managed?.version]);
+  }, [dashboardId, selectedQueryId, sourceKey, accessToken, managed?.version, policyRevision]);
   const masks = sourceKey === "PRIMARY" ? approvals?.deviceColumnMasks ?? {} : approvals?.deviceSourceColumnMasks[sourceKey] ?? {};
   const types = sourceKey === "PRIMARY" ? approvals?.deviceColumnTypes ?? {} : {};
   const matching = policy.filter(rule => rule.columnName.toUpperCase() === column.toUpperCase());
@@ -81,6 +83,7 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
       if (sequence !== scope.current) return;
       if (!/^[a-f0-9]{64}$/.test(result.version)) throw new Error("RESPONSE_INVALID");
       setApprovals(previous => previous ? { ...previous, ...(sourceKey === "PRIMARY" ? { deviceColumnMasks: next } : { deviceSourceColumnMasks: { ...previous.deviceSourceColumnMasks, [sourceKey]: next } }) } : null);
+      setLoaded(false); setPolicyRevision(previous => previous + 1);
       setManaged(previous => previous ? { ...previous, version: result.version } : null);
       setMessage(success);
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "approvals" } }));
@@ -103,7 +106,7 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
     <button type="button" disabled={saving} onClick={() => void reloadApprovals()}>重新載入核准版本</button>
     {managed && !managed.editable && <p role="alert">須先停用 Dashboard 才可修改。不會自動停用或重新啟用。</p>}
     {!selectedQueryId && <p role="status">來源尚未轉換，請先明確選擇 Query；轉換後敏感欄位需要重新核准。</p>}
-    <label>遮蔽核准來源<select aria-label="遮蔽核准來源" value={sourceKey} onChange={e => setSourceKey(e.target.value)} disabled={saving}><option value="PRIMARY">PRIMARY 主來源</option>{managed?.sources.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}</option>)}</select></label>
+    <label>遮蔽核准來源<select aria-label="遮蔽核准來源" value={sourceKey} onChange={e => { setLoaded(false); setSourceKey(e.target.value); }} disabled={saving}><option value="PRIMARY">PRIMARY 主來源</option>{managed?.sources.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}</option>)}</select></label>
     <h3>Dataset 最低保護規則（{sourceKey}）</h3>
     {!loaded && <p role="status">尚未確認 Dataset 保護；暫停欄位規則編輯。</p>}
     {policy.map(rule => <p key={rule.columnName}>{rule.columnName}：{modeNames[rule.deviceMaskMode] ?? "未知規則，禁止變更"}{rule.customMask ? `（前 ${rule.customMask.prefix}／後 ${rule.customMask.suffix}，符號 ${rule.customMask.symbol}）` : ""}</p>)}

@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const rawName = "合成患者甲", rawMrn = "SYNTHETIC987654";
 async function setup(page: Page, managed = false, canManage = true) {
-  const state = { bindingFailure: false, schemaMissing: false, active: false, persisted: null as any, approval: null as any, conflict: false, version: "a".repeat(64), authFail: false, fail: false, primaryFail: false, extraFail: false, saved: null as any };
+  const state = { legacyPreviewRequests: 0, bindingFailure: false, schemaMissing: false, active: false, persisted: null as any, approval: null as any, conflict: false, version: "a".repeat(64), authFail: false, fail: false, primaryFail: false, extraFail: false, saved: null as any };
   const dashboard = { id: 1, code: "SYNTHETIC", name: "合成保護看板", queryDefinitionId: 2, refreshSeconds: 30, displayMode: "TABLE", pageSize: 5, pageSeconds: 10,
     showClock: false, showPageNumber: false, showCountdown: false, isActive: false,
     parameters: { WARD: "OR01", LIST: [1, 2], LEGACY: { keep: true }, deviceColumnMasks: { NAME: "NAME", MRN: "FULL", ROOM: "NONE" }, deviceColumnTypes: { NAME: "NAME", MRN: "MRN", ROOM: "OTHER" }, snapshotKind: "OTHER", snapshotSeconds: 60, deviceSourceColumnMasks: {} as Record<string, Record<string, string>> } };
@@ -63,12 +63,13 @@ async function setup(page: Page, managed = false, canManage = true) {
       { id: 1, widgetType: "TABLE", title: null, x: 0, y: 0, width: 800, height: 500, fontSize: 20, alignment: "LEFT", config: { dataSourceKey: "PRIMARY" }, sortOrder: 0, sourceKey: null },
       { id: 2, widgetType: "TEXT", title: null, x: 0, y: 500, width: 800, height: 60, fontSize: 20, alignment: "LEFT", config: {}, sortOrder: 1, sourceKey: null, staticText: "固定合成標題" },
     ] }] } }); return; }
-    if (path.endsWith("/preview")) {
-      const extra = path.includes("/data-sources/");
+    if (path.endsWith("/preview")) state.legacyPreviewRequests++;
+    if (path.endsWith("/preview") || /query-sources\/v1\/[^/]+\/page$/.test(path)) {
+      const extra = path.includes("/data-sources/") || (path.includes("/query-sources/v1/") && !path.includes("/PRIMARY/"));
       if (state.authFail) { await route.fulfill({ status: 403, json: { error: { code: "FORBIDDEN", message: "private Bind patient Token" } } }); return; }
       if (state.fail || (extra ? state.extraFail : state.primaryFail)) { await route.fulfill({ status: extra ? 403 : 503, json: { error: { code: extra ? "DASHBOARD_EXECUTE_FORBIDDEN" : "PATIENT_AUDIT_FAILED", message: "driver SQL Bind patient password Token" } } }); return; }
       const { parameters: _private, ...safeDashboard } = dashboard;
-      const body = extra ? { sourceKey: "WARD", pageSize: 5, pageSeconds: 10, refreshSeconds: 30, result } : { dashboard: safeDashboard, reportColumns: [], result, disclosureId: 1 };
+      const body = path.endsWith("/page") ? { page: 1, totalPages: 1, snapshotId: "11111111-1111-4111-8111-111111111111", query: { id: 2, code: "Q", name: "合成預覽" }, refreshSeconds: 30, pageSize: 5, pageSeconds: 10, result } : extra ? { sourceKey: "WARD", pageSize: 5, pageSeconds: 10, refreshSeconds: 30, result } : { dashboard: safeDashboard, reportColumns: [], result, disclosureId: 1 };
       expect(JSON.stringify(body)).not.toContain(rawName); expect(JSON.stringify(body)).not.toContain(rawMrn);
       await route.fulfill({ json: body }); return;
     }
@@ -77,7 +78,7 @@ async function setup(page: Page, managed = false, canManage = true) {
   return state;
 }
 test("list preview shows masked values and refresh failure clears previous rows", async ({ page }) => {
-  const state = await setup(page);
+  const state = await setup(page, true);
   await page.clock.install({ time: new Date("2026-10-13T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-10-13T00:00:01Z"));
   await page.goto("/designer/dashboards");
@@ -107,7 +108,7 @@ test("data settings forms preserve legacy JSON and disallow weakening Dataset or
   expect(state.persisted.deviceColumnMasks).toEqual({ NAME: "FULL", MRN: "FULL", ROOM: "NONE" });
 });
 test("layout identifies failing PRIMARY and extra source without showing driver text or old values", async ({ page }) => {
-  const state = await setup(page); state.primaryFail = true; state.extraFail = true;
+  const state = await setup(page, true); state.primaryFail = true; state.extraFail = true;
   await page.goto("/designer/dashboards/1/layout");
   await expect(page.getByText(/來源 PRIMARY：PATIENT_AUDIT_FAILED/)).toBeVisible();
   await expect(page.getByText(/來源 WARD：DASHBOARD_EXECUTE_FORBIDDEN/)).toBeVisible();
@@ -127,7 +128,7 @@ test("Legacy designer playback never reuses previous values after PRIMARY failur
 });
 
 test("a failed extra source preserves only the safe PRIMARY layout preview", async ({ page }) => {
-  const state = await setup(page); state.extraFail = true;
+  const state = await setup(page, true); state.extraFail = true;
   await page.goto("/designer/dashboards/1/layout");
   await expect(page.getByText(/來源 WARD：DASHBOARD_EXECUTE_FORBIDDEN/)).toBeVisible();
   await expect(page.getByText("*************54", { exact: true }).first()).toBeVisible();
@@ -272,4 +273,29 @@ test("view-only preview errors never expose management entry points or private d
   await expect(page.getByText(/PATIENT_AUDIT_FAILED/).first()).toBeVisible();
   await expect(page.getByRole("navigation", { name: "安全設定入口" })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("driver SQL Bind");
+});
+
+test("management preview with its flag disabled shows safe status without Legacy execution fallback", async ({ page }) => {
+  const state = await setup(page, false);
+  await page.goto("/designer/dashboards"); await page.getByRole("button", { name: "預覽", exact: true }).click();
+  await expect(page.getByText(/新版資料來源管理功能旗標關閉/)).toBeVisible();
+  expect(state.legacyPreviewRequests).toBe(0); expect(state.saved).toBeNull(); expect(state.approval).toBeNull();
+  await expect(page.locator(".dashboard-preview-card").getByText("*************54", { exact: true })).toHaveCount(0);
+});
+
+test("approval reload waits for this read's Dataset policy before enabling reconfirmation", async ({ page }) => {
+  const state = await setup(page, true); await page.goto("/designer/dashboards?dashboardId=1#column-approvals");
+  const column = page.getByRole("combobox", { name: /^核准欄位/ }); await expect(column).toBeEnabled();
+  state.version = "c".repeat(64);
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/datasets/3/sensitive-columns", async route => { await gate; await route.fallback(); });
+  try {
+    await page.getByRole("button", { name: "重新載入核准版本", exact: true }).click();
+    await expect(column).toBeDisabled(); await expect(page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true })).toBeDisabled();
+    expect(state.approval).toBeNull();
+  } finally { release(); }
+  await expect(column).toBeEnabled(); await column.selectOption("NAME");
+  await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("FULL");
+  await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
+  await expect.poll(() => state.approval?.expectedVersion).toBe("c".repeat(64));
 });
