@@ -2,7 +2,7 @@ import { securityGuidance } from "../security/securityContracts";
 export type QuerySourceSettings = {
   id?: number; sourceKey: string; queryDefinitionId: number | null; parameters?: Record<string, unknown>;
   refreshSeconds: number; pageSize: number; pageSeconds: number; maxRows: number | null;
-  isEnabled?: boolean; bindingState?: string; errorCode?: string | null;
+  isEnabled?: boolean; bindingState?: string; errorCode?: string | null; requiresConversion?: boolean;
 };
 export type QuerySourceConfiguration = { version: string; dashboardMode?: string; isActive?: boolean; editable: boolean; overCapacity: boolean;
   primary: QuerySourceSettings; sources: QuerySourceSettings[] };
