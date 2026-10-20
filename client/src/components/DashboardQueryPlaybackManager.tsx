@@ -1,3 +1,4 @@
+import { DashboardDeviceMetadataManager } from "./DashboardDeviceMetadataManager";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -140,8 +141,9 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
       <ul>{preflight.checks.map(item => <li key={item.name}>{labels[item.name] ?? "安全檢查"}：{result(item)}</li>)}{preflight.queries.map(item => <li key={item.sourceKey}>{item.sourceKey} Query ACL／必要參數／遮蔽與稽核：{result(item)}</li>)}{preflight.delegators.map(item => <li key={item.deviceId}>裝置 {item.deviceId} 委派者／工作站／Query ACL：{result(item)}</li>)}</ul></div>}
     <button type="button" disabled={busy || !canActivate || mode?.mode === "QUERY_ONLY"} onClick={() => void change(true)}>啟用 Query-only</button>
     <button type="button" disabled={busy || mode?.mode !== "QUERY_ONLY"} onClick={() => void change(false)}>停用 Query-only</button>
-    <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。工作站綁定詳情 API 尚未提供；不得推定未綁定或驗證通過，以預檢與核發時的後端委派驗證為準。</p>
-    <p role="status">裝置新建、IP／名稱／到期調整、工作站換綁及封存寫入待安全 API 契約補齊，本區暫為唯讀。裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
+    <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。下方版本化管理區顯示已儲存工作站關聯；即時有效性仍以預檢與核發時的後端委派驗證為準。</p>
+    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken}/>
+    <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
     <table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{devices.map(device => <tr key={device.id}>
       <td>{device.deviceName}（ID {device.id}）</td><td>{deviceStatus(device, now)}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{device.expiresAtUtc === null ? "無到期日設定" : device.expiresAtUtc ?? "尚未提供"}</td>
       <td><button type="button" disabled={busy} onClick={() => void readPlacement(device.id)}>檢視 {device.deviceName} 播放位置（唯讀）</button><button type="button" disabled={busy || !canIssue(device, now)} onClick={() => void credential(device)}>核發／重新核發 {device.deviceName}</button>

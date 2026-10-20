@@ -1,3 +1,6 @@
+import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
+import { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
+import { deviceManagementStore } from "./dashboardDeviceManagement.repository.js";
 import { createDashboardApprovalRouter } from "./dashboardApproval.routes.js";
 import { createDashboardTransitionRouter } from "./dashboardTransition.routes.js";
 import { createDashboardTransitionService } from "./dashboardTransition.service.js";
@@ -293,6 +296,7 @@ dashboardRouter.use(authenticateJwt);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
+dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
@@ -314,6 +318,8 @@ dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (
     next(error);
   }
 });
+
+dashboardRouter.use("/:id/devices", requirePermission("DESIGN_QUERY"), legacyDeviceWriteGuard(() => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT, readDashboardQueryMode));
 
 dashboardRouter.get("/:id/devices", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
