@@ -69,6 +69,10 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
           || configuration.sources.some(source => source.sourceKey.toUpperCase() === draft.sourceKey.toUpperCase()))) throw new Error();
       }
     } catch { setMessage("請確認 Query、來源代碼、數值範圍及 JSON 物件；含 PRIMARY 最多 8 個來源。"); return; }
+    const firstPrimaryConversion = !removal && draft.sourceKey === "PRIMARY" && configuration.primary.maxRows == null;
+    if (firstPrimaryConversion && !window.confirm(
+      "此 Dashboard 尚未完成 PRIMARY 資料來源轉換。此操作會設定資料量上限，並啟用新版資料來源管理狀態。原有遮蔽及核准規則會保留；請確認 Dashboard 已停用，且已檢查 Query 與參數。是否繼續？"
+    )) return;
     setBusy(true); setMessage("");
     try {
       const primary = !removal && draft.sourceKey === "PRIMARY";
@@ -91,6 +95,9 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
     <p>含 PRIMARY 最多 8 個來源。僅能選擇已發布且有執行權限的 Query；須先安全停用看板。遮蔽由後端執行。轉換後請使用本區與版面編輯器；舊主設定儲存仍受保護。</p>
     <button type="button" disabled={busy} onClick={() => void reload()}>重新載入來源版本</button>
     {configuration && <>
+      {configuration.primary.maxRows == null && (
+        <p role="status">PRIMARY 尚未完成新版資料來源轉換。請在 Dashboard 停用時，選取 PRIMARY 並確認 Query、參數及資料量上限；首次儲存前會再次要求確認。未完成轉換前，資料揭露更新可能會被安全機制阻擋。</p>
+      )}
       {configuration.dashboardMode === "QUERY_ONLY" && <button type="button" disabled={busy} onClick={() => {
         if (window.confirm("停用 Query-only 並使所有相關装置憑證失效？")) void disableQueryMode();
       }}>安全停用 Query-only（撤銷裝置憑證）</button>}
