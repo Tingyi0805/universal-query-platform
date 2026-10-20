@@ -12,11 +12,13 @@ export type QuerySource = {
   queryBindingRevision: number; maxRows: number | null; parameters: Record<string, unknown>;
   refreshSeconds: number; pageSize: number; pageSeconds: number; isEnabled: boolean;
 };
+export type DashboardPresentation = { name: string; description: string | null; displayMode: "TABLE" | "BIG_SCREEN"; displayTitle: string | null; showClock: boolean; showPageNumber: boolean; showCountdown: boolean };
 export type SourceState = {
   dashboard: { id: number; queryDefinitionId: number; isActive: boolean; parameters: Record<string, unknown>;
     mode?: string; modeVersion?: number;
     updatedAtUtc: string; maxRows: number | null; refreshSeconds: number; pageSize: number; pageSeconds: number };
   sources: QuerySource[];
+  presentation?: DashboardPresentation;
   references: string[];
   layoutFingerprint?: string;
 };
@@ -29,6 +31,7 @@ export interface SourceTransaction {
   markManaged(dashboardId: number): Promise<void>;
   writeLayout?(id: number, profiles: DashboardProfileInput[]): Promise<void>;
   updatePrimary?(id: number, input: PrimarySettings): Promise<void>;
+  updatePresentation?(id: number, input: DashboardPresentation): Promise<void>;
   audit(userId: number, dashboardId: number, changes: { sourceKey: string; queryDefinitionId?: number; action: string }[]): Promise<void>;
 }
 export type PrimarySettings = { queryDefinitionId: number; parameters: Record<string, unknown>; refreshSeconds: number; pageSize: number; pageSeconds: number; maxRows: number };
@@ -62,6 +65,16 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
     await tx.validateQuery(userId, state.dashboard.queryDefinitionId, parameters);
   };
   return {
+    presentation: (id: number, userId: number, input: DashboardPresentation & { expectedVersion: string }) => run(id, async (tx, state) => {
+      if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
+      if (sourceVersion(state) !== input.expectedVersion) throw new QuerySourceError("QUERY_SOURCE_VERSION_CONFLICT");
+      if (!tx.updatePresentation || !state.presentation) throw new QuerySourceError("QUERY_SOURCE_STORAGE_UNAVAILABLE", 503);
+      const { expectedVersion: _expectedVersion, ...presentation } = input;
+      await validatePrimary(tx, state, userId);
+      await tx.updatePresentation(id, presentation);
+      await tx.audit(userId, id, [{ sourceKey: "PRIMARY", action: "PRESENTATION_UPDATE" }]);
+      return projection(await tx.readState(id));
+    }),
     configuration: (id: number, userId: number) => run(id, async (tx, state) => {
       // A failed validation is local to its source. Never return unauthorized parameter values.
       const inspect = async (queryId: number | null, values: Record<string, unknown>) => {
@@ -78,7 +91,7 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       const sources = [];
       for (const source of view.sources) sources.push({ ...source,
         ...await inspect(source.queryDefinitionId, state.sources.find(s => s.id === source.id)!.parameters) });
-      return { ...view, dashboardMode: state.dashboard.mode ?? "LEGACY", isActive: state.dashboard.isActive, editable: !state.dashboard.isActive && state.dashboard.mode !== "QUERY_ONLY",
+      return { ...view, presentation: state.presentation, dashboardMode: state.dashboard.mode ?? "LEGACY", isActive: state.dashboard.isActive, editable: !state.dashboard.isActive && state.dashboard.mode !== "QUERY_ONLY",
         primary: { ...view.primary, readOnly: false, ...await inspect(state.dashboard.queryDefinitionId, primaryParameters) },
         sources };
     }),
