@@ -635,6 +635,15 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
       return;
     }
 
+    // Managed-source Dashboards must be created inactive. Explicit conversion,
+    // sensitivity approval, and playback preflight happen after creation.
+    if (env.DASHBOARD_QUERY_SOURCE_MANAGEMENT && parsed.data.isActive) {
+      res.status(409).json({ error: {
+        code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE",
+        message: "新版資料來源管理模式下，請先建立停用的 Dashboard，完成 PRIMARY 轉換及安全核准後再啟用。",
+      } });
+      return;
+    }
     const id = await createDashboard(parsed.data, req.authUser.id);
     await ensureDefaultDashboardLayout(id, parsed.data.displayTitle ?? parsed.data.name);
     await tryWriteAuditEvent({
