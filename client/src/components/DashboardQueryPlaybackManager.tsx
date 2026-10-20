@@ -7,7 +7,7 @@ type Check = {ok:boolean;code:string|null};
 type Preflight = Mode & {ready:boolean;sourceCount:number;pendingCount:number;checks:(Check & {name:string})[];
   queries:(Check & {sourceKey:string})[];delegators:(Check & {deviceId:number})[]};
 type Device = {id:number;deviceName:string;isActive:boolean;isArchived?:boolean;revokedAtUtc?:string|null};
-const labels:Record<string,string>={inactive:"停用狀態",capacity:"含 PRIMARY 最多 8 個來源",bindings:"來源已轉換與識別有效",references:"元件來源引用",devices:"有效裝置綁定"};
+const labels:Record<string,string>={inactive:"停用狀態",capacity:"含 PRIMARY 最多 8 個來源",primaryConversion:"PRIMARY 資料來源已完成轉換",bindings:"來源已轉換與識別有效",references:"元件來源引用",devices:"有效裝置綁定"};
 export function DashboardQueryPlaybackManager({dashboardId,accessToken}:{dashboardId:number;accessToken:string|null}) {
   const [mode,setMode]=useState<Mode|null>(null),[preflight,setPreflight]=useState<Preflight|null>(null);
   const [devices,setDevices]=useState<Device[]>([]),[busy,setBusy]=useState(false),[message,setMessage]=useState("");
