@@ -104,6 +104,18 @@ test("presentation-only update preserves PRIMARY, approvals and source bindings"
   assert.deepEqual(after.references, before.references);
   await assert.rejects(f.service.presentation(1, 1, payload), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
 });
+test("presentation audit failure rolls back display changes and preserves version", async () => {
+  const f = fixture();
+  const before = structuredClone(f.state());
+  const version = sourceVersion(before);
+  f.control.auditFailure = true;
+  await assert.rejects(f.service.presentation(1, 1, {
+    ...before.presentation!, name: "Not committed", expectedVersion: version,
+  }));
+  assert.deepEqual(f.state(), before);
+  assert.equal(sourceVersion(f.state()), version);
+  assert.equal(f.control.rollback, 1);
+});
 test("presentation update is fail-closed when active, Query-only, or capability off", async () => {
   const f = fixture();
   const payload = { ...f.state().presentation!, expectedVersion: sourceVersion(f.state()), name: "Safe" };
