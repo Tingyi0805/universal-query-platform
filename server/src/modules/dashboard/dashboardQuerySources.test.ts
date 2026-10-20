@@ -104,6 +104,25 @@ test("presentation-only update preserves PRIMARY, approvals and source bindings"
   assert.deepEqual(after.references, before.references);
   await assert.rejects(f.service.presentation(1, 1, payload), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
 });
+test("presentation update is fail-closed when active, Query-only, or capability off", async () => {
+  const f = fixture();
+  const payload = { ...f.state().presentation!, expectedVersion: sourceVersion(f.state()), name: "Safe" };
+  const before = structuredClone(f.state());
+  f.state().dashboard.isActive = true;
+  await assert.rejects(f.service.presentation(1, 1, { ...payload, expectedVersion: sourceVersion(f.state()) }), {
+    code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE",
+  });
+  f.state().dashboard.isActive = false;
+  f.state().dashboard.mode = "QUERY_ONLY";
+  await assert.rejects(f.service.presentation(1, 1, { ...payload, expectedVersion: sourceVersion(f.state()) }), {
+    code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE",
+  });
+  f.state().dashboard.mode = "LEGACY";
+  f.control.enabled = false;
+  await assert.rejects(f.service.presentation(1, 1, payload), { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" });
+  assert.equal(f.control.writes, 0);
+  assert.deepEqual(f.state().presentation, before.presentation);
+});
 test("default-off capability and missing 917 reject without writes or legacy fallback", async () => {
   const f = fixture(); f.control.enabled = false;
   await assert.rejects(f.service.patch(1, 1, f.patch()), { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" });
