@@ -71,6 +71,21 @@ test("strict Query-only contract rejects Dataset, SQL, PRIMARY, duplicate keys a
   assert.equal(querySourcePatchSchema.safeParse({ ...p, upserts: [{ ...p.upserts[0], sourceKey: "PRIMARY" }] }).success, false);
   assert.equal(querySourcePatchSchema.safeParse({ ...p, removals: [{ id: 10, sourceKey: "ward" }] }).success, false);
 });
+test("PRIMARY conversion state is explicit before and after first managed update", async () => {
+  const f = fixture();
+  const before = await f.service.configuration(1, 1);
+  assert.equal(before.primary.requiresConversion, true);
+  assert.equal(before.primary.maxRows, 1000); // Display default must not imply converted.
+  assert.equal(before.editable, true);
+  await f.service.primary(1, 1, {
+    expectedVersion: before.version, queryDefinitionId: 20, parameters: {},
+    refreshSeconds: 30, pageSize: 10, pageSeconds: 15, maxRows: 1000,
+  });
+  const after = await f.service.configuration(1, 1);
+  assert.equal(after.primary.requiresConversion, false);
+  assert.equal(after.primary.maxRows, 1000);
+  assert.notEqual(after.version, before.version);
+});
 test("default-off capability and missing 917 reject without writes or legacy fallback", async () => {
   const f = fixture(); f.control.enabled = false;
   await assert.rejects(f.service.patch(1, 1, f.patch()), { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" });
