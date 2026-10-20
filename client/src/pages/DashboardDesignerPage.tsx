@@ -216,6 +216,7 @@ export function DashboardDesignerPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [legacyWriterState, setLegacyWriterState] = useState<"checking" | "allowed" | "managed" | "unavailable">("checking");
+  const [presentationEditVersion, setPresentationEditVersion] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -283,11 +284,12 @@ export function DashboardDesignerPage() {
   useEffect(() => { void load(); }, [load]);
   // Never fall back to the legacy writer when management capability is active or unknown.
   useEffect(() => {
-    if (!form.id) { setLegacyWriterState("checking"); return; }
+    if (!form.id) { setLegacyWriterState("checking"); setPresentationEditVersion(null); return; }
     let cancelled = false;
     setLegacyWriterState("checking");
-    void apiRequest(`/dashboards/${form.id}/query-sources/v1/configuration`, {}, accessToken)
-      .then(() => { if (!cancelled) setLegacyWriterState("managed"); })
+    setPresentationEditVersion(null);
+    void apiRequest<{ version: string }>(`/dashboards/${form.id}/query-sources/v1/configuration`, {}, accessToken)
+      .then((configuration) => { if (!cancelled) { setPresentationEditVersion(configuration.version); setLegacyWriterState("managed"); } })
       .catch((error: unknown) => {
         if (cancelled) return;
         const code = (error as { code?: string })?.code;
@@ -384,16 +386,14 @@ export function DashboardDesignerPage() {
   }
 
   async function savePresentation() {
-    if (!form.id || legacyWriterState !== "managed" || saving) return;
+    if (!form.id || legacyWriterState !== "managed" || !presentationEditVersion || saving) return;
     setSaving(true); setError(""); setNotice("");
     try {
       const base = `/dashboards/${form.id}/query-sources/v1`;
-      const current = await apiRequest<{version: string; editable: boolean; presentation?: unknown}>(`${base}/configuration`, {}, accessToken);
-      if (!current.editable) throw Object.assign(new Error("Dashboard 必須先停用才能修改一般顯示設定。"), { code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE" });
-      await apiRequest(`${base}/presentation`, {
+      const result = await apiRequest<{ version: string }>(`${base}/presentation`, {
         method: "PATCH",
         body: JSON.stringify({
-          expectedVersion: current.version,
+          expectedVersion: presentationEditVersion,
           name: form.name.trim(),
           description: form.description.trim() || null,
           displayMode: form.displayMode,
@@ -403,6 +403,7 @@ export function DashboardDesignerPage() {
           showCountdown: form.showCountdown,
         }),
       }, accessToken);
+      setPresentationEditVersion(result.version);
       setNotice("新版一般顯示設定已儲存；Query、參數、啟用狀態及遮蔽核准未變更。");
       await load();
     } catch (e) {
@@ -1300,7 +1301,7 @@ export function DashboardDesignerPage() {
                   {saving ? "儲存中…" : form.id ? "儲存修改" : "建立 Dashboard"}
                 </button>
                 {form.id && legacyWriterState === "managed" && (
-                  <button className="primary-button" type="button" disabled={saving || form.isActive} onClick={() => void savePresentation()}>
+                  <button className="primary-button" type="button" disabled={saving || form.isActive || !presentationEditVersion} onClick={() => void savePresentation()}>
                     {saving ? "儲存中…" : "儲存一般顯示設定（新版）"}
                   </button>
                 )}
