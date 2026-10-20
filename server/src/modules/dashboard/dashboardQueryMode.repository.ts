@@ -20,21 +20,22 @@ export async function readDashboardQueryMode(id: number) {
   if (!["LEGACY", "QUERY_ONLY", "QUERY_ONLY_DISABLED"].includes(String(row.QueryMode))) throw new QuerySourceError("QUERY_MODE_INVALID", 503);
   return { mode: String(row.QueryMode), version: Number(row.QueryModeVersion) };
 }
+export async function queryModeSchemaReady(request: sql.Request): Promise<boolean> {
+  const result = await request.query(`SELECT CASE WHEN COL_LENGTH('uqp.Dashboard','QueryMode') IS NOT NULL
+    AND COL_LENGTH('uqp.Dashboard','QueryModeVersion') IS NOT NULL AND EXISTS
+    (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.Dashboard') AND name='CK_Dashboard_QueryMode' AND is_disabled=0 AND is_not_trusted=0)
+    AND COL_LENGTH('uqp.DashboardDisplayDevice','DelegatorTokenVersion') IS NOT NULL
+    AND COL_LENGTH('uqp.DashboardDisplayDevice','QueryModeGrantVersion') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.DashboardDisplayDevice') AND name='CK_DashboardDevice_QueryModeGrant' AND is_disabled=0 AND is_not_trusted=0)
+    THEN 1 ELSE 0 END AS Ready`);
+  return Boolean(result.recordset[0]?.Ready);
+}
 export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDependencies,
   extend(transaction, base) {
     const request = () => new sql.Request(transaction);
     const scoped = (id: number) => request().input("id", sql.BigInt, id);
     return Object.assign(base, {
-      async modeReady() {
-        const result = await request().query(`SELECT CASE WHEN COL_LENGTH('uqp.Dashboard','QueryMode') IS NOT NULL
-          AND COL_LENGTH('uqp.Dashboard','QueryModeVersion') IS NOT NULL AND EXISTS
-          (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.Dashboard') AND name='CK_Dashboard_QueryMode' AND is_disabled=0 AND is_not_trusted=0)
-          AND COL_LENGTH('uqp.DashboardDisplayDevice','DelegatorTokenVersion') IS NOT NULL
-          AND COL_LENGTH('uqp.DashboardDisplayDevice','QueryModeGrantVersion') IS NOT NULL
-          AND EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.DashboardDisplayDevice') AND name='CK_DashboardDevice_QueryModeGrant' AND is_disabled=0 AND is_not_trusted=0)
-          THEN 1 ELSE 0 END AS Ready`);
-        return Boolean(result.recordset[0]?.Ready);
-      },
+      modeReady: () => queryModeSchemaReady(request()),
       async actor(userId, tokenVersion) {
         const session = await getTokenSessionState(userId, transaction);
         if (!session?.isActive || session.tokenVersion !== tokenVersion) throw new QuerySourceError("TOKEN_REVOKED", 401);

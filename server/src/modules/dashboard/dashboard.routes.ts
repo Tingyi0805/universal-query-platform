@@ -1,4 +1,7 @@
 import { createDashboardApprovalRouter } from "./dashboardApproval.routes.js";
+import { createDashboardTransitionRouter } from "./dashboardTransition.routes.js";
+import { createDashboardTransitionService } from "./dashboardTransition.service.js";
+import { dashboardTransitionStore } from "./dashboardTransition.repository.js";
 import { canCreateDashboardInMode } from "./dashboardManagedCreation.js";
 import { dashboardApprovalService, getDashboardApprovalEvidence } from "./dashboardApproval.repository.js";
 import { layoutSchema } from "./dashboardLayout.schema.js";
@@ -39,7 +42,6 @@ import { getEffectiveQueryAccess, getQueryDefinition } from "../queryDefinition/
 import { listReportColumns } from "../queryDefinition/reportColumn.repository.js";
 import {
   createDashboard,
-  deleteDashboard,
   getDashboard,
   listAccessibleDashboards,
   listDashboards,
@@ -288,6 +290,7 @@ dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, ch
   auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
@@ -751,43 +754,6 @@ dashboardRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req, res, 
       });
       return;
     }
-    next(error);
-  }
-});
-
-dashboardRouter.delete("/:id", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success || !req.authUser) {
-      res.status(400).json({
-        error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" },
-      });
-      return;
-    }
-
-    const current = await getDashboard(id.data);
-    if (!current) {
-      res.status(404).json({
-        error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" },
-      });
-      return;
-    }
-
-    await deleteDashboard(id.data);
-    await tryWriteAuditEvent({
-      eventType: "DASHBOARD_DELETED",
-      userId: req.authUser.id,
-      queryDefinitionId: current.queryDefinitionId,
-      parameters: {
-        dashboardId: current.id,
-        code: current.code,
-        name: current.name,
-      },
-      ...auditRequestContext(req),
-    });
-
-    res.json({ status: "OK" });
-  } catch (error) {
     next(error);
   }
 });

@@ -18,7 +18,9 @@ const canonical = (value: unknown): string => JSON.stringify(value && typeof val
 export function hasPrimaryApprovals(parameters: Record<string, unknown>) { return Object.keys(approvalObject(parameters.deviceColumnMasks)).length > 0; }
 export function sourceApprovals(parameters: Record<string, unknown>, key: string) {
   const sources = approvalObject(parameters.deviceSourceColumnMasks);
-  return approvalObject(Object.hasOwn(sources, key) ? sources[key] : undefined);
+  // Binding guards must also see historical case-equivalent approval keys.
+  return Object.fromEntries(Object.entries(sources).filter(([name]) => name.toUpperCase() === key.toUpperCase())
+    .flatMap(([, masks]) => Object.entries(approvalObject(masks))));
 }
 export function assertEmptyApprovalCreation(parameters: Record<string, unknown>) {
   if (hasPrimaryApprovals(parameters) || Object.keys(approvalObject(parameters.deviceColumnTypes)).length ||

@@ -85,19 +85,23 @@ export function createDashboardApprovalStore(deps = defaultApprovalDependencies)
 export const dashboardApprovalService = createDashboardApprovalService(createDashboardApprovalStore());
 
 /** Independent read-only evidence: it does not require Legacy writer permission or enable flags. */
+export async function readDashboardApprovalEvidence(id: number, request: () => sql.Request): Promise<string> {
+  const parent = (await request().input("id", sql.BigInt, id).query(
+    "SELECT QueryDefinitionId,ApprovalRowVersion FROM uqp.Dashboard WITH (HOLDLOCK) WHERE Id=@id")).recordset[0];
+  if (!parent) throw new DashboardApprovalError("DASHBOARD_NOT_FOUND", 404);
+  const sources = (await request().input("id", sql.BigInt, id).query(
+    "SELECT Id,SourceKey,DatasetId,ApprovalRowVersion FROM uqp.DashboardDataSource WITH (HOLDLOCK) WHERE DashboardId=@id ORDER BY Id")).recordset;
+  return approvalVersion({ dashboardId: id, queryId: Number(parent.QueryDefinitionId), rowVersion: rowVersion(parent.ApprovalRowVersion),
+    sources: sources.map(s => ({ id: Number(s.Id), sourceKey: String(s.SourceKey), datasetId: Number(s.DatasetId), rowVersion: rowVersion(s.ApprovalRowVersion) })) });
+}
+/** Validates 919 before reading evidence; callers sharing a transaction must do the same. */
 export function createDashboardApprovalEvidenceReader(deps: Pick<typeof defaultApprovalDependencies, "getPool" | "createTransaction" | "createRequest" | "schema"> = defaultApprovalDependencies) {
  return async (id: number): Promise<string> => {
   const pool = await deps.getPool(); if (!pool) throw new DashboardApprovalError("SECURITY_SCHEMA_REQUIRED", 503);
   const tx = deps.createTransaction(pool); await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
     await deps.schema(deps.createRequest(tx));
-    const parent = (await deps.createRequest(tx).input("id", sql.BigInt, id).query(
-      "SELECT QueryDefinitionId,ApprovalRowVersion FROM uqp.Dashboard WITH (HOLDLOCK) WHERE Id=@id")).recordset[0];
-    if (!parent) throw new DashboardApprovalError("DASHBOARD_NOT_FOUND", 404);
-    const sources = (await deps.createRequest(tx).input("id", sql.BigInt, id).query(
-      "SELECT Id,SourceKey,DatasetId,ApprovalRowVersion FROM uqp.DashboardDataSource WITH (HOLDLOCK) WHERE DashboardId=@id ORDER BY Id")).recordset;
-    const digest = approvalVersion({ dashboardId: id, queryId: Number(parent.QueryDefinitionId), rowVersion: rowVersion(parent.ApprovalRowVersion),
-      sources: sources.map(s => ({ id: Number(s.Id), sourceKey: String(s.SourceKey), datasetId: Number(s.DatasetId), rowVersion: rowVersion(s.ApprovalRowVersion) })) });
+    const digest = await readDashboardApprovalEvidence(id, () => deps.createRequest(tx));
     await tx.commit(); return digest;
   } catch (error) { try { await tx.rollback(); } catch { /* no success */ } throw error; }
  };

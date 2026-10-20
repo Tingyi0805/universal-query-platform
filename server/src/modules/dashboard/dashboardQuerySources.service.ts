@@ -198,6 +198,9 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
         if ((!saved || saved.queryDefinitionId !== item.queryDefinitionId || saved.datasetId !== datasetId) &&
           Object.keys(sourceApprovals(state.dashboard.parameters, item.sourceKey)).length)
           throw new DashboardApprovalError("DASHBOARD_APPROVAL_BINDING_CHANGED");
+        if (saved?.queryDefinitionId != null && saved.queryDefinitionId !== item.queryDefinitionId &&
+          state.references.some(ref => canonical(ref) === canonical(item.sourceKey)))
+          throw new QuerySourceError("QUERY_SOURCE_IN_USE");
         if (saved?.queryDefinitionId === null && saved.datasetId !== datasetId)
           throw new QuerySourceError("QUERY_SOURCE_CONVERSION_DATASET_MISMATCH");
         const write = { ...item, datasetId: saved?.datasetId ?? datasetId, queryBindingRevision: (saved?.queryBindingRevision ?? 0) + 1 };
