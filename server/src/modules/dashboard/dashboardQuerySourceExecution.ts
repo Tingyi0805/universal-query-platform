@@ -19,6 +19,7 @@ export type ExecutionSubject = { userId: number; tokenVersion: number; tokenHash
   verifyDevice?: () => Promise<{ deviceId: number; userId: number; tokenVersion: number; fingerprint: string }> };
 export type ExecutionDependencies = {
   loadBinding: (dashboardId: number, sourceKey: string) => Promise<ExecutionBinding>;
+  getApprovalEvidence: typeof import("./dashboardApproval.repository.js").getDashboardApprovalEvidence;
   getSession: typeof import("../auth/auth.repository.js").getTokenSessionState;
   getQuery: typeof import("../queryDefinition/queryDefinition.repository.js").getQueryDefinition;
   getAccess: typeof import("../queryDefinition/queryDefinition.repository.js").getEffectiveQueryAccess;
@@ -31,6 +32,14 @@ export type ExecutionDependencies = {
   audit: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
 };
 export function createQuerySourceExecution(deps: ExecutionDependencies, enabled: (device?: boolean) => boolean) {
+  const approvalEvidence = async (id: number) => {
+    // Server-only reader validates 919 catalog and reads parent/all-source rowversions
+    // together. Never infer a version from approval JSON, timestamps or client input.
+    const evidence = await deps.getApprovalEvidence(id);
+    if (typeof evidence !== "string" || evidence.length !== 64 || !/^[a-f0-9]{64}$/.test(evidence))
+      throw new QuerySourceError("SECURITY_SCHEMA_REQUIRED", 503);
+    return evidence;
+  };
   const readState = async (id: number, key: string, subject: ExecutionSubject) => {
     if (!enabled(subject.deviceId !== undefined)) throw new QuerySourceError("QUERY_SOURCE_EXECUTION_DISABLED", 404);
     const proof = subject.deviceId !== undefined ? await subject.verifyDevice?.() : undefined;
@@ -40,6 +49,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     if (!session?.isActive || session.tokenVersion !== subject.tokenVersion) throw new QuerySourceError("TOKEN_REVOKED", 401);
     if (!session.permissions.includes("DESIGN_QUERY") || !session.permissions.includes("EXECUTE_QUERY"))
       throw new QuerySourceError(subject.deviceId !== undefined ? "DASHBOARD_DEVICE_UNAUTHORIZED" : "QUERY_SOURCE_PERMISSION_REVOKED", subject.deviceId !== undefined ? 401 : 403);
+    const approvals = await approvalEvidence(id);
     const binding = await deps.loadBinding(id, key);
     if (subject.deviceId !== undefined) {
       if (binding.mode !== "QUERY_ONLY" || !binding.modeRevision || !binding.dashboardActive || !binding.managed)
@@ -70,8 +80,11 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     try { assertDatasetSensitivityPolicy(sensitivity); } catch (error) { throw new QuerySourceError(error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"
       ? "QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED" : "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", 503); }
     const accessRevision = await deps.getAccessRevision(query.id);
+    // Binding/masks and policy are read independently. Bracket those reads so a
+    // concurrent write (including A→B→A) cannot produce an apparently current mix.
+    if (await approvalEvidence(id) !== approvals) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
     const modeVersion = subject.deviceId !== undefined ? `QUERY_ONLY_DEVICE_V1:${binding.modeRevision}` : "QUERY_ONLY_PREVIEW_V1";
-    const fingerprint = createHash("sha256").update(JSON.stringify({ modeVersion, proof, subject, binding, query,
+    const fingerprint = createHash("sha256").update(JSON.stringify({ approvals, modeVersion, proof, subject, binding, query,
       session, access, accessRevision, dataset, source, definitions, sensitivity })).digest("hex");
     return { fingerprint, binding, query, dataset, sensitivity, accessRevision, modeVersion };
   };
@@ -117,6 +130,9 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       assertDashboardResultColumns(snapshot.columns);
       const columns = snapshot.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
       const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
+      // Cached and fresh pages must still match immediately before disclosure audit,
+      // as well as after SQL and after the mandatory audit below.
+      await current();
       let disclosureId: number | null;
       try {
         disclosureId = await deps.audit({ datasetId: dataset.id, queryDefinitionId: query.id,

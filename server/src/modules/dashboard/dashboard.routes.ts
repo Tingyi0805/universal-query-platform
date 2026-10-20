@@ -276,6 +276,7 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
 });
 
 const queryExecution = createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
+  getApprovalEvidence: getDashboardApprovalEvidence,
   getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
   getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
