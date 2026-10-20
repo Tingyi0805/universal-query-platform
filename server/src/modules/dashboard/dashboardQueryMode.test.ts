@@ -83,6 +83,19 @@ for (const fault of ["pending", "parameters", "owner", "station", "policy", "dev
     await assert.rejects(f.service.change(1, 1, 1, fault === "version" ? "0".repeat(64) : sourceVersion(f.state()), true));
     assert.deepEqual(f.state(), before); assert.equal(f.credentials(), "old-hash");
   });
+test("PRIMARY must be converted before Query-only preflight or activation", async () => {
+  const f = fixture();
+  f.state().dashboard.maxRows = null;
+  const before = structuredClone(f.state());
+  const checked = await f.service.preflight(1, 1, 1);
+  assert.equal(checked.ready, false);
+  assert.ok(checked.checks.some(c => c.name === "primaryConversion" && !c.ok && c.code === "QUERY_SOURCE_CONVERSION_REQUIRED"));
+  await assert.rejects(f.service.change(1, 1, 1, sourceVersion(f.state()), true), {
+    code: "QUERY_SOURCE_CONVERSION_REQUIRED",
+  });
+  assert.deepEqual(f.state(), before);
+  assert.equal(f.credentials(), "old-hash");
+});
 test("mandatory audit failure rolls back mode and credential invalidation", async () => {
   const f = fixture(), before = structuredClone(f.state()); f.control.auditFailure = true;
   await assert.rejects(f.service.change(1, 1, 1, sourceVersion(f.state()), true));
