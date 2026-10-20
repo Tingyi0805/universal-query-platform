@@ -1283,10 +1283,17 @@ export function DashboardDesignerPage() {
                   type="checkbox"
                   checked={form.isActive}
                   onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+                  disabled={Boolean(form.id) && legacyWriterState !== "allowed"}
                 />
                 <span>啟用 Dashboard</span>
               </label>
 
+              {form.id && legacyWriterState === "managed" && (
+                <p role="status" className="form-hint">
+                  新版「儲存一般顯示設定」僅儲存名稱、說明、顯示模式、顯示標題、時鐘、頁碼與倒數顯示。
+                  Query、更新／換頁秒數、參數及啟用狀態不會跟著儲存；請使用下方 PRIMARY 資料來源與獨立安全流程處理。
+                </p>
+              )}
               {form.id && legacyWriterState !== "allowed" && (
                 <p role="status" className="form-hint">
                   {legacyWriterState === "checking"
