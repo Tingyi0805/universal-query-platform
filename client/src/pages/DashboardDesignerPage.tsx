@@ -215,6 +215,7 @@ export function DashboardDesignerPage() {
   const [previewDashboardId, setPreviewDashboardId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [legacyWriterState, setLegacyWriterState] = useState<"checking" | "allowed" | "managed" | "unavailable">("checking");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -280,6 +281,20 @@ export function DashboardDesignerPage() {
   }, [accessToken, listDisplayMode, listPage, listPageSize, listSearch, listStatus]);
 
   useEffect(() => { void load(); }, [load]);
+  // Never fall back to the legacy writer when management capability is active or unknown.
+  useEffect(() => {
+    if (!form.id) { setLegacyWriterState("checking"); return; }
+    let cancelled = false;
+    setLegacyWriterState("checking");
+    void apiRequest(`/dashboards/${form.id}/query-sources/v1/configuration`, {}, accessToken)
+      .then(() => { if (!cancelled) setLegacyWriterState("managed"); })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const code = (error as { code?: string })?.code;
+        setLegacyWriterState(code === "QUERY_SOURCE_MANAGEMENT_DISABLED" ? "allowed" : "unavailable");
+      });
+    return () => { cancelled = true; };
+  }, [form.id, accessToken]);
   useEffect(() => {
     const selected = dashboards.find(item => item.id === requestedEditor);
     if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; editDashboard(selected); }
@@ -370,6 +385,10 @@ export function DashboardDesignerPage() {
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (form.id && legacyWriterState !== "allowed") {
+      setError("目前 Dashboard 使用新版資料來源管理，舊版整體儲存已停用；請使用下方資料來源管理，並等待一般設定轉換流程完成。");
+      return;
+    }
     setSaving(true);
     setError("");
     setNotice("");
@@ -1239,8 +1258,17 @@ export function DashboardDesignerPage() {
                 <span>啟用 Dashboard</span>
               </label>
 
+              {form.id && legacyWriterState !== "allowed" && (
+                <p role="status" className="form-hint">
+                  {legacyWriterState === "checking"
+                    ? "正在確認 Dashboard 儲存模式…"
+                    : legacyWriterState === "managed"
+                      ? "已啟用新版資料來源管理；舊版整體儲存不可使用。請使用下方資料來源管理，尚未支援的設定請勿強行儲存。"
+                      : "無法確認 Dashboard 儲存權限與管理模式；已安全停用舊版整體儲存。"}
+                </p>
+              )}
               <div className="dashboard-form-actions">
-                <button className="primary-button" type="submit" disabled={saving}>
+                <button className="primary-button" type="submit" disabled={saving || (Boolean(form.id) && legacyWriterState !== "allowed")}>
                   {saving ? "儲存中…" : form.id ? "儲存修改" : "建立 Dashboard"}
                 </button>
                 {form.id && (
