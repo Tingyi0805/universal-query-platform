@@ -17,6 +17,7 @@ function fixture() {
       maxRows: null, refreshSeconds: 30, pageSize: 10, pageSeconds: 15 },
     sources: [{ id: 10, sourceKey: "WARD", datasetId: 3, queryDefinitionId: null, queryBindingRevision: 0,
       maxRows: null, parameters: { WARD: "SYNTHETIC_PRIVATE_VALUE" }, refreshSeconds: 30, pageSize: 10, pageSeconds: 15, isEnabled: true }],
+    presentation: { name: "Test", description: null, displayMode: "BIG_SCREEN", displayTitle: "Test", showClock: true, showPageNumber: true, showCountdown: true },
     references: ["WARD"],
   };
   const control = { enabled: true, schema: true, transactions: 0, rollback: 0, writes: 0, auditFailure: false,
@@ -45,6 +46,7 @@ function fixture() {
           if (source.id === null) staged.sources.push({ ...structuredClone(source), id: Math.max(0, ...staged.sources.map(s => s.id)) + 1 });
           else staged.sources[staged.sources.findIndex(s => s.id === source.id)] = structuredClone(source) as SourceState["sources"][number];
         },
+        updatePresentation: async (_id, input) => { control.writes++; staged.presentation = structuredClone(input); staged.dashboard.updatedAtUtc = "2026-10-13T00:00:03Z"; },
         updatePrimary: async (_id, input) => { control.writes++; Object.assign(staged.dashboard, input); staged.dashboard.updatedAtUtc = "2026-10-13T00:00:02Z"; },
         writeLayout: async (_id, profiles) => { control.writes++; staged.references = profiles.flatMap(p => p.widgets.filter(w => w.widgetType === "FIELD" || w.widgetType === "TABLE").map(w => String(w.config.dataSourceKey ?? "PRIMARY"))); },
         remove: async (_dashboardId, id) => { control.writes++; staged.sources = staged.sources.filter(s => s.id !== id); },
@@ -85,6 +87,22 @@ test("PRIMARY conversion state is explicit before and after first managed update
   assert.equal(after.primary.requiresConversion, false);
   assert.equal(after.primary.maxRows, 1000);
   assert.notEqual(after.version, before.version);
+});
+test("presentation-only update preserves PRIMARY, approvals and source bindings", async () => {
+  const f = fixture();
+  const before = structuredClone(f.state());
+  const config = await f.service.configuration(1, 1);
+  assert.deepEqual(config.presentation, before.presentation);
+  const payload = { ...before.presentation!, name: "Changed", expectedVersion: config.version };
+  await f.service.presentation(1, 1, payload);
+  const after = f.state();
+  assert.equal(after.presentation?.name, "Changed");
+  assert.deepEqual(after.dashboard.parameters, before.dashboard.parameters);
+  assert.equal(after.dashboard.queryDefinitionId, before.dashboard.queryDefinitionId);
+  assert.equal(after.dashboard.maxRows, before.dashboard.maxRows);
+  assert.deepEqual(after.sources, before.sources);
+  assert.deepEqual(after.references, before.references);
+  await assert.rejects(f.service.presentation(1, 1, payload), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
 });
 test("default-off capability and missing 917 reject without writes or legacy fallback", async () => {
   const f = fixture(); f.control.enabled = false;
