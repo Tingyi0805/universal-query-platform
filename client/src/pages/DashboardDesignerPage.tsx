@@ -383,6 +383,34 @@ export function DashboardDesignerPage() {
     setError("");
   }
 
+  async function savePresentation() {
+    if (!form.id || legacyWriterState !== "managed" || saving) return;
+    setSaving(true); setError(""); setNotice("");
+    try {
+      const base = `/dashboards/${form.id}/query-sources/v1`;
+      const current = await apiRequest<{version: string; editable: boolean; presentation?: unknown}>(`${base}/configuration`, {}, accessToken);
+      if (!current.editable) throw Object.assign(new Error("Dashboard 必須先停用才能修改一般顯示設定。"), { code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE" });
+      await apiRequest(`${base}/presentation`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          expectedVersion: current.version,
+          name: form.name.trim(),
+          description: form.description.trim() || null,
+          displayMode: form.displayMode,
+          displayTitle: form.displayTitle.trim() || null,
+          showClock: form.showClock,
+          showPageNumber: form.showPageNumber,
+          showCountdown: form.showCountdown,
+        }),
+      }, accessToken);
+      setNotice("新版一般顯示設定已儲存；Query、參數、啟用狀態及遮蔽核准未變更。");
+      await load();
+    } catch (e) {
+      const safe = securityGuidance(e);
+      setError(`一般顯示設定未儲存：${safe.code}。 ${safe.message}`);
+    } finally { setSaving(false); }
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault();
     if (form.id && legacyWriterState !== "allowed") {
@@ -1271,6 +1299,11 @@ export function DashboardDesignerPage() {
                 <button className="primary-button" type="submit" disabled={saving || (Boolean(form.id) && legacyWriterState !== "allowed")}>
                   {saving ? "儲存中…" : form.id ? "儲存修改" : "建立 Dashboard"}
                 </button>
+                {form.id && legacyWriterState === "managed" && (
+                  <button className="primary-button" type="button" disabled={saving || form.isActive} onClick={() => void savePresentation()}>
+                    {saving ? "儲存中…" : "儲存一般顯示設定（新版）"}
+                  </button>
+                )}
                 {form.id && (
                   <button className="secondary-button" type="button" onClick={newDashboard}>取消編輯</button>
                 )}
