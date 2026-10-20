@@ -123,6 +123,26 @@ test("presentation update is fail-closed when active, Query-only, or capability 
   assert.equal(f.control.writes, 0);
   assert.deepEqual(f.state().presentation, before.presentation);
 });
+test("new inactive Dashboard flow can save presentation before PRIMARY conversion without changing approvals", async () => {
+  const f = fixture();
+  const original = structuredClone(f.state());
+  const version = sourceVersion(f.state());
+  await f.service.presentation(1, 1, { ...original.presentation!, name: "New Dashboard", expectedVersion: version });
+  let config = await f.service.configuration(1, 1);
+  assert.equal(config.primary.requiresConversion, true);
+  assert.equal(config.isActive, false);
+  assert.equal(config.presentation?.name, "New Dashboard");
+  assert.deepEqual(f.state().dashboard.parameters, original.dashboard.parameters);
+  await f.service.primary(1, 1, {
+    expectedVersion: config.version, queryDefinitionId: original.dashboard.queryDefinitionId,
+    parameters: {}, refreshSeconds: 15, pageSize: 5, pageSeconds: 20, maxRows: 1000,
+  });
+  config = await f.service.configuration(1, 1);
+  assert.equal(config.primary.requiresConversion, false);
+  assert.equal(config.presentation?.name, "New Dashboard");
+  assert.deepEqual(f.state().dashboard.parameters, original.dashboard.parameters);
+  assert.deepEqual(f.state().sources, original.sources);
+});
 test("default-off capability and missing 917 reject without writes or legacy fallback", async () => {
   const f = fixture(); f.control.enabled = false;
   await assert.rejects(f.service.patch(1, 1, f.patch()), { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" });
