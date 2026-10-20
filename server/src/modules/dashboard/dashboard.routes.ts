@@ -1,3 +1,4 @@
+import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
 import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
 import { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
 import { deviceManagementStore } from "./dashboardDeviceManagement.repository.js";
@@ -14,7 +15,7 @@ import { queryModeStore, readDashboardQueryMode } from "./dashboardQueryMode.rep
 import { createQueryDeviceRouter } from "./dashboardQueryDevice.routes.js";
 import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
-import { loadQueryExecutionBinding, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
+import { loadQueryExecutionBinding, loadUserPlaybackSources, readUserPlaybackMode, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
 import { getTokenSessionState } from "../auth/auth.repository.js";
 import { env } from "../../config/env.js";
 import { QuerySourceError, createQuerySourceManagement } from "./dashboardQuerySources.service.js";
@@ -280,12 +281,12 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
   }
 });
 
-const queryExecution = createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
+const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPlaybackSources, loadBinding: loadQueryExecutionBinding,
   getApprovalEvidence: getDashboardApprovalEvidence,
   getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
   getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
-  execute: executeSavedDataset, audit: auditDashboardPatientList }, device => device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
+  execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 dashboardRouter.use(createQueryDeviceRouter(queryExecution, { mode: readDashboardQueryMode, checkDevice: checkDashboardDisplayDevice, dashboard: getDashboard, reportColumns: listReportColumns }));
 
 dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
@@ -296,6 +297,7 @@ dashboardRouter.use(authenticateJwt);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
+dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));
 dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
@@ -598,7 +600,9 @@ dashboardRouter.get("/available", requirePermission("VIEW_QUERY"), async (req, r
       res.status(401).json({ error: { code: "UNAUTHORIZED", message: "需要登入。" } });
       return;
     }
-    res.json({ dashboards: await listAccessibleDashboards(req.authUser.id) });
+    res.setHeader("Cache-Control", "no-store");
+    const dashboards = await listAccessibleDashboards(req.authUser.id);
+    res.json({ dashboards: dashboards.map(({ parameters: _private, ...dashboard }) => dashboard) });
   } catch (error) {
     next(error);
   }

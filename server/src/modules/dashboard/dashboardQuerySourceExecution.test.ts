@@ -1,3 +1,6 @@
+import { createUserPlaybackSourcesReader } from "./dashboardQuerySourceExecution.repository.js";
+import { advanceDashboardAccessEvidence } from "../queryDefinition/queryAccess.repository.js";
+import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
 import { SecurityContractError } from "../securityContract/securityContract.js";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -519,3 +522,132 @@ for (const key of ["PRIMARY", "WARD"]) {
     }
   });
 }
+
+const userSubject = () => ({ ...subject, context: "user" as const, expiresAt: Math.floor(Date.now() / 1000) + 3600 });
+function userFixture() {
+  const f = fixture();
+  f.control.session.permissions = ["VIEW_QUERY", "EXECUTE_QUERY"];
+  f.control.bindings.PRIMARY = { ...structuredClone(f.control.bindings.WARD!), sourceKey: "PRIMARY", sourceId: 1 };
+  for (const b of Object.values(f.control.bindings)) Object.assign(b, { mode: "QUERY_ONLY", modeRevision: 1, dashboardActive: true, referenced: true });
+  f.deps.loadUserSources = async () => ({ keys: Object.keys(f.control.bindings), references: ["WARD", "ROOM"], version: "synthetic-catalog-v1" });
+  return f;
+}
+test("user context needs VIEW_QUERY/EXECUTE_QUERY without DESIGN_QUERY; masked page-by-page audit uses user identity", async () => {
+  const f = userFixture(), user = userSubject();
+  const first = await f.service.page(1, "PRIMARY", user, { page: 1 });
+  assert.equal(first.modeVersion, "QUERY_ONLY_USER_V1:1"); assert.equal(first.result.rows[0]!.NAME, "測○○○甲");
+  assert.equal(first.result.rows[0]!.MRN, undefined); assert.equal(f.control.audits[0]!.userId, 1); assert.equal(f.control.audits[0]!.dashboardDeviceId, undefined);
+  await f.service.page(1, "PRIMARY", user, { page: 2, snapshotId: first.snapshotId });
+  assert.equal(f.control.executions.length, 1); assert.equal(f.control.audits.length, 2);
+  assert.equal(getDashboardPageSnapshot(first.snapshotId, -1, 1)!.executionContext, "user");
+});
+for (const reason of ["view", "execute", "token", "expired", "inactive", "legacy", "unmanaged", "pending", "approval", "sibling-acl", "policy", "flag"]) test(`user playback fails closed before SQL: ${reason}`, async () => {
+  const f = userFixture(), user = userSubject();
+  if (reason === "view") f.control.session.permissions = ["EXECUTE_QUERY"];
+  if (reason === "execute") f.control.session.permissions = ["VIEW_QUERY"];
+  if (reason === "token") f.control.session.tokenVersion++;
+  if (reason === "expired") user.expiresAt = 1;
+  if (reason === "inactive") f.control.bindings.PRIMARY!.dashboardActive = false;
+  if (reason === "legacy") f.control.bindings.PRIMARY!.mode = "LEGACY";
+  if (reason === "unmanaged") f.control.bindings.PRIMARY!.managed = false;
+  if (reason === "pending") f.control.bindings.ROOM!.queryDefinitionId = null;
+  if (reason === "approval") f.control.bindings.ROOM!.sourceMasks = {};
+  if (reason === "sibling-acl") f.control.denied.add(22);
+  if (reason === "policy") f.deps.getSensitivity = async () => ({ version: 0, columns: [] });
+  if (reason === "flag") f.control.enabled = false;
+  await assert.rejects(f.service.page(1, "PRIMARY", user, { page: 1 })); assert.equal(f.control.executions.length, 0);
+});
+for (const stage of ["afterExecute", "afterAudit"] as const) for (const changed of ["approval", "policy", "acl", "jwt"] as const)
+  test(`user ${changed} change during ${stage} refuses result`, async () => {
+    const f = userFixture(), user = userSubject();
+    f.control[stage] = () => {
+      if (changed === "approval") f.control.parentRowVersion++;
+      if (changed === "policy") f.control.policyVersion++;
+      if (changed === "acl") f.control.denied.add(22);
+      if (changed === "jwt") user.expiresAt = 1;
+    };
+    await assert.rejects(f.service.page(1, "PRIMARY", user, { page: 1 }));
+  });
+for (const source of ["PRIMARY", "WARD"]) test(`user ${source} approval A→B→A cannot revive old snapshot`, async () => {
+  const f = userFixture(), user = userSubject(), first = await f.service.page(1, source, user, { page: 1 });
+  if (source === "PRIMARY") f.control.parentRowVersion += 2n; else f.control.sourceRowVersions.WARD += 2n;
+  await assert.rejects(f.service.page(1, source, user, { page: 2, snapshotId: first.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
+  assert.equal(f.control.executions.length, 1);
+});
+test("user/designer/device/session/source namespaces cannot share snapshots; context cannot forge a device identity", async () => {
+  const f = userFixture(), user = userSubject(), first = await f.service.page(1, "PRIMARY", user, { page: 1 });
+  for (const target of [{...user,userId:2}, {...user,tokenHash:"another-session"}]) await assert.rejects(f.service.page(1,"PRIMARY",target,{page:1,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+  await assert.rejects(f.service.page(1,"WARD",user,{page:1,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+  f.control.session.permissions.push("DESIGN_QUERY");
+  f.control.bindings.PRIMARY!.dashboardActive=false;
+  await assert.rejects(f.service.page(1,"PRIMARY",subject,{page:1,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+  f.control.bindings.PRIMARY!.dashboardActive=true;
+  const device = {...subject,deviceId:7,verifyDevice:async()=>({deviceId:7,userId:1,tokenVersion:1,fingerprint:"synthetic-device"})};
+  await assert.rejects(f.service.page(1,"PRIMARY",device,{page:1,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+  const devicePage=await f.service.page(1,"PRIMARY",device,{page:1});
+  await assert.rejects(f.service.page(1,"PRIMARY",user,{page:1,snapshotId:devicePage.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+  await assert.rejects(f.service.page(1,"PRIMARY",{...user,context:"device"},{page:1}),{code:"INVALID_EXECUTION_CONTEXT"});
+});
+test("user audit failure/missing evidence and expired snapshot never return cached data",async()=>{
+  for(const reason of ["audit","evidence","expiry"]){
+    const f=userFixture(),user=userSubject(),first=await f.service.page(1,"PRIMARY",user,{page:1});
+    if(reason==="audit")f.control.failAudit=true;
+    if(reason==="evidence")f.control.missingAudit=true;
+    if(reason==="expiry")getDashboardPageSnapshot(first.snapshotId,-1,1)!.createdAt=0;
+    await assert.rejects(f.service.page(1,"PRIMARY",user,{page:2,snapshotId:first.snapshotId}));
+  }
+});
+for(const reason of ["success","expired-jwt","token-version","permission","preview","injection","flag"])test(`user HTTP route and existing designer guard: ${reason}`,async()=>{
+  const f=userFixture(),oldSecret=env.JWT_SECRET;env.JWT_SECRET="synthetic-user-playback-test";
+  const app=express();app.use(express.json());app.use(createAuthenticateJwt(async()=>structuredClone(f.control.session) as any));
+  app.use(createUserPlaybackRouter(f.service,{mode:async()=>({mode:"QUERY_ONLY",version:1}),dashboard:async()=>({id:1,name:"Synthetic",code:"SYNTHETIC",isActive:true,parameters:{private:"synthetic-private-parameters"},refreshSeconds:30,pageSeconds:5,pageSize:1} as any),layout:async()=>({profiles:[]})}));
+  app.use(createQuerySourceExecutionRouter(f.service));
+  const server=createServer(app);await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  try{
+    const token=jwt.sign({sub:"1",tokenVersion:1},env.JWT_SECRET,{expiresIn:reason==="expired-jwt"?-1:3600});
+    if(reason==="token-version")f.control.session.tokenVersion++;
+    if(reason==="permission")f.control.session.permissions=["VIEW_QUERY"];
+    if(reason==="flag")f.control.enabled=false;
+    const response=await fetch(`http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/1/${reason==="preview"?"query-sources/v1":"playback/v1"}/PRIMARY/page`,{
+      method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify({page:1,...(reason==="injection"?{context:"designer"}: {})})});
+    const expected=reason==="success"?200:["expired-jwt","token-version"].includes(reason)?401:["permission","preview"].includes(reason)?403:reason==="injection"?400:404;
+    assert.equal(response.status,expected);const body=await response.json();assert.doesNotMatch(JSON.stringify(body),/synthetic-private-parameters|00000123/);
+    if(reason==="success"){assert.equal(body.modeVersion,"QUERY_ONLY_USER_V1:1");assert.deepEqual(body.dashboard.parameters,{});assert.equal(response.headers.get("cache-control"),"no-store");}
+    else assert.equal(f.control.executions.length,0);
+  }finally{env.JWT_SECRET=oldSecret;await new Promise<void>(resolve=>server.close(()=>resolve()));}
+});
+
+test("ACL A→B→A advances 919 evidence within the existing ACL transaction, for PRIMARY and additional bindings",async()=>{
+  for(const bound of [null,8]){
+    const statements:string[]=[];let revision=1n;
+    const request={input(name:string,_type:unknown,value:unknown){assert.equal(name,"dashboardAccessQueryId");assert.equal(value,21);return this;},async query(statement:string){
+      statements.push(statement);
+      if(statement.startsWith("SELECT"))return {recordset:[{VersionLength:8,TrustedVersion:1,SourceBinding:bound}]};
+      assert.match(statement,/UPDATE d SET UpdatedAtUtc=SYSUTCDATETIME/);assert.equal(statement.includes("DashboardDataSource"),bound!==null);revision++;return {rowsAffected:[1]};
+    }} as unknown as sql.Request;
+    await advanceDashboardAccessEvidence(request,21);await advanceDashboardAccessEvidence(request,21);assert.equal(revision,3n);assert.equal(statements.length,4);
+  }
+  const f=userFixture(),user=userSubject(),first=await f.service.page(1,"PRIMARY",user,{page:1});
+  // Successful revoke and regrant now update affected parent rowversions in their ACL transaction.
+  f.control.denied.add(22);f.control.parentRowVersion++;f.control.denied.delete(22);f.control.parentRowVersion++;
+  await assert.rejects(f.service.page(1,"PRIMARY",user,{page:2,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+});
+test("ACL evidence advancement preserves pre-919 Query compatibility and rejects conflicting version columns",async()=>{
+  for(const row of [{VersionLength:null,TrustedVersion:0},{VersionLength:8,TrustedVersion:0},{VersionLength:4,TrustedVersion:1}]){
+    let writes=0;
+    const request={input(){return this;},async query(s:string){if(s.startsWith("SELECT"))return {recordset:[row]};writes++;return {rowsAffected:[1]};}}as unknown as sql.Request;
+    if(row.VersionLength===null)await advanceDashboardAccessEvidence(request,21);else await assert.rejects(advanceDashboardAccessEvidence(request,21),{message:"SECURITY_SCHEMA_REQUIRED"});
+    assert.equal(writes,0);
+  }
+});
+for(const reason of ["valid","inactive","disabled-mode","pending-disabled-source","disabled-reference","schema"])test(`locked user source catalog: ${reason}`,async()=>{
+  const saved:any={dashboard:{id:1,queryDefinitionId:21,isActive:true,mode:"QUERY_ONLY",modeVersion:1,maxRows:10,parameters:{},updatedAtUtc:"2026-10-20T00:00:00Z",refreshSeconds:30,pageSize:1,pageSeconds:5},
+    sources:[{id:2,sourceKey:"WARD",datasetId:99,queryDefinitionId:22,queryBindingRevision:1,maxRows:10,isEnabled:true,parameters:{}}],references:["PRIMARY","WARD"],layoutFingerprint:"synthetic-layout"};
+  if(reason==="inactive")saved.dashboard.isActive=false;
+  if(reason==="disabled-mode")saved.dashboard.mode="QUERY_ONLY_DISABLED";
+  if(reason==="pending-disabled-source"){saved.sources[0].isEnabled=false;saved.sources[0].queryDefinitionId=null;}
+  if(reason==="disabled-reference")saved.sources[0].isEnabled=false;
+  const reader=createUserPlaybackSourcesReader({transaction:async work=>work({schemaReady:async()=>reason!=="schema",readState:async (id:number)=>{assert.equal(id,1);return saved;}} as any)});
+  if(reason==="valid"){const view=await reader(1);assert.deepEqual(view.keys,["PRIMARY","WARD"]);assert.match(view.version,/^[a-f0-9]{64}$/);}
+  else await assert.rejects(reader(1));
+});
