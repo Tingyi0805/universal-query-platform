@@ -1,4 +1,5 @@
 import { createDashboardApprovalRouter } from "./dashboardApproval.routes.js";
+import { canCreateDashboardInMode } from "./dashboardManagedCreation.js";
 import { dashboardApprovalService, getDashboardApprovalEvidence } from "./dashboardApproval.repository.js";
 import { layoutSchema } from "./dashboardLayout.schema.js";
 import { createQueryModeRouter } from "./dashboardQueryMode.routes.js";
@@ -637,7 +638,7 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
 
     // Managed-source Dashboards must be created inactive. Explicit conversion,
     // sensitivity approval, and playback preflight happen after creation.
-    if (env.DASHBOARD_QUERY_SOURCE_MANAGEMENT && parsed.data.isActive) {
+    if (!canCreateDashboardInMode(env.DASHBOARD_QUERY_SOURCE_MANAGEMENT, parsed.data.isActive)) {
       res.status(409).json({ error: {
         code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE",
         message: "新版資料來源管理模式下，請先建立停用的 Dashboard，完成 PRIMARY 轉換及安全核准後再啟用。",
