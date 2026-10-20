@@ -1,9 +1,10 @@
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
-import { basicDashboardParameters, securityGuidance } from "../security/securityContracts";
+import { DashboardLegacyDisable } from "../components/DashboardLegacyDisable";
+import { DashboardBasicSettingsEditor } from "../components/DashboardBasicSettingsEditor";
 import { DashboardDataSettingsEditor } from "../components/DashboardDataSettingsEditor";
-import { queryParameterValues, sourcePreviewFailure } from "../dashboard/dataSettings";
+import { sourcePreviewFailure } from "../dashboard/dataSettings";
 import { DashboardQueryPlaybackManager } from "../components/DashboardQueryPlaybackManager";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { rememberDashboardToken,prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
@@ -30,15 +31,6 @@ type DashboardRow = {
   showCountdown: boolean;
   parameters: Record<string, unknown>;
   isActive: boolean;
-};
-
-type QueryDefinitionRow = {
-  id: number;
-  code: string;
-  name: string;
-  isPublished: boolean;
-  isActive: boolean;
-  isArchived: boolean;
 };
 
 type ReportColumn = {
@@ -114,53 +106,8 @@ type PreviewResult = {
   };
 };
 
-type FormState = {
-  id: number | null;
-  code: string;
-  name: string;
-  description: string;
-  queryDefinitionId: string;
-  refreshSeconds: string;
-  displayMode: "TABLE" | "BIG_SCREEN";
-  displayTitle: string;
-  pageSize: string;
-  pageSeconds: string;
-  showClock: boolean;
-  showPageNumber: boolean;
-  showCountdown: boolean;
-  parametersJson: string;
-  snapshotKind: string;
-  snapshotSeconds: string;
-  estimatedRows: string;
-  deviceColumnMasksJson: string;
-  deviceColumnTypesJson: string;
-  deviceSourceColumnMasksJson: string;
-  isActive: boolean;
-};
-
-const emptyForm: FormState = {
-  id: null,
-  code: "",
-  name: "",
-  description: "",
-  queryDefinitionId: "",
-  refreshSeconds: "10",
-  displayMode: "BIG_SCREEN",
-  displayTitle: "",
-  pageSize: "5",
-  pageSeconds: "20",
-  showClock: true,
-  showPageNumber: true,
-  showCountdown: true,
-  parametersJson: "{}",
-  snapshotKind: "OTHER",
-  snapshotSeconds: "",
-  estimatedRows: "25",
-  deviceColumnMasksJson: "{}",
-  deviceColumnTypesJson: "{}",
-  deviceSourceColumnMasksJson: "{}",
-  isActive: false,
-};
+type FormState = { id: number | null; code: string };
+const emptyForm: FormState = { id: null, code: "" };
 
 function displayValue(value: unknown): string {
   if (value == null) return "";
@@ -209,14 +156,10 @@ export function DashboardDesignerPage() {
     popup.location.replace(`/designer/dashboards/${dashboardId}/display`);
   }
   const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
-  const [queries, setQueries] = useState<QueryDefinitionRow[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewDashboardId, setPreviewDashboardId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [legacyWriterState, setLegacyWriterState] = useState<"checking" | "allowed" | "managed" | "unavailable">("checking");
-  const [presentationEditVersion, setPresentationEditVersion] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -250,9 +193,10 @@ export function DashboardDesignerPage() {
     token: string;
   } | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError("");
+  const listRead = useRef(0);
+  const load = useCallback(async (background = false) => {
+    const read = ++listRead.current;
+    if (!background) { setLoading(true); setError(""); }
     try {
       const params = new URLSearchParams({
         page: String(listPage),
@@ -262,58 +206,28 @@ export function DashboardDesignerPage() {
       if (listSearch) params.set("search", listSearch);
       if (listDisplayMode) params.set("displayMode", listDisplayMode);
 
-      const [dashboardResult, queryResult] = await Promise.all([
-        apiRequest<{
-          dashboards: DashboardRow[];
-          total: number;
-          totalPages: number;
-        }>(`/dashboards?${params.toString()}`, {}, accessToken),
-        apiRequest<{ queryDefinitions: QueryDefinitionRow[] }>("/query-definitions", {}, accessToken),
-      ]);
+      const dashboardResult = await apiRequest<{ dashboards: DashboardRow[]; total: number; totalPages: number }>(`/dashboards?${params.toString()}`, {}, accessToken);
+      if (read !== listRead.current) return;
       setDashboards(dashboardResult.dashboards);
       setListTotal(dashboardResult.total);
       setListTotalPages(dashboardResult.totalPages);
-      setQueries(queryResult.queryDefinitions);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "載入 Dashboard 設定失敗。");
+      if (read === listRead.current && !background) setError(e instanceof Error ? e.message : "載入 Dashboard 設定失敗。");
     } finally {
-      setLoading(false);
+      if (read === listRead.current) setLoading(false);
     }
   }, [accessToken, listDisplayMode, listPage, listPageSize, listSearch, listStatus]);
 
-  useEffect(() => { void load(); }, [load]);
-  // Never fall back to the legacy writer when management capability is active or unknown.
   useEffect(() => {
-    if (!form.id) { setLegacyWriterState("checking"); setPresentationEditVersion(null); return; }
-    let cancelled = false;
-    setLegacyWriterState("checking");
-    setPresentationEditVersion(null);
-    void apiRequest<{ version: string }>(`/dashboards/${form.id}/query-sources/v1/configuration`, {}, accessToken)
-      .then((configuration) => { if (!cancelled) { setPresentationEditVersion(configuration.version); setLegacyWriterState("managed"); } })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        const code = (error as { code?: string })?.code;
-        setLegacyWriterState(code === "QUERY_SOURCE_MANAGEMENT_DISABLED" ? "allowed" : "unavailable");
-      });
-    return () => { cancelled = true; };
-  }, [form.id, accessToken]);
+    void load();
+    const changed = () => { void load(true); };
+    window.addEventListener("uqp.dashboard.configuration.changed", changed);
+    return () => { ++listRead.current; window.removeEventListener("uqp.dashboard.configuration.changed", changed); };
+  }, [load]);
   useEffect(() => {
     const selected = dashboards.find(item => item.id === requestedEditor);
     if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; editDashboard(selected); }
   }, [dashboards, requestedEditor]);
-
-  const snapshotDefaultSeconds: Record<FormState["snapshotKind"], number> = {
-    SURGERY: 20, OUTPATIENT: 60, EXAM: 60, STATISTICS: 180, OTHER: 60,
-  };
-  const estimatedPages = Math.max(1, Math.ceil(Math.max(1, Number(form.estimatedRows) || 1) / Math.max(1, Number(form.pageSize) || 1)));
-  const estimatedCycleSeconds = estimatedPages * Math.max(5, Number(form.pageSeconds) || 5);
-  const recommendedSnapshotSeconds = Math.ceil((estimatedCycleSeconds + Math.max(10, Math.ceil(estimatedCycleSeconds * 0.2))) / 10) * 10;
-  const effectiveSnapshotSeconds = form.snapshotSeconds.trim() ? Number(form.snapshotSeconds) : snapshotDefaultSeconds[form.snapshotKind];
-
-  const usableQueries = useMemo(
-    () => queries.filter((query) => query.isPublished && query.isActive && !query.isArchived),
-    [queries],
-  );
 
   const previewSequence = useRef(0);
   const loadPreview = useCallback(async (dashboardId: number, silent = false) => {
@@ -352,29 +266,7 @@ export function DashboardDesignerPage() {
   }, [dashboards, loadPreview, previewDashboardId]);
 
   function editDashboard(item: DashboardRow) {
-    setForm({
-      id: item.id,
-      code: item.code,
-      name: item.name,
-      description: item.description ?? "",
-      queryDefinitionId: String(item.queryDefinitionId),
-      refreshSeconds: String(item.refreshSeconds),
-      displayMode: item.displayMode,
-      displayTitle: item.displayTitle ?? "",
-      pageSize: String(item.pageSize),
-      pageSeconds: String(item.pageSeconds),
-      showClock: item.showClock,
-      showPageNumber: item.showPageNumber,
-      showCountdown: item.showCountdown,
-      parametersJson: JSON.stringify(queryParameterValues(item.parameters ?? {}), null, 2),
-      snapshotKind: typeof item.parameters?.snapshotKind === "string" ? item.parameters.snapshotKind : "OTHER",
-      snapshotSeconds: item.parameters?.snapshotSeconds == null ? "" : String(item.parameters.snapshotSeconds),
-      estimatedRows: "25",
-      deviceColumnMasksJson: JSON.stringify(item.parameters?.deviceColumnMasks === undefined ? {} : item.parameters.deviceColumnMasks, null, 2),
-      deviceSourceColumnMasksJson: JSON.stringify(item.parameters?.deviceSourceColumnMasks === undefined ? {} : item.parameters.deviceSourceColumnMasks, null, 2),
-      deviceColumnTypesJson: JSON.stringify(item.parameters?.deviceColumnTypes === undefined ? {} : item.parameters.deviceColumnTypes, null, 2),
-      isActive: item.isActive,
-    });
+    setForm({ id: item.id, code: item.code });
     setNotice("");
     setError("");
   }
@@ -383,126 +275,6 @@ export function DashboardDesignerPage() {
     setForm(emptyForm);
     setNotice("");
     setError("");
-  }
-
-  async function savePresentation() {
-    if (!form.id || legacyWriterState !== "managed" || !presentationEditVersion || saving) return;
-    setSaving(true); setError(""); setNotice("");
-    try {
-      const base = `/dashboards/${form.id}/query-sources/v1`;
-      const result = await apiRequest<{ version: string }>(`${base}/presentation`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          expectedVersion: presentationEditVersion,
-          name: form.name.trim(),
-          description: form.description.trim() || null,
-          displayMode: form.displayMode,
-          displayTitle: form.displayTitle.trim() || null,
-          showClock: form.showClock,
-          showPageNumber: form.showPageNumber,
-          showCountdown: form.showCountdown,
-        }),
-      }, accessToken);
-      setPresentationEditVersion(result.version);
-      setNotice("新版一般顯示設定已儲存；Query、參數、啟用狀態及遮蔽核准未變更。");
-      await load();
-    } catch (e) {
-      const safe = securityGuidance(e);
-      setError(`一般顯示設定未儲存：${safe.code}。 ${safe.message}`);
-    } finally { setSaving(false); }
-  }
-
-  async function save(event: FormEvent) {
-    event.preventDefault();
-    if (form.id && legacyWriterState !== "allowed") {
-      setError("目前 Dashboard 使用新版資料來源管理，舊版整體儲存已停用；請使用下方資料來源管理，並等待一般設定轉換流程完成。");
-      return;
-    }
-    setSaving(true);
-    setError("");
-    setNotice("");
-
-    try {
-      let parameters: Record<string, unknown>;
-      try {
-        const parsed = JSON.parse(form.parametersJson || "{}");
-        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error("NOT_OBJECT");
-        }
-        parameters = parsed;
-      } catch {
-        setError("預設參數必須是 JSON Object，例如 { \"ROOM_CODE\": \"OR01\" }。");
-        return;
-      }
-
-      if (form.snapshotSeconds.trim() !== "" && (!Number.isInteger(Number(form.snapshotSeconds)) || Number(form.snapshotSeconds) < 10 || Number(form.snapshotSeconds) > 3600)) {
-        setError("快照秒數必須為 10～3600 的整數，或留白使用建議值。");
-        return;
-      }
-      parameters = basicDashboardParameters(parameters);
-      const storedKind = dashboards.find(item => item.id === form.id)?.parameters?.snapshotKind;
-      if (storedKind !== undefined && typeof storedKind !== "string") {
-        setError("舊快照用途格式無法安全轉換，原設定保留；請管理者審查。"); return;
-      }
-      parameters.snapshotKind = form.snapshotKind;
-      if (form.snapshotSeconds.trim() !== "") parameters.snapshotSeconds = Number(form.snapshotSeconds);
-
-      const payload = {
-        code: form.code.trim().toUpperCase(),
-        name: form.name.trim(),
-        description: form.description.trim() || null,
-        queryDefinitionId: Number(form.queryDefinitionId),
-        refreshSeconds: Number(form.refreshSeconds),
-        displayMode: form.displayMode,
-        displayTitle: form.displayTitle.trim() || null,
-        pageSize: Number(form.pageSize),
-        pageSeconds: Number(form.pageSeconds),
-        showClock: form.showClock,
-        showPageNumber: form.showPageNumber,
-        showCountdown: form.showCountdown,
-        parameters,
-        isActive: form.isActive,
-      };
-
-      if (form.id) {
-        await apiRequest(`/dashboards/${form.id}`, {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        }, accessToken);
-        setNotice("Dashboard 一般設定已更新。若要修改核准，請重新載入核准版本。");
-      } else {
-        const created = await apiRequest<{ id: number }>("/dashboards", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        }, accessToken);
-        if (!Number.isSafeInteger(created.id) || created.id < 1) throw new Error("RESPONSE_INVALID");
-        setForm(current => ({ ...current, id: created.id }));
-        setNotice("Dashboard 已建立，預設沒有核准欄位。請在下方明確管理核准。");
-      }
-
-      await load();
-    } catch (e) {
-      const safe = securityGuidance(e); setError(`來源 PRIMARY：${safe.code}。${safe.message}`);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function remove(item: DashboardRow) {
-    if (!window.confirm(`確定刪除 Dashboard「${item.name}」？`)) return;
-    setError("");
-    setNotice("");
-    try {
-      await apiRequest(`/dashboards/${item.id}`, { method: "DELETE" }, accessToken);
-      if (previewDashboardId === item.id) {
-        setPreviewDashboardId(null);
-        setPreview(null);
-      }
-      setNotice("Dashboard 已刪除。");
-      await load();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "刪除 Dashboard 失敗。");
-    }
   }
 
   async function startPreview(item: DashboardRow) {
@@ -1095,231 +867,12 @@ export function DashboardDesignerPage() {
 
       {!loading && (
         <>
-          <section className="dashboard-editor-card">
-            <div className="dashboard-editor-heading">
-              <h2>{form.id ? "編輯 Dashboard" : "新增 Dashboard"}</h2>
-              {form.id && (
-                <button className="secondary-button" type="button" onClick={newDashboard}>新增另一個</button>
-              )}
-            </div>
-
-            <form onSubmit={save} className="dashboard-editor-form">
-              <label>
-                <span>代碼</span>
-                <input
-                  value={form.code}
-                  placeholder="例如 OR01_STATUS"
-                  disabled={Boolean(form.id)}
-                  onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })}
-                />
-              </label>
-
-              <label>
-                <span>名稱</span>
-                <input
-                  value={form.name}
-                  placeholder="例如 手術室 1 狀態"
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                />
-              </label>
-
-              <label className="wide">
-                <span>說明</span>
-                <input
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                />
-              </label>
-
-              <label>
-                <span>資料 Query</span>
-                <select
-                  value={form.queryDefinitionId}
-                  onChange={(e) => {
-                    if (form.id && e.target.value !== form.queryDefinitionId) {
-                      try { if (Object.keys(JSON.parse(form.deviceColumnMasksJson)).length) { setError(sourcePreviewFailure("PRIMARY", { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" })); return; } }
-                      catch { setError("核准 JSON 尚未確認，請先重新載入核准版本；禁止換綁。"); return; }
-                    }
-                    setForm({ ...form, queryDefinitionId: e.target.value });
-                  }}
-                >
-                  <option value="">請選擇已發佈 Query</option>
-                  {usableQueries.map((query) => (
-                    <option key={query.id} value={query.id}>
-                      {query.name} ({query.code})
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <h3 className="wide">Dashboard 播放設定</h3>
-              <label>
-                <span>資料更新秒數</span>
-                <input
-                  type="number"
-                  min={5}
-                  max={3600}
-                  value={form.refreshSeconds}
-                  onChange={(e) => setForm({ ...form, refreshSeconds: e.target.value })}
-                />
-                <small>每個 Dashboard 可獨立設定，5～3600 秒。</small>
-              </label>
-
-              <label>
-                <span>顯示模式</span>
-                <select
-                  value={form.displayMode}
-                  onChange={(e) => setForm({ ...form, displayMode: e.target.value as "TABLE" | "BIG_SCREEN" })}
-                >
-                  <option value="BIG_SCREEN">大螢幕看板</option>
-                  <option value="TABLE">一般表格</option>
-                </select>
-              </label>
-
-              <label className="wide">
-                <span>播放標題</span>
-                <input
-                  value={form.displayTitle}
-                  placeholder="例如 手術病患動態；留白則使用 Dashboard 名稱"
-                  onChange={(e) => setForm({ ...form, displayTitle: e.target.value })}
-                />
-              </label>
-
-              <label>
-                <span>每頁筆數</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={50}
-                  value={form.pageSize}
-                  onChange={(e) => setForm({ ...form, pageSize: e.target.value })}
-                />
-              </label>
-
-              <label>
-                <span>換頁秒數</span>
-                <input
-                  type="number"
-                  min={5}
-                  max={3600}
-                  value={form.pageSeconds}
-                  onChange={(e) => setForm({ ...form, pageSeconds: e.target.value })}
-                />
-                <small>每個 Dashboard 可獨立設定，與資料更新秒數分開。</small>
-              </label>
-
-              <label>
-                <span>Dashboard 用途（快照預設）</span>
-                <select value={form.snapshotKind} onChange={(e) => setForm({ ...form, snapshotKind: e.target.value as FormState["snapshotKind"] })}>
-                  {!["SURGERY", "OUTPATIENT", "EXAM", "STATISTICS", "OTHER"].includes(form.snapshotKind) && <option value={form.snapshotKind}>舊用途（保留原設定）</option>}
-                  <option value="SURGERY">手術狀態（20 秒）</option>
-                  <option value="OUTPATIENT">診間候診（60 秒）</option>
-                  <option value="EXAM">檢查進度（60 秒）</option>
-                  <option value="STATISTICS">統計報表（180 秒）</option>
-                  <option value="OTHER">其他（60 秒）</option>
-                </select>
-              </label>
-              <label>
-                <span>快照秒數（選填）</span>
-                <input type="number" min={10} max={3600} step={1} value={form.snapshotSeconds}
-                  placeholder="留白採用用途建議值"
-                  onChange={(e) => setForm({ ...form, snapshotSeconds: e.target.value })} />
-                <small>留白使用上方建議值；與換頁秒數、資料更新秒數分開。</small>
-              </label>
-
-              <div className="wide" style={{ padding: 12, border: "1px solid var(--border-color, #d1d5db)", borderRadius: 8 }}>
-                <strong>快照時間試算與建議值</strong>
-                <label style={{ display: "block", marginTop: 8 }}>
-                  <span>預估總資料筆數（僅供試算，不會儲存）</span>
-                  <input type="number" min={1} max={100000} value={form.estimatedRows}
-                    onChange={(e) => setForm({ ...form, estimatedRows: e.target.value })} />
-                </label>
-                <p>預估 {estimatedPages} 頁 × 每頁 {form.pageSeconds || "0"} 秒 = {estimatedCycleSeconds} 秒／輪。</p>
-                <p>建議快照：<strong>{recommendedSnapshotSeconds} 秒</strong>（含至少 10 秒或 20% 緩衝）。目前設定：{effectiveSnapshotSeconds} 秒。</p>
-                {recommendedSnapshotSeconds > 3600 ? (
-                  <small>建議時間超過 3600 秒，請減少頁數或縮短換頁時間。</small>
-                ) : (
-                  <button type="button" className="secondary-button"
-                    onClick={() => setForm({ ...form, snapshotSeconds: String(recommendedSnapshotSeconds) })}>
-                    套用建議快照秒數
-                  </button>
-                )}
-                {effectiveSnapshotSeconds < estimatedCycleSeconds && <p role="alert">目前快照時間短於一輪播放時間，可能中途過期。</p>}
-              </div>
-
-              <DashboardDataSettingsEditor key={form.queryDefinitionId} dashboardId={form.id} queryId={Number(form.queryDefinitionId)} accessToken={accessToken}
-                parametersJson={form.parametersJson} masksJson={form.deviceColumnMasksJson} typesJson={form.deviceColumnTypesJson} sourceMasksJson={form.deviceSourceColumnMasksJson}
-                onChange={patch => setForm(current => ({ ...current, ...patch }))} />
-
-              <div className="dashboard-display-options wide">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={form.showClock}
-                    onChange={(e) => setForm({ ...form, showClock: e.target.checked })}
-                  />
-                  <span>顯示系統時間</span>
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={form.showPageNumber}
-                    onChange={(e) => setForm({ ...form, showPageNumber: e.target.checked })}
-                  />
-                  <span>顯示頁碼</span>
-                </label>
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={form.showCountdown}
-                    onChange={(e) => setForm({ ...form, showCountdown: e.target.checked })}
-                  />
-                  <span>顯示換頁倒數</span>
-                </label>
-              </div>
-
-              <label className="dashboard-active-field">
-                <input
-                  type="checkbox"
-                  checked={form.isActive}
-                  onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-                  disabled={Boolean(form.id) && legacyWriterState !== "allowed"}
-                />
-                <span>啟用 Dashboard</span>
-              </label>
-
-              {form.id && legacyWriterState === "managed" && (
-                <p role="status" className="form-hint">
-                  新版「儲存一般顯示設定」僅儲存名稱、說明、顯示模式、顯示標題、時鐘、頁碼與倒數顯示。
-                  Query、更新／換頁秒數、參數及啟用狀態不會跟著儲存；請使用下方 PRIMARY 資料來源與獨立安全流程處理。
-                </p>
-              )}
-              {form.id && legacyWriterState !== "allowed" && (
-                <p role="status" className="form-hint">
-                  {legacyWriterState === "checking"
-                    ? "正在確認 Dashboard 儲存模式…"
-                    : legacyWriterState === "managed"
-                      ? "已啟用新版資料來源管理；舊版整體儲存不可使用。請使用下方資料來源管理，尚未支援的設定請勿強行儲存。"
-                      : "無法確認 Dashboard 儲存權限與管理模式；已安全停用舊版整體儲存。"}
-                </p>
-              )}
-              <div className="dashboard-form-actions">
-                <button className="primary-button" type="submit" disabled={saving || (Boolean(form.id) && legacyWriterState !== "allowed")}>
-                  {saving ? "儲存中…" : form.id ? "儲存修改" : "建立 Dashboard"}
-                </button>
-                {form.id && legacyWriterState === "managed" && (
-                  <button className="primary-button" type="button" disabled={saving || form.isActive || !presentationEditVersion} onClick={() => void savePresentation()}>
-                    {saving ? "儲存中…" : "儲存一般顯示設定（新版）"}
-                  </button>
-                )}
-                {form.id && (
-                  <button className="secondary-button" type="button" onClick={newDashboard}>取消編輯</button>
-                )}
-              </div>
-            </form>
-          </section>
-
+          <button type="button" onClick={newDashboard}>新增另一個／取消編輯</button>
+          <DashboardBasicSettingsEditor key={`basic-${form.id}`} dashboardId={form.id} code={form.code} accessToken={accessToken}
+            onCreated={(id, code) => { setForm({ id, code }); setNotice("已建立停用草稿；請完成 PRIMARY 設定及敏感欄位重新核准。"); void load(); }} />
+          {form.id && <DashboardLegacyDisable key={`disable-${form.id}`} dashboardId={form.id} accessToken={accessToken} />}
           {form.id && <DashboardDataSourcesEditor key={form.id} dashboardId={form.id} accessToken={accessToken} />}
+          {form.id && <section className="dashboard-editor-card"><h2>敏感欄位核准</h2><DashboardDataSettingsEditor dashboardId={form.id} accessToken={accessToken}/></section>}
           {form.id && <DashboardQueryPlaybackManager key={`playback-${form.id}`} dashboardId={form.id} accessToken={accessToken} />}
 
           <section className="dashboard-list-card">
@@ -1423,7 +976,6 @@ export function DashboardDesignerPage() {
                         >
                           裝置管理
                         </button>
-                        <button className="danger-button" type="button" onClick={() => void remove(item)}>刪除</button>
                       </td>
                     </tr>
                   ))}
