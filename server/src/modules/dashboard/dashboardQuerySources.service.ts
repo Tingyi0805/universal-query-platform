@@ -41,7 +41,7 @@ function projection(state: SourceState) {
   return { version: sourceVersion(state), mode: "MANAGEMENT_ONLY", playbackEnabled: false,
     overCapacity: sources.length + 1 > 8,
     primary: { sourceKey: "PRIMARY", queryDefinitionId: dashboard.queryDefinitionId,
-      maxRows: dashboard.maxRows ?? 1000, refreshSeconds: dashboard.refreshSeconds,
+      maxRows: dashboard.maxRows ?? 1000, requiresConversion: dashboard.maxRows === null, refreshSeconds: dashboard.refreshSeconds,
       pageSize: dashboard.pageSize, pageSeconds: dashboard.pageSeconds, readOnly: true },
     sources: sources.map(({ parameters: _parameters, datasetId: _history, ...source }) => ({
       ...source, bindingState: source.queryDefinitionId === null ? "PENDING_CONVERSION" : "QUERY_BOUND",
