@@ -301,23 +301,30 @@ export async function listQueryVersions(queryId: number) {
   }));
 }
 
-export async function restoreDatasetVersion(
+export const createDatasetVersionRestorer = (deps = {
+  getPool: requirePool,
+  createTransaction: (pool: sql.ConnectionPool) => new sql.Transaction(pool),
+  createRequest: (tx: sql.Transaction) => new sql.Request(tx),
+  snapshotVersion: snapshotDatasetVersion,
+  invalidateMetadata: invalidatePatientMetadata,
+}) =>
+async function restoreDatasetVersion(
   datasetId: number,
   versionNo: number,
   userId: number,
 ): Promise<void> {
-  const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
+  const pool = await deps.getPool();
+  const tx = deps.createTransaction(pool);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
   try {
-    const current = await new sql.Request(tx)
+    const current = await deps.createRequest(tx)
       .input("datasetId", sql.BigInt, datasetId)
-      .query("SELECT Id, IsArchived FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
+      .query("SELECT Id, IsArchived, SqlText, DataSourceId FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
     if (!current.recordset[0]) throw new Error("DATASET_NOT_FOUND");
     if (current.recordset[0].IsArchived) throw new Error("DATASET_ARCHIVED");
 
-    const versionResult = await new sql.Request(tx)
+    const versionResult = await deps.createRequest(tx)
       .input("datasetId", sql.BigInt, datasetId)
       .input("versionNo", sql.Int, versionNo)
       .query("SELECT SnapshotJson FROM uqp.DatasetVersion WHERE DatasetId=@datasetId AND VersionNo=@versionNo");
@@ -325,14 +332,24 @@ export async function restoreDatasetVersion(
 
     const snapshot = JSON.parse(String(versionResult.recordset[0].SnapshotJson)) as DatasetSnapshot;
 
-    const source = await new sql.Request(tx)
+    // Match updateDataset: aliases or an old snapshot do not prove unchanged
+    // sensitive semantics. Check under the Dataset lock before any writes.
+    if (String(current.recordset[0].SqlText) !== snapshot.dataset.sqlText ||
+        Number(current.recordset[0].DataSourceId) !== snapshot.dataset.dataSourceId) {
+      const protectedRules = await deps.createRequest(tx)
+        .input("datasetId", sql.BigInt, datasetId)
+        .query("SELECT TOP (1) ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@datasetId");
+      if (protectedRules.recordset.length) throw new Error("DATASET_SENSITIVITY_REVIEW_REQUIRED");
+    }
+
+    const source = await deps.createRequest(tx)
       .input("dataSourceId", sql.BigInt, snapshot.dataset.dataSourceId)
       .query("SELECT Id FROM uqp.DataSource WHERE Id=@dataSourceId");
     if (!source.recordset[0]) throw new Error("DATASOURCE_NOT_FOUND");
 
     for (const parameter of snapshot.parameters) {
       if (parameter.optionMode !== "DATASET" || !parameter.lookupDatasetId) continue;
-      const lookup = await new sql.Request(tx)
+      const lookup = await deps.createRequest(tx)
         .input("lookupDatasetId", sql.BigInt, parameter.lookupDatasetId)
         .query("SELECT Id, IsArchived FROM uqp.Dataset WHERE Id=@lookupDatasetId");
       if (!lookup.recordset[0] || lookup.recordset[0].IsArchived) {
@@ -340,11 +357,11 @@ export async function restoreDatasetVersion(
       }
     }
 
-    await snapshotDatasetVersion(tx, datasetId, userId, `RESTORE_FROM_V${versionNo}`);
+    await deps.snapshotVersion(tx, datasetId, userId, `RESTORE_FROM_V${versionNo}`);
     // Restoring a saved definition never restores its former proof.
-    await invalidatePatientMetadata(tx, datasetId);
+    await deps.invalidateMetadata(tx, datasetId);
 
-    await new sql.Request(tx)
+    await deps.createRequest(tx)
       .input("datasetId", sql.BigInt, datasetId)
       .input("name", sql.NVarChar(200), snapshot.dataset.name)
       .input("description", sql.NVarChar(1000), snapshot.dataset.description)
@@ -365,12 +382,12 @@ export async function restoreDatasetVersion(
         WHERE Id=@datasetId
       `);
 
-    await new sql.Request(tx)
+    await deps.createRequest(tx)
       .input("datasetId", sql.BigInt, datasetId)
       .query("DELETE FROM uqp.DatasetParameter WHERE DatasetId=@datasetId");
 
     for (const parameter of snapshot.parameters) {
-      await new sql.Request(tx)
+      await deps.createRequest(tx)
         .input("datasetId", sql.BigInt, datasetId)
         .input("name", sql.NVarChar(100), parameter.name)
         .input("label", sql.NVarChar(200), parameter.label)
@@ -405,7 +422,7 @@ export async function restoreDatasetVersion(
         `);
     }
 
-    await new sql.Request(tx)
+    await deps.createRequest(tx)
       .input("datasetId", sql.BigInt, datasetId)
       .query(`
         UPDATE q
@@ -422,7 +439,9 @@ export async function restoreDatasetVersion(
     await tx.rollback();
     throw error;
   }
-}
+};
+
+export const restoreDatasetVersion = createDatasetVersionRestorer();
 
 export async function restoreQueryVersion(
   queryId: number,

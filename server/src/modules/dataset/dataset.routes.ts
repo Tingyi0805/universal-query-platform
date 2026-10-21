@@ -1,5 +1,5 @@
 import { createPatientAuditPreview } from "./patientAuditPreview.js";
-import { Router } from "express";
+import { Router, type RequestHandler } from "express";
 import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { getDatasetSensitivitySnapshot, listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
 import { patientAuditService } from "./patientAuditContract.repository.js";
@@ -522,7 +522,10 @@ datasetRouter.put("/:id/versions/:versionNo/pin", async (req, res, next) => {
   }
 });
 
-datasetRouter.post("/:id/versions/:versionNo/restore", async (req, res, next) => {
+export const createDatasetVersionRestoreHandler = (deps = {
+  restoreDatasetVersion, tryWriteAuditEvent, getDataset,
+}): RequestHandler =>
+async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     const versionNo = z.coerce.number().int().positive().safeParse(req.params.versionNo);
@@ -531,15 +534,19 @@ datasetRouter.post("/:id/versions/:versionNo/restore", async (req, res, next) =>
       return;
     }
 
-    await restoreDatasetVersion(id.data, versionNo.data, req.authUser.id);
-    await tryWriteAuditEvent({
+    await deps.restoreDatasetVersion(id.data, versionNo.data, req.authUser.id);
+    await deps.tryWriteAuditEvent({
       eventType: "DATASET_VERSION_RESTORED",
       userId: req.authUser.id,
       parameters: { versionNo: versionNo.data },
       ...auditRequestContext(req),
     });
-    res.json({ status: "OK", dataset: await getDataset(id.data) });
+    res.json({ status: "OK", dataset: await deps.getDataset(id.data) });
   } catch (error) {
+    if (error instanceof Error && error.message === "DATASET_SENSITIVITY_REVIEW_REQUIRED") {
+      res.status(409).json({ error: { code: error.message, message: "版本未還原：此 Dataset 有敏感欄位規則，SQL／資料來源異動須完成安全審查。現有設定已保留。" } });
+      return;
+    }
     if (error instanceof Error && error.message === "DATASET_VERSION_NOT_FOUND") {
       res.status(404).json({ error: { code: error.message, message: "找不到指定的 Dataset 版本。" } });
       return;
@@ -554,7 +561,9 @@ datasetRouter.post("/:id/versions/:versionNo/restore", async (req, res, next) =>
     }
     next(error);
   }
-});
+};
+
+datasetRouter.post("/:id/versions/:versionNo/restore", createDatasetVersionRestoreHandler());
 
 datasetRouter.post("/:id/archive", async (req, res, next) => {
   try {
