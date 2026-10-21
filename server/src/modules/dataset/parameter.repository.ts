@@ -107,7 +107,10 @@ export function createParameterRepository(deps: ParameterRepositoryDependencies)
         await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId).input("name", sql.NVarChar(100), name)
           .query("DELETE FROM uqp.DatasetParameter WHERE DatasetId=@datasetId AND Name=@name");
       }
-      if (preview.added.length || removeNames.length) await unpublishParameterQueries(tx, datasetId);
+      if (preview.added.length || removeNames.length) {
+        await touchDatasetDefinition(tx, datasetId);
+        await unpublishParameterQueries(tx, datasetId);
+      }
       await tx.commit();
     } catch (error) {
       await tx.rollback().catch(() => undefined);
@@ -120,6 +123,14 @@ export function createParameterRepository(deps: ParameterRepositoryDependencies)
       UPDATE uqp.QueryDefinition SET IsPublished=0, PublishedAtUtc=NULL,
         PublishedByUserId=NULL, UpdatedAtUtc=SYSUTCDATETIME()
       WHERE DatasetId=@datasetId AND IsPublished=1`);
+  }
+
+  async function touchDatasetDefinition(tx: sql.Transaction, datasetId: number) {
+    // A self-assignment leaves user-visible data unchanged while advancing the
+    // SQL Server ROWVERSION added by migration 920. It remains harmless on a
+    // pre-920 schema and participates in the surrounding transaction.
+    await deps.createRequest(tx).input("datasetId", sql.BigInt, datasetId)
+      .query("UPDATE uqp.Dataset SET UpdatedAtUtc=UpdatedAtUtc WHERE Id=@datasetId");
   }
 
   async function saveDatasetParameters(
@@ -197,6 +208,7 @@ export function createParameterRepository(deps: ParameterRepositoryDependencies)
           `);
       }
 
+      await touchDatasetDefinition(tx, datasetId);
       await unpublishParameterQueries(tx, datasetId);
 
       await tx.commit();

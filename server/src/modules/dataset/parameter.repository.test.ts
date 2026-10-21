@@ -19,6 +19,7 @@ test("explicit additive sync preserves all existing settings, ID, ordering and c
   assert.equal(f.state.rows[1]!.Name, "NEW");
   assert.equal(f.state.rows[1]!.DisplayOrder, 8);
   assert.equal(f.state.snapshots, 1); assert.equal(f.state.commits, 1);
+  assert.equal(f.state.definitionVersion, 2);
   assert.ok(!f.state.queries.some(q => q.includes("DELETE FROM uqp.DatasetParameter")));
 });
 test("unused and zero-detection parameters survive sync", async () => {
@@ -52,12 +53,13 @@ test("SQL or setting changes invalidate the preview before any write", async () 
     assert.ok(!f.state.queries.some(q => /INSERT|DELETE|UPDATE/.test(q)));
   }
 });
-test("failed insert/removal/unpublish rolls back all changes and preserves original errors", async () => {
-  for (const failOn of ["INSERT INTO", "DELETE FROM", "UPDATE uqp.QueryDefinition"]) {
+test("failed insert/removal/version-touch/unpublish rolls back all changes and preserves original errors", async () => {
+  for (const failOn of ["INSERT INTO", "DELETE FROM", "UPDATE uqp.Dataset SET", "UPDATE uqp.QueryDefinition"]) {
     const f = parameterFixture("SELECT {{NEW}}"); const original = structuredClone(f.state.rows);
     f.state.failOn = failOn; f.state.failRollback = failOn === "INSERT INTO";
     await assert.rejects(f.repository.syncDatasetParameters(2, await token(f), ["WARD"]), (error: any) => error.number === 229);
     assert.deepEqual(f.state.rows, original); assert.equal(f.state.commits, 0); assert.equal(f.state.rollbacks, 1);
+    assert.equal(f.state.definitionVersion, 1);
   }
 });
 test("parameter save updates in place; omission/duplication/stale saves cannot delete settings", async () => {
@@ -77,8 +79,18 @@ test("parameter save failures roll back and archived datasets cannot be changed"
   f.state.failOn = "UPDATE uqp.DatasetParameter";
   await assert.rejects(f.repository.saveDatasetParameters(2, [syntheticParameter], 5, await token(f)));
   assert.deepEqual(f.state.rows, original); assert.equal(f.state.commits, 0);
+  assert.equal(f.state.definitionVersion, 1);
   f.state.failOn = ""; f.state.archived = true;
   await assert.rejects(f.repository.syncDatasetParameters(2, await token(f)), /DATASET_ARCHIVED/);
+});
+
+test("parameter A→B→A advances the Dataset definition ROWVERSION evidence", async () => {
+  const f = parameterFixture("SELECT {{WARD}}");
+  await f.repository.saveDatasetParameters(2, [{ ...syntheticParameter, label: "changed" }], 5, await token(f));
+  assert.equal(f.state.definitionVersion, 2);
+  await f.repository.saveDatasetParameters(2, [syntheticParameter], 5, await token(f));
+  assert.equal(f.state.definitionVersion, 3);
+  assert.deepEqual(f.state.rows.map(row => row.Label), [syntheticParameter.label]);
 });
 
 test("sync cannot exceed parameter count or display-order bounds without changing rows", async () => {

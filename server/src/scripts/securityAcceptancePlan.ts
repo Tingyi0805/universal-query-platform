@@ -14,7 +14,7 @@ export const prerequisites: Record<number, number[]> = {
   906: [], 907: [3], 908: [906], 909: [25, 906], 910: [3, 6],
   911: [910], 912: [910], 913: [3, 20], 914: [913], 915: [912, 914],
   916: [1, 6, 25, 902, 904, 906, 915], 917: [5, 20, 914], 918: [25, 917],
-  919: [3, 6, 7, 907, 910, 913],
+  919: [3, 6, 7, 907, 910, 913], 920: [3, 907, 910, 919],
 };
 export const migrationsDirectory = fileURLToPath(new URL("../../../database/migrations/", import.meta.url));
 export const acceptanceDirectory = fileURLToPath(new URL("../../../database/acceptance/", import.meta.url));
@@ -37,7 +37,9 @@ export async function inventory(directory = migrationsDirectory): Promise<Invent
 }
 export function selectProfile(rows: InventoryItem[], profile: string) {
   if (profile !== "legacy" && profile !== "coexistence") throw new Error("PROFILE_INVALID");
-  const selected = rows.filter(row => profile === "coexistence" || ![916, 917, 918].includes(row.id));
+  // Phase 4B-2 profiles remain pinned through 919. Migration 920 requires its
+  // own future SQL Server acceptance and must not silently enter an old plan.
+  const selected = rows.filter(row => row.id !== 920 && (profile === "coexistence" || ![916, 917, 918].includes(row.id)));
   const ids = new Set(selected.map(row => row.id));
   if (selected.some(row => row.requires.some(id => !ids.has(id)))) throw new Error("PROFILE_DEPENDENCY_MISSING");
   return selected;

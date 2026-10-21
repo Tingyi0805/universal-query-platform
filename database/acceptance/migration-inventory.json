@@ -387,5 +387,16 @@
       910,
       913
     ]
+  },
+  {
+    "id": 920,
+    "file": "920_dataset_definition_rowversion.sql",
+    "sha256": "f8d6b9d50881c12407d453f1d3ccf4e7054efd931c2f19f8cb1f7316b791880b",
+    "requires": [
+      3,
+      907,
+      910,
+      919
+    ]
   }
 ]
