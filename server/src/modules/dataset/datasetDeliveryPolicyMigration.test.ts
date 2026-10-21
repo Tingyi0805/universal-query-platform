@@ -4,12 +4,12 @@ import { readFile, readdir } from "node:fs/promises";
 
 const migrations = new URL("../../../../database/migrations/", import.meta.url);
 
-test("920 is the next unique migration after 919", async () => {
+test("920 remains the unique Dataset definition migration after 919", async () => {
   const files = (await readdir(migrations)).filter(file => /^\d+_.*\.sql$/u.test(file)).sort();
   const ids = files.map(file => Number(file.split("_")[0]));
   assert.equal(new Set(ids).size, ids.length);
-  assert.deepEqual(ids.slice(-2), [919, 920]);
-  assert.equal(files.at(-1), "920_dataset_definition_rowversion.sql");
+  assert.deepEqual(ids.filter(id => id >= 919 && id <= 920), [919, 920]);
+  assert.equal(files.find(file => file.startsWith("920_")), "920_dataset_definition_rowversion.sql");
 });
 
 test("920 is one additive transaction with explicit rollback", async () => {
