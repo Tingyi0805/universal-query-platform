@@ -1,3 +1,4 @@
+import { finalizeDeliveryAudit } from "../audit/deliveryAudit.repository.js";
 import { safeAuditErrorCode, withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
 import { Router } from "express";
 import { z } from "zod";
@@ -11,7 +12,6 @@ import {
 } from "./queryDefinition.repository.js";
 import {
   completeAuditFailure,
-  completeAuditSuccess,
   startAudit,
 } from "../audit/audit.repository.js";
 import {
@@ -104,7 +104,7 @@ function sendRuntimeError(res: any, error: unknown): boolean {
 export const defaultQueryRuntimeDependencies = {
   authenticate: authenticateJwt, identity: createRuntimeIdentityVerifier(), delivery: createQueryDelivery(),
   listAccessibleQueries, setQueryFavorite, listDatasetParameters, getParameterOptions,
-  startAudit, completeAuditSuccess, completeAuditFailure, createQueryCsv, createQueryExcel,
+  startAudit, finalizeDeliveryAudit, completeAuditFailure, createQueryCsv, createQueryExcel,
 };
 export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies) {
   const queryRuntimeRouter = Router();
@@ -155,7 +155,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
         return;
       }
 
-      const context = await deps.delivery.open(id.data, "VIEW", () => deps.identity(req.headers.authorization));
+      const context = await deps.delivery.open(id.data, "VIEW", transaction => deps.identity(req.headers.authorization, transaction));
       const query = context.query, dataset = context.dataset;
       const savedParameters = await withErrorModule("dataset.parameters.load", () => deps.listDatasetParameters(query.datasetId));
       const parameters = await withErrorModule("dataset.parameters.validate", async () => runtimeParameterDefinitions(dataset.sqlText, savedParameters));
@@ -198,7 +198,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
         return;
       }
 
-      const context = await deps.delivery.open(id.data, "VIEW", () => deps.identity(req.headers.authorization));
+      const context = await deps.delivery.open(id.data, "VIEW", transaction => deps.identity(req.headers.authorization, transaction));
       const parameters = await deps.listDatasetParameters(context.query.datasetId);
       const parameter = parameters.find(p => p.name === name.data);
       if (!parameter) throw new QueryDeliveryError("PARAMETER_NOT_FOUND", 404);
@@ -219,7 +219,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
       try {
         const id = idSchema.safeParse(req.params.id), body = executeBodySchema.safeParse(req.body);
         if (!id.success || !body.success) throw new QueryDeliveryError("VALIDATION_ERROR", 400);
-        const context = await deps.delivery.open(id.data, format === "json" ? "EXECUTE" : "EXPORT", () => deps.identity(req.headers.authorization));
+        const context = await deps.delivery.open(id.data, format === "json" ? "EXECUTE" : "EXPORT", transaction => deps.identity(req.headers.authorization, transaction));
         const query = context.query;
         auditId = await deps.startAudit({
           eventType: format === "json" ? "QUERY_EXECUTE" : format === "csv" ? "QUERY_EXPORT_CSV" : "QUERY_EXPORT_EXCEL",
@@ -235,8 +235,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
           : format === "excel" ? await deps.createQueryExcel(query.name, delivery.result, delivery.reportColumns)
           : JSON.stringify({ result: delivery.result, disclosureId: delivery.disclosureId });
         await context.revalidate();
-        await deps.completeAuditSuccess(auditId, { rowCount: delivery.result.rowCount, durationMs: Date.now() - started });
-        await context.revalidate();
+        await deps.finalizeDeliveryAudit(auditId, { rowCount: delivery.result.rowCount, durationMs: Date.now() - started }, context.revalidate);
         if (format === "json") {
           res.type("json").send(payload);
         } else {

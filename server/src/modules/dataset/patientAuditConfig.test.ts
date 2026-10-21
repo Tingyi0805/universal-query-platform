@@ -8,18 +8,13 @@ import { createServer } from "node:http";
 import { env } from "../../config/env.js";
 import { createAuthenticateJwt } from "../auth/auth.middleware.js";
 import { createPatientAuditConfigRouter } from "./patientAuditConfig.routes.js";
-import { createPatientAuditPreview } from "./patientAuditPreview.js";
 
 const input: PatientConfigInput = { expectedVersion: "0", isEnabled: true, patientKeyColumn: "MRN", identifierConfirmed: true };
 test("source changed during a successful preview cannot certify the executed aliases", async () => {
   const f = patientFixture();
   const executed = { datasetId: 1, ...f.control.state.definition, values: {}, maxRows: 10 };
-  const run = createPatientAuditPreview({
-    execute: async () => { f.control.state.definition.dataSourceId = 99;
-      return { columns: [{ name: "MRN" }], rows: [], rowCount: 0, elapsedMs: 1, truncated: false }; },
-    sync: async () => {}, record: f.service.recordPreview,
-  });
-  await run(executed, 2, {});
+  f.control.state.definition.dataSourceId = 99;
+  await f.service.recordPreview(1, { sqlText: executed.sqlText, dataSourceId: executed.dataSourceId }, ["MRN"], 2);
   assert.equal(f.control.state.metadata, null);
 });
 export function patientFixture() {

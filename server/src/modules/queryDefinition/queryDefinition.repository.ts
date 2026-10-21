@@ -51,11 +51,11 @@ export async function listQueryDefinitions(): Promise<QueryDefinitionRecord[]> {
   return result.recordset.map(mapRow);
 }
 
-export async function getQueryDefinition(id: number): Promise<QueryDefinitionRecord | null> {
-  const pool = await requirePool();
-  const result = await pool.request().input("id", sql.BigInt, id).query(`
+export async function getQueryDefinition(id: number, transaction?: sql.Transaction, includeAuditCount = true): Promise<QueryDefinitionRecord | null> {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
+  const result = await request.input("id", sql.BigInt, id).query(`
     SELECT q.*, d.Name AS DatasetName,
-           (SELECT COUNT(1) FROM uqp.AuditLog a WHERE a.QueryDefinitionId=q.Id) AS AuditCount,
+           ${includeAuditCount ? "(SELECT COUNT(1) FROM uqp.AuditLog a WHERE a.QueryDefinitionId=q.Id)" : "0"} AS AuditCount,
            c.Name AS CategoryName,
            ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder
     FROM uqp.QueryDefinition q
@@ -311,7 +311,7 @@ export async function restoreQueryDefinition(id: number): Promise<void> {
   }
 }
 
-export async function listAccessibleQueries(userId: number, transaction?: sql.Transaction) {
+export async function listAccessibleQueries(userId: number, transaction?: sql.Transaction, includeUsage = true) {
   const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
   const result = await request.input("userId", sql.BigInt, userId).query(`
     WITH RoleAccess AS (
@@ -339,7 +339,7 @@ export async function listAccessibleQueries(userId: number, transaction?: sql.Tr
            q.Icon, q.DatasetId, q.SortOrder, q.AllowExcelExport, q.IsPublished,
            q.IsActive, q.PublishedAtUtc, d.Name AS DatasetName,
            CASE WHEN f.UserId IS NULL THEN 0 ELSE 1 END AS IsFavorite,
-           recent.LastUsedAtUtc,
+           ${includeUsage ? "recent.LastUsedAtUtc" : "NULL AS LastUsedAtUtc"},
            CASE WHEN ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1 THEN 1 ELSE 0 END AS EffectiveCanView,
            CASE WHEN ISNULL(ra.CanExecute,0)=1 OR ISNULL(ua.CanExecute,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExecute,
            CASE WHEN ISNULL(ra.CanExport,0)=1 OR ISNULL(ua.CanExport,0)=1 THEN 1 ELSE 0 END AS EffectiveCanExport
@@ -351,14 +351,14 @@ export async function listAccessibleQueries(userId: number, transaction?: sql.Tr
     LEFT JOIN UserAccess ua ON ua.QueryDefinitionId=q.Id
     LEFT JOIN uqp.UserQueryFavorite f
       ON f.QueryDefinitionId=q.Id AND f.UserId=@userId
-    OUTER APPLY (
+    ${includeUsage ? `OUTER APPLY (
       SELECT MAX(a.CreatedAtUtc) AS LastUsedAtUtc
       FROM uqp.AuditLog a
       WHERE a.UserId=@userId
         AND a.QueryDefinitionId=q.Id
         AND a.EventType='QUERY_EXECUTE'
         AND a.Status='SUCCESS'
-    ) recent
+    ) recent` : ""}
     WHERE q.IsPublished=1 AND q.IsActive=1 AND q.IsArchived=0
       AND NOT EXISTS (
         SELECT 1
@@ -380,8 +380,8 @@ export async function listAccessibleQueries(userId: number, transaction?: sql.Tr
   }));
 }
 
-export async function getEffectiveQueryAccess(userId: number, queryId: number, transaction?: sql.Transaction) {
-  const queries = await listAccessibleQueries(userId, transaction);
+export async function getEffectiveQueryAccess(userId: number, queryId: number, transaction?: sql.Transaction, includeUsage = true) {
+  const queries = await listAccessibleQueries(userId, transaction, includeUsage);
   return queries.find((query) => query.id === queryId) ?? null;
 }
 

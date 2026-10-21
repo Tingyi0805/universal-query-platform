@@ -87,17 +87,13 @@ test("patient query input metadata excludes unused lookup/required settings and 
   assert.throws(() => runtimeParameterDefinitions("SELECT {{NEW}}", [syntheticParameter]), /PARAMETER_DEFINITION_MISMATCH/);
 });
 
-test("active patient option lookup ignores retained obsolete required settings but blocks active required inputs", async () => {
+test("unauthenticated option resolver refuses every Dataset-backed lookup before execution", async () => {
   for (const active of [false, true]) {
     const f = fixture();
     const parent = { ...syntheticParameter, optionMode: "DATASET" as const, lookupDatasetId: 9, lookupValueField: "SYNTHETIC", lookupLabelField: "SYNTHETIC" };
     f.deps.listDatasetParameters = async id => id === 2 ? [parent] : [{ ...syntheticParameter, name: "OLD", defaultValue: null }];
     f.deps.getDataset = async id => ({ id, dataSourceId: 4, sqlText: active ? "SELECT {{OLD}}" : "SELECT 7 AS SYNTHETIC", isActive: true, isArchived: false, maxRows: 500 } as DatasetRecord);
-    if (active) {
-      await assert.rejects(f.service.getParameterOptions(2, "WARD"), /PARAMETER_LOOKUP_REQUIRES_INPUT/);
-      assert.equal(f.state.queries.length, 0);
-    } else {
-      assert.deepEqual(await f.service.getParameterOptions(2, "WARD"), [{ value: 7, label: "7" }]);
-    }
+    await assert.rejects(f.service.getParameterOptions(2, "WARD"), /PARAMETER_LOOKUP_REQUIRES_AUTHORIZED_DELIVERY/);
+    assert.equal(f.state.queries.length, 0);
   }
 });

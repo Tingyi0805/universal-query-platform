@@ -71,3 +71,23 @@ for (const failAudit of [false, true]) test(`production store passes same transa
   else { assert.equal((await run).version, "1"); assert.equal(committed, "1"); assert.equal(events.at(-1), "commit"); }
   assert.ok(events.indexOf(securityCatalogSql) < events.findIndex(e => e.includes("FROM uqp.Dataset WITH")));
 });
+
+test("patient proof inspection joins final delivery transaction without a second connection or commit", async () => {
+  const definition = { sqlText: "SELECT MRN FROM synthetic", dataSourceId: 4 };
+  const tx = { begin: async () => assert.fail("must not begin"), commit: async () => assert.fail("must not commit"),
+    rollback: async () => assert.fail("must not rollback") } as unknown as sql.Transaction;
+  const request = { input() { return request; }, query: async (statement: string) => {
+    if (statement === securityCatalogSql) return { recordsets: catalog() };
+    if (statement.includes("FROM uqp.Dataset WITH")) return { recordset: [{ SqlText: definition.sqlText, DataSourceId: 4 }] };
+    if (statement.includes("FROM uqp.DatasetPatientAuditMetadata")) return { recordset: [{ DefinitionHash: definitionHash(definition), ColumnsJson: '["MRN"]' }] };
+    assert.ok(!/INSERT|UPDATE|DELETE/.test(statement));
+    return { recordset: [] };
+  } };
+  const service = createPatientAuditService(createPatientAuditStore({
+    getPool: async () => assert.fail("must use outer connection"),
+    createTransaction: () => assert.fail("must use outer transaction"),
+    createRequest: actual => { assert.equal(actual, tx); return request as never; },
+    audit: async () => assert.fail("inspection must not write"),
+  }), () => ({ activeVersion: 1, versions: new Map([[1, Buffer.alloc(32, 3)]]) }));
+  assert.equal((await service.dashboardState(1, tx)).status, "NOT_CONFIGURED");
+});

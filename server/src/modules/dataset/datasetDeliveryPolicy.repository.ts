@@ -117,27 +117,23 @@ export function createDatasetDeliveryPolicyRepository(deps: DatasetDeliveryPolic
   async function readConfirmedDatasetDeliverySnapshot(
     datasetId: number,
     expected?: DatasetDeliveryVersionEvidence,
+    existingTransaction?: sql.Transaction,
   ): Promise<ConfirmedDatasetDeliverySnapshot> {
-    let pool: sql.ConnectionPool;
-    try {
-      const configured = await deps.getPool();
-      if (!configured) throw new Error("missing");
-      pool = configured;
-    } catch {
-      throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_POLICY_UNAVAILABLE");
-    }
-
     let transaction: sql.Transaction;
     try {
-      transaction = deps.createTransaction(pool);
+      if (existingTransaction) transaction = existingTransaction;
+      else {
+        const pool = await deps.getPool();
+        if (!pool) throw new Error("missing");
+        transaction = deps.createTransaction(pool);
+      }
     } catch {
       throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_POLICY_UNAVAILABLE");
     }
     let begun = false;
     const request = () => deps.createRequest(transaction);
     try {
-      await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-      begun = true;
+      if (!existingTransaction) { await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE); begun = true; }
       await request().query("SET XACT_ABORT ON");
       await deps.requireSchema(request);
 
@@ -215,7 +211,7 @@ export function createDatasetDeliveryPolicyRepository(deps: DatasetDeliveryPolic
           patientKeyColumn,
         },
       };
-      await transaction.commit();
+      if (!existingTransaction) await transaction.commit();
       return snapshot;
     } catch (error) {
       if (begun) {

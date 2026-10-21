@@ -48,9 +48,9 @@ export async function syncDatasetColumns(datasetId: number, columns: QueryColumn
   }
 }
 
-export async function listDatasetColumns(datasetId: number) {
-  const pool = await requirePool();
-  const result = await pool.request()
+export async function listDatasetColumns(datasetId: number, transaction?: sql.Transaction) {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
+  const result = await request
     .input("datasetId", sql.BigInt, datasetId)
     .query(`
       SELECT ColumnName, DataType, [Ordinal] AS Ordinal

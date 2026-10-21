@@ -151,9 +151,9 @@ export async function searchQueryAccessUsers(searchText: string, limit = 20) {
 }
 
 /** Deterministic ACL revision without user names or credentials in playback payloads. */
-export async function getQueryAccessRevision(queryId: number): Promise<string> {
-  const pool = await requirePool();
-  const result = await pool.request().input("queryId", sql.BigInt, queryId).query(`
+export async function getQueryAccessRevision(queryId: number, transaction?: sql.Transaction): Promise<string> {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
+  const result = await request.input("queryId", sql.BigInt, queryId).query(`
     SELECT 'ROLE' AS Kind, a.RoleId AS PrincipalId, a.CanView, a.CanExecute, a.CanExport, r.IsActive
     FROM uqp.RoleQueryAccess a INNER JOIN uqp.Role r ON r.Id=a.RoleId
     WHERE a.QueryDefinitionId=@queryId

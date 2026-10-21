@@ -46,7 +46,7 @@ async function setup() {
       rowCount: 1, truncated: false, elapsedMs: 1 },
     revision: "acl-1", patientFingerprint: "patient-1", patientStatus: "CONFIRMED", policyError: "",
     executes: 0, patientAudits: 0, starts: 0, successes: 0, failures: 0, optionReads: 0,
-    auditFailure: false, successFailure: false, startFailure: false, missingDisclosure: false,
+    failureWriteFailure: false, auditFailure: false, successFailure: false, startFailure: false, missingDisclosure: false,
     parameterMode: "NONE", phase: "", change: () => {},
   };
   const dependencies = {
@@ -84,13 +84,14 @@ async function setup() {
       if (state.startFailure) throw new Error("SYNTHETIC_START_FAILURE");
       return 10;
     },
-    completeAuditSuccess: async () => {
+    finalizeDeliveryAudit: async (_id, _stats, validate) => {
       if (state.phase === "success-audit") state.change();
       if (state.successFailure) throw new Error("SYNTHETIC_SUCCESS_FAILURE");
+      await validate({} as never);
       state.successes++;
       state.query.lastUsedAtUtc = new Date().toISOString();
     },
-    completeAuditFailure: async () => { state.failures++; },
+    completeAuditFailure: async () => { if (state.failureWriteFailure) throw new Error("synthetic failure-write failure"); state.failures++; },
     createQueryExcel: async (...args) => {
       const buffer = await defaultQueryRuntimeDependencies.createQueryExcel(...args);
       if (state.phase === "serialize") state.change();
@@ -184,10 +185,11 @@ const changes = {
 };
 for (const phase of ["sql", "patient-audit", "success-audit", "serialize"]) for (const [name, change] of Object.entries(changes)) {
   test(`${phase}: ${name} changes discard results before delivery`, () => fixture(async f => {
-    f.state.phase = phase; f.state.change = () => change(f.state);
+    f.state.phase = phase; f.state.change = () => change(f.state); f.state.failureWriteFailure = phase === "success-audit";
     const response = await f.request("/export/excel"); assert.ok(response.status >= 400);
     const text = await response.text(); assert.ok(!text.includes(rawName) && !text.includes(rawId));
     assert.equal(response.headers.get("content-disposition"), null);
+    assert.equal(f.state.successes, 0);
   }));
 }
 

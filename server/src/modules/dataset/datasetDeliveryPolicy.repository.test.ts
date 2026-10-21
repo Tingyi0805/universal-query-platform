@@ -65,7 +65,7 @@ function fixture() {
       if (state.schemaMissing) throw new SecurityContractError("SECURITY_SCHEMA_REQUIRED");
     },
   });
-  return { state, repository };
+  return { state, repository, tx };
 }
 
 test("reads definition, policy, rules and patient evidence in one serializable snapshot", async () => {
@@ -162,4 +162,13 @@ test("database failures roll back and expose no SQL, patient, token or mask sett
     return true;
   });
   assert.equal(f.state.commits, 0); assert.equal(f.state.rollbacks, 1);
+});
+
+for (const failure of [false, true]) test(`delivery snapshot joins outer transaction without owning its completion (failure=${failure})`, async () => {
+  const f = fixture();
+  if (failure) f.state.schemaMissing = true;
+  const read = f.repository.readConfirmedDatasetDeliverySnapshot(7, undefined, f.tx);
+  if (failure) await assert.rejects(read, /DATASET_DELIVERY_SCHEMA_REQUIRED/);
+  else assert.equal((await read).datasetId, 7);
+  assert.equal(f.state.transactions, 0); assert.equal(f.state.commits, 0); assert.equal(f.state.rollbacks, 0);
 });

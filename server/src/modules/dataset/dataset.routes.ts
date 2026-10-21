@@ -1,6 +1,5 @@
-import { createPatientAuditPreview } from "./patientAuditPreview.js";
+import { createDatasetDataRouter } from "./datasetData.routes.js";
 import { Router, type RequestHandler } from "express";
-import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { getDatasetSensitivitySnapshot, listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
 import { patientAuditService } from "./patientAuditContract.repository.js";
 import { createPatientAuditConfigRouter } from "./patientAuditConfig.routes.js";
@@ -22,8 +21,6 @@ import {
   restoreDataset,
   updateDataset,
 } from "./dataset.repository.js";
-import { executeSavedDataset, getParameterOptions, previewDataset } from "./dataset.service.js";
-import { syncDatasetColumns } from "./column.repository.js";
 import {
   listDatasetParameters,
   saveDatasetParameters,
@@ -48,15 +45,6 @@ const datasetSchema = z.object({
   maxRows: z.coerce.number().int().min(1).max(10000).default(500),
   queryTimeoutSec: z.coerce.number().int().min(1).max(3600).nullable().optional().default(null),
   isActive: z.boolean().default(true),
-});
-
-const previewSchema = z.object({
-  dataSourceId: z.coerce.number().int().positive(),
-  sqlText: z.string().trim().min(1).max(200000),
-  values: z.record(z.unknown()).default({}),
-  maxRows: z.coerce.number().int().min(1).max(10000).default(100),
-  queryTimeoutSec: z.coerce.number().int().min(1).max(300).nullable().optional().default(null),
-  datasetId: z.coerce.number().int().positive().optional(),
 });
 
 const parameterSchema = z.object({
@@ -263,107 +251,8 @@ datasetRouter.get("/", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-const runPatientAuditPreview = createPatientAuditPreview({ execute: previewDataset, sync: syncDatasetColumns, record: patientAuditService.recordPreview });
-
-datasetRouter.post("/preview/run", async (req, res, next) => {
-  try {
-    const parsed = previewSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "預覽參數格式不正確。" } });
-      return;
-    }
-    const result = await runPatientAuditPreview(parsed.data, req.authUser!.id, auditRequestContext(req));
-    res.json({
-      parameterNames: extractParameterNames(parsed.data.sqlText),
-      result,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === "DATASET_SENSITIVITY_COLUMNS_STALE") {
-      res.status(409).json({ error: { code: "DATASET_SENSITIVITY_COLUMNS_STALE", message: "查詢欄位已異動，現有敏感資料規則無法對應；請先調整欄位別名或更新敏感資料設定。" } });
-      return;
-    }
-    if (sendDatasetExecutionError(res, error)) return;
-    if (error instanceof Error && error.message.startsWith("MISSING_QUERY_PARAMETER:")) {
-      const name = error.message.split(":")[1];
-      res.status(400).json({ error: { code: "MISSING_QUERY_PARAMETER", message: `缺少查詢參數：${name}` } });
-      return;
-    }
-    if (error instanceof Error && error.message.startsWith("SQL_")) {
-      res.status(400).json({ error: { code: error.message, message: "只允許單一 SELECT / WITH 查詢。" } });
-      return;
-    }
-    if (error instanceof Error && ["DATASET_NOT_FOUND","DATASET_ARCHIVED","DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
-      res.status(400).json({ error: { code: error.message, message: "指定的資料來源不存在或已停用。" } });
-      return;
-    }
-    next(error);
-  }
-});
-
-datasetRouter.post("/:id/execute", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const body = z.object({
-      values: z.record(z.unknown()).default({}),
-      maxRows: z.coerce.number().int().min(1).max(10000).optional(),
-    }).safeParse(req.body);
-
-    if (!id.success || !body.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset 執行參數格式不正確。" } });
-      return;
-    }
-
-    const result = await executeSavedDataset(id.data, body.data.values, body.data.maxRows);
-    const dataset = await getDataset(id.data);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    // Audit the exact rows returned, before delivering them to the caller.
-    // This route is authenticated by DESIGN_QUERY; user identity comes from JWT.
-    const disclosureId = await withErrorModule("query.patient.disclosure", () => auditPatientListIfConfigured({
-      datasetId: id.data,
-      userId: req.authUser?.id ?? null,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "MANUAL",
-      masked: false,
-      rows: result.rows,
-    }));
-    await withErrorModule("dataset.columns.sync", () => syncDatasetColumns(id.data, result.columns));
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ result, disclosureId });
-  } catch (error) {
-    if (error instanceof Error && error.message === "DATASET_SENSITIVITY_COLUMNS_STALE") {
-      res.status(409).json({ error: { code: "DATASET_SENSITIVITY_COLUMNS_STALE", message: "查詢欄位已異動，現有敏感資料規則無法對應；請先調整欄位別名或更新敏感資料設定。" } });
-      return;
-    }
-    if (sendDatasetExecutionError(res, error)) return;
-    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
-      res.status(400).json({ error: { code: error.message.split(":")[0], message: "查詢參數格式不正確。" } });
-      return;
-    }
-    if (error instanceof Error && ["DATASET_NOT_FOUND","DATASET_ARCHIVED","DATASET_DISABLED","DATASOURCE_NOT_FOUND","DATASOURCE_DISABLED"].includes(error.message)) {
-      res.status(400).json({ error: { code: error.message, message: "Dataset 或資料來源不存在或已停用。" } });
-      return;
-    }
-    next(error);
-  }
-});
-
-datasetRouter.get("/:id/parameters/:name/options", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const name = z.string().regex(/^[A-Z][A-Z0-9_]*$/).safeParse(req.params.name);
-    if (!id.success || !name.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "參數識別資料不正確。" } });
-      return;
-    }
-    res.json({ options: await getParameterOptions(id.data, name.data) });
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
-      res.status(400).json({ error: { code: error.message, message: "無法取得參數選項。" } });
-      return;
-    }
-    next(error);
-  }
-});
+// All data-bearing Dataset routes share isolated, versioned delivery contracts.
+datasetRouter.use(createDatasetDataRouter());
 
 datasetRouter.put("/:id/parameters", async (req, res, next) => {
   try {

@@ -1,3 +1,4 @@
+import type sql from "mssql";
 import { createHash } from "node:crypto";
 import jwt from "jsonwebtoken";
 import { env } from "../../config/env.js";
@@ -21,7 +22,7 @@ export type RuntimeIdentity = { userId: number; tokenVersion: number; permission
 
 /** Re-verifies signature, expiry and current session at every delivery boundary. */
 export function createRuntimeIdentityVerifier(session = getTokenSessionState) {
-  return async (authorization: string | undefined): Promise<RuntimeIdentity> => {
+  return async (authorization: string | undefined, transaction?: sql.Transaction): Promise<RuntimeIdentity> => {
     if (!env.JWT_SECRET || !authorization?.startsWith("Bearer ")) throw new QueryDeliveryError("UNAUTHORIZED", 401);
     let payload: jwt.JwtPayload;
     try {
@@ -32,7 +33,7 @@ export function createRuntimeIdentityVerifier(session = getTokenSessionState) {
     const userId = Number(payload.sub), tokenVersion = Number(payload.tokenVersion);
     if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(tokenVersion) || tokenVersion < 1)
       throw new QueryDeliveryError("INVALID_TOKEN", 401);
-    const current = await session(userId);
+    const current = await session(userId, transaction);
     if (!current?.isActive || current.tokenVersion !== tokenVersion) throw new QueryDeliveryError("TOKEN_REVOKED", 401);
     return { userId, tokenVersion, permissions: current.permissions };
   };
@@ -50,7 +51,9 @@ export function deliveryReportColumns(policy: ConfirmedDatasetDeliveryPolicy, re
 }
 
 export const defaultQueryDeliveryDependencies = {
-  access: getEffectiveQueryAccess, accessRevision: getQueryAccessRevision,
+  // Usage statistics can wait on other in-flight audit rows. They are not
+  // needed for authorization and must stay out of the final audit transaction.
+  access: (userId: number, queryId: number, tx?: sql.Transaction) => getEffectiveQueryAccess(userId, queryId, tx, false), accessRevision: getQueryAccessRevision,
   snapshot: readConfirmedDatasetDeliverySnapshot, dataset: getDataset,
   patientState: patientAuditService.dashboardState, auditPatient: auditDashboardPatientList,
   execute: executeSavedDataset, reports: listReportColumns,
@@ -58,25 +61,25 @@ export const defaultQueryDeliveryDependencies = {
 
 /** Raw rows are request-local and used only for required auditing before the shared policy engine. */
 export function createQueryDelivery(deps = defaultQueryDeliveryDependencies) {
-  async function open(queryId: number, action: DeliveryAction, identity: () => Promise<RuntimeIdentity>) {
-    async function inspect() {
-      const actor = await identity();
+  async function open(queryId: number, action: DeliveryAction, identity: (transaction?: sql.Transaction) => Promise<RuntimeIdentity>) {
+    async function inspect(transaction?: sql.Transaction) {
+      const actor = await identity(transaction);
       const required = ["VIEW_QUERY", ...(action === "VIEW" ? [] : ["EXECUTE_QUERY"]), ...(action === "EXPORT" ? ["EXPORT_QUERY"] : [])];
       if (!required.every(p => actor.permissions.includes(p))) throw new QueryDeliveryError("FORBIDDEN", 403);
-      const query = await deps.access(actor.userId, queryId);
+      const query = await deps.access(actor.userId, queryId, transaction);
       if (!query?.canView || !query.isPublished || !query.isActive || query.isArchived
         || (action !== "VIEW" && !query.canExecute) || (action === "EXPORT" && !query.canExport))
         throw new QueryDeliveryError("QUERY_DELIVERY_FORBIDDEN", 403);
-      const snapshot = await deps.snapshot(query.datasetId);
+      const snapshot = await deps.snapshot(query.datasetId, undefined, transaction);
       if (snapshot.datasetId !== query.datasetId || snapshot.policy.version !== snapshot.sensitivityVersion
         || !/^[0-9a-f]{16}$/u.test(snapshot.definitionVersion)) throw new QueryDeliveryError("QUERY_DELIVERY_VERSION_INVALID", 503);
       applyDatasetDeliveryPolicy({ policy: snapshot.policy, columns: [], rows: [] });
-      const dataset = await deps.dataset(query.datasetId);
+      const dataset = await deps.dataset(query.datasetId, transaction);
       if (!dataset?.isActive || dataset.isArchived || dataset.id !== query.datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
-      const patient = snapshot.patientAudit.enabled ? await deps.patientState(query.datasetId) : null;
+      const patient = snapshot.patientAudit.enabled ? await deps.patientState(query.datasetId, transaction) : null;
       if (patient && patient.status !== "CONFIRMED") throw new QueryDeliveryError("PATIENT_AUDIT_NOT_CONFIRMED", 503);
-      const reports = await deps.reports(query.id);
-      const revision = await deps.accessRevision(queryId);
+      const reports = await deps.reports(query.id, transaction);
+      const revision = await deps.accessRevision(queryId, transaction);
       // LastUsedAtUtc is derived from the usage audit being completed by this
       // very request. Favorites/usage counters are not authorization evidence.
       const queryEvidence = [query.id, query.datasetId, query.code, query.name,
@@ -89,8 +92,8 @@ export function createQueryDelivery(deps = defaultQueryDeliveryDependencies) {
       return { actor, query, snapshot, dataset, reports, fingerprint };
     }
     const initial = await inspect();
-    const revalidate = async () => {
-      if ((await inspect()).fingerprint !== initial.fingerprint) throw new QueryDeliveryError("QUERY_DELIVERY_VERSION_CONFLICT");
+    const revalidate = async (transaction?: sql.Transaction) => {
+      if ((await inspect(transaction)).fingerprint !== initial.fingerprint) throw new QueryDeliveryError("QUERY_DELIVERY_VERSION_CONFLICT");
     };
     await revalidate();
     return { ...initial, revalidate };
