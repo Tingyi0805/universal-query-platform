@@ -10,19 +10,19 @@ import { env } from "../../config/env.js";
 import { errorHandler } from "../../middleware/errorHandler.js";
 
 async function fixture(run: (request: (authenticated?: boolean) => Promise<{ status: number; body: any }>,
-  state: { permissions: string[]; tokenVersion: number; restores: number; audits: number; reads: number; failure: string }) => Promise<void>) {
+  state: { permissions: string[]; tokenVersion: number; restores: number; reads: number; failure: string }) => Promise<void>) {
   const previous = env.JWT_SECRET;
   env.JWT_SECRET = "synthetic-restore-test-key";
-  const state = { permissions: ["DESIGN_QUERY"], tokenVersion: 1, restores: 0, audits: 0, reads: 0, failure: "" };
+  const state = { permissions: ["DESIGN_QUERY"], tokenVersion: 1, restores: 0, reads: 0, failure: "" };
   const app = express();
   app.use(createAuthenticateJwt(async () => ({ isActive: true, tokenVersion: state.tokenVersion, permissions: state.permissions })));
   app.use(requirePermission("DESIGN_QUERY"));
   app.post("/:id/versions/:versionNo/restore", createDatasetVersionRestoreHandler({
-    restoreDatasetVersion: async (id, version, user) => {
+    restoreDatasetVersion: async (id, version, user, context) => {
       assert.deepEqual([id, version, user], [2, 1, 5]); state.restores++;
+      assert.equal(context?.ipAddress, "127.0.0.1");
       if (state.failure) throw new Error(state.failure);
     },
-    tryWriteAuditEvent: async event => { assert.equal(event.eventType, "DATASET_VERSION_RESTORED"); state.audits++; },
     getDataset: async () => { state.reads++; return null; },
   }));
   app.use(errorHandler);
@@ -48,7 +48,7 @@ test("restore requires current DESIGN_QUERY and valid JWT/TokenVersion before re
   state.permissions = []; assert.equal((await request()).status, 403);
   state.permissions = ["DESIGN_QUERY"]; state.tokenVersion = 2;
   assert.equal((await request()).status, 401);
-  assert.equal(state.restores, 0); assert.equal(state.audits, 0); assert.equal(state.reads, 0);
+  assert.equal(state.restores, 0); assert.equal(state.reads, 0);
 }));
 
 test("sensitivity refusal is explicit 409 without success audit or dataset response", () => fixture(async (request, state) => {
@@ -57,7 +57,7 @@ test("sensitivity refusal is explicit 409 without success audit or dataset respo
   assert.equal(response.status, 409);
   assert.equal(response.body.error.code, state.failure);
   assert.equal(response.body.status, undefined); assert.equal(response.body.dataset, undefined);
-  assert.equal(state.audits, 0); assert.equal(state.reads, 0);
+  assert.equal(state.reads, 0);
 }));
 
 test("transaction errors cannot return success, definition, or success audit", () => fixture(async (request, state) => {
@@ -66,14 +66,22 @@ test("transaction errors cannot return success, definition, or success audit", (
   assert.equal(response.status, 500); assert.equal(response.body.error.code, "INTERNAL_SERVER_ERROR");
   assert.equal(response.body.status, undefined); assert.equal(response.body.dataset, undefined);
   assert.ok(!JSON.stringify(response.body).includes(state.failure));
-  assert.equal(state.audits, 0); assert.equal(state.reads, 0);
+  assert.equal(state.reads, 0);
 }));
 
-test("successful restore keeps existing audit and reload response", () => fixture(async (request, state) => {
+test("successful restore reloads only after the transaction-owned audit completes", () => fixture(async (request, state) => {
   const response = await request();
   assert.equal(response.status, 200); assert.equal(response.body.status, "OK");
-  assert.equal(state.restores, 1); assert.equal(state.audits, 1); assert.equal(state.reads, 1);
+  assert.equal(state.restores, 1); assert.equal(state.reads, 1);
 }));
+
+test("restore route has no best-effort success audit fallback", () => {
+  const source = readFileSync(new URL("./dataset.routes.ts", import.meta.url), "utf8");
+  const handler = source.slice(source.indexOf("export const createDatasetVersionRestoreHandler"),
+    source.indexOf('datasetRouter.post("/:id/versions/:versionNo/restore"'));
+  assert.ok(!handler.includes("tryWriteAuditEvent"));
+  assert.ok(!handler.includes("DATASET_VERSION_RESTORED"));
+});
 
 test("production restore remains behind router JWT and DESIGN_QUERY gates", () => {
   const source = readFileSync(new URL("./dataset.routes.ts", import.meta.url), "utf8");

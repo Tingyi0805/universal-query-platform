@@ -18,9 +18,11 @@ function fixture() {
     metadata: { DefinitionHash: "synthetic-proof" } as object | null,
     approvals: { primary: "synthetic-version-1", extra: "synthetic-version-2" },
     versions: [1, 2], parameters: ["ORIGINAL"], published: true,
+    audits: [] as Array<Record<string, unknown>>,
   };
   const state = { saved: structuredClone(original), staged: structuredClone(original), queries: [] as string[],
-    commits: 0, rollbacks: 0, snapshots: 0, invalidations: 0, failOn: "", missing: false, missingVersion: false };
+    commits: 0, rollbacks: 0, snapshots: 0, invalidations: 0, failOn: "", failAudit: false, concurrentConflict: false,
+    missing: false, missingVersion: false };
   const tx = {
     begin: async (level: number) => { assert.equal(level, sql.ISOLATION_LEVEL.SERIALIZABLE); state.staged = structuredClone(state.saved); },
     commit: async () => { if (state.failOn === "commit") throw new Error("SYNTHETIC_COMMIT_FAILED"); state.saved = structuredClone(state.staged); state.commits++; },
@@ -33,6 +35,8 @@ function fixture() {
       input(name: string, _type: unknown, value: unknown) { values[name] = value; return r; },
       async query(text: string) {
         state.queries.push(text);
+        if (state.concurrentConflict && text.includes("UPDATE uqp.Dataset"))
+          throw Object.assign(new Error("SYNTHETIC_CONCURRENT_CONFLICT"), { number: 1205 });
         if (state.failOn && text.includes(state.failOn)) throw new Error("SYNTHETIC_TRANSACTION_FAILED");
         if (text.includes("FROM uqp.Dataset WITH")) {
           assert.match(text, /UPDLOCK, HOLDLOCK/);
@@ -63,8 +67,21 @@ function fixture() {
       state.snapshots++; state.staged.versions.push(3); return 3;
     },
     invalidateMetadata: async parent => { assert.equal(parent, tx); state.invalidations++; state.staged.metadata = null; },
+    audit: async (input, parent) => {
+      assert.equal(parent, tx);
+      if (state.failAudit) throw new Error("SYNTHETIC_AUDIT_FAILED");
+      state.staged.audits.push(structuredClone(input.parameters ?? {}));
+      assert.equal(input.eventType, "DATASET_VERSION_RESTORED");
+      assert.equal(input.userId, 5); assert.equal(input.datasetId, 2);
+      assert.equal(input.ipAddress, "192.0.2.10"); assert.equal(input.userAgent, "synthetic-agent");
+      assert.deepEqual(input.parameters, { restoredVersionNo: 1, backupVersionNo: 3 });
+      const serialized = JSON.stringify(input);
+      assert.ok(!serialized.includes(snapshot.dataset.sqlText));
+      assert.ok(!serialized.includes("SYNTHETIC_KEY"));
+      return 99;
+    },
   });
-  return { state, snapshot, restore: () => restore(2, 1, 5) };
+  return { state, snapshot, restore: () => restore(2, 1, 5, { ipAddress: "192.0.2.10", userAgent: "synthetic-agent" }) };
 }
 
 for (const change of ["sql", "source", "whitespace"] as const) {
@@ -90,6 +107,7 @@ test("same SQL/source permits restore and preserves rules/config/approvals", asy
   assert.deepEqual(f.state.saved.rules, before.rules); assert.deepEqual(f.state.saved.patientConfig, before.patientConfig);
   assert.deepEqual(f.state.saved.approvals, before.approvals);
   assert.equal(f.state.saved.metadata, null); // Existing restore invalidates former proof.
+  assert.deepEqual(f.state.saved.audits, [{ restoredVersionNo: 1, backupVersionNo: 3 }]);
 });
 
 test("without sensitive rules changed SQL/source restore remains available", async () => {
@@ -106,6 +124,22 @@ test("policy read failure fails closed before snapshot/metadata or definition ch
   await assert.rejects(f.restore(), /SYNTHETIC_TRANSACTION_FAILED/);
   assert.deepEqual(f.state.saved, before); assert.equal(f.state.snapshots, 0); assert.equal(f.state.invalidations, 0);
   assert.equal(f.state.rollbacks, 1); assert.equal(f.state.commits, 0);
+});
+
+test("mandatory audit failure rolls back definition, parameters, history, metadata and publication", async () => {
+  const f = fixture(); const before = structuredClone(f.state.saved); f.state.failAudit = true;
+  await assert.rejects(f.restore(), /SYNTHETIC_AUDIT_FAILED/);
+  assert.deepEqual(f.state.saved, before); assert.deepEqual(f.state.staged, before);
+  assert.equal(f.state.snapshots, 1); assert.equal(f.state.invalidations, 1);
+  assert.equal(f.state.commits, 0); assert.equal(f.state.rollbacks, 1);
+});
+
+test("concurrent transaction conflict rolls back and cannot write a success audit", async () => {
+  const f = fixture(); const before = structuredClone(f.state.saved);
+  f.state.concurrentConflict = true;
+  await assert.rejects(f.restore(), (error: any) => error.message === "SYNTHETIC_CONCURRENT_CONFLICT" && error.number === 1205);
+  assert.deepEqual(f.state.saved, before); assert.deepEqual(f.state.saved.audits, []);
+  assert.equal(f.state.commits, 0); assert.equal(f.state.rollbacks, 1);
 });
 
 test("update, parameter, unpublish and commit failures roll back definition, history and proof", async () => {

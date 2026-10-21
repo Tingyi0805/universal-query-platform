@@ -1,4 +1,5 @@
 import { invalidatePatientMetadata } from "../dataset/patientAuditContract.repository.js";
+import { writeAuditEvent } from "../audit/audit.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -307,11 +308,13 @@ export const createDatasetVersionRestorer = (deps = {
   createRequest: (tx: sql.Transaction) => new sql.Request(tx),
   snapshotVersion: snapshotDatasetVersion,
   invalidateMetadata: invalidatePatientMetadata,
+  audit: writeAuditEvent,
 }) =>
 async function restoreDatasetVersion(
   datasetId: number,
   versionNo: number,
   userId: number,
+  auditContext: { ipAddress?: string | null; userAgent?: string | null } = {},
 ): Promise<void> {
   const pool = await deps.getPool();
   const tx = deps.createTransaction(pool);
@@ -357,7 +360,7 @@ async function restoreDatasetVersion(
       }
     }
 
-    await deps.snapshotVersion(tx, datasetId, userId, `RESTORE_FROM_V${versionNo}`);
+    const backupVersionNo = await deps.snapshotVersion(tx, datasetId, userId, `RESTORE_FROM_V${versionNo}`);
     // Restoring a saved definition never restores its former proof.
     await deps.invalidateMetadata(tx, datasetId);
 
@@ -433,6 +436,16 @@ async function restoreDatasetVersion(
         FROM uqp.QueryDefinition q
         WHERE q.DatasetId=@datasetId
       `);
+
+    // This is a mandatory management audit. Keeping it in the restore
+    // transaction prevents a successful restore without its audit evidence.
+    await deps.audit({
+      eventType: "DATASET_VERSION_RESTORED",
+      userId,
+      datasetId,
+      parameters: { restoredVersionNo: versionNo, backupVersionNo },
+      ...auditContext,
+    }, tx);
 
     await tx.commit();
   } catch (error) {

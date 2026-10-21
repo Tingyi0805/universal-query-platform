@@ -523,7 +523,7 @@ datasetRouter.put("/:id/versions/:versionNo/pin", async (req, res, next) => {
 });
 
 export const createDatasetVersionRestoreHandler = (deps = {
-  restoreDatasetVersion, tryWriteAuditEvent, getDataset,
+  restoreDatasetVersion, getDataset,
 }): RequestHandler =>
 async (req, res, next) => {
   try {
@@ -534,13 +534,7 @@ async (req, res, next) => {
       return;
     }
 
-    await deps.restoreDatasetVersion(id.data, versionNo.data, req.authUser.id);
-    await deps.tryWriteAuditEvent({
-      eventType: "DATASET_VERSION_RESTORED",
-      userId: req.authUser.id,
-      parameters: { versionNo: versionNo.data },
-      ...auditRequestContext(req),
-    });
+    await deps.restoreDatasetVersion(id.data, versionNo.data, req.authUser.id, auditRequestContext(req));
     res.json({ status: "OK", dataset: await deps.getDataset(id.data) });
   } catch (error) {
     if (error instanceof Error && error.message === "DATASET_SENSITIVITY_REVIEW_REQUIRED") {
