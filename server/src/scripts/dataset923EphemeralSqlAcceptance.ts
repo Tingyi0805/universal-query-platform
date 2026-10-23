@@ -83,10 +83,13 @@ async function summarizeSyntheticCatalogDrift(pool: sql.ConnectionPool) {
   const result = await pool.request().query(diagnose);
   const rows = result.recordset.map(row => ({
     side: row.Side, category: row.category, owner: row.owner, name: row.name,
-    signature: String(row.signature).slice(0, 240),
+    signature: String(row.signature).slice(0, 900),
   }));
   console.error("UQP923_CATALOG_REAL_DRIFT_COUNT=" + rows.length);
-  console.error("UQP923_CATALOG_REAL_DRIFT_SAMPLE=" + JSON.stringify(rows.slice(0, 12)));
+  console.error("UQP923_CATALOG_REAL_DRIFT_SAMPLE=" + JSON.stringify([
+    ...rows.filter(row => row.side === "MISSING").slice(0, 3),
+    ...rows.filter(row => row.side === "UNEXPECTED").slice(0, 3),
+  ]));
 }
 
 async function main() {
