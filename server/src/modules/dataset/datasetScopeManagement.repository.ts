@@ -11,7 +11,7 @@ type Params=Record<string,string|number|Buffer|null>;
 export async function scopeQuery(tx:sql.Transaction,text:string,params:Params={}) {
   const r=new sql.Request(tx);
   for(const [key,value] of Object.entries(params)) r.input(key,Buffer.isBuffer(value)?sql.VarBinary(value.length):
-    value===null&&["expected","parentVersion"].includes(key)?sql.Binary(8):
+    value===null&&["expected","parentVersion"].includes(key)?sql.VarBinary(8):
     typeof value==="number"||(value===null&&["subjectToken","parentToken"].includes(key))?sql.Int:["incarnation","requestId","transactionReference"].includes(key)?sql.UniqueIdentifier:sql.NVarChar(sql.MAX),value);
   return r.query(text);
 }
@@ -80,6 +80,10 @@ export function createDatasetScopeManagement(deps:Partial<{
         AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'UPDATE'),1)=0
         AND NOT EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id=OBJECT_ID(N'uqp.DatasetSecurityDecision')
           AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'UPDATE',c.name,N'COLUMN'),1)<>0)
+        AND NOT EXISTS(SELECT 1 FROM sys.database_permissions perm JOIN sys.database_principals pr ON pr.principal_id=perm.grantee_principal_id
+          WHERE perm.class=1 AND perm.major_id=OBJECT_ID(N'uqp.DatasetSecurityDecision') AND perm.minor_id>0
+            AND perm.permission_name=N'UPDATE' AND perm.state IN(N'G',N'W')
+            AND (pr.principal_id=DATABASE_PRINCIPAL_ID() OR pr.name=N'public' OR IS_ROLEMEMBER(pr.name)=1))
         AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'DELETE'),1)=0
         AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'ALTER'),1)=0
         AND COALESCE(HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'CONTROL'),1)=0
