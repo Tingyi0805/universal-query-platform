@@ -18,7 +18,91 @@ if (-not (Get-Command npm.cmd -ErrorAction SilentlyContinue)) {
 
 $expectedServer = Read-Host "Confirm SQL @@SERVERNAME from SSMS (not IP/DNS)"
 $expectedDb = Read-Host "Confirm UQP database name"
-$expectedLogin = Read-Host "Confirm ORIGINAL_LOGIN() for installer"
+
+# The UQP runtime .env remains untouched. When selected, installer SQL
+# credentials exist only in this PowerShell process and its npm child.
+$previousDbUser = [Environment]::GetEnvironmentVariable("PLATFORM_DB_USER", "Process")
+$previousDbPassword = [Environment]::GetEnvironmentVariable("PLATFORM_DB_PASSWORD", "Process")
+$separateInstallerLogin = $false
+$useSeparateLogin = Read-Host "Use a separate SQL installation login for 923 only? (Y/N, default N)"
+if ($useSeparateLogin -match '^[Yy]
+if ([string]::IsNullOrWhiteSpace($expectedServer) -or
+    [string]::IsNullOrWhiteSpace($expectedDb) -or
+    [string]::IsNullOrWhiteSpace($expectedLogin)) {
+  throw "923_TARGET_DETAILS_REQUIRED"
+}
+
+$env:UQP_923_EXPECTED_SERVER = $expectedServer
+$env:UQP_923_EXPECTED_DATABASE = $expectedDb
+$env:UQP_923_EXPECTED_LOGIN = $expectedLogin
+
+try {
+  Push-Location $serverDir
+  try {
+    Write-Host "923: PRE-FLIGHT (read-only) ..." -ForegroundColor Cyan
+    & npm.cmd run db:923:preflight
+    if ($LASTEXITCODE -ne 0) { throw "923_PREFLIGHT_STOP_NO_MUTATION" }
+    if ($Mode -eq "Preflight") { return }
+
+    if ($Mode -eq "Install") {
+      Write-Host "923: This operation adds four uqp tables + one sequence and one schema ledger entry."
+      Write-Host "923: No patients, Dataset values, roles or policies are intentionally changed."
+      Write-Host "923: STOP if this database is shared with active UQP services."
+      $backup = Read-Host "Have you verified a restorable backup/snapshot? Type YES"
+      if ($backup -cne "YES") { throw "923_BACKUP_NOT_CONFIRMED" }
+      $confirm = Read-Host "To approve installation, retype the exact database name"
+      if ($confirm -cne $expectedDb) { throw "923_EXPLICIT_DATABASE_APPROVAL_FAILED" }
+      $env:UQP_923_BACKUP_VERIFIED = "YES"
+      $env:UQP_923_APPROVE_INSTALL = "I_APPROVE_REBUILT_UQP_923"
+      Write-Host "923: Applying ONLY Migration 923 ..." -ForegroundColor Cyan
+      & npm.cmd run db:923:apply -- --confirm
+      if ($LASTEXITCODE -ne 0) { throw "923_INSTALL_FAILED_NO_SUCCESS_CLAIM_CHECK_STATE" }
+    }
+    Write-Host "923: VERIFY (read-only) ..." -ForegroundColor Cyan
+    & npm.cmd run db:923:verify
+    if ($LASTEXITCODE -ne 0) { throw "923_POST_INSTALL_VERIFICATION_FAILED" }
+    Write-Host "923: VERIFIED, no runtime feature activated." -ForegroundColor Green
+  } finally {
+    Pop-Location
+  }
+} finally {
+  Remove-Item Env:UQP_923_EXPECTED_SERVER -ErrorAction SilentlyContinue
+  Remove-Item Env:UQP_923_EXPECTED_DATABASE -ErrorAction SilentlyContinue
+  Remove-Item Env:UQP_923_EXPECTED_LOGIN -ErrorAction SilentlyContinue
+  Remove-Item Env:UQP_923_BACKUP_VERIFIED -ErrorAction SilentlyContinue
+  Remove-Item Env:UQP_923_APPROVE_INSTALL -ErrorAction SilentlyContinue
+  if ($separateInstallerLogin) {
+    [Environment]::SetEnvironmentVariable("PLATFORM_DB_USER", $previousDbUser, "Process")
+    [Environment]::SetEnvironmentVariable("PLATFORM_DB_PASSWORD", $previousDbPassword, "Process")
+  }
+}
+) {
+  $installerUser = Read-Host "SQL installer login (must be effective dbo on target DB)"
+  if ([string]::IsNullOrWhiteSpace($installerUser)) {
+    throw "923_INSTALLER_LOGIN_REQUIRED"
+  }
+  $securePassword = Read-Host "SQL installer password (hidden)" -AsSecureString
+  if ($securePassword.Length -eq 0) {
+    $securePassword.Dispose()
+    throw "923_INSTALLER_PASSWORD_REQUIRED"
+  }
+  $passwordPointer = [IntPtr]::Zero
+  try {
+    $passwordPointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($securePassword)
+    $env:PLATFORM_DB_PASSWORD = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($passwordPointer)
+    $env:PLATFORM_DB_USER = $installerUser
+    $separateInstallerLogin = $true
+  } finally {
+    if ($passwordPointer -ne [IntPtr]::Zero) {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($passwordPointer)
+    }
+    $securePassword.Dispose()
+  }
+  $expectedLogin = $installerUser
+  Write-Host "Using the separate SQL installer login temporarily. server/.env will NOT be changed."
+} else {
+  $expectedLogin = Read-Host "Confirm ORIGINAL_LOGIN() for installer"
+}
 if ([string]::IsNullOrWhiteSpace($expectedServer) -or
     [string]::IsNullOrWhiteSpace($expectedDb) -or
     [string]::IsNullOrWhiteSpace($expectedLogin)) {
