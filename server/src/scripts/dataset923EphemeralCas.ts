@@ -19,6 +19,15 @@ async function readExactRowVersion(tx: sql.Transaction, userId: number): Promise
     SELECT CONVERT(varchar(16),ScopeRowVersion,2) AS V
     FROM uqp.DatasetSecurityScope WITH (HOLDLOCK)
     WHERE DatasetId=@datasetId AND UserId=@userId AND ScopeKind=N'OWNER'`);
+  const probe = r.recordset[0]?.V;
+  console.log("UQP923_CAS_HEX_PROJECTION", JSON.stringify({
+    rows: r.recordset.length,
+    keys: Object.keys(r.recordset[0] ?? {}),
+    valueType: typeof probe, isBuffer: Buffer.isBuffer(probe),
+    byteLength: typeof probe === "string" ? probe.length
+      : Buffer.isBuffer(probe) ? probe.length : null,
+    valuePreview: typeof probe === "string" ? JSON.stringify(probe).slice(0, 48) : null,
+  }));
   assert.equal(r.recordset.length, 1);
   const hex = r.recordset[0]?.V;
   if (typeof hex !== "string" || !/^[0-9a-fA-F]{16}$/u.test(hex))
