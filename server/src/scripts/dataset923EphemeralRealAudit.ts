@@ -108,8 +108,8 @@ export async function test923ExactAuditReceiptOnDisposableSql2019(pool:sql.Conne
   assert.equal(q.recordset.length,1);
   const row=q.recordset[0];
   assert.equal(row.ExactId,exact);
-  assert.equal(row.UserId,actorUserId);
-  assert.equal(row.DatasetId,datasetId);
+  assert.equal(String(row.UserId),String(actorUserId));
+  assert.equal(String(row.DatasetId),String(datasetId));
   assert.equal(row.EventType,"DATASET_SECURITY_DECISION");
   assert.equal(row.EventCategory,"SECURITY");
   assert.equal(row.IsImportant,true);
