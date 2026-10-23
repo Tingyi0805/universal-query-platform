@@ -1,4 +1,5 @@
 import { types } from "node:util";
+import { sqlServer2019CheckGolden } from "./datasetMetadata923CheckGolden.js";
 
 /** Offline source contract only. No connection, SQL execution, issuer or application integration. */
 const schema = "uqp";
@@ -171,7 +172,15 @@ export function expected923Catalog(): Catalog923Row[] {
       add("INDEX", t.name, i.name, [i.kind === "PK" ? "1" : "2", i.unique ? "1" : "0", "0|0|0", i.kind === "PK" ? "1" : "0", i.kind === "UQ" ? "1" : "0", i.columns.map(n => `${n}:ASC`).join(","), i.include.join(","), i.filter ?? "NULL", "0|1|1|0"].join("|"));
       if (i.kind !== "IX") add("KEY", t.name, i.name, `${i.kind}|${i.name}|0`);
     }
-    for (const c of t.checks) add("CHECK", t.name, c.name, `${checkDefinition(c.predicate)}|0|0|0|0|0|0`);
+    for (const c of t.checks) {
+      // SQL Server 2019 persists CHECK expressions in a rewritten, lowercase
+      // canonical form and assigns a real parent_column_id/uses_database_collation.
+      // Pin the exact observed SQL2019 catalog bytes; never normalize target
+      // expressions during validation, or silently accept unknown serializers.
+      const persisted = sqlServer2019CheckGolden[`${t.name}.${c.name}`];
+      if (typeof persisted !== "string") throw new Error("923_SQL2019_CHECK_GOLDEN_MISSING");
+      add("CHECK", t.name, c.name, persisted);
+    }
     for (const f of t.foreignKeys) add("FK", t.name, f.name, `${f.columns.join(",")}|uqp.${f.target}|${f.references.join(",")}|0|0|0|0|0|0`);
   }
   return rows;
