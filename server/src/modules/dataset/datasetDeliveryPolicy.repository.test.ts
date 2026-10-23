@@ -106,6 +106,7 @@ test("patient audit identifier must retain OMIT and CUSTOM is never overwritten"
   for (const rules of [
     [] as RuleRow[],
     [{ ColumnName: "MRN", DeviceMaskMode: "CUSTOM", CustomMaskJson: JSON.stringify({ prefix: 0, suffix: 2, symbol: "*" }) }],
+    [{ ColumnName: "MRN", DeviceMaskMode: "FULL", CustomMaskJson: null }],
   ]) {
     const f = fixture(); f.state.rules = structuredClone(rules); const before = structuredClone(rules);
     await assert.rejects(f.repository.readConfirmedDatasetDeliverySnapshot(7), /DATASET_DELIVERY_POLICY_INVALID/);

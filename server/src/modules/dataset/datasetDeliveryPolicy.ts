@@ -2,7 +2,7 @@ import { maskCustomValue, type CustomMaskConfig } from "../dashboard/dashboardDe
 
 export type DatasetDeliveryRule = Readonly<{
   columnName: string;
-  mode: "CUSTOM" | "OMIT";
+  mode: "CUSTOM" | "FULL" | "OMIT";
   customMask?: CustomMaskConfig | null;
 }>;
 
@@ -80,7 +80,7 @@ function validatePolicy(policy: ConfirmedDatasetDeliveryPolicy | null | undefine
   for (const rule of policy.rules) {
     if (!rule || typeof rule !== "object") fail("DATASET_DELIVERY_POLICY_INVALID");
     const key = canonicalColumnName(rule.columnName);
-    if (rules.has(key) || (rule.mode !== "CUSTOM" && rule.mode !== "OMIT")) {
+    if (rules.has(key) || (rule.mode !== "CUSTOM" && rule.mode !== "FULL" && rule.mode !== "OMIT")) {
       fail("DATASET_DELIVERY_POLICY_INVALID");
     }
     if (rule.mode === "CUSTOM" ? !validCustomMask(rule.customMask) : rule.customMask != null) {
@@ -156,7 +156,9 @@ export function applyDatasetDeliveryPolicy(input: DatasetDeliveryInput): Dataset
       if (!values.has(key)) continue;
       const value = values.get(key);
       const rule = rules.get(key);
-      if (rule?.mode === "CUSTOM" && value != null) {
+      if (rule?.mode === "FULL" && value != null) {
+        entries.push([column.name, "○○○○"]);
+      } else if (rule?.mode === "CUSTOM" && value != null) {
         try {
           entries.push([column.name, maskCustomValue(value, rule.customMask)]);
         } catch {

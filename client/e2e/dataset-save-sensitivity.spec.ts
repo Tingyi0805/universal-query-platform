@@ -87,3 +87,17 @@ for (const code of ["SENSITIVITY_VERSION_CONFLICT", "SENSITIVITY_ACTIVE_DASHBOAR
     if (code === "SENSITIVITY_VERSION_CONFLICT") await expect(policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true })).toBeDisabled();
   });
 }
+
+for (const name of ["NAME", "MRN", "PHONE", "OPAQUE_7"]) test(`user selects ${name} and full mask without inferred classification`, async ({ page }) => {
+  const { state, policy } = await setup(page);
+  state.rules = [{ columnName: name, sensitivityType: "OTHER", deviceMaskMode: "FULL" }];
+  await policy.getByRole("button", { name: "重新載入伺服器規則" }).click();
+  await expect(policy.getByRole("cell", { name, exact: true })).toBeVisible();
+  expect(state.writes).toEqual([]);
+  await policy.getByRole("combobox", { name: /查詢結果欄位/ }).selectOption(name);
+  await policy.getByRole("radio", { name: "全部遮蔽", exact: true }).check();
+  await policy.getByRole("button", { name: "加入／更新欄位規則" }).click();
+  await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true }).click();
+  await expect(policy.getByText(/敏感欄位規則已儲存/)).toBeVisible();
+  expect(state.rules).toEqual([{ columnName: name, sensitivityType: "OTHER", deviceMaskMode: "FULL", customMask: null }]);
+});

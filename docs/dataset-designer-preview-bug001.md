@@ -1,5 +1,7 @@
 # BUG-001：Dataset Designer 預覽
 
+> 普通資料聲明預覽已由 [BUG-002](dataset-sensitive-initialization-bug002.md) 撤回；以下保留修復歷史，不作為目前解鎖預覽的指引。
+
 基準：PR #66 `1ac8bafe300114a9539703d704e3e6af62d5b13b`。僅用合成資料、Mock API／Repository 與瀏覽器攔截；未連使用者 DB，未讀取所提供 Request ID 的正式稽核紀錄。以下結論來自程式及測試。
 
 ## 根因

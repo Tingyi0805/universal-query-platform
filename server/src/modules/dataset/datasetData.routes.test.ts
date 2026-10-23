@@ -174,7 +174,7 @@ for (const enabled of [false, true]) test(`raw design refuses absent or disabled
   assert.equal(response.status, 503); assert.deepEqual(f.state.executions, []);
 }));
 
-for (const mode of ["CUSTOM", "OMIT"] as const) for (const field of ["CODE", "LABEL"]) {
+for (const mode of ["CUSTOM", "FULL", "OMIT"] as const) for (const field of ["CODE", "LABEL"]) {
   test(`source ${field} ${mode} blocks lookup before SQL despite permissive parent`, () => fixture(async f => {
     const source = f.state.snapshots.get(2)!;
     f.state.snapshots.set(2, { ...source, policy: { ...source.policy, rules: [...source.policy.rules,
@@ -235,62 +235,34 @@ test("fixed options do not execute a Dataset and require the same parent authori
   assert.deepEqual(f.state.executions, []);
 }));
 
-function ordinary(f: Awaited<ReturnType<typeof setup>>) {
-  const snapshot = f.state.snapshots.get(1)!;
-  f.state.snapshots.set(1, { ...snapshot, patientAuditVersion: "0",
-    patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
-    policy: { state: "CONFIRMED", version: "1", rules: [] } });
-  return { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText,
-    expectedDefinitionVersion: version, nonPatientConfirmed: true, values: {} };
+// BUG-002: classification claims and candidate metadata never grant admission.
+for (const kind of ["A_ORDINARY", "B_SENSITIVE_NON_PATIENT", "C_PATIENT_UNCONFIRMED"] as const) {
+  for (const claim of [false, true]) test(`${kind}: initialization remains closed (client claim=${claim})`, () => fixture(async f => {
+    const current = f.state.snapshots.get(1)!;
+    f.state.snapshots.set(1, { ...current, patientAuditVersion: "0",
+      patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
+      policy: { state: "CONFIRMED", version: "1", rules: kind === "A_ORDINARY" ? [] : current.policy.rules } });
+    const input = { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText, expectedDefinitionVersion: version,
+      values: {}, ...(claim ? { nonPatientConfirmed: true } : {}) };
+    const before = structuredClone(f.state.snapshots);
+    const response = await f.request("/preview/run", input);
+    assert.equal(response.status, claim ? 400 : 503);
+    const body = await response.json() as any;
+    assert.equal(body.error.code, claim ? "VALIDATION_ERROR" : "DATASET_PREVIEW_INITIALIZATION_REQUIRED");
+    assert.deepEqual(f.state.executions, []); assert.deepEqual(f.state.disclosures, []);
+    assert.equal(f.state.startAudits, 0); assert.deepEqual(f.state.snapshots, before);
+  }));
 }
-
-test("ordinary preview requires a saved exact definition, explicit per-request assertion and confirmed empty policy", () => fixture(async f => {
-  const body = ordinary(f);
-  assert.equal((await f.request("/preview/run", body)).status, 200);
-  assert.deepEqual(f.state.executions, [1]);
-  assert.deepEqual(f.state.disclosures, []);
-  assert.equal(f.state.operationStatus, "SUCCESS");
-  const { nonPatientConfirmed: _, ...raw } = body;
-  assert.equal((await f.request("/preview/run", raw)).status, 503);
+for (const injection of [{ nonPatientConfirmed: true }, { metadata: { trust: "CONFIRMED", columns: ["NAME"] } },
+  { metadata: { trust: "UNBOUND_CANDIDATE", columns: ["OPAQUE"] } }, { sensitivityConfirmed: true }, { purpose: "NON_PATIENT_DESIGN" }]) {
+  test(`client-provided proof cannot authorize preview: ${JSON.stringify(Object.keys(injection))}`, () => fixture(async f => {
+    const response = await f.request("/preview/run", { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText,
+      expectedDefinitionVersion: version, values: {}, ...injection });
+    assert.equal(response.status, 400); assert.deepEqual(f.state.executions, []); assert.equal(f.state.startAudits, 0);
+  }));
+}
+test("context contains versions only, no candidate metadata, SQL or rows", () => fixture(async f => {
+  const response = await f.request("/1/design-preview/context"); assert.equal(response.status, 200);
+  assert.deepEqual(Object.keys(await response.json() as object).sort(), ["datasetId", "definitionVersion", "patientAuditVersion", "sensitivityVersion"]);
+  assert.deepEqual(f.state.executions, []); assert.deepEqual(f.state.disclosures, []);
 }));
-for (const failure of ["unsaved", "sql", "source", "version", "missing-version", "policy", "patient-config", "sensitive", "permission"] as const) {
-  test(`ordinary preview rejects ${failure} before execution with actionable safe errors`, () => fixture(async f => {
-    const body: any = ordinary(f);
-    if (failure === "unsaved") delete body.datasetId;
-    if (failure === "sql") body.sqlText += " AND 1=1";
-    if (failure === "source") body.dataSourceId = 99;
-    if (failure === "version") body.expectedDefinitionVersion = "0000000000000002";
-    if (failure === "missing-version") delete body.expectedDefinitionVersion;
-    if (failure === "policy") f.state.policyUnconfirmed = true;
-    if (failure === "patient-config") f.state.snapshots.set(1, { ...f.state.snapshots.get(1)!, patientAudit: { configured: true, enabled: false, patientKeyColumn: "MRN" } });
-    if (failure === "sensitive") f.state.snapshots.set(1, { ...f.state.snapshots.get(1)!, policy: policy(1).policy });
-    if (failure === "permission") f.state.session.permissions = ["DESIGN_QUERY"];
-    const response = await f.request("/preview/run", body);
-    assert.ok(response.status >= 400);
-    const text = await response.text();
-    assert.ok(!text.includes("SELECT") && !text.includes(rawName) && !text.includes(rawId));
-    assert.ok(!text.includes("Dataset 資料交付安全檢查未通過。"));
-    assert.deepEqual(f.state.executions, []);
-    assert.equal(f.state.startAudits, 0);
-  }));
-}
-for (const failure of ["definition", "source", "policy", "patient", "operation-audit"] as const) {
-  test(`ordinary preview fails closed on ${failure} drift or audit failure after execution`, () => fixture(async f => {
-    const body = ordinary(f);
-    f.state.phase = "sql";
-    f.state.change = () => {
-      if (failure === "definition") f.state.snapshots.set(1, { ...f.state.snapshots.get(1)!, definitionVersion: "0000000000000002" });
-      if (failure === "source") f.state.sourceRevision = "source-2";
-      if (failure === "policy") f.state.policyUnconfirmed = true;
-      if (failure === "patient") {
-        const snapshot = f.state.snapshots.get(1)!;
-        f.state.snapshots.set(1, { ...snapshot, patientAudit: { ...snapshot.patientAudit, configured: true } });
-      }
-      if (failure === "operation-audit") f.state.operationFailure = true;
-    };
-    const response = await f.request("/preview/run", body);
-    assert.ok(response.status >= 400);
-    const text = await response.text(); assert.ok(!text.includes(rawName) && !text.includes(rawId));
-    assert.notEqual(f.state.operationStatus, "SUCCESS");
-  }));
-}

@@ -22,7 +22,6 @@ const savedSchema = z.object(valuesSchema).strict();
 const rawSchema = savedSchema.extend({ expectedDefinitionVersion: z.string().regex(/^[0-9a-f]{16}$/) });
 const candidateSchema = z.object({ ...valuesSchema, datasetId: idSchema.optional(), dataSourceId: idSchema,
   sqlText: z.string().min(1).max(200000), expectedDefinitionVersion: z.string().optional(),
-  nonPatientConfirmed: z.literal(true).optional(),
   queryTimeoutSec: z.number().int().min(1).max(300).nullable().optional() }).strict();
 
 export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependencies) {
@@ -71,7 +70,6 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
       await audited(req, res, context, context.dataset.id, "DATASET_DESIGN_PREVIEW", {
         purpose: context.purpose, definitionVersion: context.snapshot.definitionVersion,
         sensitivityVersion: context.snapshot.sensitivityVersion, patientAuditVersion: context.snapshot.patientAuditVersion,
-        nonPatientConfirmed: input.nonPatientConfirmed === true,
       }, async () => {
         const result = await deps.delivery.execute(context, input.values, input.maxRows);
         return { payload: { ...result, parameterNames: extractParameterNames(context.dataset.sqlText) }, rowCount: result.result.rowCount };
@@ -132,7 +130,7 @@ export function datasetPreviewGuidance(code: string): string {
     DATASET_DELIVERY_POLICY_INVALID: "敏感政策格式或遮蔽規則無效，請管理者重新檢查並儲存有效規則，不可移除保護繞過。",
     DATASET_DELIVERY_POLICY_UNAVAILABLE: "無法讀取安全政策，請管理者檢查服務狀態後重試；資料不會交付。",
     PATIENT_AUDIT_NOT_CONFIRMED: "患者稽核尚未確認。請檢查可信欄位、患者識別欄位與 HMAC 金鑰；新 Dataset 缺少可信 metadata 時須由管理者安排初始化，不可停用稽核繞過。",
-    DATASET_NON_PATIENT_PREVIEW_DENIED: "此 Dataset 已有患者設定或敏感規則，不適用普通資料預覽。請取消普通資料確認，完成患者稽核及敏感欄位設定。",
+    DATASET_PREVIEW_INITIALIZATION_REQUIRED: "Dataset 安全初始化尚未完成。空政策與使用者聲明不能證明無敏感或患者資料；普通／非患者敏感 Dataset 的可信欄位及非患者確認流程尚未就緒。患者 Dataset 另須完成可信欄位、識別欄位及揭露稽核；請管理者安排初始化，不可停用保護繞過。",
     FORBIDDEN: "預覽需要 DESIGN_QUERY 與 EXECUTE_QUERY 權限，請管理者確認授權。",
     DATASET_NOT_AVAILABLE: "Dataset 已停用或封存，請確認狀態後再預覽。",
     DATASOURCE_NOT_AVAILABLE: "資料來源不可用，請管理者確認來源狀態。",

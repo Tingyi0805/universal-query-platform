@@ -92,11 +92,12 @@ test("missing or untrusted revision evidence fails closed", () => {
 test("unknown modes and invalid CUSTOM settings fail closed", () => {
   const input = { columns: [{ name: "NAME" }], rows: [{ NAME: "synthetic" }] } as const;
   const invalidRules = [
-    [{ columnName: "NAME", mode: "FULL" }],
+    [{ columnName: "NAME", mode: "MRN" }],
     [{ columnName: "NAME", mode: "CUSTOM" }],
     [{ columnName: "NAME", mode: "CUSTOM", customMask: { prefix: -1, suffix: 1, symbol: "*" } }],
     [{ columnName: "NAME", mode: "CUSTOM", customMask: { prefix: 1, suffix: 1, symbol: "**" } }],
     [{ columnName: "NAME", mode: "OMIT", customMask: { prefix: 1, suffix: 1, symbol: "*" } }],
+    [{ columnName: "NAME", mode: "FULL", customMask: { prefix: 0, suffix: 0, symbol: "*" } }],
   ];
   for (const rules of invalidRules) {
     assert.throws(() => applyDatasetDeliveryPolicy({ ...input, policy: confirmed(rules as never) }), /DATASET_DELIVERY_POLICY_INVALID/);
@@ -161,6 +162,8 @@ test("patient audit-only evidence requires an OMIT rule and cannot be weakened",
     policy: confirmed([{ columnName: "MRN", mode: "CUSTOM", customMask: { prefix: 0, suffix: 2, symbol: "*" } }], ["MRN"]),
   }), /DATASET_DELIVERY_POLICY_INVALID/);
   assert.throws(() => applyDatasetDeliveryPolicy({ ...input, policy: confirmed([], ["MRN"]) }), /DATASET_DELIVERY_POLICY_INVALID/);
+  assert.throws(() => applyDatasetDeliveryPolicy({ ...input,
+    policy: confirmed([{ columnName: "MRN", mode: "FULL" }], ["MRN"]) }), /DATASET_DELIVERY_POLICY_INVALID/);
 });
 
 test("invalid result shape fails with a data-free error code", () => {
@@ -175,4 +178,14 @@ test("invalid result shape fails with a data-free error code", () => {
     assert.equal(error.message.includes(secret), false);
     return true;
   });
+});
+
+test("user-selected FULL mask preserves fixed length for standard-looking and opaque aliases", () => {
+  for (const name of ["NAME", "MRN", "PHONE", "OPAQUE_7"]) {
+    const result = applyDatasetDeliveryPolicy({
+      policy: confirmed([{ columnName: name, mode: "FULL" }]),
+      columns: [{ name }], rows: [{ [name]: "synthetic" }, { [name]: "x" }, { [name]: null }],
+    });
+    assert.deepEqual(result.rows, [{ [name]: "○○○○" }, { [name]: "○○○○" }, { [name]: null }]);
+  }
 });

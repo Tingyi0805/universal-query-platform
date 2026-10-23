@@ -5,8 +5,8 @@ type CustomMask = { prefix: number; suffix: number; symbol: string };
 type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: CustomMask | null };
 
 
-export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumns, onDirtyChanged }: {
-  datasetId: number; accessToken: string | null; previewColumns: string[]; onDirtyChanged?: (dirty: boolean) => void;
+export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChanged }: {
+  datasetId: number; accessToken: string | null; onDirtyChanged?: (dirty: boolean) => void;
 }) {
   const scope = useRef(0);
   const [rules, setRules] = useState<Rule[]>([]);
@@ -112,10 +112,11 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   return <section className="preview-panel">
     <h2>Dataset 敏感資料欄位管理</h2>
     <p>此處使用獨立 API 儲存規則；「儲存 Dataset」不會儲存本區變更。移除只修改編輯清單，須按「儲存 Dataset 敏感欄位規則」才生效。啟用中的 Dashboard 安全限制仍適用。</p>
-    <p>選擇欄位後設定遮蔽位置及符號，無需選擇英文模式或敏感資料分類。原有敏感分類與既有規則會保留；未核准欄位不會傳送到播放裝置。</p>
+    <p>選擇欄位後設定遮蔽位置及符號，無需選擇英文模式或敏感資料分類。系統不會依 NAME、MRN、PHONE 等欄位名稱推定分類或遮蔽方式；原有使用者儲存的分類與規則會保留。</p>
+    <p role="status">新增欄位：BLOCKED。可信欄位 metadata 初始化尚未就緒，目前僅能選擇已儲存規則的欄位進行調整；預覽欄名不是初始化證據。空政策不代表沒有敏感資料，也不會解除預覽限制。</p>
     <label>查詢結果欄位 <select value={column} onChange={(event) => editRule(event.target.value)}>
       <option value="">請選擇欄位</option>
-      {[...new Set([...previewColumns, ...rules.map((rule) => rule.columnName)])].map((name) => <option key={name} value={name}>{name}</option>)}
+      {[...new Set(rules.map((rule) => rule.columnName))].map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
     <fieldset>
       <legend>播放裝置資料處理方式</legend>

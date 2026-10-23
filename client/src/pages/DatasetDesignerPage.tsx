@@ -100,7 +100,6 @@ export function DatasetDesignerPage() {
   const [sqlSaveRevision, setSqlSaveRevision] = useState(0);
   const [auditRevision, setAuditRevision] = useState(0);
   const [sensitivityDirty, setSensitivityDirty] = useState(false);
-  const [nonPatientConfirmed, setNonPatientConfirmed] = useState(false);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
   const previewParameterSequence = useRef(0);
   const [previewParametersLoading, setPreviewParametersLoading] = useState(false);
@@ -121,7 +120,7 @@ export function DatasetDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
-  useEffect(() => { setNonPatientConfirmed(false); setPreview(null); }, [form, sqlSaveRevision, sensitivityDirty]);
+  useEffect(() => { setPreview(null); }, [form, sqlSaveRevision, sensitivityDirty]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -281,7 +280,7 @@ export function DatasetDesignerPage() {
         }, accessToken);
         savedId = created.id;
         setForm((current) => ({ ...current, id: created.id }));
-        setNotice("Dataset 已建立。請先檢查並確認敏感欄位政策，再選擇普通資料確認或完成患者稽核設定後預覽。");
+        setNotice("Dataset 已建立。請先檢查並確認敏感欄位政策，可信 metadata 初始化尚未就緒時請停止預覽，不可用聲明替代安全證據。");
       }
 
       // The save API trims SQL. Keep the editor aligned with the saved definition.
@@ -428,7 +427,6 @@ export function DatasetDesignerPage() {
           maxRows: Math.min(Number(form.maxRows), 10000),
           queryTimeoutSec: form.queryTimeoutSec === "" ? null : Number(form.queryTimeoutSec),
           expectedDefinitionVersion: context.definitionVersion,
-          ...(nonPatientConfirmed ? { nonPatientConfirmed: true } : {}),
           ...(form.id ? { datasetId: form.id } : {}),
         }),
       }, accessToken);
@@ -439,7 +437,6 @@ export function DatasetDesignerPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "查詢預覽失敗。");
     } finally {
-      setNonPatientConfirmed(false);
       setBusy(false);
     }
   }
@@ -692,10 +689,16 @@ export function DatasetDesignerPage() {
               )}
             </div>
 
-            <p>預覽順序：儲存 Dataset → 檢查並儲存敏感欄位政策 → 完成下列普通資料確認或患者稽核設定 → 執行預覽。未儲存的 SQL 不會執行。</p>
-            <label><input type="checkbox" checked={nonPatientConfirmed} disabled={busy || !form.id || sensitivityDirty}
-              onChange={e => setNonPatientConfirmed(e.target.checked)} />我已與資料負責人確認本次已儲存定義不含患者資料或敏感欄位，使用普通資料預覽（每次須重新確認）。</label>
-            <p>普通資料預覽仍需已確認的空敏感政策；已有患者設定或敏感規則時不可使用。系統不會自動判定資料無敏感性，也不會關閉患者稽核。</p>
+            <section aria-label="Dataset 安全初始化狀態">
+              <h3>安全初始化：BLOCKED</h3>
+              <p>目前無安全的可信欄位 metadata 初始化入口；不會執行 SQL 取資料列來推測欄位，也不會將候選描述直接當作可信證據。</p>
+              <ul>
+                <li>普通 Dataset：先儲存定義、取得可信欄位並確認空政策；空政策或使用者聲明不能證明沒有敏感／患者資料，目前新建預覽仍受阻。</li>
+                <li>非患者敏感 Dataset：可信欄位就緒後，由使用者選擇敏感欄位及遮蔽方式；非患者分類的安全確認流程尚未就緒，不應啟用患者稽核來繞過。</li>
+                <li>患者 Dataset：除敏感規則外，須由授權使用者選擇並確認患者識別欄位，完成金鑰與揭露稽核設定。</li>
+              </ul>
+              <p>已有可信設定的 Dataset 可使用既有預覽檢查；本次不重新發證。新建者請管理者安排可信 metadata 流程，不能以未設定遮蔽推定無敏感性。</p>
+            </section>
             <div className="form-actions">
               {!form.isArchived ? (
                 <>
@@ -760,7 +763,7 @@ export function DatasetDesignerPage() {
 
           {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
 
-          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} previewColumns={preview?.columns.map((column) => column.name) ?? []} />}
+          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
 
           {preview && (
             <section className="preview-panel">

@@ -158,3 +158,17 @@ test("real JWT/TokenVersion, DESIGN_QUERY and strict HTTP contract protect patie
     assert.equal(f.control.audits.length, 1);
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); env.JWT_SECRET = previous; }
 });
+
+for (const alias of ["NAME", "MRN", "PHONE", "OPAQUE_7"]) test(`patient identifier uses explicit choice, never name heuristics: ${alias}`, async () => {
+  const f = patientFixture(); f.control.state.metadata!.columns = ["NAME", "MRN", "PHONE", "OPAQUE_7"];
+  f.control.state.nameColumns = [];
+  assert.equal((await f.service.get(1)).config, null); assert.equal(f.control.audits.length, 0);
+  const view = await f.service.put(1, { ...input, patientKeyColumn: alias }, 2);
+  assert.equal(view.config?.patientKeyColumn, alias); assert.equal(view.status, "CONFIRMED");
+});
+test("an opaque alias explicitly classified as NAME is still refused as patient identifier", async () => {
+  const f = patientFixture(); f.control.state.metadata!.columns = ["OPAQUE_7"];
+  f.control.state.nameColumns = ["OPAQUE_7"];
+  await assert.rejects(f.service.put(1, { ...input, patientKeyColumn: "OPAQUE_7" }, 2), { code: "PATIENT_KEY_INVALID" });
+  assert.equal(f.control.state.config, null); assert.equal(f.control.audits.length, 0);
+});

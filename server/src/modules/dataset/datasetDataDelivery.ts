@@ -24,7 +24,7 @@ export const defaultDatasetDataDependencies = {
  */
 export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies) {
   async function open(datasetId: number, identity: (transaction?: sql.Transaction) => Promise<RuntimeIdentity>,
-    purpose: "STANDARD" | "RAW_DESIGN" | "NON_PATIENT_DESIGN" = "STANDARD", expectedDefinitionVersion?: string) {
+    purpose: "STANDARD" | "RAW_DESIGN" = "STANDARD", expectedDefinitionVersion?: string) {
     if (purpose !== "STANDARD" && !/^[0-9a-f]{16}$/u.test(expectedDefinitionVersion ?? ""))
       throw new QueryDeliveryError("DATASET_PREVIEW_VERSION_REQUIRED");
     async function inspect(transaction?: sql.Transaction) {
@@ -37,18 +37,13 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
       applyDatasetDeliveryPolicy({ policy: snapshot.policy, columns: [], rows: [] });
       if (purpose !== "STANDARD" && snapshot.definitionVersion !== expectedDefinitionVersion)
         throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_CONFLICT");
-      // This separate, explicitly attested preview cannot override any existing
-      // patient configuration or sensitive rule. RAW_DESIGN admission is unchanged.
-      if (purpose === "NON_PATIENT_DESIGN" && (snapshot.patientAudit.configured || snapshot.patientAudit.enabled
-        || snapshot.patientAudit.patientKeyColumn !== null
-        || snapshot.patientAuditVersion !== "0" || snapshot.policy.rules.length !== 0
-        || (snapshot.policy.patientAuditOnlyColumns?.length ?? 0) !== 0))
-        throw new QueryDeliveryError("DATASET_NON_PATIENT_PREVIEW_DENIED");
       const dataset = await deps.dataset(datasetId, transaction);
       if (!dataset?.isActive || dataset.isArchived || dataset.id !== datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
       const source = await deps.source(dataset.dataSourceId, transaction);
       if (!source?.isActive) throw new QueryDeliveryError("DATASOURCE_NOT_AVAILABLE");
-      if (purpose === "RAW_DESIGN" && (!snapshot.patientAudit.configured || !snapshot.patientAudit.enabled))
+      if (purpose === "RAW_DESIGN" && !snapshot.patientAudit.configured)
+        throw new QueryDeliveryError("DATASET_PREVIEW_INITIALIZATION_REQUIRED", 503);
+      if (purpose === "RAW_DESIGN" && !snapshot.patientAudit.enabled)
         throw new QueryDeliveryError("PATIENT_AUDIT_NOT_CONFIRMED", 503);
       const patient = snapshot.patientAudit.enabled ? await deps.patientState(datasetId, transaction) : null;
       if (patient && patient.status !== "CONFIRMED") throw new QueryDeliveryError("PATIENT_AUDIT_NOT_CONFIRMED", 503);
