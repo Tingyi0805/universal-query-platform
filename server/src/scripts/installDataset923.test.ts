@@ -7,6 +7,7 @@ const baseline = () => ({
   engineMajor: 15, compatibility: 150, databaseState: "ONLINE",
   ledger: true, missingMigrations: [] as string[], requiredColumns: true,
   existingRecord: false, catalog: "NOT_INSTALLED",
+  dbPrincipalId: 1, hasViewDefinition: 1, dbOwnerMember: 1,
 });
 
 test("923 preflight allows precisely absent schema with verified 001-921 prerequisites", () => {
@@ -18,7 +19,7 @@ test("923 installed only when catalog exact AND ledger records same migration", 
   assert.throws(() => assess923Target({ ...baseline(), existingRecord: true }), { code: "923_PARTIAL_UNRECORDED_OR_UNTRUSTED" });
 });
 test("923 partial, different, unknown or tampered objects always reject", () => {
-  for (const catalog of ["REJECTED_UNKNOWN", "REJECTED_PARTIAL_OR_DIFFERENT", "UNVERIFIED", ""]) {
+  for (const catalog of ["REJECTED_PARTIAL_OR_DIFFERENT", "UNVERIFIED", ""]) {
     assert.throws(() => assess923Target({ ...baseline(), catalog }), Install923Error);
   }
 });
@@ -32,4 +33,23 @@ test("923 missing prerequisite records or schema, engine, compatibility and unre
 });
 test("923 installer has no side-effect on import (this suite itself imports it)", () => {
   assert.equal(typeof assess923Target, "function");
+});
+
+test("923 REJECTED_UNKNOWN identifies insufficient visibility, never calls it a partial install", () => {
+  for (const flags of [
+    { dbPrincipalId: 5 },
+    { hasViewDefinition: 0 },
+    { hasViewDefinition: null },
+    { dbPrincipalId: null },
+    { dbPrincipalId: 7, dbOwnerMember: 1 },
+  ]) assert.throws(() => assess923Target({ ...baseline(), catalog: "REJECTED_UNKNOWN", ...flags }),
+    { code: "923_CATALOG_VISIBILITY_REQUIRES_DBO_AND_VIEW_DEFINITION" });
+  assert.throws(() => assess923Target({ ...baseline(), catalog: "REJECTED_UNKNOWN" }),
+    { code: "923_CATALOG_UNKNOWN_WITH_EXPECTED_VISIBILITY" });
+});
+test("923 visibility repair never authorizes partial schema or ledger mismatch", () => {
+  assert.throws(() => assess923Target({ ...baseline(), catalog: "REJECTED_PARTIAL_OR_DIFFERENT" }),
+    { code: "923_PARTIAL_UNRECORDED_OR_UNTRUSTED" });
+  assert.throws(() => assess923Target({ ...baseline(), catalog: "EXACT_MATCH", existingRecord: false }),
+    { code: "923_PARTIAL_UNRECORDED_OR_UNTRUSTED" });
 });
