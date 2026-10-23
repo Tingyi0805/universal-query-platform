@@ -67,7 +67,13 @@ test("NULL/UNKNOWN CHECK loophole is closed by CASE ELSE 0 and explicit shape gu
   const pass = (sqlTruth: true | false | null) => (sqlTruth === true ? 1 : 0) === 1;
   assert.equal(pass(null), false); assert.equal(pass(false), false); assert.equal(pass(true), true);
   const checks = expected923Catalog().filter(r => r.category === "CHECK");
-  for (const c of checks) { assert.ok(c.signature.startsWith("(CASE WHEN (")); assert.ok(c.signature.includes("THEN (1) ELSE (0) END=(1))")); }
+  for (const c of checks) {
+    assert.ok(c.signature.startsWith("(case when "));
+    assert.ok(c.signature.includes("then (1) else (0) end=(1))"));
+    assert.match(c.signature, /\\|0\\|0\\|0\\|\\d+\\|0\\|1$/u);
+  }
+  // DDL continues to carry the original explicit CASE/WHEN guard.
+  assert.match(render923Draft(), /CHECK \\(CASE WHEN/u);
   const active = checks.find(c => c.name === "CK_DatasetSecurityConfirmation_Active")!.signature;
   for (const field of ["Classification", "PolicyDigest", "SensitivityVersion", "ReviewerId", "OwnerUserId", "ReviewerTokenVersion", "OwnerTokenVersion", "ActorScopeEpoch", "OwnerScopeEpoch", "PatientConfigurationVersion", "PatientKeyAlias"]) assert.ok(active.includes(`[${field}] IS NOT NULL`));
   assert.ok(checks.find(c => c.name === "CK_DatasetSecurityScope_Parent")!.signature.includes("[ParentOwnerKind] IS NOT NULL"));
@@ -81,7 +87,8 @@ test("BIN2 enums also require exact byte length: trailing-space variants cannot 
   for (const value of ["ACTIVE ", "OWNER ", "PATIENT           ", "MISSING "]) assert.equal(exactEnum(value, ["ACTIVE", "OWNER", "PATIENT", "NON_PATIENT_PUBLIC", "MISSING"]), false);
   for (const field of ["State", "ScopeKind", "ParentOwnerKind", "ParameterMode", "Kind", "Action", "ReasonCode", "PreviousState", "NextState", "Classification", "ApproverScopeKind", "AuthorizationModelVersion"]) assert.ok(render923Draft().includes(`DATALENGTH([${field}])`));
   const rows = expected923Catalog().map(r => ({ ...r })); const state = rows.find(r => r.name === "CK_DatasetSecurityConfirmation_State")!;
-  state.signature = state.signature.replace("AND DATALENGTH([State])=(12)", "AND (1)=(1)"); rejected(rows);
+  assert.ok(state.signature.includes("AND datalength([State])=(12)"));
+  state.signature = state.signature.replace("AND datalength([State])=(12)", "AND (1)=(1)"); rejected(rows);
 });
 test("all states/defaults stay within approved domains; missing previous version is not zero", () => {
   const ddl = render923Draft();
