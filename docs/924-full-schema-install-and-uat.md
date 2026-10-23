@@ -10,7 +10,7 @@
 |---|---|
 | 完整基礎 | 48 個真實 Migration 記錄、46 張基礎表、923 專用安裝與 EXACT_MATCH |
 | 924 absent／partial／wrong target | absent 可預檢；同名異形、部分安裝、錯誤 Instance／DB／Login、缺核准均拒絕 |
-| DDL 失敗 | 在新增第二個能力時以合成 CHECK 拒絕；新 Binding、第一個能力、Ledger 均 rollback，不清除失敗現場來假裝成功 |
+| DDL 失敗 | 在新增第二個能力時以合成 CHECK 拒絕；新 Binding、第一個能力、Ledger 均 rollback；另於 Ledger 寫入失敗時驗證 Binding、兩個能力與 Decision DENY 一起回復，不清除失敗現場來假裝成功 |
 | 安裝／再入 | 924 精確 Catalog、兩個能力定義、public Decision UPDATE/DELETE DENY 與唯一 Ledger 同交易提交；第二次 apply 拒絕，不修補／adopt |
 | 精確結構 | 10 欄、BINARY(8)（非新 ROWVERSION）、BIN2、複合 clustered PK、兩個 trusted NO ACTION FK、完整 CHECK 文字／flags；額外欄、索引、disabled CHECK/FK 拒絕 |
 | CHECK／FK | 合法 Owner 可寫；尾端空白 kind、零 ID/token/version、NULL 必填、Owner 帶 parent、未知 Dataset FK 均拒絕 |

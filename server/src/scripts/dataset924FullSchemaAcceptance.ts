@@ -45,8 +45,12 @@ async function businessSnapshot(pool:sql.ConnectionPool){
   const result:Record<string,string>={};
   const priorStage=stage;
   for(const {name} of names){stage="BUSINESS_SNAPSHOT_"+name;check(/^[A-Za-z0-9_]+$/.test(name),"FIXED_TABLE_NAME");
-    const r=await pool.request().query(`SELECT (SELECT * FROM uqp.[${name}] FOR JSON PATH,INCLUDE_NULL_VALUES) AS Payload`);
-    result[name]=digest(JSON.stringify((JSON.parse(r.recordset[0].Payload) as unknown[]).map(v=>JSON.stringify(v)).sort()));
+    const r=await pool.request().query(`SELECT CONVERT(varchar(20),(SELECT COUNT_BIG(*) FROM uqp.[${name}])) AS ExactCount,
+      COALESCE((SELECT * FROM uqp.[${name}] FOR JSON PATH,INCLUDE_NULL_VALUES),N'[]') AS Payload`);
+    const row=r.recordset[0];check(!!row&&typeof row.Payload==="string","SNAPSHOT_FORMAT");
+    const parsed=JSON.parse(row.Payload) as unknown;
+    check(Array.isArray(parsed)&&BigInt(parsed.length)===BigInt(row.ExactCount),"SNAPSHOT_COUNT_OR_ARRAY");
+    result[name]=digest(JSON.stringify(parsed.map(v=>JSON.stringify(v)).sort()));
   }
   stage=priorStage;return result;
 }
@@ -115,6 +119,13 @@ async function main(){
     check((await root.request().query("SELECT COUNT(*) C FROM uqp.Permission WHERE Code IN(N'MANAGE_DATASET_SECURITY_SCOPE',N'CONFIRM_DATASET_CLASSIFICATION')")).recordset[0].C===0,"DDL_FAILURE_LEFT_PERMISSION");
     check((await root.request().query("SELECT COUNT(*) C FROM uqp.SchemaMigration WHERE FileName=N'924_dataset_security_scope_binding.sql'")).recordset[0].C===0,"DDL_FAILURE_LEFT_LEDGER");
     await root.request().query("ALTER TABLE uqp.Permission DROP CONSTRAINT CK_Ci924_FailSecondCapability");
+    stage="924_LEDGER_FAILURE_ROLLBACK";
+    await root.request().query("ALTER TABLE uqp.SchemaMigration ADD CONSTRAINT CK_Ci924_LedgerFailure CHECK(FileName<>N'924_dataset_security_scope_binding.sql')");
+    rejected(await cli("924","apply"));
+    check(await catalog(root)==="NOT_INSTALLED","LEDGER_FAILURE_LEFT_BINDING");
+    check((await root.request().query("SELECT COUNT(*) C FROM uqp.Permission WHERE Code IN(N'MANAGE_DATASET_SECURITY_SCOPE',N'CONFIRM_DATASET_CLASSIFICATION')")).recordset[0].C===0,"LEDGER_FAILURE_LEFT_PERMISSION");
+    check((await root.request().query("SELECT COUNT(*) C FROM sys.database_permissions WHERE major_id=OBJECT_ID(N'uqp.DatasetSecurityDecision') AND grantee_principal_id=DATABASE_PRINCIPAL_ID(N'public') AND state=N'D' AND permission_name IN(N'UPDATE',N'DELETE')")).recordset[0].C===0,"LEDGER_FAILURE_LEFT_DENY");
+    await root.request().query("ALTER TABLE uqp.SchemaMigration DROP CONSTRAINT CK_Ci924_LedgerFailure");
     stage="924_REFERENCE_ROUNDTRIP";
     const probe=new sql.Transaction(root);await probe.begin();
     try{
@@ -143,13 +154,14 @@ async function main(){
       `ALTER TABLE uqp.${bindingTable} ADD ExtraColumn INT NULL`,
       `ALTER TABLE uqp.${bindingTable} NOCHECK CONSTRAINT FK_${bindingTable}_User`,
       `CREATE INDEX IX_CiUnexpected ON uqp.${bindingTable}(UserId)`,
+      `CREATE TRIGGER uqp.Ci924UnexpectedTrigger ON uqp.${bindingTable} AFTER INSERT AS RETURN;`,
     ]){
       const tx=new sql.Transaction(root);await tx.begin();
       try{await new sql.Request(tx).query(mutation);check((await new sql.Request(tx).query(render924CatalogSql())).recordset[0].CatalogStatus==="REJECTED_PARTIAL_OR_DIFFERENT","DRIFT_ACCEPTED");}finally{await tx.rollback();}
     }
     stage="924_CHECK_FK_BOUNDARIES";
     const valid=[datasetId,ownerId,"N'OWNER'","0x0101010101010101","1","0x0101010101010101","0x0101010101010101","NULL","NULL","NEWID()"];
-    const cases=[valid,...[[0,"0"],[2,"N'OWNER '"],[3,"0x0000000000000000"],[4,"0"],[5,"NULL"],[7,"0x0101010101010101"],[8,"1"],[0,"9223372036854775807"]].map(([i,value])=>valid.map((v,n)=>n===i?String(value):v))];
+    const cases=[valid,...[[0,"0"],[2,"N'REVIEWER'"],[2,"N'UNKNOWN'"],[2,"N'OWNER '"],[3,"0x0000000000000000"],[4,"0"],[5,"NULL"],[7,"0x0101010101010101"],[8,"1"],[0,"9223372036854775807"]].map(([i,value])=>valid.map((v,n)=>n===i?String(value):v))];
     for(const [i,values] of cases.entries()){
       const r=await root.request().batch(`BEGIN TRAN; BEGIN TRY INSERT uqp.${bindingTable} VALUES(${values.join(",")});
         ROLLBACK; SELECT 1 AS Accepted; END TRY BEGIN CATCH IF XACT_STATE()<>0 ROLLBACK; SELECT 0 AS Accepted,ERROR_NUMBER() AS N; END CATCH`);

@@ -26,12 +26,21 @@ export async function inspect924(request:()=>sql.Request){
     (SELECT compatibility_level FROM sys.databases WHERE database_id=DB_ID()) AS Compat,
     (SELECT state_desc FROM sys.databases WHERE database_id=DB_ID()) AS State,
     OBJECT_ID(N'uqp.SchemaMigration',N'U') AS Ledger,
+    CASE WHEN EXISTS(SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.Dataset') AND name=N'DefinitionRowVersion'
+      AND system_type_id=189 AND user_type_id=189 AND max_length=8 AND is_nullable=0 AND is_computed=0)
+      AND EXISTS(SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DataSource') AND name=N'ConfigurationRowVersion'
+      AND system_type_id=189 AND user_type_id=189 AND max_length=8 AND is_nullable=0 AND is_computed=0)
+      AND (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.Dataset') AND system_type_id=189)=1
+      AND (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DataSource') AND system_type_id=189)=1
+      AND EXISTS(SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.AppUser') AND name=N'TokenVersion'
+      AND system_type_id=56 AND user_type_id=56 AND is_nullable=0 AND is_computed=0)
+      THEN 1 ELSE 0 END AS Foundation,
     CASE WHEN EXISTS(SELECT 1 FROM uqp.Permission WHERE Code COLLATE Latin1_General_100_BIN2=N'MANAGE_DATASET_SECURITY_SCOPE' AND DATALENGTH(Code)=58)
       AND EXISTS(SELECT 1 FROM uqp.Permission WHERE Code COLLATE Latin1_General_100_BIN2=N'CONFIRM_DATASET_CLASSIFICATION' AND DATALENGTH(Code)=60) THEN 1 ELSE 0 END AS Capabilities,
     (SELECT COUNT(*) FROM sys.database_permissions WHERE class=1 AND major_id=OBJECT_ID(N'uqp.DatasetSecurityDecision')
       AND minor_id=0 AND grantee_principal_id=DATABASE_PRINCIPAL_ID(N'public') AND state=N'D' AND permission_name IN(N'UPDATE',N'DELETE')) AS Immutable
     `)).recordset[0];
-  if(!info||info.Major!==15||info.Compat!==150||info.State!=="ONLINE"||!info.Ledger)fail("924_FULL_BASELINE_OR_ENGINE_REQUIRED");
+  if(!info||info.Major!==15||info.Compat!==150||info.State!=="ONLINE"||!info.Ledger||info.Foundation!==1)fail("924_FULL_BASELINE_OR_ENGINE_REQUIRED");
   const expected=await readdir(new URL("../../../database/migrations/",import.meta.url));
   const files=expected.filter(n=>/^\d+_.*\.sql$/i.test(n)).sort();
   if(files.length!==48||files.some(n=>Number(n.slice(0,3))>921))fail("924_BASELINE_MANIFEST_UNREVIEWED");
