@@ -11,6 +11,7 @@ import type { DataSourceConfig } from "../modules/datasource/datasource.types.js
 import { test923ScopeCasInDisposableSqlServer } from "./dataset923EphemeralCas.js";
 import { test923SyntheticDecisionAuditAtomicity } from "./dataset923EphemeralDecisionAudit.js";
 import { test923ManualInstallerOnSyntheticSqlServer } from "./dataset923EphemeralInstallAcceptance.js";
+import { test923ExactAuditReceiptOnDisposableSql2019 } from "./dataset923EphemeralRealAudit.js";
 
 const dbName = "UQP923_CI_SYNTHETIC";
 const expectedMachine = "uqp-923-ephemeral";
@@ -179,6 +180,9 @@ async function main() {
     // never a genuine AuditLog or application-issued security decision.
     stage = "923_SYNTHETIC_F5_ATOMIC_DECISION_AUDIT";
     await test923SyntheticDecisionAuditAtomicity(isolated);
+    stage = "923_REAL_AUDIT_LOG_TRANSACTION_RECEIPT";
+    await test923ExactAuditReceiptOnDisposableSql2019(isolated);
+
     stage = "923_DEDICATED_INSTALLER_ON_SECOND_SYNTHETIC_DATABASE";
     await test923ManualInstallerOnSyntheticSqlServer(master);
 
