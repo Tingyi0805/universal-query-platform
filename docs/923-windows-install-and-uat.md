@@ -28,6 +28,30 @@
 - 正式資料預覽仍須完成 Owner/Reviewer、精確正式 Audit Writer、來源 DDL Fence、可信欄位證據與患者分類確認。既有患者稽核、RBAC、遮蔽不可關閉來省略驗收。
 - 923 的開發位於 **PR #66 Draft**，目前不能將新包直接覆蓋線上 UQP。UAT 分為：Schema 安裝驗收 → 管理介面與欄位候選預覽 → 安全分類及資料列預覽 → Query/Excel/Dashboard 整合。
 
+## 特別處理：`REJECTED_UNKNOWN`（非「部分安裝」）
+
+這個狀態表示 923 Catalog 的驗證者**無法證明自己能看到完整資料庫目錄**，不是證明 923 表已部分安裝。SQL Server 2019、相容性 150 和基礎 Migration 都可能已符合要求。923 驗證器刻意同時要求：
+
+- `USER_ID() = 1`（登入連線於目標資料庫的**有效資料庫主體是 dbo**）；只有 `IS_MEMBER('db_owner')=1` **不能**代替。
+- `HAS_PERMS_BY_NAME(DB_NAME(),'DATABASE','VIEW DEFINITION')=1`。
+
+登入必須與安裝程式連線實際使用的登入一致；若 SSMS 使用 Windows 認證，而 `server/.env` 使用 SQL 認證，結果可能不同。
+
+在 SSMS 選取**重新建置的測試資料庫**後，可先執行這段唯讀檢查（不需提供密碼）：
+
+```sql
+SELECT DB_NAME() AS DatabaseName,
+       ORIGINAL_LOGIN() AS LoginName,
+       USER_NAME() AS DatabasePrincipal,
+       USER_ID() AS DatabasePrincipalId,
+       HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION') AS CanViewDefinition,
+       IS_MEMBER(N'db_owner') AS IsDbOwnerRoleMember;
+```
+
+若 DatabasePrincipalId 非 1 或 CanViewDefinition 非 1，請**不要提升 UQP 平日使用帳號的權限**。準備由 DBA 核准、對本次重建測試 DB 具備 dbo 可見性的**安裝專用 SQL 登入**，再開啟新版 `tools/install-uqp-923.bat`；回答 `Use a separate SQL installation login for 923 only?` 為 `Y`，輸入安裝帳號與隱藏密碼。它只在此 PowerShell 程序的環境中暫時覆蓋登入，不會寫入 `server/.env`。
+
+新版預檢會回報 `catalogVisibility.databasePrincipalIsDbo` 與 `catalogVisibility.canViewDefinition` 的布林值，並將缺乏可見性的情況明確分類為 `923_CATALOG_VISIBILITY_REQUIRES_DBO_AND_VIEW_DEFINITION`。即使改用安裝帳號，**仍必須通過**所有原有前置檢查，且目標不承載任何線上服務、具有可回復備份，才可以安裝。不應手動寫入 SchemaMigration、跳過 Catalog 或直接 CREATE 923 表。
+
 ## 失敗處理
 
 - `923_BASELINE_OR_ENGINE_NOT_READY`：先查缺少的 Migration 編號、RowVersion/資料庫版本；不自動補表、不跳過前置條件。
