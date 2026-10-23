@@ -35,7 +35,7 @@ test("candidate describes only saved zero-parameter SQL and never gains delivery
 test("missing, inactive, archived or non-SQL Server Dataset never reaches describe", async () => {
   for (const key of ["datasetActive", "datasetArchived", "sourceActive", "sourceType"] as const) {
     const f = fixture();
-    (f.s as any)[key] = key === "datasetActive" ? false : key === "sourceType" ? "ORACLE" : true;
+    (f.s as any)[key] = key === "datasetActive" || key === "sourceActive" ? false : key === "sourceType" ? "ORACLE" : true;
     await assert.rejects(f.service.open(7));
     assert.equal(f.describes, 0);
   }
