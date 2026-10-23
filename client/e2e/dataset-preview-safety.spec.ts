@@ -74,7 +74,7 @@ test("all three missing-metadata flows show BLOCKED without automatic settings w
   const panel = page.getByRole("region", { name: "Dataset 安全初始化狀態" });
   await expect(panel.getByRole("heading", { name: "安全初始化：BLOCKED" })).toBeVisible();
   await expect(panel).toContainText("普通 Dataset"); await expect(panel).toContainText("非患者敏感 Dataset"); await expect(panel).toContainText("患者 Dataset");
-  await expect(panel).toContainText("來源結構變更驗證、版本綁定的欄位儲存、資料負責人分類確認");
+  await expect(panel).toContainText("來源結構變更驗證、可信欄位發證、資料負責人分類確認");
   await expect(panel).toContainText("候選欄位不會加入下方可選清單");
   await expect(page.getByText(/新增欄位：BLOCKED/)).toBeVisible();
   await expect(page.getByRole("combobox", { name: /查詢結果欄位/ }).getByRole("option")).toHaveCount(1);

@@ -5,6 +5,9 @@ import {datasetFieldInitialization,initializeFieldsCommand} from "./datasetField
 import {DatasetScopeError,exactScopeId} from "./datasetScopeManagement.js";
 import {SourceFenceError} from "./sqlServerSourceFence.js";
 const messages:Record<string,string>={
+  SCOPE_MANAGEMENT_NOT_CONFIGURED:"欄位初始化功能尚未啟用；需先核准 924、平台 incarnation 與來源 Provider，目前保持 BLOCKED。",
+  SCOPE_924_OR_IMMUTABLE_LEDGER_REQUIRED:"需完整 924 與受限資料庫身分；請先在隔離環境驗收，不可使用 dbo 繞過。",
+  SCOPE_FINAL_REVALIDATION_FAILED:"Scope、Dataset 或來源已變更，請停止並重新載入；原政策與歷史欄位保留。",
   SOURCE_PROVIDER_NOT_REGISTERED:"尚未註冊經審查的來源 Metadata Provider；Source Fence 仍 BLOCKED。",
   SOURCE_DEPENDENCY_UNPROVEN:"此階段僅支援單一實體表；跨資料庫、View、Synonym、Function 或未知依賴均拒絕。",
   SOURCE_SQL_UNSUPPORTED:"此階段僅接受明確欄位的 SELECT schema.table，不支援其他 SQL 組合。",
