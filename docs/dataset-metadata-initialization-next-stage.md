@@ -1,5 +1,7 @@
 # BUG-002 下一階段：版本綁定收集與 Schema 審查稿
 
+> Schema、Owner Scope 與 Fence 的定案以 [923 決策](dataset-metadata-923-owner-fence-decision.md) 為準；本稿保留收集 Fixture 及前版設計歷史。
+
 基準 `5c16edee3e6d9a784d9f635395c2a0dbc4cca923` / CI #887 Success / Draft PR #66。本稿沿用 [BUG-002 根因](dataset-sensitive-initialization-bug002.md)，不重新提出既有可行性研究。
 
 ## 本次實作邊界
