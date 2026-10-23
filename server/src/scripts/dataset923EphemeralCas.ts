@@ -71,10 +71,13 @@ export async function test923ScopeCasInDisposableSqlServer(
         OUTPUT CONVERT(varchar(16),inserted.ScopeRowVersion,2) AS NewVersion
         VALUES (@datasetId,@userId,N'OWNER',${sourceId},N'REVOKED',
           NULL,NULL,@userId,NEWID(),N'OWNER_APPOINTED',SYSUTCDATETIME(),SYSUTCDATETIME())`);
+      console.log("UQP923_CAS_STAGE_INSERT", JSON.stringify({ rows: insert.recordset.length, affected: insert.rowsAffected }));
       assert.equal(insert.recordset.length, 1);
       const version = String(insert.recordset[0].NewVersion).toLowerCase();
+      console.log("UQP923_CAS_STAGE_VERSION", JSON.stringify({ length: version.length, hex: /^[0-9a-f]+$/u.test(version) }));
       assert.match(version, /^[0-9a-f]{16}$/u);
       await a.commit(); aStarted = false;
+      console.log("UQP923_CAS_STAGE_FIRST_COMMIT");
       console.log("UQP923_CAS_EMPTY_PREDICATE_TWO_SPIDS: CONFLICT_1222, FIRST_WRITE_COMMITTED");
 
       const txNew = new sql.Transaction(poolA);
@@ -82,6 +85,7 @@ export async function test923ScopeCasInDisposableSqlServer(
       try {
         await txNew.begin(sql.ISOLATION_LEVEL.SERIALIZABLE); newStarted = true;
         const fresh = await scopeRequest(txNew, ownerId).query(scopeSql);
+        console.log("UQP923_CAS_STAGE_REOPEN", fresh.recordset.length);
         assert.equal(fresh.recordset.length, 1, "Second CAS must observe existing scope");
         await txNew.commit(); newStarted = false;
       } finally { await failSafeRollback(txNew, newStarted); }
@@ -99,6 +103,7 @@ export async function test923ScopeCasInDisposableSqlServer(
             OUTPUT CONVERT(varchar(16),inserted.ScopeRowVersion,2) AS NewVersion
             WHERE DatasetId=@datasetId AND UserId=@userId AND ScopeKind=N'OWNER'
               AND ScopeRowVersion=@expected`);
+        console.log("UQP923_CAS_STAGE_UPDATE", JSON.stringify({ rows: result.recordset.length, affected: result.rowsAffected }));
         assert.equal(result.recordset.length, 1);
         assert.notEqual(String(result.recordset[0].NewVersion).toLowerCase(), version);
         await updater.commit(); updateStarted = false;
@@ -112,6 +117,7 @@ export async function test923ScopeCasInDisposableSqlServer(
           SET State=N'REVOKED', LastRequestId=NEWID()
           WHERE DatasetId=@datasetId AND UserId=@userId AND ScopeKind=N'OWNER'
             AND ScopeRowVersion=@expected`);
+      console.log("UQP923_CAS_STAGE_STALE", JSON.stringify({ affected: rejected.rowsAffected }));
       assert.equal(rejected.rowsAffected[0], 0, "Stale ROWVERSION CAS must update zero rows");
       console.log("UQP923_CAS_ROWVERSION: ONE_UPDATE, STALE_UPDATE_ZERO");
 
@@ -133,6 +139,7 @@ export async function test923ScopeCasInDisposableSqlServer(
       const remaining = await poolA.request()
         .input("userId", sql.BigInt, rollbackUserId)
         .query("SELECT COUNT_BIG(*) AS C FROM uqp.DatasetSecurityScope WHERE UserId=@userId");
+      console.log("UQP923_CAS_STAGE_ROLLBACK_COUNT", Number(remaining.recordset[0]?.C));
       assert.equal(Number(remaining.recordset[0]?.C), 0, "Rollback must not persist scope");
       console.log("UQP923_CAS_ROLLBACK: NO_PERSISTED_SCOPE");
     } finally {
