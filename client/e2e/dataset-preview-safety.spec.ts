@@ -106,7 +106,7 @@ test("candidate-only masking rehearsal never writes policy, syncs trusted column
   const draft = panel.getByRole("region", { name: "候選欄位遮蔽草稿" });
   await draft.getByRole("combobox", { name: "候選遮蔽欄位" }).selectOption("VALUE");
   await draft.getByRole("button", { name: "加入／更新本頁草稿（不儲存）" }).click();
-  await expect(draft.getByRole("caption", { name: "尚未儲存、未生效的遮蔽草稿" })).toBeVisible();
+  await expect(draft.locator("table caption")).toHaveText("尚未儲存、未生效的遮蔽草稿");
   await expect(draft).toContainText("ABC01234");
   expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
   await expect(page.getByText(/新增欄位：BLOCKED/)).toBeVisible();
