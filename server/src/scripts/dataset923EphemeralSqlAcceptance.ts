@@ -9,6 +9,7 @@ import { render923CatalogSql, render923Draft } from "../modules/dataset/datasetM
 import { SqlServerAdapter } from "../modules/datasource/adapters/sqlServerAdapter.js";
 import type { DataSourceConfig } from "../modules/datasource/datasource.types.js";
 import { test923ScopeCasInDisposableSqlServer } from "./dataset923EphemeralCas.js";
+import { test923SyntheticDecisionAuditAtomicity } from "./dataset923EphemeralDecisionAudit.js";
 
 const dbName = "UQP923_CI_SYNTHETIC";
 const expectedMachine = "uqp-923-ephemeral";
@@ -173,6 +174,11 @@ async function main() {
     // source-fence, confirmation Writer, audit or authorization acceptance.
     stage = "923_SCOPE_CAS_TWO_SESSIONS";
     await test923ScopeCasInDisposableSqlServer(isolated, () => connect(dbName));
+    // F5 synthetic ledger/receipt transaction rehearsal. Uses a private table,
+    // never a genuine AuditLog or application-issued security decision.
+    stage = "923_SYNTHETIC_F5_ATOMIC_DECISION_AUDIT";
+    await test923SyntheticDecisionAuditAtomicity(isolated);
+
 
 
     console.log("UQP923_EPHEMERAL_SQL2019_SYNTHETIC: NOT_INSTALLED -> PARTIAL_REJECTED -> EXACT_MATCH -> EXACT_MATCH");
