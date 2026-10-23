@@ -24,7 +24,8 @@ const prerequisites = [
 export type Install923Target = Readonly<{ server: string; database: string; login: string;
   engineMajor: number; compatibility: number; databaseState: string;
   ledger: boolean; missingMigrations: string[]; requiredColumns: boolean;
-  existingRecord: boolean; catalog: string }>;
+  existingRecord: boolean; catalog: string;
+  dbPrincipalId: number | null; hasViewDefinition: number | null; dbOwnerMember: number | null }>;
 
 export class Install923Error extends Error {
   constructor(readonly code: string) { super(code); this.name = "Install923Error"; }
@@ -36,6 +37,11 @@ export function assess923Target(t: Install923Target): "READY" | "INSTALLED" {
       t.missingMigrations.length !== 0 ||
       !t.server || !t.database || !t.login)
     throw new Install923Error("923_BASELINE_OR_ENGINE_NOT_READY");
+  if (t.catalog === "REJECTED_UNKNOWN") {
+    if (t.dbPrincipalId !== 1 || t.hasViewDefinition !== 1)
+      throw new Install923Error("923_CATALOG_VISIBILITY_REQUIRES_DBO_AND_VIEW_DEFINITION");
+    throw new Install923Error("923_CATALOG_UNKNOWN_WITH_EXPECTED_VISIBILITY");
+  }
   if (t.catalog === "EXACT_MATCH" && t.existingRecord) return "INSTALLED";
   if (t.catalog === "NOT_INSTALLED" && !t.existingRecord) return "READY";
   throw new Install923Error("923_PARTIAL_UNRECORDED_OR_UNTRUSTED");
@@ -55,6 +61,9 @@ async function readTarget(request: () => sql.Request): Promise<Install923Target>
   const info = await request().query(`
     SELECT @@SERVERNAME AS ServerName, DB_NAME() AS DatabaseName,
       ORIGINAL_LOGIN() AS LoginName,
+      USER_ID() AS DatabasePrincipalId,
+      HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION') AS HasViewDefinition,
+      IS_MEMBER(N'db_owner') AS IsDbOwnerMember,
       TRY_CONVERT(int, SERVERPROPERTY(N'ProductMajorVersion')) AS Major,
       (SELECT compatibility_level FROM sys.databases WHERE database_id=DB_ID()) AS Compat,
       (SELECT state_desc FROM sys.databases WHERE database_id=DB_ID()) AS DatabaseState,
@@ -81,6 +90,9 @@ async function readTarget(request: () => sql.Request): Promise<Install923Target>
     ledger: true, missingMigrations: prerequisites.filter(f => !names.has(f)),
     requiredColumns: a.PrerequisitesVisible === 1,
     existingRecord: names.has(fileName), catalog,
+    dbPrincipalId: a.DatabasePrincipalId == null ? null : Number(a.DatabasePrincipalId),
+    hasViewDefinition: a.HasViewDefinition == null ? null : Number(a.HasViewDefinition),
+    dbOwnerMember: a.IsDbOwnerMember == null ? null : Number(a.IsDbOwnerMember),
   };
 }
 
@@ -111,7 +123,14 @@ async function run() {
       console.log("923_PREFLIGHT_OBSERVATION=" + JSON.stringify({catalog:before.catalog,
         existingRecord:before.existingRecord,missingMigrations:before.missingMigrations,
         requiredColumns:before.requiredColumns,engineMajor:before.engineMajor,
-        compatibility:before.compatibility, databaseState:before.databaseState}));
+        compatibility:before.compatibility, databaseState:before.databaseState,
+        catalogVisibility: {databasePrincipalIsDbo: before.dbPrincipalId === 1,
+          canViewDefinition: before.hasViewDefinition === 1,
+          isDbOwnerRoleMember: before.dbOwnerMember === 1}}));
+      if (before.catalog === "REJECTED_UNKNOWN") {
+        console.log("923_PREFLIGHT_HINT=CATALOG_REQUIRES_EFFECTIVE_DBO_USER_AND_VIEW_DEFINITION");
+        console.log("923_PREFLIGHT_HINT=USE_A_SEPARATE_INSTALLER_LOGIN_NOT_PERMANENT_UQP_APP_CREDENTIALS");
+      }
     }
     const state = assess923Target(before);
     if (mode === "preflight") {
