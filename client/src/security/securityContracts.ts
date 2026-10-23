@@ -7,7 +7,7 @@ const record = (value: unknown): value is Record<string, unknown> => !!value && 
 const aliases = (value: unknown): value is string[] => Array.isArray(value) && value.every(v => typeof v === "string" && v.length > 0 && v.length <= 256) && new Set(value.map(v => v.toUpperCase())).size === value.length;
 const version = (value: unknown): value is string => typeof value === "string" && /^(0|[1-9][0-9]{0,18})$(?![\s\S])/.test(value) && (value.length < 19 || value <= "9223372036854775807");
 export const patientStatuses: Record<string, string> = { NOT_CONFIGURED: "尚未設定", DISABLED: "目前停用", KEY_UNAVAILABLE: "HMAC 金鑰不可用，請聯絡系統管理者",
-  METADATA_UNCONFIRMED: "可信欄位尚未確認，請儲存 Dataset 定義並成功預覽後重新載入", METADATA_AMBIGUOUS: "欄位別名有大小寫歧義，請檢查 Dataset 定義",
+  METADATA_UNCONFIRMED: "可信欄位尚未確認，患者資料預覽維持阻擋；請管理者安排可信 metadata 初始化，不可用候選描述或停用稽核替代", METADATA_AMBIGUOUS: "欄位別名有大小寫歧義，請檢查 Dataset 定義",
   PATIENT_KEY_INVALID: "識別欄位無效或屬姓名分類，請重新確認", CONFIRMED: "已確認" };
 export type PatientAuditView = { config: { isEnabled: boolean; patientKeyColumn: string; version: string } | null;
   version: string; status: string; metadataStatus: string; columns: string[] };
@@ -49,7 +49,7 @@ const guidance: Record<string, string> = {
   QUERY_SOURCE_QUERY_FORBIDDEN: "本來源沒有查詢執行權限，請管理者確認 Query 授權。",
   TOKEN_REVOKED: "登入授權已失效，請重新登入。", INVALID_TOKEN: "登入授權已失效，請重新登入。", UNAUTHORIZED: "請重新登入或重新完成裝置授權。",
   DASHBOARD_DEVICE_UNAUTHORIZED: "裝置授權已失效，請管理者重新完成授權。", QUERY_SOURCE_LEGACY_WRITER_DISABLED: "此看板受轉換或寫入者保護，請使用對應管理流程，不能回退到舊寫入。",
-  METADATA_UNCONFIRMED: "請先儲存 Dataset 定義並成功預覽，再重新載入可信欄位。", METADATA_AMBIGUOUS: "結果別名有大小寫歧義，請管理者修正定義。",
+  METADATA_UNCONFIRMED: "請先儲存 Dataset，再由管理者安排可信 metadata 初始化；患者預覽在完成前維持阻擋。", METADATA_AMBIGUOUS: "結果別名有大小寫歧義，請管理者修正定義。",
   PARAMETER_REQUIRED: "請管理者確認本來源的必要查詢參數。",
   PATIENT_KEY_INVALID: "請選擇後端確認的精確識別別名；姓名不能作為患者識別碼。",
 };

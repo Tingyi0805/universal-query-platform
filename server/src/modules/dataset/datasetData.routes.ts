@@ -22,6 +22,7 @@ const savedSchema = z.object(valuesSchema).strict();
 const rawSchema = savedSchema.extend({ expectedDefinitionVersion: z.string().regex(/^[0-9a-f]{16}$/) });
 const candidateSchema = z.object({ ...valuesSchema, datasetId: idSchema.optional(), dataSourceId: idSchema,
   sqlText: z.string().min(1).max(200000), expectedDefinitionVersion: z.string().optional(),
+  nonPatientConfirmed: z.literal(true).optional(),
   queryTimeoutSec: z.number().int().min(1).max(300).nullable().optional() }).strict();
 
 export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependencies) {
@@ -68,7 +69,9 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
       const input = candidateSchema.parse(req.body);
       const context = await preparePreview(input, identity(req));
       await audited(req, res, context, context.dataset.id, "DATASET_DESIGN_PREVIEW", {
-        purpose: "RAW_DESIGN", definitionVersion: context.snapshot.definitionVersion,
+        purpose: context.purpose, definitionVersion: context.snapshot.definitionVersion,
+        sensitivityVersion: context.snapshot.sensitivityVersion, patientAuditVersion: context.snapshot.patientAuditVersion,
+        nonPatientConfirmed: input.nonPatientConfirmed === true,
       }, async () => {
         const result = await deps.delivery.execute(context, input.values, input.maxRows);
         return { payload: { ...result, parameterNames: extractParameterNames(context.dataset.sqlText) }, rowCount: result.result.rowCount };
@@ -110,10 +113,31 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
       const status = error instanceof z.ZodError ? 400 : error instanceof QueryDeliveryError ? error.status
         : error instanceof DatasetDeliverySnapshotError && error.code === "DATASET_DELIVERY_SCHEMA_REQUIRED" ? 503 : 409;
       res.status(status).json({ error: { code: error instanceof z.ZodError ? "VALIDATION_ERROR" : error.code,
-        message: "Dataset 資料交付安全檢查未通過。", requestId: _req.id } });
+        message: datasetPreviewGuidance(error instanceof z.ZodError ? "VALIDATION_ERROR" : error.code), requestId: _req.id } });
       return;
     }
     next(error);
   }) satisfies import("express").ErrorRequestHandler);
   return router;
+}
+
+// Fixed messages only: never expose candidate SQL, driver errors or policy values.
+export function datasetPreviewGuidance(code: string): string {
+  const messages: Record<string, string> = {
+    DATASET_CANDIDATE_PREVIEW_UNAVAILABLE: "請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。",
+    DATASET_PREVIEW_VERSION_REQUIRED: "缺少預覽定義版本，請重新載入 Dataset 後重試。",
+    DATASET_DELIVERY_VERSION_CONFLICT: "Dataset 定義、來源或安全設定已變更，請重新載入並確認後再預覽。",
+    DATASET_DELIVERY_POLICY_UNCONFIRMED: "敏感欄位政策尚未確認。請到敏感資料欄位管理檢查並儲存規則；無敏感欄位也須明確確認空政策。",
+    DATASET_DELIVERY_POLICY_REQUIRED: "請先檢查並儲存敏感欄位政策，空政策也需要明確確認。",
+    DATASET_DELIVERY_POLICY_INVALID: "敏感政策格式或遮蔽規則無效，請管理者重新檢查並儲存有效規則，不可移除保護繞過。",
+    DATASET_DELIVERY_POLICY_UNAVAILABLE: "無法讀取安全政策，請管理者檢查服務狀態後重試；資料不會交付。",
+    PATIENT_AUDIT_NOT_CONFIRMED: "患者稽核尚未確認。請檢查可信欄位、患者識別欄位與 HMAC 金鑰；新 Dataset 缺少可信 metadata 時須由管理者安排初始化，不可停用稽核繞過。",
+    DATASET_NON_PATIENT_PREVIEW_DENIED: "此 Dataset 已有患者設定或敏感規則，不適用普通資料預覽。請取消普通資料確認，完成患者稽核及敏感欄位設定。",
+    FORBIDDEN: "預覽需要 DESIGN_QUERY 與 EXECUTE_QUERY 權限，請管理者確認授權。",
+    DATASET_NOT_AVAILABLE: "Dataset 已停用或封存，請確認狀態後再預覽。",
+    DATASOURCE_NOT_AVAILABLE: "資料來源不可用，請管理者確認來源狀態。",
+    DATASET_DELIVERY_SCHEMA_REQUIRED: "安全 Schema 尚未就緒，請聯絡管理者；不可略過檢查。",
+    VALIDATION_ERROR: "預覽請求格式不正確，請重新載入並確認設定。",
+  };
+  return messages[code] ?? "Dataset 安全檢查未通過，請管理者依錯誤代碼與 Request ID 檢查設定及稽核服務。";
 }

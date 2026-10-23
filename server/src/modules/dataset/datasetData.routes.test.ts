@@ -35,7 +35,7 @@ async function setup() {
     executions: [] as number[], disclosures: [] as Array<{ datasetId: number; masked: boolean; identity: unknown }>,
     parameters: [{ ...syntheticParameter, name: "WARD", optionMode: "DATASET" as "DATASET" | "FIXED" | "NONE",
       lookupDatasetId: 2, lookupValueField: "CODE", lookupLabelField: "LABEL", defaultValue: "A", fixedOptionsJson: '[{"value":"A","label":"A"}]' }],
-    sourceActive: true, patientStatus: "CONFIRMED", patientFingerprint: "proof-1",
+    sourceActive: true, sourceRevision: "source-1", policyUnconfirmed: false, patientStatus: "CONFIRMED", patientFingerprint: "proof-1",
     sqlText: "SELECT NAME, MRN, CODE, LABEL WHERE CODE={{WARD}}", phase: "", change: () => {},
     auditFailure: false, operationFailure: false, failureWriteFailure: false, missingDisclosure: false,
     operationStatus: "NONE", schemaMissing: false, startAudits: 0,
@@ -45,9 +45,10 @@ async function setup() {
     ...defaultDatasetDataDependencies,
     snapshot: async (id: number) => { state.snapshotReads.push(id);
       if (state.schemaMissing) throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_SCHEMA_REQUIRED");
+      if (state.policyUnconfirmed) throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_POLICY_UNCONFIRMED");
       return structuredClone(state.snapshots.get(id)!); },
     dataset: async (id: number) => ({ id, dataSourceId: id + 10, sqlText: state.sqlText, isActive: true, isArchived: false, maxRows: 100 }),
-    source: async () => ({ isActive: state.sourceActive, revision: "source-1" }),
+    source: async () => ({ isActive: state.sourceActive, revision: state.sourceRevision }),
     parameters: async () => structuredClone(state.parameters),
     patientState: async () => ({ status: state.patientStatus, fingerprint: state.patientFingerprint }),
     execute: async (id: number) => {
@@ -233,3 +234,63 @@ test("fixed options do not execute a Dataset and require the same parent authori
   assert.deepEqual(await (await f.request("/1/parameters/WARD/options")).json(), { options: [{ value: "A", label: "A" }] });
   assert.deepEqual(f.state.executions, []);
 }));
+
+function ordinary(f: Awaited<ReturnType<typeof setup>>) {
+  const snapshot = f.state.snapshots.get(1)!;
+  f.state.snapshots.set(1, { ...snapshot, patientAuditVersion: "0",
+    patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
+    policy: { state: "CONFIRMED", version: "1", rules: [] } });
+  return { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText,
+    expectedDefinitionVersion: version, nonPatientConfirmed: true, values: {} };
+}
+
+test("ordinary preview requires a saved exact definition, explicit per-request assertion and confirmed empty policy", () => fixture(async f => {
+  const body = ordinary(f);
+  assert.equal((await f.request("/preview/run", body)).status, 200);
+  assert.deepEqual(f.state.executions, [1]);
+  assert.deepEqual(f.state.disclosures, []);
+  assert.equal(f.state.operationStatus, "SUCCESS");
+  const { nonPatientConfirmed: _, ...raw } = body;
+  assert.equal((await f.request("/preview/run", raw)).status, 503);
+}));
+for (const failure of ["unsaved", "sql", "source", "version", "missing-version", "policy", "patient-config", "sensitive", "permission"] as const) {
+  test(`ordinary preview rejects ${failure} before execution with actionable safe errors`, () => fixture(async f => {
+    const body: any = ordinary(f);
+    if (failure === "unsaved") delete body.datasetId;
+    if (failure === "sql") body.sqlText += " AND 1=1";
+    if (failure === "source") body.dataSourceId = 99;
+    if (failure === "version") body.expectedDefinitionVersion = "0000000000000002";
+    if (failure === "missing-version") delete body.expectedDefinitionVersion;
+    if (failure === "policy") f.state.policyUnconfirmed = true;
+    if (failure === "patient-config") f.state.snapshots.set(1, { ...f.state.snapshots.get(1)!, patientAudit: { configured: true, enabled: false, patientKeyColumn: "MRN" } });
+    if (failure === "sensitive") f.state.snapshots.set(1, { ...f.state.snapshots.get(1)!, policy: policy(1).policy });
+    if (failure === "permission") f.state.session.permissions = ["DESIGN_QUERY"];
+    const response = await f.request("/preview/run", body);
+    assert.ok(response.status >= 400);
+    const text = await response.text();
+    assert.ok(!text.includes("SELECT") && !text.includes(rawName) && !text.includes(rawId));
+    assert.ok(!text.includes("Dataset 資料交付安全檢查未通過。"));
+    assert.deepEqual(f.state.executions, []);
+    assert.equal(f.state.startAudits, 0);
+  }));
+}
+for (const failure of ["definition", "source", "policy", "patient", "operation-audit"] as const) {
+  test(`ordinary preview fails closed on ${failure} drift or audit failure after execution`, () => fixture(async f => {
+    const body = ordinary(f);
+    f.state.phase = "sql";
+    f.state.change = () => {
+      if (failure === "definition") f.state.snapshots.set(1, { ...f.state.snapshots.get(1)!, definitionVersion: "0000000000000002" });
+      if (failure === "source") f.state.sourceRevision = "source-2";
+      if (failure === "policy") f.state.policyUnconfirmed = true;
+      if (failure === "patient") {
+        const snapshot = f.state.snapshots.get(1)!;
+        f.state.snapshots.set(1, { ...snapshot, patientAudit: { ...snapshot.patientAudit, configured: true } });
+      }
+      if (failure === "operation-audit") f.state.operationFailure = true;
+    };
+    const response = await f.request("/preview/run", body);
+    assert.ok(response.status >= 400);
+    const text = await response.text(); assert.ok(!text.includes(rawName) && !text.includes(rawId));
+    assert.notEqual(f.state.operationStatus, "SUCCESS");
+  }));
+}

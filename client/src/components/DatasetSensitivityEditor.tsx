@@ -40,6 +40,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
   const [loaded, setLoaded] = useState(false);
   const [version, setVersion] = useState<number | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [emptyConfirmed, setEmptyConfirmed] = useState(false);
   const [message, setMessage] = useState("");
   const [conflict, setConflict] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
@@ -52,6 +53,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     setLoaded(false);
     setVersion(null);
     setDirty(false);
+    setEmptyConfirmed(false);
     setMessage("");
     setConflict(false);
     void apiRequest<{ columns: Rule[]; version: number }>(`/datasets/${datasetId}/sensitive-columns`, {}, accessToken)
@@ -80,6 +82,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
     setMessage("已加入編輯清單，請按儲存規則。");
   };
   const save = async () => {
+    if (version === 0 && rules.length === 0 && !emptyConfirmed) return;
     if (rules.some((rule) => rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) {
       setMessage("敏感資料不可設定為原樣顯示。"); return;
     }
@@ -92,6 +95,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
       setRules(result.columns);
       setVersion(result.version);
       setDirty(false);
+      setEmptyConfirmed(false);
       setConflict(false);
       setMessage("敏感欄位規則已儲存，並記錄異動稽核。");
     } catch (error) {
@@ -141,7 +145,10 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, previewColumn
           : `舊版規則：${rule.deviceMaskMode}（仍有效，選取欄位可調整）`}</td>
         <td><button type="button" disabled={busy} onClick={() => editRule(rule.columnName)}>編輯</button>
           <button type="button" disabled={!loaded || conflict || busy} onClick={() => { setRules((previous) => previous.filter((item) => item.columnName !== rule.columnName)); setDirty(true); }}>移除</button></td></tr>)}</tbody></table>
-    <button type="button" disabled={busy || !dirty || !loaded || version === null || conflict} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
+    {loaded && version === 0 && rules.length === 0 && <label><input type="checkbox" checked={emptyConfirmed} disabled={busy}
+      onChange={e => setEmptyConfirmed(e.target.checked)} />我已檢查已儲存的 SQL 與來源，目前沒有需設定遮蔽的敏感欄位；明確確認空政策。</label>}
+    <button type="button" disabled={busy || (!dirty && !emptyConfirmed) || !loaded || version === null || conflict
+      || (version === 0 && rules.length === 0 && !emptyConfirmed)} onClick={() => void save()}>儲存 Dataset 敏感欄位規則</button>
     {!loaded && <p role="status">原有規則尚未載入完成，暫停儲存以避免誤覆蓋。</p>}
     {dirty && <p role="status">尚有未儲存的敏感欄位規則變更。</p>}
     <button type="button" disabled={busy} onClick={reload}>重新載入伺服器規則</button>

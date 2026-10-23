@@ -24,8 +24,8 @@ export const defaultDatasetDataDependencies = {
  */
 export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies) {
   async function open(datasetId: number, identity: (transaction?: sql.Transaction) => Promise<RuntimeIdentity>,
-    purpose: "STANDARD" | "RAW_DESIGN" = "STANDARD", expectedDefinitionVersion?: string) {
-    if (purpose === "RAW_DESIGN" && !/^[0-9a-f]{16}$/u.test(expectedDefinitionVersion ?? ""))
+    purpose: "STANDARD" | "RAW_DESIGN" | "NON_PATIENT_DESIGN" = "STANDARD", expectedDefinitionVersion?: string) {
+    if (purpose !== "STANDARD" && !/^[0-9a-f]{16}$/u.test(expectedDefinitionVersion ?? ""))
       throw new QueryDeliveryError("DATASET_PREVIEW_VERSION_REQUIRED");
     async function inspect(transaction?: sql.Transaction) {
       const actor = await identity(transaction);
@@ -35,8 +35,15 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
       if (snapshot.datasetId !== datasetId || snapshot.sensitivityVersion !== snapshot.policy.version
         || !/^[0-9a-f]{16}$/u.test(snapshot.definitionVersion)) throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_INVALID", 503);
       applyDatasetDeliveryPolicy({ policy: snapshot.policy, columns: [], rows: [] });
-      if (purpose === "RAW_DESIGN" && snapshot.definitionVersion !== expectedDefinitionVersion)
+      if (purpose !== "STANDARD" && snapshot.definitionVersion !== expectedDefinitionVersion)
         throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_CONFLICT");
+      // This separate, explicitly attested preview cannot override any existing
+      // patient configuration or sensitive rule. RAW_DESIGN admission is unchanged.
+      if (purpose === "NON_PATIENT_DESIGN" && (snapshot.patientAudit.configured || snapshot.patientAudit.enabled
+        || snapshot.patientAudit.patientKeyColumn !== null
+        || snapshot.patientAuditVersion !== "0" || snapshot.policy.rules.length !== 0
+        || (snapshot.policy.patientAuditOnlyColumns?.length ?? 0) !== 0))
+        throw new QueryDeliveryError("DATASET_NON_PATIENT_PREVIEW_DENIED");
       const dataset = await deps.dataset(datasetId, transaction);
       if (!dataset?.isActive || dataset.isArchived || dataset.id !== datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
       const source = await deps.source(dataset.dataSourceId, transaction);

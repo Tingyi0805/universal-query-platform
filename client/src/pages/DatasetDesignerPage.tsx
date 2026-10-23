@@ -86,18 +86,21 @@ function extractParameters(sqlText: string): string[] {
 }
 
 export function DatasetDesignerPage() {
-  const { accessToken } = useAuth();
+  const { accessToken, hasPermission } = useAuth();
   const [searchParams] = useSearchParams();
   const requestedEditor = Number(searchParams.get("datasetId"));
   const openedFromLink = useRef<number | null>(null);
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceOption[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const currentForm = useRef(form);
+  currentForm.current = form;
   const [savedSql, setSavedSql] = useState("");
   const [savedDataSourceId, setSavedDataSourceId] = useState<number | "">("");
   const [sqlSaveRevision, setSqlSaveRevision] = useState(0);
   const [auditRevision, setAuditRevision] = useState(0);
   const [sensitivityDirty, setSensitivityDirty] = useState(false);
+  const [nonPatientConfirmed, setNonPatientConfirmed] = useState(false);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
   const previewParameterSequence = useRef(0);
   const [previewParametersLoading, setPreviewParametersLoading] = useState(false);
@@ -118,6 +121,7 @@ export function DatasetDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
+  useEffect(() => { setNonPatientConfirmed(false); setPreview(null); }, [form, sqlSaveRevision, sensitivityDirty]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -277,10 +281,12 @@ export function DatasetDesignerPage() {
         }, accessToken);
         savedId = created.id;
         setForm((current) => ({ ...current, id: created.id }));
-        setNotice("Dataset 已建立。");
+        setNotice("Dataset 已建立。請先檢查並確認敏感欄位政策，再選擇普通資料確認或完成患者稽核設定後預覽。");
       }
 
-      setSavedSql(submitted.sqlText);
+      // The save API trims SQL. Keep the editor aligned with the saved definition.
+      setForm(current => ({ ...current, sqlText: submitted.sqlText.trim() }));
+      setSavedSql(submitted.sqlText.trim());
       setSavedDataSourceId(submitted.dataSourceId);
       setSqlSaveRevision((current) => current + 1);
       await load();
@@ -367,6 +373,13 @@ export function DatasetDesignerPage() {
   }
 
   async function runPreview() {
+    if (!hasPermission("DESIGN_QUERY") || !hasPermission("EXECUTE_QUERY")) {
+      setError("預覽需要 DESIGN_QUERY 與 EXECUTE_QUERY 權限，請聯絡管理者。"); return;
+    }
+    if (!form.id || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId) {
+      setError("請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。"); return;
+    }
+    if (sensitivityDirty) { setError("敏感欄位規則尚未儲存，請先儲存規則再預覽。"); return; }
     if (form.id && (previewParametersLoading || previewParameterError)) {
       setError("參數設定尚未成功載入，請先重試讀取再執行預覽。");
       return;
@@ -400,6 +413,9 @@ export function DatasetDesignerPage() {
         }),
       );
 
+      const context = await apiRequest<{ definitionVersion: string }>(`/datasets/${form.id}/design-preview/context`, {}, accessToken);
+      if (currentForm.current !== form) throw new Error("編輯內容已變更，請儲存並重新確認後再預覽。");
+      if (!/^[0-9a-f]{16}$/.test(context.definitionVersion)) throw new Error("預覽定義版本無效，請重新載入 Dataset。");
       const response = await apiRequest<{
         result: QueryResult;
         parameterNames: string[];
@@ -411,15 +427,19 @@ export function DatasetDesignerPage() {
           values,
           maxRows: Math.min(Number(form.maxRows), 10000),
           queryTimeoutSec: form.queryTimeoutSec === "" ? null : Number(form.queryTimeoutSec),
+          expectedDefinitionVersion: context.definitionVersion,
+          ...(nonPatientConfirmed ? { nonPatientConfirmed: true } : {}),
           ...(form.id ? { datasetId: form.id } : {}),
         }),
       }, accessToken);
 
+      if (currentForm.current !== form) throw new Error("編輯內容已變更，預覽結果已捨棄。請儲存並重新確認後再預覽。");
       setPreview(response.result); setAuditRevision(value => value + 1);
       setNotice(`預覽完成：${response.result.rowCount} 筆，${response.result.elapsedMs} ms${response.result.truncated ? "（結果已截斷）" : ""}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "查詢預覽失敗。");
     } finally {
+      setNonPatientConfirmed(false);
       setBusy(false);
     }
   }
@@ -672,6 +692,10 @@ export function DatasetDesignerPage() {
               )}
             </div>
 
+            <p>預覽順序：儲存 Dataset → 檢查並儲存敏感欄位政策 → 完成下列普通資料確認或患者稽核設定 → 執行預覽。未儲存的 SQL 不會執行。</p>
+            <label><input type="checkbox" checked={nonPatientConfirmed} disabled={busy || !form.id || sensitivityDirty}
+              onChange={e => setNonPatientConfirmed(e.target.checked)} />我已與資料負責人確認本次已儲存定義不含患者資料或敏感欄位，使用普通資料預覽（每次須重新確認）。</label>
+            <p>普通資料預覽仍需已確認的空敏感政策；已有患者設定或敏感規則時不可使用。系統不會自動判定資料無敏感性，也不會關閉患者稽核。</p>
             <div className="form-actions">
               {!form.isArchived ? (
                 <>
