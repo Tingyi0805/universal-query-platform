@@ -224,6 +224,18 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
     });
 
     const result = await executeSavedDataset(query.datasetId, body.data.values);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Must commit disclosure audit before sending any patient-bearing rows.
+    const disclosureId = await auditPatientListIfConfigured({
+      datasetId: query.datasetId,
+      queryDefinitionId: query.id,
+      userId: req.authUser!.id,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "MANUAL",
+      masked: false,
+      rows: result.rows,
+    });
 
     // Persist patient disclosure before delivering any rows; failure blocks the response.
     const dataset = await getDataset(query.datasetId);
