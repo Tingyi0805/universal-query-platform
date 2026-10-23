@@ -14,7 +14,10 @@
     "db:923:preflight": "tsx src/scripts/installDataset923.ts preflight",
     "db:923:apply": "tsx src/scripts/installDataset923.ts apply",
     "db:923:verify": "tsx src/scripts/installDataset923.ts verify",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "db:924:preflight": "tsx src/scripts/installDataset924.ts preflight",
+    "db:924:apply": "tsx src/scripts/installDataset924.ts apply",
+    "db:924:verify": "tsx src/scripts/installDataset924.ts verify"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

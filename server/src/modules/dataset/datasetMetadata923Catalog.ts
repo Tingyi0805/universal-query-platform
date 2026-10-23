@@ -229,14 +229,18 @@ export function validateSynthetic923Catalog(input: unknown) {
 
 /** Emits a single SELECT/CTE statement over sys catalog only; never executes it. */
 export function render923CatalogSql(): string {
-  const expected = expected923Catalog();
-  const values = expected.map(r => `(${[r.category, r.owner, r.name, r.signature].map(literal).join(",")})`).join(",\n    ");
-  const names = contract().map(t => literal(t.name)).join(",");
-  const constraintOwners = contract().flatMap(t => [
-    ...t.checks.map(c => [c.name, t.name]), ...t.foreignKeys.map(f => [f.name, t.name]),
-    ...t.indexes.filter(i => i.kind !== "IX").map(i => [i.name, t.name]),
-    ...t.columns.filter(c => c.default).map(c => [defaultName(t, c), t.name]),
-  ]).map(pair => `(${pair.map(literal).join(",")})`).join(",\n    ");
+  return renderExactSidecarCatalogSql(expected923Catalog(), contract().map(t=>t.name), contract().flatMap(t=>[
+    ...t.checks.map(c=>[c.name,t.name]), ...t.foreignKeys.map(f=>[f.name,t.name]),
+    ...t.indexes.filter(i=>i.kind!=="IX").map(i=>[i.name,t.name]),
+    ...t.columns.filter(c=>c.default).map(c=>[defaultName(t,c),t.name]),
+  ]), sequenceName);
+}
+
+/** Shared exact sys-catalog projection; each sidecar supplies its own immutable manifest. */
+export function renderExactSidecarCatalogSql(expected: Catalog923Row[], tables: string[], constraints: string[][], sequenceName: string): string {
+  const values = expected.map(r => `(${[r.category,r.owner,r.name,r.signature].map(literal).join(",")})`).join(",\n    ");
+  const names = tables.map(literal).join(",");
+  const constraintOwners = constraints.map(pair=>`(${pair.map(literal).join(",")})`).join(",\n    ");
   return `-- OFFLINE SOURCE ONLY. Do not execute without separate isolated-environment authorization.
 -- Exact expression text is intentional: unobserved SQL Server serialization is rejected, never normalized away.
 -- No business rows, SchemaMigration, permissions writes, dynamic SQL or 922 dependency.
