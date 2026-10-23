@@ -107,6 +107,10 @@ export function DatasetDesignerPage() {
   const [previewParameters, setPreviewParameters] = useState<PreviewParameter[]>([]);
   const [previewOptions, setPreviewOptions] = useState<Record<string, PreviewOption[]>>({});
   const [preview, setPreview] = useState<QueryResult | null>(null);
+  const [columnCandidate, setColumnCandidate] = useState<{ columns: { name: string; dataType: string; ordinal: number }[];
+    trust: "UNBOUND_CANDIDATE"; metadataState: "NOT_INITIALIZED"; deliveryAllowed: false } | null>(null);
+  const [columnCandidateBusy, setColumnCandidateBusy] = useState(false);
+  const [columnCandidateError, setColumnCandidateError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -120,7 +124,7 @@ export function DatasetDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
-  useEffect(() => { setPreview(null); }, [form, sqlSaveRevision, sensitivityDirty]);
+  useEffect(() => { setPreview(null); setColumnCandidate(null); setColumnCandidateError(""); }, [form, sqlSaveRevision, sensitivityDirty]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -369,6 +373,34 @@ export function DatasetDesignerPage() {
         onChange={(e) => setParameterValues({ ...parameterValues, [name]: e.target.value })}
       />
     );
+  }
+
+  async function describeColumns() {
+    if (!form.id || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId) {
+      setColumnCandidateError("請先儲存 Dataset 的 SQL 與資料來源。"); return;
+    }
+    if (!hasPermission("DESIGN_QUERY") || !hasPermission("EXECUTE_QUERY")) {
+      setColumnCandidateError("欄位描述需要 DESIGN_QUERY 與 EXECUTE_QUERY 權限。"); return;
+    }
+    const requestedForm = form;
+    setColumnCandidate(null);
+    setColumnCandidateError("");
+    setColumnCandidateBusy(true);
+    try {
+      const result = await apiRequest<{ columns: { name: string; dataType: string; ordinal: number }[];
+        trust: "UNBOUND_CANDIDATE"; metadataState: "NOT_INITIALIZED"; deliveryAllowed: false }>(
+        `/datasets/${form.id}/column-candidates`, {}, accessToken);
+      if (currentForm.current !== requestedForm) {
+        setColumnCandidateError("編輯內容已變更，請重新取得欄位。"); return;
+      }
+      if (result.trust !== "UNBOUND_CANDIDATE" || result.metadataState !== "NOT_INITIALIZED"
+        || result.deliveryAllowed !== false || !Array.isArray(result.columns)) {
+        setColumnCandidateError("欄位描述回應不符合安全契約。"); return;
+      }
+      setColumnCandidate(result);
+    } catch (error) {
+      setColumnCandidateError(error instanceof Error ? error.message : "取得欄位資訊失敗。");
+    } finally { setColumnCandidateBusy(false); }
   }
 
   async function runPreview() {
@@ -689,6 +721,22 @@ export function DatasetDesignerPage() {
               )}
             </div>
 
+            <section className="preview-panel" aria-label="SQL 欄位候選預覽">
+              <h3>SQL 欄位候選預覽（不讀取資料列）</h3>
+              <p>僅支援已儲存、無參數的 SQL Server SELECT。這是未認證的候選描述，不代表來源未漂移，也不能直接儲存為可信欄位、設定新敏感規則或解除資料預覽限制。</p>
+              <button type="button" disabled={busy || columnCandidateBusy || !form.id || form.isArchived}
+                onClick={() => void describeColumns()}>{columnCandidateBusy ? "讀取欄位中…" : "取得 SQL 欄位名稱及型別"}</button>
+              {columnCandidateError && <p role="alert">{columnCandidateError}</p>}
+              {columnCandidate && <>
+                <p role="status">UNBOUND_CANDIDATE · 尚未初始化 · 禁止資料列交付</p>
+                <table className="preview-table">
+                  <thead><tr><th>順序</th><th>欄位名稱</th><th>SQL 型別</th></tr></thead>
+                  <tbody>{columnCandidate.columns.map(item => <tr key={item.ordinal}>
+                    <td>{item.ordinal}</td><td>{item.name}</td><td>{item.dataType}</td>
+                  </tr>)}</tbody>
+                </table>
+              </>}
+            </section>
             <section aria-label="Dataset 安全初始化狀態">
               <h3>安全初始化：BLOCKED</h3>
               <p>目前無安全的可信欄位 metadata 初始化入口；不會執行 SQL 取資料列來推測欄位，也不會將候選描述直接當作可信證據。</p>
