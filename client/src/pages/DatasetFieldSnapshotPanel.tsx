@@ -4,8 +4,9 @@ type Status={dataset:{definitionVersion:string;configurationVersion:string};coll
   trust:"UNBOUND_CANDIDATE";deliveryAllowed:false;sourceFence:"BLOCKED_PRIVILEGED_DDL_PATHS";
   snapshot:null|{id:string;state:string;version:string;current:boolean;columns:{name:string;dataType:string;ordinal:number}[]}};
 export function DatasetFieldSnapshotPanel({datasetId,token,enabled}:{datasetId:number;token:string|null;enabled:boolean}){
+  const safeId=Number.isSafeInteger(datasetId)&&datasetId>0;
   const [status,setStatus]=useState<Status|null>(null),[message,setMessage]=useState(""),[busy,setBusy]=useState(false),[uncertain,setUncertain]=useState(false);
-  const load=async()=>{setStatus(null);const s=await apiRequest<Status>(`/dataset-field-initialization/${datasetId}`,{},token);
+  const load=async()=>{if(!safeId)throw Error("Designer 無法精確表示此 Dataset ID，停止 Metadata 操作；請使用精確 BIGINT 介面查核。");setStatus(null);const s=await apiRequest<Status>(`/dataset-field-initialization/${datasetId}`,{},token);
     if(s.trust!=="UNBOUND_CANDIDATE"||s.deliveryAllowed!==false||s.sourceFence!=="BLOCKED_PRIVILEGED_DDL_PATHS")throw Error("欄位證據格式不符，停止初始化。");setStatus(s);};
   const collect=async()=>{if(!status||busy||uncertain)return;let requestId:string;
     try{const b=crypto.getRandomValues(new Uint8Array(16));b[6]=(b[6]!&15)|64;b[8]=(b[8]!&63)|128;
@@ -17,7 +18,8 @@ export function DatasetFieldSnapshotPanel({datasetId,token,enabled}:{datasetId:n
     }catch(e){setUncertain(true);setStatus(null);setMessage(`${(e as Error).message} RequestId：${requestId}，請查證後再操作。`);}finally{setBusy(false);}};
   return <section aria-label="已儲存欄位 Snapshot"><h3>已儲存欄位 Snapshot</h3>
     <p>Source Fence：BLOCKED。受控 Gate 無法保證外部 DBA 路徑；不開放資料列、不更新敏感欄位政策。</p>
-    <button type="button" disabled={!enabled||busy} onClick={()=>{setBusy(true);void load().catch(e=>setMessage(e.message)).finally(()=>setBusy(false));}}>查詢欄位 Snapshot 狀態</button>
+    <button type="button" disabled={!enabled||!safeId||busy} onClick={()=>{setBusy(true);void load().catch(e=>setMessage(e.message)).finally(()=>setBusy(false));}}>查詢欄位 Snapshot 狀態</button>
+    {!safeId&&<p role="alert">Dataset ID 超出 Designer 安全整數範圍，停止操作，禁止 Number 精度修復。</p>}
     {!enabled&&<p>需有效 Owner／Reviewer Scope 與明確資料分類確認能力；請先儲存 Dataset。</p>}
     <p role="status">{message}</p>
     {status&&<><p>{status.snapshot?.state??"NOT_INITIALIZED"} · UNBOUND_CANDIDATE · 分類未確認</p>
