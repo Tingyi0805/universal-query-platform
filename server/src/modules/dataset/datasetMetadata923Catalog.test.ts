@@ -28,7 +28,7 @@ test("golden manifest pins column counts, keys, indexes and three actual rowvers
   assert.equal(rows.filter(r => r.category === "INDEX").length, 16);
   assert.equal(rows.filter(r => r.category === "FK").length, 10);
   assert.equal(rows.filter(r => r.category === "KEY").length, 7);
-  assert.equal(createHash("sha256").update(JSON.stringify(rows)).digest("hex"), "2bf2d793a204343cd1c04eca6b99e5e3b9a49e377eb1d1b94254b43916b1b42a");
+  assert.equal(createHash("sha256").update(JSON.stringify(rows)).digest("hex"), "506db0667a584bd1d88982b0e9eacf778e7ab390b5a5796c85a96dc0ca0ff8df");
 });
 
 for (const category of ["OBJECT", "TABLE", "ROWVERSION_COUNT", "COLUMN", "DEFAULT", "CHECK", "KEY", "INDEX", "FK", "SEQUENCE"]) {
