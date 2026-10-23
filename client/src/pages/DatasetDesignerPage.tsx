@@ -1,4 +1,5 @@
 import { DatasetPatientAuditEditor } from "../components/DatasetPatientAuditEditor";
+import { DatasetCandidateMaskDraft } from "../components/DatasetCandidateMaskDraft";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -735,6 +736,7 @@ export function DatasetDesignerPage() {
                     <td>{item.ordinal}</td><td>{item.name}</td><td>{item.dataType}</td>
                   </tr>)}</tbody>
                 </table>
+                <DatasetCandidateMaskDraft columns={columnCandidate.columns} />
               </>}
             </section>
             <section aria-label="Dataset 安全初始化狀態">
