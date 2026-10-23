@@ -98,3 +98,8 @@ test("924 remains an independent review draft: no installed 923 schema or accoun
   assert.match(code,/DENY UPDATE,DELETE ON OBJECT::uqp.DatasetSecurityDecision TO public/);
   assert.match(code,/SubjectTokenVersion INT NOT NULL/);assert.match(code,/ParentScopeVersion BINARY\(8\) NULL/);
 });
+test("metadata composition cannot substitute SYSTEM_ADMIN for explicit classification capability",async()=>{
+  const f=fixture();let called=false;
+  await assert.rejects(()=>f.store.withMetadataOwner("Bearer synthetic","9007199254740996",async()=>{called=true;}),{code:"SCOPE_METADATA_AUTHORIZATION_REQUIRED"});
+  assert.equal(called,false);assert.ok(f.log.includes("rollback"));
+});

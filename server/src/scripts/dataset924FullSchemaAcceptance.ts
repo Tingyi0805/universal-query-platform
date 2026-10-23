@@ -1,5 +1,6 @@
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
+import {testF3SourceMetadata} from "./datasetF3SourceAcceptance.js";
 import {readFile,readdir} from "node:fs/promises";
 import {createHash,randomBytes,randomUUID} from "node:crypto";
 import {spawn} from "node:child_process";
@@ -246,6 +247,8 @@ async function main(){
     check((await store.mutate(auth,datasetId,ownerId,"OWNER",first)).replayed,"ARCHIVE_RELATION_LOST");
     await root.request().input("auditId",sql.VarChar(20),written.auditLogId).query("DELETE uqp.AuditLogArchive WHERE Id=CONVERT(bigint,@auditId)");
     await assert.rejects(()=>store.mutate(auth,datasetId,ownerId,"OWNER",first),{code:"SCOPE_AUDIT_HISTORY_MISSING"});
+    stage="F3_SOURCE_METADATA";
+    await testF3SourceMetadata(root,master,config,app,login);
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");

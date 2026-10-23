@@ -24,6 +24,21 @@ const eligible=(user:string)=>`EXISTS(SELECT 1 FROM uqp.UserRole ur WITH(HOLDLOC
   JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
   WHERE ur.UserId=${user} AND p.Code=N'CONFIRM_DATASET_CLASSIFICATION')`;
 
+export async function verifyExactDatasetAuditReceipt(tx:sql.Transaction,auditId:string,datasetId:string,actorId:string,requestId:string,kind:"SCOPE"|"SNAPSHOT",action:string,digest:string,query=scopeQuery){
+    const params={auditId:parseExact923AuditId(auditId),datasetId,actorId,requestId,kind,action,digest};
+    const condition=`Id=CONVERT(bigint,@auditId) AND DatasetId=CONVERT(bigint,@datasetId) AND UserId=CONVERT(bigint,@actorId)
+      AND EventType=N'DATASET_SECURITY_DECISION' AND Status=N'SUCCESS' AND LOWER(JSON_VALUE(ParametersJson,'$.requestId'))=LOWER(CONVERT(nvarchar(36),@requestId)) AND DATALENGTH(JSON_VALUE(ParametersJson,'$.requestId'))=72
+      AND JSON_VALUE(ParametersJson,'$.kind') COLLATE Latin1_General_100_BIN2=@kind COLLATE Latin1_General_100_BIN2 AND DATALENGTH(JSON_VALUE(ParametersJson,'$.kind'))=DATALENGTH(@kind)
+      AND JSON_VALUE(ParametersJson,'$.action') COLLATE Latin1_General_100_BIN2=@action COLLATE Latin1_General_100_BIN2
+      AND DATALENGTH(JSON_VALUE(ParametersJson,'$.action'))=DATALENGTH(@action)
+      AND JSON_VALUE(ParametersJson,'$.commandDigest') COLLATE Latin1_General_100_BIN2=@digest COLLATE Latin1_General_100_BIN2
+      AND DATALENGTH(JSON_VALUE(ParametersJson,'$.commandDigest'))=128`;
+    if((await query(tx,`/* scope:receipt */ SELECT CONVERT(varchar(20),Id) AS Id FROM uqp.AuditLog WITH(HOLDLOCK) WHERE ${condition}`,params)).recordset.length===1) return;
+    const archive=await query(tx,"/* scope:archive */ SELECT CASE WHEN OBJECT_ID(N'uqp.AuditLogArchive',N'U') IS NOT NULL THEN 1 ELSE 0 END AS Present");
+    if(archive.recordset[0]?.Present===1 && (await query(tx,`SELECT CONVERT(varchar(20),Id) AS Id FROM uqp.AuditLogArchive WITH(HOLDLOCK) WHERE ${condition}`,params)).recordset.length===1) return;
+    return scopeFail("SCOPE_AUDIT_HISTORY_MISSING");
+  }
+
 export function createDatasetScopeManagement(deps:Partial<{
   pool:typeof getPlatformDbPool; identity:ReturnType<typeof createRuntimeIdentityVerifier>;
   enabled:()=>boolean;incarnation:()=>string|undefined;
@@ -47,7 +62,13 @@ export function createDatasetScopeManagement(deps:Partial<{
     if(result.recordset.length!==1) return scopeFail("SCOPE_ADMIN_REQUIRED",403);
     return actor;
   }
-  async function owned<T>(authorization:string|undefined,write:boolean,work:(tx:sql.Transaction,actor:RuntimeIdentity,inc:string)=>Promise<T>):Promise<T>{
+  async function authorizeClassifier(tx:sql.Transaction,authorization:string|undefined){
+    const actor=await verify(authorization,tx);
+    if(!Number.isSafeInteger(actor.userId)||actor.userId<=0||!Number.isSafeInteger(actor.tokenVersion)||actor.tokenVersion<1
+      ||!["DESIGN_QUERY","CONFIRM_DATASET_CLASSIFICATION"].every(p=>actor.permissions.includes(p)))return scopeFail("SCOPE_METADATA_AUTHORIZATION_REQUIRED",403);
+    return actor;
+  }
+  async function owned<T>(authorization:string|undefined,write:boolean,work:(tx:sql.Transaction,actor:RuntimeIdentity,inc:string)=>Promise<T>,classify=false):Promise<T>{
     const inc=uuid.safeParse(incarnation());
     if(!enabled()||!inc.success) return scopeFail("SCOPE_MANAGEMENT_NOT_CONFIGURED",503);
     const p=await pool(); if(!p) return scopeFail("SCOPE_DB_NOT_READY",503);
@@ -64,7 +85,7 @@ export function createDatasetScopeManagement(deps:Partial<{
         DECLARE @lockResult int;
         EXEC @lockResult=sys.sp_getapplock @Resource=N'UQP:DATASET_SECURITY_SCOPE:V1',@LockMode=${write?"N'Exclusive'":"N'Shared'"},@LockOwner=N'Transaction',@LockTimeout=5000;
         IF @lockResult IS NULL OR @lockResult<0 THROW 52924,'SCOPE_LOCK_UNAVAILABLE',1;`);
-      const actor=await authorize(tx,authorization);
+      const actor=await (classify?authorizeClassifier:authorize)(tx,authorization);
       const ready=await query(tx,`/* scope:ready */ SELECT CASE WHEN
         OBJECT_ID(N'uqp.DatasetSecurityScopeBinding',N'U') IS NOT NULL
         AND (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DatasetSecurityScopeBinding'))=10
@@ -93,7 +114,7 @@ export function createDatasetScopeManagement(deps:Partial<{
         THEN 1 ELSE 0 END AS Ready;`);
       if(ready.recordset[0]?.Ready!==1) return scopeFail("SCOPE_924_OR_IMMUTABLE_LEDGER_REQUIRED",503);
       const result=await work(tx,actor,inc.data.toLowerCase());
-      const finalActor=await authorize(tx,authorization);
+      const finalActor=await (classify?authorizeClassifier:authorize)(tx,authorization);
       if(finalActor.userId!==actor.userId||finalActor.tokenVersion!==actor.tokenVersion) return scopeFail("TOKEN_REVOKED",401);
       committing=true;await tx.commit();started=false;return result;
     } catch(error) {
@@ -136,21 +157,20 @@ export function createDatasetScopeManagement(deps:Partial<{
     return r.recordset.map(row=>({userId:exactScopeId.parse(row.UserId),kind:scopeKind.parse(row.ScopeKind),state:String(row.State),
       version:hex(row.ScopeRowVersion),boundDataSourceId:exactScopeId.parse(row.BoundDataSourceId),parentOwnerUserId:row.ParentOwnerUserId===null?null:exactScopeId.parse(row.ParentOwnerUserId),effective:row.Effective===1}));
   }
-  async function receiptExists(tx:sql.Transaction,auditId:string,datasetId:string,actorId:string,requestId:string,action:string,digest:string){
-    const params={auditId,datasetId,actorId,requestId,action,digest};
-    const condition=`Id=CONVERT(bigint,@auditId) AND DatasetId=CONVERT(bigint,@datasetId) AND UserId=CONVERT(bigint,@actorId)
-      AND EventType=N'DATASET_SECURITY_DECISION' AND Status=N'SUCCESS' AND LOWER(JSON_VALUE(ParametersJson,'$.requestId'))=LOWER(CONVERT(nvarchar(36),@requestId)) AND DATALENGTH(JSON_VALUE(ParametersJson,'$.requestId'))=72
-      AND JSON_VALUE(ParametersJson,'$.kind') COLLATE Latin1_General_100_BIN2=N'SCOPE' AND DATALENGTH(JSON_VALUE(ParametersJson,'$.kind'))=10
-      AND JSON_VALUE(ParametersJson,'$.action') COLLATE Latin1_General_100_BIN2=@action COLLATE Latin1_General_100_BIN2
-      AND DATALENGTH(JSON_VALUE(ParametersJson,'$.action'))=DATALENGTH(@action)
-      AND JSON_VALUE(ParametersJson,'$.commandDigest') COLLATE Latin1_General_100_BIN2=@digest COLLATE Latin1_General_100_BIN2
-      AND DATALENGTH(JSON_VALUE(ParametersJson,'$.commandDigest'))=128`;
-    if((await query(tx,`/* scope:receipt */ SELECT CONVERT(varchar(20),Id) AS Id FROM uqp.AuditLog WITH(HOLDLOCK) WHERE ${condition}`,params)).recordset.length===1) return;
-    const archive=await query(tx,"/* scope:archive */ SELECT CASE WHEN OBJECT_ID(N'uqp.AuditLogArchive',N'U') IS NOT NULL THEN 1 ELSE 0 END AS Present");
-    if(archive.recordset[0]?.Present===1 && (await query(tx,`SELECT CONVERT(varchar(20),Id) AS Id FROM uqp.AuditLogArchive WITH(HOLDLOCK) WHERE ${condition}`,params)).recordset.length===1) return;
-    return scopeFail("SCOPE_AUDIT_HISTORY_MISSING");
-  }
+  const receiptExists=(tx:sql.Transaction,auditId:string,datasetId:string,actorId:string,requestId:string,action:string,digest:string)=>
+    verifyExactDatasetAuditReceipt(tx,auditId,datasetId,actorId,requestId,"SCOPE",action,digest,query);
+
   return {
+    withMetadataOwner:<T>(authorization:string|undefined,datasetId:string,work:(tx:sql.Transaction,context:{actor:RuntimeIdentity;incarnation:string;dataset:Awaited<ReturnType<typeof dataset>>;scopeVersion:string})=>Promise<T>)=>owned(authorization,true,async(tx,actor,inc)=>{
+      const id=exactScopeId.parse(datasetId),d=await dataset(tx,id);
+      if(!d.active)return scopeFail("SCOPE_DATASET_INACTIVE");
+      const authorized=(await scopes(tx,id,inc)).find(h=>h.userId===actor.userId.toString()&&h.effective);
+      if(!authorized)return scopeFail("SCOPE_METADATA_AUTHORIZATION_REQUIRED",403);
+      const result=await work(tx,{actor,incarnation:inc,dataset:d,scopeVersion:authorized.version});
+      const final=(await scopes(tx,id,inc)).find(h=>h.userId===actor.userId.toString()&&h.kind===authorized.kind&&h.effective);
+      if(!final||final.version!==authorized.version||JSON.stringify(await dataset(tx,id))!==JSON.stringify(d))return scopeFail("SCOPE_FINAL_REVALIDATION_FAILED");
+      return result;
+    },true),
     history:(authorization:string|undefined,datasetId:string,requestId?:string)=>owned(authorization,false,async(tx)=>{
       exactScopeId.parse(datasetId);if(requestId)z.string().uuid().parse(requestId);
       await dataset(tx,datasetId);
