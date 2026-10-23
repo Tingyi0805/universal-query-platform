@@ -14,7 +14,7 @@
 
 ## Source Gate 與可信邊界
 
-來源介面只允許後端明確註冊 Provider；預設沒有 Provider，回 `SOURCE_PROVIDER_NOT_REGISTERED`，不自行搜尋替代資料庫、不使用前端憑證／SQL／CONFIRMED 標記。沿用既有 Scope 管理預設關閉設定，沒有 `.env` 變更或公開註冊 API。此次可操作子功能限於核准、注入真實 SQL Provider 的隔離 CI。
+來源介面只允許後端明確註冊 Provider，註冊對應必須包含已儲存 DataSourceId、Configuration RV、Host、Port 與 Database；不能只憑 ID 改接另一來源。CI 對照完整儲存端點與固定來源 pool；預設沒有 Provider，回 `SOURCE_PROVIDER_NOT_REGISTERED`，不自行搜尋替代資料庫、不使用前端憑證／SQL／CONFIRMED 標記。沿用既有 Scope 管理預設關閉設定，沒有 `.env` 變更或公開註冊 API。此次可操作子功能限於核准、注入真實 SQL Provider 的隔離 CI。
 
 CI 專用來源 DB `UQP_F3_CI_SOURCE` 與平台 DB 分開。`f3.FenceState`、受控 DDL procedure 和權限只在該可銷毀來源 DB 建立，**不是正式來源安裝或平台 Migration**。Collector 與 DDL Writer 使用不同受限登入；DDL Writer 只能呼叫固定操作 procedure，不能任意 ALTER。procedure 先取 transaction-owned Exclusive Gate，再執行固定 ALTER/DROP/GRANT/REVOKE 及 generation/leaseVersion 推進，同交易提交；Collector 持 Shared Gate。來源 generation A→B→A 會推進，與 ROWVERSION +1 無關。
 

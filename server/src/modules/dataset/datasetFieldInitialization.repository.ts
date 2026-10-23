@@ -40,14 +40,15 @@ export function createDatasetFieldInitialization(deps:{management?:typeof datase
         if(command.definitionVersion!==c.dataset.definitionVersion||command.configurationVersion!==c.dataset.configurationVersion)return scopeFail("METADATA_VERSION_CONFLICT");
         const head=await latest(tx,id);
         if((head?.StateRowVersion.toString("hex")??"MISSING")!==command.expectedSnapshotVersion)return scopeFail("METADATA_SNAPSHOT_CONFLICT");
-        const saved=(await scopeQuery(tx,`SELECT d.SqlText,ds.Type,
+        const saved=(await scopeQuery(tx,`SELECT d.SqlText,ds.Type,ds.Host,ds.Port,ds.DatabaseName,
           (SELECT COUNT(*) FROM uqp.DatasetParameter WITH(HOLDLOCK) WHERE DatasetId=d.Id) ParameterCount,n.ContractRowVersion,n.State ContractState
           FROM uqp.Dataset d WITH(HOLDLOCK) JOIN uqp.DataSource ds WITH(HOLDLOCK) ON ds.Id=d.DataSourceId
           LEFT JOIN uqp.DatasetNativeParameterContract n WITH(HOLDLOCK) ON n.DatasetId=d.Id WHERE d.Id=CONVERT(bigint,@datasetId)`,{datasetId:id})).recordset[0];
         if(!saved||saved.Type!=="SQLSERVER"||saved.ParameterCount!==0||saved.ContractState&&saved.ContractState!=="UNCONFIRMED")return scopeFail("METADATA_PARAMETER_OR_SOURCE_UNSUPPORTED");
         restrictedSavedSelect(saved.SqlText);
         if(!deps.source)throw new SourceFenceError("SOURCE_PROVIDER_NOT_REGISTERED");
-        lease=await deps.source(c.dataset.dataSourceId);const observation=await lease.describe(saved.SqlText);
+        if(typeof saved.Host!=="string"||!Number.isInteger(saved.Port)||saved.Port<1||saved.Port>65535||typeof saved.DatabaseName!=="string"||!saved.DatabaseName)return scopeFail("METADATA_SOURCE_TARGET_INVALID");
+        lease=await deps.source({dataSourceId:c.dataset.dataSourceId,configurationVersion:c.dataset.configurationVersion,host:saved.Host,port:saved.Port,database:saved.DatabaseName});const observation=await lease.describe(saved.SqlText);
         // Explicitly no SOURCE_BOUND issuing branch. Cooperative gate/registry observations cannot establish DBA-safe authority.
         if(observation.fence!=="BLOCKED_PRIVILEGED_DDL_PATHS")throw new SourceFenceError("SOURCE_AUTHORITY_UNPROVEN");
         await lease.revalidate();

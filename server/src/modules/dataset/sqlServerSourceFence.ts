@@ -25,7 +25,8 @@ export function restrictedSavedSelect(text:string){
 export const sourceObservationSafety={authority:"NONE",fence:"BLOCKED_PRIVILEGED_DDL_PATHS",runtimeBindVerified:false,deliveryAllowed:false} as const;
 export type SourceObservation={sessionId:number;identity:string;incarnation:string;generation:string;leaseVersion:string;leaseId:string;collation:string;columns:readonly DescriptionColumn[];dependencyDigest:string;fence:typeof sourceObservationSafety.fence};
 export interface MetadataSourceLease {describe(savedSql:string):Promise<SourceObservation>;revalidate():Promise<void>;close():Promise<void>}
-export type MetadataSourceProvider=(dataSourceId:string)=>Promise<MetadataSourceLease>;
+export type MetadataSourceTarget=Readonly<{dataSourceId:string;configurationVersion:string;host:string;port:number;database:string}>;
+export type MetadataSourceProvider=(target:MetadataSourceTarget)=>Promise<MetadataSourceLease>;
 const hash=(s:unknown)=>createHash("sha256").update(JSON.stringify(s)).digest("hex");
 /** Explicit server registration only. No request-supplied credentials, registry, identity, generation or VERIFIED flag. */
 export async function acquireControlledMetadataLease(pool:sql.ConnectionPool,expected:{identity:string;incarnation:string;database:string}):Promise<MetadataSourceLease>{

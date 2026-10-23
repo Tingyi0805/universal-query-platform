@@ -80,6 +80,7 @@ export async function testF3SourceMetadata(root:sql.ConnectionPool,master:sql.Co
       INSERT uqp.UserRole(UserId,RoleId) SELECT 303,Id FROM uqp.Role WHERE Code=N'CI_CLASSIFY';
       INSERT uqp.RolePermission(RoleId,PermissionId) SELECT r.Id,p.Id FROM uqp.Role r CROSS JOIN uqp.Permission p WHERE r.Code=N'CI_CLASSIFY' AND p.Code=N'DESIGN_QUERY';
       UPDATE uqp.AppUser SET TokenVersion=TokenVersion+1 WHERE Id=303;
+      UPDATE uqp.DataSource SET Host=N'127.0.0.1',Port=14334,DatabaseName=N'${sourceDb}' WHERE Id=201;
       UPDATE uqp.Dataset SET SqlText=N'SELECT [Id], [Label] FROM [f3].[Records]' WHERE Id=${datasetId};`);
     const tv=(await root.request().query("SELECT TokenVersion V FROM uqp.AppUser WHERE Id=303")).recordset[0].V;
     const auth="Bearer "+jwt.sign({sub:"303",tokenVersion:tv},env.JWT_SECRET!);
@@ -87,7 +88,9 @@ export async function testF3SourceMetadata(root:sql.ConnectionPool,master:sql.Co
     const state=await management.list(auth,datasetId);
     await management.mutate(auth,datasetId,"303","OWNER",scopeCommand.parse({requestId:randomUUID(),action:"GRANT",expectedVersion:"MISSING",definitionVersion:state.dataset.definitionVersion,
       configurationVersion:state.dataset.configurationVersion,parentOwnerUserId:null,parentOwnerVersion:null}));
-    const service=createDatasetFieldInitialization({management,source:async id=>{assert.equal(id,"201");return acquire();}});
+    const service=createDatasetFieldInitialization({management,source:async target=>{
+      assert.equal(target.dataSourceId,"201");assert.equal(target.configurationVersion,state.dataset.configurationVersion);
+      assert.equal(target.host,"127.0.0.1");assert.equal(target.port,14334);assert.equal(target.database,sourceDb);return acquire();}});
     const command=async()=>{const s=await service.status(auth,datasetId);return initializeFieldsCommand.parse({requestId:randomUUID(),definitionVersion:s.dataset.definitionVersion,
       configurationVersion:s.dataset.configurationVersion,expectedSnapshotVersion:s.snapshot?.version??"MISSING"});};
     await assert.rejects(()=>service.status("Bearer "+jwt.sign({sub:"302",tokenVersion:1},env.JWT_SECRET!),datasetId),{code:"SCOPE_METADATA_AUTHORIZATION_REQUIRED"});
