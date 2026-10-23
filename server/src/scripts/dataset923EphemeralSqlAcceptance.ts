@@ -6,6 +6,8 @@
 import assert from "node:assert/strict";
 import sql from "mssql";
 import { render923CatalogSql, render923Draft } from "../modules/dataset/datasetMetadata923Catalog.js";
+import { SqlServerAdapter } from "../modules/datasource/adapters/sqlServerAdapter.js";
+import type { DataSourceConfig } from "../modules/datasource/datasource.types.js";
 
 const dbName = "UQP923_CI_SYNTHETIC";
 const expectedMachine = "uqp-923-ephemeral";
@@ -142,6 +144,31 @@ async function main() {
       `Exact SQL Server 2019 catalog mismatch; missing=${exact.missing}; extra=${exact.unexpected}`);
     stage = "CATALOG_REPEAT"; const again = await status(isolated);
     assert.equal(again.state, "EXACT_MATCH");
+
+    // This is the actual SQL Server 2019 metadata-only RPC that the Dataset
+    // Designer uses. No business table, patient rows, preview, or policy writes.
+    stage = "LIVE_SP_DESCRIBE_FIRST_RESULT_SET";
+    const syntheticSource = {
+      type: "SQLSERVER", host: "127.0.0.1", port: 14333,
+      databaseName: dbName, username: "sa",
+      password: process.env.UQP_923_CI_PASSWORD!,
+      isActive: true, connectionTimeoutSec: 10, queryTimeoutSec: 10,
+      encryptConnection: true, trustServerCertificate: true,
+    } as DataSourceConfig;
+    const description = await new SqlServerAdapter().describeQuery(syntheticSource, {
+      sql: "SELECT CAST(1 AS int) AS SYNTHETIC_FIELD_A, CAST(2 AS bigint) AS SYNTHETIC_FIELD_B",
+      parameters: [], timeoutSec: 10,
+    });
+    assert.equal(description.trust, "UNBOUND_CANDIDATE");
+    assert.equal(description.requiresExecutionComparison, true);
+    assert.equal(description.evidenceType, "SQLSERVER_DESCRIBE_FIRST_RESULT_SET");
+    assert.deepEqual(description.columns.map(column => column.name),
+      ["SYNTHETIC_FIELD_A", "SYNTHETIC_FIELD_B"]);
+    assert.deepEqual(description.columns.map(column => column.ordinal), [1, 2]);
+    assert.deepEqual(description.columns.map(column => column.dataType), ["int", "bigint"]);
+    assert.ok(!("rows" in description));
+    console.log("UQP923_EPHEMERAL_SQL2019_METADATA_DESCRIBE: 2 CANDIDATE COLUMNS, NO ROWS");
+
     console.log("UQP923_EPHEMERAL_SQL2019_SYNTHETIC: NOT_INSTALLED -> PARTIAL_REJECTED -> EXACT_MATCH -> EXACT_MATCH");
     console.log("F1/F2/F3/F4/F5/F6=NOT_RUN; SQL_LOCK_VERIFIED=false; deliveryAllowed=false");
   } finally {
