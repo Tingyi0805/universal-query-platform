@@ -68,6 +68,27 @@ async function status(pool: sql.ConnectionPool) {
     unexpected: String(item.UnexpectedDefinitionCount) };
 }
 
+async function summarizeSyntheticCatalogDrift(pool: sql.ConnectionPool) {
+  // Reuse the same CTE, but project mismatches only for this disposable CI instance.
+  // No application rows or credentials are accessed by the sys.catalog query.
+  const original = render923CatalogSql();
+  const marker = "\nSELECT CASE WHEN v.ok<>1";
+  const offset = original.lastIndexOf(marker);
+  assert.ok(offset > 0, "Reviewed catalog query final projection changed");
+  const diagnose = original.slice(0, offset) + `
+    SELECT N'MISSING' AS Side, category, owner, name, signature FROM Missing
+    UNION ALL
+    SELECT N'UNEXPECTED' AS Side, category, owner, name, signature FROM Unexpected;
+  `;
+  const result = await pool.request().query(diagnose);
+  const rows = result.recordset.map(row => ({
+    side: row.Side, category: row.category, owner: row.owner, name: row.name,
+    signature: String(row.signature).slice(0, 240),
+  }));
+  console.error("UQP923_CATALOG_REAL_DRIFT_COUNT=" + rows.length);
+  console.error("UQP923_CATALOG_REAL_DRIFT_SAMPLE=" + JSON.stringify(rows.slice(0, 12)));
+}
+
 async function main() {
   stage = "PRECHECK"; assertIsolatedRuntime();
   stage = "CONNECT"; const master = await startup();
@@ -104,6 +125,7 @@ async function main() {
       await isolated.request().batch(statement);
     }
     stage = "CATALOG_EXACT"; const exact = await status(isolated);
+    if (exact.state !== "EXACT_MATCH") await summarizeSyntheticCatalogDrift(isolated);
     assert.equal(exact.state, "EXACT_MATCH",
       `Exact SQL Server 2019 catalog mismatch; missing=${exact.missing}; extra=${exact.unexpected}`);
     stage = "CATALOG_REPEAT"; const again = await status(isolated);
