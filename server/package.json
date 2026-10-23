@@ -11,6 +11,9 @@
     "db:migrate": "tsx src/scripts/migrate.ts",
     "db:migrate:status": "tsx src/scripts/migrate.ts status",
     "db:migrate:adopt": "tsx src/scripts/migrate.ts adopt",
+    "db:923:preflight": "tsx src/scripts/installDataset923.ts preflight",
+    "db:923:apply": "tsx src/scripts/installDataset923.ts apply",
+    "db:923:verify": "tsx src/scripts/installDataset923.ts verify",
     "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
