@@ -9,6 +9,7 @@ import { render923CatalogSql, render923Draft } from "../modules/dataset/datasetM
 
 const dbName = "UQP923_CI_SYNTHETIC";
 const expectedMachine = "uqp-923-ephemeral";
+let stage = "BOOT";
 
 function assertIsolatedRuntime() {
   if (process.env.GITHUB_ACTIONS !== "true"
@@ -68,25 +69,25 @@ async function status(pool: sql.ConnectionPool) {
 }
 
 async function main() {
-  assertIsolatedRuntime();
-  const master = await startup();
+  stage = "PRECHECK"; assertIsolatedRuntime();
+  stage = "CONNECT"; const master = await startup();
   let isolated: sql.ConnectionPool | undefined;
   let syntheticCreated = false;
   try {
-    await assertSyntheticServer(master);
-    await master.request().batch(`CREATE DATABASE [${dbName}]`);
+    stage = "IDENTITY"; await assertSyntheticServer(master);
+    stage = "CREATE_SYNTHETIC_DB"; await master.request().batch(`CREATE DATABASE [${dbName}]`);
     syntheticCreated = true;
-    await master.request().batch(`ALTER DATABASE [${dbName}] SET COMPATIBILITY_LEVEL = 150`);
-    isolated = await connect(dbName);
+    stage = "SET_COMPAT"; await master.request().batch(`ALTER DATABASE [${dbName}] SET COMPATIBILITY_LEVEL = 150`);
+    stage = "CONNECT_SYNTHETIC"; isolated = await connect(dbName);
     const setup = `
       CREATE SCHEMA [uqp];
       CREATE TABLE [uqp].[Dataset] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_Dataset PRIMARY KEY);
       CREATE TABLE [uqp].[DataSource] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_DataSource PRIMARY KEY);
       CREATE TABLE [uqp].[AppUser] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_AppUser PRIMARY KEY);
     `;
-    for (const statement of setup.split(";").map(s => s.trim()).filter(Boolean))
+    stage = "CREATE_PREREQS"; for (const statement of setup.split(";").map(s => s.trim()).filter(Boolean))
       await isolated.request().batch(statement);
-    const initial = await status(isolated);
+    stage = "CATALOG_ABSENT"; const initial = await status(isolated);
     assert.equal(initial.state, "NOT_INSTALLED", "Baseline catalog must be entirely absent");
 
     const ddl = render923Draft();
@@ -94,15 +95,18 @@ async function main() {
     assert.ok(statements.length >= 9);
     // Leave the sequence-only state deliberately incomplete to prove fail-closed detection.
     assert.match(statements[0]!, /CREATE SEQUENCE/u);
-    await isolated.request().batch(statements[0]!);
-    const partial = await status(isolated);
+    stage = "DDL_SEQUENCE"; await isolated.request().batch(statements[0]!);
+    stage = "CATALOG_PARTIAL"; const partial = await status(isolated);
     assert.equal(partial.state, "REJECTED_PARTIAL_OR_DIFFERENT", "Partial 923 must refuse");
 
-    for (const statement of statements.slice(1)) await isolated.request().batch(statement);
-    const exact = await status(isolated);
+    for (const [index, statement] of statements.slice(1).entries()) {
+      stage = `DDL_OBJECT_${index+1}`;
+      await isolated.request().batch(statement);
+    }
+    stage = "CATALOG_EXACT"; const exact = await status(isolated);
     assert.equal(exact.state, "EXACT_MATCH",
       `Exact SQL Server 2019 catalog mismatch; missing=${exact.missing}; extra=${exact.unexpected}`);
-    const again = await status(isolated);
+    stage = "CATALOG_REPEAT"; const again = await status(isolated);
     assert.equal(again.state, "EXACT_MATCH");
     console.log("UQP923_EPHEMERAL_SQL2019_SYNTHETIC: NOT_INSTALLED -> PARTIAL_REJECTED -> EXACT_MATCH -> EXACT_MATCH");
     console.log("F1/F2/F3/F4/F5/F6=NOT_RUN; SQL_LOCK_VERIFIED=false; deliveryAllowed=false");
@@ -128,8 +132,11 @@ async function assertSyntheticServerForCleanup(pool: sql.ConnectionPool) {
   assert.equal(result.recordset[0]?.DbName, "master");
 }
 
-main().catch(() => {
-  // Opaque CI error only; never expose connection strings/driver details.
-  console.error("UQP923_EPHEMERAL_SYNTHETIC_ACCEPTANCE_FAILED");
+main().catch((error: unknown) => {
+  // Identifies synthetic failure stage without SQL, credentials or connection string.
+  const v = error as { code?: unknown; number?: unknown } | null;
+  const code = typeof v?.code === "string" && /^[A-Z_]{1,32}$/u.test(v.code) ? v.code : "UNKNOWN";
+  const number = typeof v?.number === "number" && Number.isSafeInteger(v.number) ? v.number : 0;
+  console.error(`UQP923_EPHEMERAL_SYNTHETIC_ACCEPTANCE_FAILED stage=${stage} driverCode=${code} sqlNumber=${number}`);
   process.exitCode = 1;
 });
