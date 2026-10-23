@@ -14,6 +14,7 @@ import { test923ManualInstallerOnSyntheticSqlServer } from "./dataset923Ephemera
 import { test923ExactAuditReceiptOnDisposableSql2019 } from "./dataset923EphemeralRealAudit.js";
 import { test923RealAuditScopeDecisionOnDisposableSql2019 } from "./dataset923EphemeralRealAuditDecision.js";
 import { test923ScopeConfirmationGateOnSyntheticSql2019 } from "./dataset923EphemeralScopeConfirmationGate.js";
+import { testDatasetScopeManagementInDisposableSql2019 } from "./datasetScopeManagementEphemeral.js";
 
 const dbName = "UQP923_CI_SYNTHETIC";
 const expectedMachine = "uqp-923-ephemeral";
@@ -188,6 +189,8 @@ async function main() {
     await test923RealAuditScopeDecisionOnDisposableSql2019(isolated);
     stage = "923_F2_SCOPE_CONFIRMATION_GATE";
     await test923ScopeConfirmationGateOnSyntheticSql2019(isolated);
+    stage = "924_DATASET_SCOPE_MANAGEMENT_WRITER";
+    await testDatasetScopeManagementInDisposableSql2019(isolated);
 
     stage = "923_DEDICATED_INSTALLER_ON_SECOND_SYNTHETIC_DATABASE";
     await test923ManualInstallerOnSyntheticSqlServer(master);

@@ -21,8 +21,8 @@ export type Dataset923AuditAction =
   | "INVALIDATE" | "CONFIRM" | "REJECT" | "REVOKE";
 
 export type Dataset923AuditInput = Readonly<{
-  datasetId: number;
-  actorUserId: number;
+  datasetId: number | string;
+  actorUserId: number | string;
   kind: Dataset923AuditKind;
   action: Dataset923AuditAction;
   requestId: string;
@@ -49,8 +49,7 @@ export function parseExact923AuditId(value: unknown): string {
 }
 
 function validate(input: Dataset923AuditInput): string {
-  if (!Number.isSafeInteger(input.datasetId) || input.datasetId <= 0 ||
-      !Number.isSafeInteger(input.actorUserId) || input.actorUserId <= 0 ||
+  if (!exactEntity(input.datasetId) || !exactEntity(input.actorUserId) ||
       !Object.prototype.hasOwnProperty.call(operations, input.kind) ||
       !operations[input.kind]?.includes(input.action) ||
       !uuid.test(input.requestId) || !sha256.test(input.commandDigestHex)) {
@@ -66,6 +65,14 @@ function validate(input: Dataset923AuditInput): string {
   return details;
 }
 
+function exactEntity(value:number|string):string {
+  if(typeof value==="number") {
+    if(!Number.isSafeInteger(value)||value<=0) throw new Dataset923AuditReceiptError("923_AUDIT_INPUT_INVALID");
+    return value.toString();
+  }
+  return parseExact923AuditId(value);
+}
+
 /**
  * Must be invoked inside the same caller-owned SERIALIZABLE transaction as
  * the Scope/Confirmation CAS and the immutable DatasetSecurityDecision INSERT.
@@ -79,8 +86,8 @@ export async function writeExact923AuditReceipt(
   if (!transaction) throw new Dataset923AuditReceiptError("923_AUDIT_INPUT_INVALID");
   const details = validate(input);
   const result = await new sql.Request(transaction)
-    .input("datasetId", sql.BigInt, input.datasetId)
-    .input("actorId", sql.BigInt, input.actorUserId)
+    .input("datasetId", sql.VarChar(20), exactEntity(input.datasetId))
+    .input("actorId", sql.VarChar(20), exactEntity(input.actorUserId))
     .input("parameters", sql.NVarChar(sql.MAX), details)
     .query(`
       DECLARE @Written TABLE (Id BIGINT NOT NULL);
@@ -89,7 +96,7 @@ export async function writeExact923AuditReceipt(
          Status,ParametersJson,IpAddress,UserAgent,ErrorCode,CompletedAtUtc)
       OUTPUT INSERTED.Id INTO @Written(Id)
       VALUES
-        (N'DATASET_SECURITY_DECISION',N'SECURITY',1,@actorId,NULL,@datasetId,
+        (N'DATASET_SECURITY_DECISION',N'SECURITY',1,CONVERT(bigint,@actorId),NULL,CONVERT(bigint,@datasetId),
          N'SUCCESS',@parameters,NULL,NULL,NULL,SYSUTCDATETIME());
       SELECT CONVERT(varchar(20),Id) AS ExactAuditId FROM @Written;
     `);

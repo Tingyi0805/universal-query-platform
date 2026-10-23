@@ -5,6 +5,7 @@ import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { useAuth } from "./auth/AuthContext";
 import { apiRequest } from "./api/client";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
+import { DatasetSecurityScopesPage } from "./pages/DatasetSecurityScopesPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
@@ -33,6 +34,7 @@ type DashboardDeviceAlert = {
 };
 
 const modules = [
+  { title: "Dataset 負責人指派", description: "逐 Dataset 指派或撤銷 Owner 與 Reviewer。", icon: ShieldCheck, permission: "MANAGE_DATASET_SECURITY_SCOPE", path: "/admin/dataset-security" },
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
   { title: "儀表板", description: "播放目前帳號可使用的即時 Dashboard。", icon: LayoutDashboard, permission: "VIEW_QUERY", path: "/dashboards" },
   { title: "查詢設計", description: "建立 Dataset、SQL 與安全查詢參數。", icon: PanelsTopLeft, permission: "DESIGN_QUERY", path: "/designer/datasets" },
@@ -175,6 +177,7 @@ export default function App() {
       <Route path="/setup" element={<SetupPage />} />
       <Route path="/display/dashboards/:id" element={<DashboardDisplayPage />} />
       <Route element={<ProtectedRoute />}>
+        <Route path="/admin/dataset-security" element={<PermissionRoute permission="MANAGE_DATASET_SECURITY_SCOPE"><DatasetSecurityScopesPage /></PermissionRoute>} />
         <Route path="/" element={<HomePage />} />
         <Route path="/account/password" element={<ChangePasswordPage />} />
         <Route path="/admin/shared-workstations" element={<PermissionRoute permission="MANAGE_USERS"><SharedWorkstationsPage /></PermissionRoute>} />

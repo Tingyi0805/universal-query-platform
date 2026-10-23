@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { explicitSystemAdminCapabilities } from "../dataset/datasetScopeManagement.js";
 import { getPlatformDbPool } from "../../config/database.js";
 
 async function requirePool() {
@@ -269,7 +270,8 @@ export async function updateRole(roleId: number, input: { name: string; descript
 
       const allPermissions = await new sql.Request(tx)
         .query("SELECT Code FROM uqp.Permission ORDER BY Code");
-      input.permissionCodes = allPermissions.recordset.map((row) => String(row.Code));
+      // These capabilities require an explicit selection, even for SYSTEM_ADMIN.
+      input.permissionCodes = explicitSystemAdminCapabilities(allPermissions.recordset.map((row) => String(row.Code)),input.permissionCodes);
     }
 
     const currentPermissionsResult = await new sql.Request(tx)

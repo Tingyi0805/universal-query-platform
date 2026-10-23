@@ -17,6 +17,7 @@ import { queryDefinitionRouter } from "./modules/queryDefinition/queryDefinition
 import { queryRuntimeRouter } from "./modules/queryDefinition/queryRuntime.routes.js";
 import { systemSettingsRouter } from "./modules/systemSettings/systemSettings.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
+import { createDatasetScopeManagementRouter } from "./modules/dataset/datasetScopeManagement.routes.js";
 
 const pinoHttp = pinoHttpModule as unknown as (options: {
   logger: typeof logger;
@@ -62,6 +63,7 @@ app.use("/api/admin", adminRouter);
 app.use("/api/audit", auditRouter);
 app.use("/api/datasources", dataSourceRouter);
 app.use("/api/datasets", datasetRouter);
+app.use("/api/dataset-security", createDatasetScopeManagementRouter());
 app.use("/api/dashboards", dashboardRouter);
 app.use("/api/query-categories", queryCategoryRouter);
 app.use("/api/query-definitions", queryDefinitionRouter);
