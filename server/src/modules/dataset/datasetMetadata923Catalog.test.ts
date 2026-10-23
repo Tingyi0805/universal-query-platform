@@ -73,7 +73,7 @@ test("NULL/UNKNOWN CHECK loophole is closed by CASE ELSE 0 and explicit shape gu
     assert.match(c.signature, /\\|0\\|0\\|0\\|\\d+\\|0\\|1$/u);
   }
   // DDL continues to carry the original explicit CASE/WHEN guard.
-  assert.match(render923Draft(), /CHECK \\(CASE WHEN/u);
+  assert.match(render923Draft(), /CHECK \(CASE WHEN/u);
   const active = checks.find(c => c.name === "CK_DatasetSecurityConfirmation_Active")!.signature;
   for (const field of ["Classification", "PolicyDigest", "SensitivityVersion", "ReviewerId", "OwnerUserId", "ReviewerTokenVersion", "OwnerTokenVersion", "ActorScopeEpoch", "OwnerScopeEpoch", "PatientConfigurationVersion", "PatientKeyAlias"]) assert.ok(active.includes(`[${field}] IS NOT NULL`));
   assert.ok(checks.find(c => c.name === "CK_DatasetSecurityScope_Parent")!.signature.includes("[ParentOwnerKind] IS NOT NULL"));
