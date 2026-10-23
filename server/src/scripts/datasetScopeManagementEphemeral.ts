@@ -5,7 +5,8 @@ import {randomUUID,randomBytes} from "node:crypto";
 import sql from "mssql";
 import jwt from "jsonwebtoken";
 import {env} from "../config/env.js";
-import {createDatasetScopeManagement} from "../modules/dataset/datasetScopeManagement.repository.js";
+import {createDatasetScopeManagement,scopeQuery} from "../modules/dataset/datasetScopeManagement.repository.js";
+import {writeExact923AuditReceipt} from "../modules/dataset/dataset923ExactAuditReceipt.js";
 import {scopeCommand,type ScopeCommand} from "../modules/dataset/datasetScopeManagement.js";
 import {render923CatalogSql} from "../modules/dataset/datasetMetadata923Catalog.js";
 
@@ -48,7 +49,15 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
     await root.request().batch(`CREATE USER [${login}] FOR LOGIN [${login}]; ALTER ROLE db_datareader ADD MEMBER [${login}];
       ALTER ROLE db_datawriter ADD MEMBER [${login}]; GRANT VIEW DEFINITION TO [${login}];`);
     app=await new sql.ConnectionPool({...config,user:login,password,pool:{min:0,max:4}}).connect();
-    const store=createDatasetScopeManagement({pool:async()=>app!,enabled:()=>true,incarnation:()=>incarnation});
+    // Diagnose only fixed stage labels and numeric driver codes; never log SQL/parameters/messages.
+    const diagnose=(error:unknown,label:string)=>{
+      const n=(error as {number?:unknown})?.number;
+      console.error(`DATASET_SCOPE_SQL_STAGE=${label};NUMBER=${typeof n==="number"?n:0}`);
+    };
+    const store=createDatasetScopeManagement({pool:async()=>app!,enabled:()=>true,incarnation:()=>incarnation,
+      query:async(tx,text,params)=>{try{return await scopeQuery(tx,text,params);}catch(e){diagnose(e,/\/\* scope:([a-z-]+) \*\//.exec(text)?.[1]??"fixed-query");throw e;}},
+      audit:async(tx,input)=>{try{return await writeExact923AuditReceipt(tx,input);}catch(e){diagnose(e,"exact-audit");throw e;}},
+    });
     const token=(id=actorId,version=1)=>`Bearer ${jwt.sign({sub:id,tokenVersion:version,roles:["SYSTEM_ADMIN"],permissions:["MANAGE_DATASET_SECURITY_SCOPE"]},env.JWT_SECRET!)}`;
     let auth=token();
     const snapshot=()=>store.list(auth,datasetId);
