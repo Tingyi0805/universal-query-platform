@@ -8,6 +8,7 @@ import sql from "mssql";
 import { render923CatalogSql, render923Draft } from "../modules/dataset/datasetMetadata923Catalog.js";
 import { SqlServerAdapter } from "../modules/datasource/adapters/sqlServerAdapter.js";
 import type { DataSourceConfig } from "../modules/datasource/datasource.types.js";
+import { test923ScopeCasInDisposableSqlServer } from "./dataset923EphemeralCas.js";
 
 const dbName = "UQP923_CI_SYNTHETIC";
 const expectedMachine = "uqp-923-ephemeral";
@@ -168,6 +169,11 @@ async function main() {
     assert.deepEqual(description.columns.map(column => column.dataType), ["int", "bigint"]);
     assert.ok(!("rows" in description));
     console.log("UQP923_EPHEMERAL_SQL2019_METADATA_DESCRIBE: 2 CANDIDATE COLUMNS, NO ROWS");
+    // Genuine SQL Server locking / rollback mechanics, but NOT production
+    // source-fence, confirmation Writer, audit or authorization acceptance.
+    stage = "923_SCOPE_CAS_TWO_SESSIONS";
+    await test923ScopeCasInDisposableSqlServer(isolated, () => connect(dbName));
+
 
     console.log("UQP923_EPHEMERAL_SQL2019_SYNTHETIC: NOT_INSTALLED -> PARTIAL_REJECTED -> EXACT_MATCH -> EXACT_MATCH");
     console.log("F1/F2/F3/F4/F5/F6=NOT_RUN; SQL_LOCK_VERIFIED=false; deliveryAllowed=false");
