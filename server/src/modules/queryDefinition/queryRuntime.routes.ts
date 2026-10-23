@@ -24,6 +24,8 @@ import {
   createQueryCsv,
 } from "../export/csvExport.service.js";
 import { listReportColumns } from "./reportColumn.repository.js";
+import { getDataset } from "../dataset/dataset.repository.js";
+import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
 import { setQueryFavorite } from "./queryFavorite.repository.js";
 
 const idSchema = z.coerce.number().int().positive();
@@ -224,6 +226,18 @@ queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), asyn
     });
 
     const result = await executeSavedDataset(query.datasetId, body.data.values);
+    const dataset = await getDataset(query.datasetId);
+    if (!dataset) throw new Error("DATASET_NOT_FOUND");
+    // Patient-bearing data must not leave this endpoint before disclosure audit commits.
+    const disclosureId = await auditPatientListIfConfigured({
+      userId: req.authUser!.id,
+      queryDefinitionId: query.id,
+      datasetId: query.datasetId,
+      sourceScope: `datasource:${dataset.dataSourceId}`,
+      deliveryType: "MANUAL",
+      masked: false,
+      rows: result.rows,
+    });
 
     // Persist patient disclosure before delivering any rows; failure blocks the response.
     const dataset = await getDataset(query.datasetId);
