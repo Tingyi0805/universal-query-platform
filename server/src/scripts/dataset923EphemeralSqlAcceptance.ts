@@ -13,6 +13,7 @@ import { test923SyntheticDecisionAuditAtomicity } from "./dataset923EphemeralDec
 import { test923ManualInstallerOnSyntheticSqlServer } from "./dataset923EphemeralInstallAcceptance.js";
 import { test923ExactAuditReceiptOnDisposableSql2019 } from "./dataset923EphemeralRealAudit.js";
 import { test923RealAuditScopeDecisionOnDisposableSql2019 } from "./dataset923EphemeralRealAuditDecision.js";
+import { test923ScopeConfirmationGateOnSyntheticSql2019 } from "./dataset923EphemeralScopeConfirmationGate.js";
 
 const dbName = "UQP923_CI_SYNTHETIC";
 const expectedMachine = "uqp-923-ephemeral";
@@ -121,7 +122,7 @@ async function main() {
     stage = "CONNECT_SYNTHETIC"; isolated = await connect(dbName);
     const setup = `
       CREATE SCHEMA [uqp];
-      CREATE TABLE [uqp].[Dataset] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_Dataset PRIMARY KEY, [IsActive] BIT NOT NULL DEFAULT 1, [IsArchived] BIT NOT NULL DEFAULT 0);
+      CREATE TABLE [uqp].[Dataset] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_Dataset PRIMARY KEY, [DataSourceId] BIGINT NOT NULL DEFAULT 201, [IsActive] BIT NOT NULL DEFAULT 1, [IsArchived] BIT NOT NULL DEFAULT 0);
       CREATE TABLE [uqp].[DataSource] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_DataSource PRIMARY KEY, [IsActive] BIT NOT NULL DEFAULT 1);
       CREATE TABLE [uqp].[AppUser] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_AppUser PRIMARY KEY, [IsActive] BIT NOT NULL DEFAULT 1, [TokenVersion] INT NOT NULL DEFAULT 1);
     `;
@@ -185,6 +186,8 @@ async function main() {
     await test923ExactAuditReceiptOnDisposableSql2019(isolated);
     stage = "923_REAL_AUDIT_DECISION_ATOMIC_CAS";
     await test923RealAuditScopeDecisionOnDisposableSql2019(isolated);
+    stage = "923_F2_SCOPE_CONFIRMATION_GATE";
+    await test923ScopeConfirmationGateOnSyntheticSql2019(isolated);
 
     stage = "923_DEDICATED_INSTALLER_ON_SECOND_SYNTHETIC_DATABASE";
     await test923ManualInstallerOnSyntheticSqlServer(master);
