@@ -54,7 +54,13 @@ export async function test923ScopeCasInDisposableSqlServer(
         await scopeRequest(b, ownerId).query("SET LOCK_TIMEOUT 800; " + scopeSql);
       } catch (error) { lockError = error; }
       const sqlNumber = (lockError as { number?: number } | null)?.number;
-      assert.equal(sqlNumber, 1222, "Second connection must be blocked by PK range lock");
+      const kind = (lockError as { code?: unknown; originalError?: { info?: { number?: number } } } | null)?.code;
+      const nestedNumber = (lockError as { originalError?: { info?: { number?: number } } } | null)?.originalError?.info?.number;
+      console.log("UQP923_CAS_CONFLICT_DIAGNOSTIC", JSON.stringify({
+        failed: Boolean(lockError), number: sqlNumber ?? null, nestedNumber: nestedNumber ?? null,
+        driverCode: typeof kind === "string" && /^[A-Z_]{1,40}$/u.test(kind) ? kind : "UNKNOWN",
+      }));
+      assert.equal(sqlNumber ?? nestedNumber, 1222, "Second connection must be blocked by PK range lock");
       await b.rollback(); bStarted = false;
 
       const insert = await scopeRequest(a, ownerId).query(`
