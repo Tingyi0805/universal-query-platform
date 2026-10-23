@@ -14,7 +14,7 @@ const machine="uqp-924-full-schema",db="UQP924_CI_FULL",port=14334;
 const datasetId="9007199254740993",ownerId="9007199254740995",reviewerId="302",actorId="303";
 let stage="PRECHECK";
 const digest=(v:string)=>createHash("sha256").update(v).digest("hex");
-function check(ok:unknown,label:string):asserts ok {if(!ok)throw Error(label);}
+function check(ok:unknown,label:string):asserts ok {if(!ok)throw Object.assign(new Error("ACCEPTANCE_CHECK_FAILED"),{code:label.replaceAll("=","_")});}
 async function cli(which:"923"|"924",mode:string,approval=true,extra:Record<string,string>={}){
   const e={...process.env,PLATFORM_DB_SERVER:"127.0.0.1",PLATFORM_DB_PORT:String(port),PLATFORM_DB_DATABASE:db,
     PLATFORM_DB_USER:"sa",PLATFORM_DB_PASSWORD:process.env.UQP_924_CI_PASSWORD!,PLATFORM_DB_ENCRYPT:"true",PLATFORM_DB_TRUST_SERVER_CERTIFICATE:"true",
@@ -183,8 +183,9 @@ async function main(){
       INSERT uqp.RolePermission(RoleId,PermissionId) SELECT r.Id,p.Id FROM uqp.Role r CROSS JOIN uqp.Permission p WHERE r.Code=N'SYSTEM_ADMIN' AND p.Code=N'MANAGE_DATASET_SECURITY_SCOPE';`);
     app=await new sql.ConnectionPool({...config,database:db,user:login,password,pool:{min:0,max:4}}).connect();
     const rights=(await app.request().query(`SELECT IS_SRVROLEMEMBER(N'sysadmin') SA,IS_MEMBER(N'db_owner') DO,
-      HAS_PERMS_BY_NAME(NULL,N'SERVER',N'VIEW SERVER STATE') VS,HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'CONTROL') CT,
+      HAS_PERMS_BY_NAME(NULL,NULL,N'VIEW SERVER STATE') VS,HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'CONTROL') CT,
       HAS_PERMS_BY_NAME(N'uqp',N'SCHEMA',N'ALTER') AL`)).recordset[0];
+    console.log("924_RUNTIME_PRIVILEGE_WITNESS="+JSON.stringify(rights));
     check(Object.values(rights).every(v=>v===0),"EXCESS_RUNTIME_PRIVILEGE");
     check((await app.request().query(render924CatalogSql())).recordset[0].CatalogStatus==="REJECTED_UNKNOWN","NON_DBO_CATALOG_MUST_NOT_CLAIM_EXACT");
     env.JWT_SECRET=randomBytes(32).toString("hex");
