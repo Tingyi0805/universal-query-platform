@@ -76,3 +76,20 @@ jobs:
         shell: bash
         working-directory: .
         run: docker rm -f uqp-923-ephemeral >/dev/null 2>&1 || true
+
+  windows-923-installer:
+    # Syntax-only; no credentials and no SQL connection.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify PowerShell 5.1 installer syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          $file = (Resolve-Path '.\tools\install-uqp-923.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw '923_WINDOWS_INSTALLER_SYNTAX_INVALID' }
+          Write-Host '923_WINDOWS_POWERSHELL_51_SYNTAX_OK'
