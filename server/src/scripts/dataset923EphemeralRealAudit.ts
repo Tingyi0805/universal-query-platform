@@ -90,17 +90,21 @@ export async function test923ExactAuditReceiptOnDisposableSql2019(pool:sql.Conne
   await assert.rejects(async()=>inOwnedTransaction(pool,tx=>
     writeExact923AuditReceipt(tx,bad),true),{code:"923_AUDIT_INPUT_INVALID"});
   assert.equal(await auditCount(pool),0,"Rejected input must not leave audit records");
+  console.log("UQP923_REAL_AUDIT_INVALID_INPUT_REJECTED");
 
   // Success path returns the exact decimal BIGINT from real AuditLog.
   const command=makeInput();
+  console.log("UQP923_REAL_AUDIT_COMMIT_BEGIN");
   const exact=await inOwnedTransaction(pool,tx=>
     writeExact923AuditReceipt(tx,command),true);
   assert.ok(BigInt(exact)>BigInt(Number.MAX_SAFE_INTEGER));
+  console.log("UQP923_REAL_AUDIT_COMMIT_EXACT_ID_VALID");
   const q=await pool.request()
     .input("auditId",sql.VarChar(20),exact)
     .query(`SELECT CONVERT(varchar(20),Id) AS ExactId,UserId,DatasetId,
       EventType,EventCategory,IsImportant,Status,ParametersJson
       FROM uqp.AuditLog WHERE Id=CONVERT(bigint,@auditId)`);
+  console.log("UQP923_REAL_AUDIT_READBACK",JSON.stringify({rows:q.recordset.length,columns:Object.keys(q.recordset[0]??{}),types:q.recordset[0]?{UserId:typeof q.recordset[0].UserId,DatasetId:typeof q.recordset[0].DatasetId,IsImportant:typeof q.recordset[0].IsImportant}:null}));
   assert.equal(q.recordset.length,1);
   const row=q.recordset[0];
   assert.equal(row.ExactId,exact);
