@@ -20,6 +20,7 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
   let app:sql.ConnectionPool|undefined;
   const secret=env.JWT_SECRET;env.JWT_SECRET=randomBytes(32).toString("hex");
   const datasetId="9007199254740993",ownerId="9007199254740995",reviewerId="302",actorId="303",incarnation=randomUUID();
+  let stage="FIXTURE_COLUMNS";
   try{
     // Extend synthetic parent fixtures only, after all existing 923/F2/F5 rehearsals have completed.
     await root.request().batch(`ALTER TABLE uqp.Dataset ADD Name NVARCHAR(200) NOT NULL DEFAULT N'SYNTHETIC',DefinitionRowVersion ROWVERSION NOT NULL;
@@ -27,18 +28,21 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
       ALTER TABLE uqp.AppUser ADD DisplayName NVARCHAR(200) NOT NULL DEFAULT N'SYNTHETIC';
       ALTER TABLE uqp.Permission ADD Name NVARCHAR(100) NOT NULL DEFAULT N'SYNTHETIC',Description NVARCHAR(500) NULL;
       CREATE SEQUENCE uqp.CiPermissionSequence AS BIGINT START WITH 1000;
-      ALTER TABLE uqp.Permission ADD CONSTRAINT DF_CiScopePermission DEFAULT(NEXT VALUE FOR uqp.CiPermissionSequence) FOR Id;
-      INSERT uqp.Dataset(Id,DataSourceId,Name) VALUES(${datasetId},202,N'SYNTHETIC_EXACT_DATASET');
+      ALTER TABLE uqp.Permission ADD CONSTRAINT DF_CiScopePermission DEFAULT(NEXT VALUE FOR uqp.CiPermissionSequence) FOR Id;`);
+    stage="FIXTURE_ROWS";
+    await root.request().batch(`INSERT uqp.Dataset(Id,DataSourceId,Name) VALUES(${datasetId},202,N'SYNTHETIC_EXACT_DATASET');
       INSERT uqp.AppUser(Id,DisplayName) VALUES(${ownerId},N'SYNTHETIC_EXACT_OWNER'),(${actorId},N'SYNTHETIC_ADMIN');
       INSERT uqp.UserRole(UserId,RoleId) VALUES(${ownerId},1);
       INSERT uqp.Role(Id,Code,IsActive,IsSystem) VALUES(2,N'SYSTEM_ADMIN',1,1);
       INSERT uqp.UserRole(UserId,RoleId) VALUES(${actorId},2);`);
+    stage="924_DRAFT";
     const draft=await readFile(new URL("../../../database/drafts/924_dataset_security_scope_binding.sql",import.meta.url),"utf8");
     await root.request().batch(draft);
     const catalog=(await root.request().query(render923CatalogSql())).recordset[0];
     assert.equal(catalog.CatalogStatus??catalog.state??catalog.State??catalog.status,"EXACT_MATCH");
     assert.equal((await root.request().query("SELECT COUNT(*) AS C FROM uqp.RolePermission rp JOIN uqp.Permission p ON p.Id=rp.PermissionId WHERE p.Code=N'MANAGE_DATASET_SECURITY_SCOPE'")).recordset[0].C,0);
     await root.request().query("INSERT uqp.RolePermission(RoleId,PermissionId) SELECT 2,Id FROM uqp.Permission WHERE Code=N'MANAGE_DATASET_SECURITY_SCOPE'");
+    stage="RESTRICTED_PRINCIPAL";
     // Dedicated, non-dbo application identity. No user/environment connection credentials are reused or printed.
     await master.request().batch(`CREATE LOGIN [${login}] WITH PASSWORD=N'${password}',CHECK_POLICY=OFF; GRANT VIEW SERVER STATE TO [${login}];`);
     await root.request().batch(`CREATE USER [${login}] FOR LOGIN [${login}]; ALTER ROLE db_datareader ADD MEMBER [${login}];
@@ -55,10 +59,12 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
         parentOwnerUserId:kind==="REVIEWER"&&action==="GRANT"?ownerId:null,parentOwnerVersion:kind==="REVIEWER"&&action==="GRANT"?parent?.version:null});
     }
     async function grantOwner(){const c=await command(ownerId,"OWNER");return store.mutate(auth,datasetId,ownerId,"OWNER",c);}
+    stage="OWNED_LIST";
     const before=await snapshot();assert.equal(before.scopes.length,0);
     await assert.rejects(()=>store.list(token(reviewerId),datasetId),{code:"SCOPE_ADMIN_REQUIRED"});
     const privileged=createDatasetScopeManagement({pool:async()=>root,enabled:()=>true,incarnation:()=>incarnation});
     await assert.rejects(()=>privileged.list(auth,datasetId),{code:"SCOPE_924_OR_IMMUTABLE_LEDGER_REQUIRED"});
+    stage="OWNED_GRANT";
     const first=await command(ownerId,"OWNER"),written=await store.mutate(auth,datasetId,ownerId,"OWNER",first);
     assert.equal(written.deliveryAllowed,false);assert.ok(BigInt(written.auditLogId)>9007199254740991n);
     assert.equal((await store.mutate(auth,datasetId,ownerId,"OWNER",first)).replayed,true);
@@ -68,6 +74,7 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
     assert.ok((await snapshot()).scopes.every(s=>s.effective));
     // New repository path, not a repetition of the pre-existing low-level F5 primitive tests.
     const counts=async()=>(await root.request().query(`SELECT (SELECT COUNT_BIG(*) FROM uqp.DatasetSecurityDecision) D,(SELECT COUNT_BIG(*) FROM uqp.AuditLog) A`)).recordset[0];
+    stage="ATOMIC_ROLLBACK";
     for(const object of ["AuditLog","DatasetSecurityDecision"]){
       const old=(await snapshot()).scopes.find(s=>s.userId===ownerId)!,start=await counts();
       await root.request().query(`DENY INSERT ON OBJECT::uqp.${object} TO [${login}]`);
@@ -77,6 +84,7 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
     }
     await assert.rejects(()=>app!.request().query("UPDATE uqp.DatasetSecurityDecision SET ReasonCode=ReasonCode"));
     await assert.rejects(()=>app!.request().query("DELETE FROM uqp.DatasetSecurityDecision"));
+    stage="CONCURRENT_CAS";
     const same=await command(ownerId,"OWNER"),competing=await Promise.allSettled([
       store.mutate(auth,datasetId,ownerId,"OWNER",same),store.mutate(auth,datasetId,ownerId,"OWNER",{...same,requestId:randomUUID()}),
     ]);
@@ -87,6 +95,7 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
     await store.mutate(auth,datasetId,ownerId,"OWNER",await command(ownerId,"OWNER","REVOKE"));
     assert.ok((await snapshot()).scopes.every(s=>!s.effective));
     await grantOwner();assert.equal((await snapshot()).scopes.find(s=>s.userId===reviewerId)?.effective,false);
+    stage="REVOCATION_ABA";
     await root.request().query(`UPDATE uqp.AppUser SET IsActive=0,TokenVersion=TokenVersion+1 WHERE Id=${ownerId}`);
     assert.equal((await snapshot()).scopes.find(s=>s.userId===ownerId)?.effective,false);
     await root.request().query(`UPDATE uqp.AppUser SET IsActive=1,TokenVersion=TokenVersion+1 WHERE Id=${ownerId}`);
@@ -106,6 +115,8 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
     assert.equal(history.decisions[0].auditLogId,written.auditLogId);
     console.log("DATASET_SCOPE_MANAGEMENT_SQL2019: EXACT_IDS CAS_REPLAY IMMUTABLE_LEDGER REAL_AUDIT_ROLLBACK PARENT_TOKEN_SOURCE_ABA_CLOSED");
     console.log("SOURCE_BOUND=false SQL_LOCK_VERIFIED=false DATA_PREVIEW=false");
+  }catch(error){
+    console.error(`DATASET_SCOPE_CI_STAGE=${stage}`);throw error;
   }finally{
     env.JWT_SECRET=secret;
     if(app)await app.close();
