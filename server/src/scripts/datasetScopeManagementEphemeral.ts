@@ -91,6 +91,11 @@ export async function testDatasetScopeManagementInDisposableSql2019(root:sql.Con
       await root.request().query(`REVOKE INSERT ON OBJECT::uqp.${object} FROM [${login}]`);
       assert.deepEqual(await counts(),start);assert.equal((await snapshot()).scopes.find(s=>s.userId===ownerId)?.version,old.version);
     }
+    stage="IMMUTABLE_COLUMN_PERMISSION";
+    // SQL Server permits column GRANT to override an object DENY. The application must reject that identity too.
+    await root.request().query(`GRANT UPDATE(ReasonCode) ON OBJECT::uqp.DatasetSecurityDecision TO [${login}]`);
+    await assert.rejects(snapshot,{code:"SCOPE_924_OR_IMMUTABLE_LEDGER_REQUIRED"});
+    await root.request().query(`REVOKE UPDATE(ReasonCode) ON OBJECT::uqp.DatasetSecurityDecision FROM [${login}]`);
     await assert.rejects(()=>app!.request().query("UPDATE uqp.DatasetSecurityDecision SET ReasonCode=ReasonCode"));
     await assert.rejects(()=>app!.request().query("DELETE FROM uqp.DatasetSecurityDecision"));
     stage="CONCURRENT_CAS";

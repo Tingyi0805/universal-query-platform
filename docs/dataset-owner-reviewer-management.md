@@ -14,7 +14,7 @@ Binding PK=(DatasetId,UserId,ScopeKind)，只向既有 Dataset/AppUser 建 NO AC
 
 功能預設關閉。獨立環境經批准後才可設定 `DATASET_SECURITY_SCOPE_MANAGEMENT=true` 與 `DATASET_SECURITY_PLATFORM_INCARNATION`；incarnation 必須由核准的 DB 備份外 registry／部署程序提供，不能由前端或每次請求產生。UUID 設定本身不證明 restore 安全；還原／clone／多 Worker 的停機、重驗及 incarnation 更新流程未核准前不得正式開啟。此次沒有修改 `.env`。
 
-資料庫 application principal 必須可讀必要 metadata、使用交易鎖／session DMV，並有 Scope/Binding/Decision INSERT/Audit 所需權限，但不得 CONTROL DB/Decision、ALTER schema/Binding/Decision 或 UPDATE/DELETE Decision。**dbo/sysadmin 拒絕使用新 API**；DENY 無法限制 dbo/sysadmin。這不是要求修改使用中的 UQP 登入：請在獨立測試版本準備受限身分，先驗證其他既有功能回歸。
+資料庫 application principal 必須可讀必要 metadata、使用交易鎖／session DMV，並有 Scope/Binding/Decision INSERT/Audit 所需權限，但不得 CONTROL DB/Decision、ALTER schema/Binding/Decision 或 UPDATE/DELETE Decision（包括可覆蓋 table DENY 的 column UPDATE GRANT）。**dbo/sysadmin 拒絕使用新 API**；DENY 無法限制 dbo/sysadmin。這不是要求修改使用中的 UQP 登入：請在獨立測試版本準備受限身分，先驗證其他既有功能回歸。
 
 ## API 與原子交易
 

@@ -11,7 +11,8 @@ type Params=Record<string,string|number|Buffer|null>;
 export async function scopeQuery(tx:sql.Transaction,text:string,params:Params={}) {
   const r=new sql.Request(tx);
   for(const [key,value] of Object.entries(params)) r.input(key,Buffer.isBuffer(value)?sql.VarBinary(value.length):
-    typeof value==="number"?sql.Int:["incarnation","requestId","transactionReference"].includes(key)?sql.UniqueIdentifier:sql.NVarChar(sql.MAX),value);
+    value===null&&["expected","parentVersion"].includes(key)?sql.Binary(8):
+    typeof value==="number"||(value===null&&["subjectToken","parentToken"].includes(key))?sql.Int:["incarnation","requestId","transactionReference"].includes(key)?sql.UniqueIdentifier:sql.NVarChar(sql.MAX),value);
   return r.query(text);
 }
 const uuid=z.string().uuid().refine(v=>v!=="00000000-0000-0000-0000-000000000000");
@@ -77,6 +78,8 @@ export function createDatasetScopeManagement(deps:Partial<{
         AND EXISTS(SELECT 1 FROM sys.foreign_keys WHERE parent_object_id=OBJECT_ID(N'uqp.DatasetSecurityScopeBinding')
           AND referenced_object_id=OBJECT_ID(N'uqp.AppUser') AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0 AND update_referential_action=0)
         AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'UPDATE'),1)=0
+        AND NOT EXISTS(SELECT 1 FROM sys.columns c WHERE c.object_id=OBJECT_ID(N'uqp.DatasetSecurityDecision')
+          AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'UPDATE',c.name,N'COLUMN'),1)<>0)
         AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'DELETE'),1)=0
         AND COALESCE(HAS_PERMS_BY_NAME(N'uqp.DatasetSecurityDecision',N'OBJECT',N'ALTER'),1)=0
         AND COALESCE(HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'CONTROL'),1)=0
