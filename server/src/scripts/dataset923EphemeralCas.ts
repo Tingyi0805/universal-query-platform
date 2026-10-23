@@ -12,10 +12,18 @@ const scopeSql = `
   FROM uqp.DatasetSecurityScope WITH (UPDLOCK, HOLDLOCK, INDEX(PK_DatasetSecurityScope))
   WHERE DatasetId=@datasetId AND UserId=@userId AND ScopeKind=N'OWNER'`;
 
-function exactRowVersion(value: unknown): string {
-  // mssql returns SQL Server binary/rowversion as Buffer, not a textual hex.
-  if (!Buffer.isBuffer(value) || value.length !== 8) throw new Error("923_ROWVERSION_NOT_BINARY8");
-  return value.toString("hex");
+async function readExactRowVersion(tx: sql.Transaction, userId: number): Promise<string> {
+  // An explicit SELECT projection is returned by mssql as VARCHAR text;
+  // the OUTPUT clause's driver metadata is not used as a codec.
+  const r = await scopeRequest(tx, userId).query(`
+    SELECT CONVERT(varchar(16),ScopeRowVersion,2) AS V
+    FROM uqp.DatasetSecurityScope WITH (HOLDLOCK)
+    WHERE DatasetId=@datasetId AND UserId=@userId AND ScopeKind=N'OWNER'`);
+  assert.equal(r.recordset.length, 1);
+  const hex = r.recordset[0]?.V;
+  if (typeof hex !== "string" || !/^[0-9a-fA-F]{16}$/u.test(hex))
+    throw new Error("923_ROWVERSION_NOT_EXACT_HEX");
+  return hex.toLowerCase();
 }
 
 function scopeRequest(transaction: sql.Transaction, userId: number) {
@@ -79,7 +87,7 @@ export async function test923ScopeCasInDisposableSqlServer(
           NULL,NULL,@userId,NEWID(),N'OWNER_APPOINTED',SYSUTCDATETIME(),SYSUTCDATETIME())`);
       console.log("UQP923_CAS_STAGE_INSERT", JSON.stringify({ rows: insert.recordset.length, affected: insert.rowsAffected }));
       assert.equal(insert.recordset.length, 1);
-      const version = exactRowVersion(insert.recordset[0].NewVersion);
+      const version = await readExactRowVersion(a, ownerId);
       console.log("UQP923_CAS_STAGE_VERSION", JSON.stringify({ length: version.length, hex: /^[0-9a-f]+$/u.test(version) }));
       assert.match(version, /^[0-9a-f]{16}$/u);
       await a.commit(); aStarted = false;
@@ -111,7 +119,7 @@ export async function test923ScopeCasInDisposableSqlServer(
               AND ScopeRowVersion=@expected`);
         console.log("UQP923_CAS_STAGE_UPDATE", JSON.stringify({ rows: result.recordset.length, affected: result.rowsAffected }));
         assert.equal(result.recordset.length, 1);
-        assert.notEqual(exactRowVersion(result.recordset[0].NewVersion), version);
+        assert.notEqual(await readExactRowVersion(updater, ownerId), version);
         await updater.commit(); updateStarted = false;
       } finally { await failSafeRollback(updater, updateStarted); }
       const rejected = await poolB.request()
