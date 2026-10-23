@@ -13,26 +13,17 @@ const scopeSql = `
   WHERE DatasetId=@datasetId AND UserId=@userId AND ScopeKind=N'OWNER'`;
 
 async function readExactRowVersion(tx: sql.Transaction, userId: number): Promise<string> {
-  // An explicit SELECT projection is returned by mssql as VARCHAR text;
-  // the OUTPUT clause's driver metadata is not used as a codec.
+  // Read the native ROWVERSION (TDS binary) without casting to varchar:
+  // SQL Server 2019 can return an 8-character raw byte string for varchar casts.
   const r = await scopeRequest(tx, userId).query(`
-    SELECT CONVERT(varchar(16),ScopeRowVersion,2) AS V
+    SELECT ScopeRowVersion AS V
     FROM uqp.DatasetSecurityScope WITH (HOLDLOCK)
     WHERE DatasetId=@datasetId AND UserId=@userId AND ScopeKind=N'OWNER'`);
-  const probe = r.recordset[0]?.V;
-  console.log("UQP923_CAS_HEX_PROJECTION", JSON.stringify({
-    rows: r.recordset.length,
-    keys: Object.keys(r.recordset[0] ?? {}),
-    valueType: typeof probe, isBuffer: Buffer.isBuffer(probe),
-    byteLength: typeof probe === "string" ? probe.length
-      : Buffer.isBuffer(probe) ? probe.length : null,
-    valuePreview: typeof probe === "string" ? JSON.stringify(probe).slice(0, 48) : null,
-  }));
   assert.equal(r.recordset.length, 1);
-  const hex = r.recordset[0]?.V;
-  if (typeof hex !== "string" || !/^[0-9a-fA-F]{16}$/u.test(hex))
-    throw new Error("923_ROWVERSION_NOT_EXACT_HEX");
-  return hex.toLowerCase();
+  const native = r.recordset[0]?.V;
+  if (!Buffer.isBuffer(native) || native.length !== 8)
+    throw new Error("923_ROWVERSION_NOT_NATIVE_BINARY8");
+  return native.toString("hex");
 }
 
 function scopeRequest(transaction: sql.Transaction, userId: number) {
