@@ -26,7 +26,9 @@ test("persisted descriptors stay untrusted, stale and separate from policy/row d
   await expect(page.getByRole("cell",{name:"自選欄位"})).toBeVisible();
   await expect(page.getByText("DESCRIBED · UNBOUND_CANDIDATE · 分類未確認")).toBeVisible();
   await expect(page.getByText(/Dataset／來源版本已失效/)).toBeVisible();
-  expect(state.rows).toBe(0);expect(state.policies).toBe(0);expect(state.posts).toHaveLength(0);void panel;
+  expect(state.rows).toBe(0);expect(state.policies).toBe(0);expect(state.posts).toHaveLength(0);
+  await page.locator("textarea").first().fill("SELECT Label FROM f3.Records");
+  await expect(page.getByRole("button",{name:"保存候選欄位描述（非可信發證）"})).toBeDisabled();expect(state.posts).toHaveLength(0);void panel;
 });
 test("unknown collection retains RequestId and prevents automatic resend",async({page})=>{
   const state=await setup(page);await page.getByRole("button",{name:"查詢欄位 Snapshot 狀態"}).click();
