@@ -111,6 +111,7 @@ export function DatasetDesignerPage() {
   const [columnCandidate, setColumnCandidate] = useState<{ columns: { name: string; dataType: string; ordinal: number }[];
     trust: "UNBOUND_CANDIDATE"; metadataState: "NOT_INITIALIZED"; deliveryAllowed: false } | null>(null);
   const [columnCandidateBusy, setColumnCandidateBusy] = useState(false);
+  const [columnCandidateRevision, setColumnCandidateRevision] = useState(0);
   const [columnCandidateError, setColumnCandidateError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -398,6 +399,7 @@ export function DatasetDesignerPage() {
         || result.deliveryAllowed !== false || !Array.isArray(result.columns)) {
         setColumnCandidateError("欄位描述回應不符合安全契約。"); return;
       }
+      setColumnCandidateRevision(current => current + 1);
       setColumnCandidate(result);
     } catch (error) {
       setColumnCandidateError(error instanceof Error ? error.message : "取得欄位資訊失敗。");
@@ -736,7 +738,7 @@ export function DatasetDesignerPage() {
                     <td>{item.ordinal}</td><td>{item.name}</td><td>{item.dataType}</td>
                   </tr>)}</tbody>
                 </table>
-                <DatasetCandidateMaskDraft columns={columnCandidate.columns} />
+                <DatasetCandidateMaskDraft key={columnCandidateRevision} columns={columnCandidate.columns} />
               </>}
             </section>
             <section aria-label="Dataset 安全初始化狀態">
