@@ -85,6 +85,15 @@ async function summarizeSyntheticCatalogDrift(pool: sql.ConnectionPool) {
     side: row.Side, category: row.category, owner: row.owner, name: row.name,
     signature: String(row.signature).slice(0, 900),
   }));
+  const liveChecks = result.recordset
+    .filter(row => row.Side === "UNEXPECTED" && row.category === "CHECK")
+    .map(row => ({ owner: String(row.owner), name: String(row.name), signature: String(row.signature) }))
+    .sort((x, y) => (x.owner + "/" + x.name).localeCompare(y.owner + "/" + y.name));
+  // The container is disposable; the record contains ONLY check-constraint definitions
+  // from the synthetic schema created by this CI run. Capture once for review.
+  if (liveChecks.length === 24) {
+    console.error("UQP923_REAL_CHECK_GOLDEN=" + JSON.stringify(liveChecks));
+  }
   console.error("UQP923_CATALOG_REAL_DRIFT_COUNT=" + rows.length);
   console.error("UQP923_CATALOG_REAL_DRIFT_SAMPLE=" + JSON.stringify([
     ...rows.filter(row => row.side === "MISSING").slice(0, 3),
