@@ -14,6 +14,11 @@ async function setup(page: Page, saved = true, execute = true) {
       await route.fulfill({ json: { columns: [], version: state.policyVersion } }); return;
     }
     if (path.endsWith("/patient-audit-config")) { await route.fulfill({ json: { config: null, version: "0", status: "NOT_CONFIGURED", metadataStatus: "METADATA_UNCONFIRMED", columns: [] } }); return; }
+    if (path.endsWith("/column-candidates")) {
+      await route.fulfill({ json: { trust: "UNBOUND_CANDIDATE", metadataState: "NOT_INITIALIZED",
+        deliveryAllowed: false, requiresExecutionComparison: true, evidenceType: "SQLSERVER_DESCRIBE_FIRST_RESULT_SET",
+        columns: [{ name: "VALUE", dataType: "int", ordinal: 1 }] } }); return;
+    }
     if (path.endsWith("/design-preview/context")) {
       state.contexts++;
       if (!state.policyVersion) { await route.fulfill({ status: 409, json: { error: { code: "DATASET_DELIVERY_POLICY_UNCONFIRMED", message: "敏感欄位政策尚未確認，請檢查並儲存規則。", requestId: "synthetic-request" } } }); return; }
@@ -79,4 +84,17 @@ test("existing confirmed context still supplies exact version without a non-pati
   const state = await setup(page); state.policyVersion = 1;
   await preview(page).click(); await expect(page.getByText(/預覽完成：1 筆/)).toBeVisible();
   expect(state.runs[0].expectedDefinitionVersion).toBe(version); expect(state.runs[0].nonPatientConfirmed).toBeUndefined();
+});
+
+test("designer displays candidate metadata without unlocking sensitive policy or data preview", async ({ page }) => {
+  const state = await setup(page);
+  const panel = page.getByRole("region", { name: "SQL 欄位候選預覽" });
+  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
+  await expect(panel.getByText("UNBOUND_CANDIDATE", { exact: false })).toBeVisible();
+  await expect(panel.getByRole("cell", { name: "VALUE" })).toBeVisible();
+  await expect(panel.getByRole("cell", { name: "int" })).toBeVisible();
+  await expect(page.getByText(/新增欄位：BLOCKED/)).toBeVisible();
+  expect(state.runs).toEqual([]); expect(state.policyWrites).toBe(0);
+  await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
+  await expect(panel.getByRole("cell", { name: "VALUE" })).toHaveCount(0);
 });
