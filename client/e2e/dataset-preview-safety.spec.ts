@@ -98,3 +98,30 @@ test("designer displays candidate metadata without unlocking sensitive policy or
   await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
   await expect(panel.getByRole("cell", { name: "VALUE" })).toHaveCount(0);
 });
+
+test("candidate-only masking rehearsal never writes policy, syncs trusted columns or runs data", async ({ page }) => {
+  const state = await setup(page);
+  const panel = page.getByRole("region", { name: "SQL 欄位候選預覽" });
+  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
+  const draft = panel.getByRole("region", { name: "候選欄位遮蔽草稿" });
+  await draft.getByRole("combobox", { name: "候選遮蔽欄位" }).selectOption("VALUE");
+  await draft.getByRole("button", { name: "加入／更新本頁草稿（不儲存）" }).click();
+  await expect(draft.getByRole("caption", { name: "尚未儲存、未生效的遮蔽草稿" })).toBeVisible();
+  await expect(draft).toContainText("ABC01234");
+  expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
+  await expect(page.getByText(/新增欄位：BLOCKED/)).toBeVisible();
+  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
+  await expect(panel.getByText("尚未儲存、未生效的遮蔽草稿")).toHaveCount(0);
+  expect(state.policyWrites).toBe(0);
+});
+test("candidate masking draft disappears when saved SQL changes", async ({ page }) => {
+  const state = await setup(page);
+  const panel = page.getByRole("region", { name: "SQL 欄位候選預覽" });
+  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
+  const draft = panel.getByRole("region", { name: "候選欄位遮蔽草稿" });
+  await draft.getByRole("combobox", { name: "候選遮蔽欄位" }).selectOption("VALUE");
+  await draft.getByRole("button", { name: "加入／更新本頁草稿（不儲存）" }).click();
+  await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
+  await expect(panel.getByRole("region", { name: "候選欄位遮蔽草稿" })).toHaveCount(0);
+  expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
+});
