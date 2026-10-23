@@ -37,3 +37,42 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+
+  sql-923-ephemeral:
+    # Experimental acceptance only, scoped to the existing Draft PR.
+    # No access to user databases or production connection secrets.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Launch disposable SQL Server 2019
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          pw="S9a!$(openssl rand -hex 20)Z"
+          echo "::add-mask::$pw"
+          echo "UQP_923_CI_PASSWORD=$pw" >> "$GITHUB_ENV"
+          docker run -d --rm --name uqp-923-ephemeral --hostname uqp-923-ephemeral \
+            -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$pw" \
+            -p 127.0.0.1:14333:1433 \
+            mcr.microsoft.com/mssql/server:2019-latest >/dev/null
+      - name: SQL Server 2019 synthetic 923 DDL / Catalog acceptance
+        env:
+          UQP_923_CI_EPHEMERAL: "1"
+          UQP_923_CI_HOST: "127.0.0.1"
+          UQP_923_CI_PORT: "14333"
+        run: npx tsx src/scripts/dataset923EphemeralSqlAcceptance.ts
+      - name: Destroy disposable SQL Server
+        if: always()
+        shell: bash
+        working-directory: .
+        run: docker rm -f uqp-923-ephemeral >/dev/null 2>&1 || true
