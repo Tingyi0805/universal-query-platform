@@ -61,6 +61,7 @@ export async function testF3SourceMetadata(root:sql.ConnectionPool,master:sql.Co
     lease=await acquire();observation=await lease.describe(text);
     // A privileged DDL session does NOT acquire the cooperative Gate. ABA restores identical descriptors/generation.
     await source.request().query("SET LOCK_TIMEOUT 700; ALTER TABLE f3.Records ADD Untracked INT NULL;ALTER TABLE f3.Records DROP COLUMN Untracked;");
+    await source.request().query(`GRANT SELECT ON OBJECT::f3.Records TO [${ddlLogin}]; REVOKE SELECT ON OBJECT::f3.Records FROM [${ddlLogin}]`);
     await lease.revalidate();assert.equal(observation.fence,"BLOCKED_PRIVILEGED_DDL_PATHS");
     console.log("F3_EXTERNAL_DBA_ALTER_ABA: BYPASSES_GATE_AND_GENERATION; TRUSTED_ISSUANCE=BLOCKED");
     await source.request().query("ALTER TABLE f3.Records ALTER COLUMN Label NVARCHAR(40) NULL");
@@ -89,6 +90,7 @@ export async function testF3SourceMetadata(root:sql.ConnectionPool,master:sql.Co
     const service=createDatasetFieldInitialization({management,source:async id=>{assert.equal(id,"201");return acquire();}});
     const command=async()=>{const s=await service.status(auth,datasetId);return initializeFieldsCommand.parse({requestId:randomUUID(),definitionVersion:s.dataset.definitionVersion,
       configurationVersion:s.dataset.configurationVersion,expectedSnapshotVersion:s.snapshot?.version??"MISSING"});};
+    await assert.rejects(()=>service.status("Bearer "+jwt.sign({sub:"302",tokenVersion:1},env.JWT_SECRET!),datasetId),{code:"SCOPE_METADATA_AUTHORIZATION_REQUIRED"});
     phase="DESCRIBED_ATOMIC_SNAPSHOT";
     const first=await command(),written=await service.collect(auth,datasetId,first);
     assert.equal(written.metadataState,"DESCRIBED");assert.equal(written.authority,"NONE");assert.equal(written.deliveryAllowed,false);
@@ -102,8 +104,30 @@ export async function testF3SourceMetadata(root:sql.ConnectionPool,master:sql.Co
       await assert.rejects(()=>service.collect(auth,datasetId,c));await root.request().query(`REVOKE INSERT ON OBJECT::uqp.${table} FROM [${appLogin}]; GRANT INSERT ON OBJECT::uqp.${table} TO [${appLogin}]`);
       assert.deepEqual(await counts(),before);
     }
+    const stale=await command();await assert.rejects(()=>service.collect(auth,datasetId,{...stale,definitionVersion:"ffffffffffffffff"}),{code:"METADATA_VERSION_CONFLICT"});
+    phase="SOURCE_INCARNATION_REJECTS";
+    const beforeIdentity=await counts(),identityCommand=await command();
+    await source.request().query(`UPDATE f3.FenceState SET Incarnation=NEWID() WHERE Id=1`);
+    await assert.rejects(()=>service.collect(auth,datasetId,identityCommand),{code:"SOURCE_IDENTITY_CONFLICT"});
+    assert.deepEqual(await counts(),beforeIdentity);
+    await source.request().query(`UPDATE f3.FenceState SET Incarnation='${incarnation}',Generation=Generation+1 WHERE Id=1`);
+    phase="SOURCE_LOSS_ROLLS_BACK_PLATFORM";
+    const beforeLoss=await counts(),lossCommand=await command();
+    const interrupted=createDatasetFieldInitialization({management,source:async()=>{
+      const active=await acquire();let spid=0;
+      return {describe:async text=>{const o=await active.describe(text);spid=o.sessionId;return o;},revalidate:async()=>{await source!.request().query(`KILL ${spid}`);await active.revalidate();},close:()=>active.close()};
+    }});
+    await assert.rejects(()=>interrupted.collect(auth,datasetId,lossCommand));assert.deepEqual(await counts(),beforeLoss);
+    phase="SNAPSHOT_CONCURRENT_CAS";
     const same=await command(),competing=await Promise.allSettled([service.collect(auth,datasetId,same),service.collect(auth,datasetId,{...same,requestId:randomUUID()})]);
     assert.equal(competing.filter(r=>r.status==="fulfilled").length,1);
+    phase="PLATFORM_SOURCE_VERSION_DRIFT";
+    const oldCommand=await command();await root.request().query("UPDATE uqp.DataSource SET Name=N'F3_CHANGED' WHERE Id=201");
+    await assert.rejects(()=>service.collect(auth,datasetId,oldCommand),{code:"SCOPE_METADATA_AUTHORIZATION_REQUIRED"});
+    const rebound=await management.list(auth,datasetId),oldOwner=rebound.scopes.find(s=>s.userId==="303"&&s.kind==="OWNER")!;
+    await management.mutate(auth,datasetId,"303","OWNER",scopeCommand.parse({requestId:randomUUID(),action:"GRANT",expectedVersion:oldOwner.version,
+      definitionVersion:rebound.dataset.definitionVersion,configurationVersion:rebound.dataset.configurationVersion,parentOwnerUserId:null,parentOwnerVersion:null}));
+    await assert.rejects(()=>service.collect(auth,datasetId,oldCommand),{code:"METADATA_VERSION_CONFLICT"});
     phase="INVALID_DEPENDENCIES_AND_NO_AUTHORITY";
     for(const invalid of ["SELECT * FROM f3.Records","SELECT Id FROM otherdb.f3.Records","SELECT dbo.fn(Id) FROM f3.Records","EXEC sys.sp_tables","SELECT Id FROM f3.Records;DROP TABLE f3.Records"])
       assert.throws(()=>restrictedSavedSelect(invalid));

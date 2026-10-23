@@ -2,8 +2,8 @@
 import sql from "mssql";
 import {createHash,randomUUID} from "node:crypto";
 import {candidateDescription,compileDescription,type DescriptionColumn} from "../../query/queryDescription.js";
-import {exactScopeId} from "./datasetScopeManagement.js";
-export class SourceFenceError extends Error {constructor(readonly code:string){super(code);}}
+import {exactScopeId,DatasetScopeError} from "./datasetScopeManagement.js";
+export class SourceFenceError extends DatasetScopeError {constructor(code:string){super(code,503);this.name="SourceFenceError";}}
 const fail=(code:string):never=>{throw new SourceFenceError(code);};
 const identifier="(?:\\[[^\\]\\r\\n]+\\]|[A-Za-z_][A-Za-z0-9_]*)";
 const unquote=(s:string)=>s.startsWith("[")?s.slice(1,-1):s;

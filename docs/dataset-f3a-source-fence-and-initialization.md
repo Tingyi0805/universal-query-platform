@@ -10,7 +10,7 @@
 - 描述只呼叫 `sys.sp_describe_first_result_set`，不執行 SELECT 資料查詢。檢查可見欄位的名稱、順序、來源 DB/schema/table/column、別名唯一性及有限 Native Type。metadata 帳號須完整 DB VIEW DEFINITION 以免隱藏 RLS／依賴；來源 requestTimeout 必須有限且不超過5秒，Gate 等待1秒。
 - 正常收集：平台鎖定已儲存 SQL／D/S RV／參數範圍／合約版本 → 取得來源共享 Gate → 原生 metadata 與觀測 → 重驗 → INSERT DESCRIBED Snapshot → 精確 AuditLog INSERT/OUTPUT及關聯重讀 → immutable Decision INSERT → 來源與授權重驗 → 平台 commit → 釋放來源交易。Snapshot／Decision／Audit 在同一平台交易；**來源交易沒有被宣稱成跨 DB 原子提交**。
 - 新 Snapshot 是 INSERT，不覆寫舊欄位／政策。RequestId 全 Ledger 唯一、相符重放只讀原精確 Audit 關聯，衝突／過期權限拒絕；最新 Snapshot RV CAS 拒絕競爭。中途 Audit／Decision／來源錯誤 rollback，不留下成功 Snapshot。來源 release／commit unknown 可能已提交候選列，回報未知並保留 RequestId，不自動重送。
-- Snapshot 的 SourceIdentity／Incarnation／Generation／LeaseVersion 是**觀測值**。generation／ID 使用 canonical SQL BIGINT 字串；版本使用真實 RV bytes，不經 JS Number。SourceEvidenceJson 明記 authority=NONE、externalDdl=BLOCKED。15分鐘 ExpiresAt 只是描述保存期限，不能充當 Lease 或 DDL 保護。
+- Snapshot 的 SourceIdentity（service_broker_guid 觀測）／Incarnation／Generation／LeaseVersion 是**觀測值**。generation／ID 使用 canonical SQL BIGINT 字串；版本使用真實 RV bytes，不經 JS Number。SourceEvidenceJson 明記 authority=NONE、externalDdl=BLOCKED。15分鐘 ExpiresAt 只是描述保存期限，不能充當 Lease 或 DDL 保護。
 
 ## Source Gate 與可信邊界
 
@@ -29,7 +29,7 @@ CI 專用來源 DB `UQP_F3_CI_SOURCE` 與平台 DB 分開。`f3.FenceState`、�
 | 共享 Gate vs 受控 ALTER／DROP／REVOKE | 第二獨立連線 timeout／rollback；描述與 generation 不變 |
 | 受限 DDL 登入直接 ALTER | 權限拒絕，不能繞過 procedure |
 | 受控 ADD→REMOVE | 描述可相同，generation 不同，舊觀測失效 |
-| DBA 直接 ALTER ABA | 實證可繞過 Gate／generation 時，trusted issuance **BLOCKED**；描述比對不能當 ABA 防護 |
+| DBA 直接 ALTER／GRANT／REVOKE ABA | 實證可繞過 Gate／generation 時，trusted issuance **BLOCKED**；描述比對不能當 ABA 防護 |
 | DBA 改欄位型別／DROP | 重驗拒絕，不把未知依賴當成功 |
 | REVOKE SELECT | Collector 描述拒絕；GRANT 後 generation 改變 |
 | KILL Collector session | 來源失去 ownership／連線，後續重驗拒絕 |
