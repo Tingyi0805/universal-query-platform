@@ -121,9 +121,9 @@ async function main() {
     stage = "CONNECT_SYNTHETIC"; isolated = await connect(dbName);
     const setup = `
       CREATE SCHEMA [uqp];
-      CREATE TABLE [uqp].[Dataset] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_Dataset PRIMARY KEY);
-      CREATE TABLE [uqp].[DataSource] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_DataSource PRIMARY KEY);
-      CREATE TABLE [uqp].[AppUser] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_AppUser PRIMARY KEY);
+      CREATE TABLE [uqp].[Dataset] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_Dataset PRIMARY KEY, [IsActive] BIT NOT NULL DEFAULT 1, [IsArchived] BIT NOT NULL DEFAULT 0);
+      CREATE TABLE [uqp].[DataSource] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_DataSource PRIMARY KEY, [IsActive] BIT NOT NULL DEFAULT 1);
+      CREATE TABLE [uqp].[AppUser] ([Id] BIGINT NOT NULL CONSTRAINT PK_Synthetic_AppUser PRIMARY KEY, [IsActive] BIT NOT NULL DEFAULT 1, [TokenVersion] INT NOT NULL DEFAULT 1);
     `;
     stage = "CREATE_PREREQS"; for (const statement of setup.split(";").map(s => s.trim()).filter(Boolean))
       await isolated.request().batch(statement);
