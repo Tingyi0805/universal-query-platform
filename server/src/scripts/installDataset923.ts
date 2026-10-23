@@ -4,6 +4,8 @@
  * No runtime policy grants, no Source Fence, no preview unlock.
  */
 import sql from "mssql";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 import { getPlatformDbPool, closePlatformDbPool } from "../config/database.js";
 import { render923CatalogSql, render923Draft } from "../modules/dataset/datasetMetadata923Catalog.js";
 
@@ -19,7 +21,7 @@ const prerequisites = [
   "921_datasource_native_parameter_versions.sql",
 ] as const;
 
-type Target = Readonly<{ server: string; database: string; login: string;
+export type Install923Target = Readonly<{ server: string; database: string; login: string;
   engineMajor: number; compatibility: number; databaseState: string;
   ledger: boolean; missingMigrations: string[]; requiredColumns: boolean;
   existingRecord: boolean; catalog: string }>;
@@ -28,7 +30,7 @@ export class Install923Error extends Error {
   constructor(readonly code: string) { super(code); this.name = "Install923Error"; }
 }
 
-export function assess923Target(t: Target): "READY" | "INSTALLED" {
+export function assess923Target(t: Install923Target): "READY" | "INSTALLED" {
   if (t.engineMajor !== 15 || t.compatibility !== 150 ||
       t.databaseState !== "ONLINE" || !t.ledger || !t.requiredColumns ||
       t.missingMigrations.length !== 0 ||
@@ -39,7 +41,7 @@ export function assess923Target(t: Target): "READY" | "INSTALLED" {
   throw new Install923Error("923_PARTIAL_UNRECORDED_OR_UNTRUSTED");
 }
 
-function requireTargetAttestation(t: Target) {
+function requireTargetAttestation(t: Install923Target) {
   const expectedServer = process.env.UQP_923_EXPECTED_SERVER;
   const expectedDb = process.env.UQP_923_EXPECTED_DATABASE;
   const expectedLogin = process.env.UQP_923_EXPECTED_LOGIN;
@@ -49,7 +51,7 @@ function requireTargetAttestation(t: Target) {
   }
 }
 
-async function readTarget(request: () => sql.Request): Promise<Target> {
+async function readTarget(request: () => sql.Request): Promise<Install923Target> {
   const info = await request().query(`
     SELECT @@SERVERNAME AS ServerName, DB_NAME() AS DatabaseName,
       ORIGINAL_LOGIN() AS LoginName,
@@ -99,11 +101,18 @@ async function run() {
   // Do not even open a connection if the user requested apply without approval.
   if (mode === "apply") requireExplicitApproval(args);
 
+  // Explicit manual operation only: never authorize a default auto-migrator run.
   const pool = await getPlatformDbPool();
   if (!pool) throw new Install923Error("923_PLATFORM_DB_NOT_CONFIGURED");
   try {
     const before = await readTarget(() => pool.request());
     requireTargetAttestation(before);
+    if (mode === "preflight") {
+      console.log("923_PREFLIGHT_OBSERVATION=" + JSON.stringify({catalog:before.catalog,
+        existingRecord:before.existingRecord,missingMigrations:before.missingMigrations,
+        requiredColumns:before.requiredColumns,engineMajor:before.engineMajor,
+        compatibility:before.compatibility, databaseState:before.databaseState}));
+    }
     const state = assess923Target(before);
     if (mode === "preflight") {
       console.log("923_PREFLIGHT=" + state);
@@ -166,7 +175,8 @@ async function run() {
   }
 }
 
-if (process.env.NODE_ENV !== "test") {
+// Imported test modules must never trigger database access by side effect.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   run().catch((error: unknown) => {
     // Never log SQL connection strings, SQL text, passwords or driver errors.
     const code = error instanceof Install923Error ? error.code : "923_INSTALL_UNEXPECTED_FAILURE_VERIFY_STATE";
