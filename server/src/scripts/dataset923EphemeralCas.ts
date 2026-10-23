@@ -110,7 +110,7 @@ export async function test923ScopeCasInDisposableSqlServer(
       try {
         await updater.begin(sql.ISOLATION_LEVEL.SERIALIZABLE); updateStarted = true;
         const result = await scopeRequest(updater, ownerId)
-          .input("expected", sql.Binary(8), Buffer.from(version, "hex"))
+          .input("expected", sql.VarBinary(8), Buffer.from(version, "hex"))
           .query(`
             UPDATE uqp.DatasetSecurityScope WITH (UPDLOCK, HOLDLOCK)
             SET State=N'ACTIVE', LastRequestId=NEWID(), ChangedAt=SYSUTCDATETIME()
@@ -125,7 +125,7 @@ export async function test923ScopeCasInDisposableSqlServer(
       const rejected = await poolB.request()
         .input("datasetId", sql.BigInt, datasetId)
         .input("userId", sql.BigInt, ownerId)
-        .input("expected", sql.Binary(8), Buffer.from(version, "hex"))
+        .input("expected", sql.VarBinary(8), Buffer.from(version, "hex"))
         .query(`
           UPDATE uqp.DatasetSecurityScope
           SET State=N'REVOKED', LastRequestId=NEWID()
