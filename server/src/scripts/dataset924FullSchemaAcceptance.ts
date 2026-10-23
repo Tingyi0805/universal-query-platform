@@ -7,7 +7,7 @@ import sql from "mssql";
 import jwt from "jsonwebtoken";
 import {env} from "../config/env.js";
 import {render923CatalogSql} from "../modules/dataset/datasetMetadata923Catalog.js";
-import {render924CatalogSql,bindingTable} from "../modules/dataset/datasetMetadata924Catalog.js";
+import {render924CatalogSql,bindingTable,read924Draft} from "../modules/dataset/datasetMetadata924Catalog.js";
 import {createDatasetScopeManagement} from "../modules/dataset/datasetScopeManagement.repository.js";
 import {scopeCommand,type ScopeCommand} from "../modules/dataset/datasetScopeManagement.js";
 const machine="uqp-924-full-schema",db="UQP924_CI_FULL",port=14334;
@@ -43,11 +43,12 @@ async function catalog(pool:sql.ConnectionPool){
 async function businessSnapshot(pool:sql.ConnectionPool){
   const names=(await pool.request().query("SELECT name FROM sys.tables WHERE schema_id=SCHEMA_ID(N'uqp') AND name NOT IN(N'SchemaMigration',N'Permission',N'DatasetSecurityScopeBinding') ORDER BY name")).recordset;
   const result:Record<string,string>={};
-  for(const {name} of names){check(/^[A-Za-z0-9_]+$/.test(name),"FIXED_TABLE_NAME");
-    const r=await pool.request().query(`SELECT * FROM uqp.[${name}] ORDER BY (SELECT NULL) FOR JSON PATH,INCLUDE_NULL_VALUES`);
-    result[name]=digest(JSON.stringify((JSON.parse(r.recordset.map(row=>Object.values(row).join("")).join("")) as unknown[]).map(v=>JSON.stringify(v)).sort()));
+  const priorStage=stage;
+  for(const {name} of names){stage="BUSINESS_SNAPSHOT_"+name;check(/^[A-Za-z0-9_]+$/.test(name),"FIXED_TABLE_NAME");
+    const r=await pool.request().query(`SELECT (SELECT * FROM uqp.[${name}] FOR JSON PATH,INCLUDE_NULL_VALUES) AS Payload`);
+    result[name]=digest(JSON.stringify((JSON.parse(r.recordset[0].Payload) as unknown[]).map(v=>JSON.stringify(v)).sort()));
   }
-  return result;
+  stage=priorStage;return result;
 }
 async function main(){
   check(process.env.GITHUB_ACTIONS==="true"&&process.env.UQP_924_CI_EPHEMERAL==="1"&&!!process.env.UQP_924_CI_PASSWORD,"CI_ONLY");
@@ -114,6 +115,19 @@ async function main(){
     check((await root.request().query("SELECT COUNT(*) C FROM uqp.Permission WHERE Code IN(N'MANAGE_DATASET_SECURITY_SCOPE',N'CONFIRM_DATASET_CLASSIFICATION')")).recordset[0].C===0,"DDL_FAILURE_LEFT_PERMISSION");
     check((await root.request().query("SELECT COUNT(*) C FROM uqp.SchemaMigration WHERE FileName=N'924_dataset_security_scope_binding.sql'")).recordset[0].C===0,"DDL_FAILURE_LEFT_LEDGER");
     await root.request().query("ALTER TABLE uqp.Permission DROP CONSTRAINT CK_Ci924_FailSecondCapability");
+    stage="924_REFERENCE_ROUNDTRIP";
+    const probe=new sql.Transaction(root);await probe.begin();
+    try{
+      await new sql.Request(probe).batch(await read924Draft());
+      const result=(await new sql.Request(probe).query(render924CatalogSql())).recordset[0];
+      if(result.CatalogStatus!=="EXACT_MATCH"){
+        const query=render924CatalogSql(),offset=query.lastIndexOf("\nSELECT CASE WHEN v.ok");
+        check(offset>0,"CATALOG_PROJECTION");
+        const drift=(await new sql.Request(probe).query(query.slice(0,offset)+" SELECT N'MISSING' Side,* FROM Missing UNION ALL SELECT N'UNEXPECTED' Side,* FROM Unexpected;")).recordset;
+        console.error("924_SYNTHETIC_SCHEMA_DRIFT="+JSON.stringify(drift));
+      }
+      check(result.CatalogStatus==="EXACT_MATCH","REFERENCE_CATALOG_MISMATCH");
+    }finally{await probe.rollback();}
     stage="924_APPLY";
     const applied=await cli("924","apply");
     if(applied.exit!==0)await catalog(root);
@@ -232,4 +246,4 @@ async function main(){
     }await master.close();
   }
 }
-main().catch(e=>{console.error(`F2_924_FAILED stage=${stage};code=${typeof e?.code==="string"&&/^[A-Z0-9_]+$/.test(e.code)?e.code:"CHECK_FAILED"};number=${Number.isSafeInteger(e?.number)?e.number:0}`);process.exitCode=1;});
+main().catch(e=>{console.error(`F2_924_FAILED stage=${stage};type=${e instanceof SyntaxError?"SYNTAX":e instanceof TypeError?"TYPE":"OTHER"};code=${typeof e?.code==="string"&&/^[A-Z0-9_]+$/.test(e.code)?e.code:"CHECK_FAILED"};number=${Number.isSafeInteger(e?.number)?e.number:0}`);process.exitCode=1;});
