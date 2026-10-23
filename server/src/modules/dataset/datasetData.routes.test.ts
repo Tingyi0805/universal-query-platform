@@ -11,6 +11,7 @@ import { createDatasetDataRouter, defaultDatasetDataRouteDependencies } from "./
 import { createDatasetDataDelivery, defaultDatasetDataDependencies } from "./datasetDataDelivery.js";
 import { type ConfirmedDatasetDeliverySnapshot, DatasetDeliverySnapshotError } from "./datasetDeliveryPolicy.repository.js";
 import { syntheticParameter } from "./parameterTestFixture.js";
+import { DatasetColumnCandidateError } from "./datasetColumnCandidate.js";
 
 const version = "0000000000000001", rawName = "王小明", rawId = "SYNTHETIC-AUDIT-ID";
 function policy(datasetId: number): ConfirmedDatasetDeliverySnapshot {
@@ -38,7 +39,7 @@ async function setup() {
     sourceActive: true, sourceRevision: "source-1", policyUnconfirmed: false, patientStatus: "CONFIRMED", patientFingerprint: "proof-1",
     sqlText: "SELECT NAME, MRN, CODE, LABEL WHERE CODE={{WARD}}", phase: "", change: () => {},
     auditFailure: false, operationFailure: false, failureWriteFailure: false, missingDisclosure: false,
-    operationStatus: "NONE", schemaMissing: false, startAudits: 0,
+    operationStatus: "NONE", schemaMissing: false, startAudits: 0, candidateCalls: 0, candidateDrift: false, candidateFailure: false,
     lookupValue: "A" as unknown,
   };
   const deps = {
@@ -67,6 +68,23 @@ async function setup() {
   const app = express(); app.use(express.json()); app.use(createAuthenticateJwt(session));
   app.use("/datasets", createDatasetDataRouter({
     ...defaultDatasetDataRouteDependencies, delivery: createDatasetDataDelivery(deps), identity: createRuntimeIdentityVerifier(session),
+    candidate: { open: async (id: number) => {
+      assert.equal(id, 1);
+      return {
+        definitionVersion: version, configurationVersion: version,
+        revalidate: async () => {
+          if (state.candidateDrift) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_CONFLICT");
+        },
+        describe: async () => {
+          state.candidateCalls++;
+          if (state.candidateFailure) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
+          return { trust: "UNBOUND_CANDIDATE" as const,
+            requiresExecutionComparison: true as const, evidenceType: "SQLSERVER_DESCRIBE_FIRST_RESULT_SET" as const,
+            columns: [{ name: "OPAQUE_A", dataType: "int", ordinal: 1 }] };
+        },
+      };
+    } },
+
     startAudit: async input => {
       state.startAudits++; state.operationStatus = "STARTED";
       const serialized = JSON.stringify(input.parameters);
@@ -265,4 +283,53 @@ test("context contains versions only, no candidate metadata, SQL or rows", () =>
   const response = await f.request("/1/design-preview/context"); assert.equal(response.status, 200);
   assert.deepEqual(Object.keys(await response.json() as object).sort(), ["datasetId", "definitionVersion", "patientAuditVersion", "sensitivityVersion"]);
   assert.deepEqual(f.state.executions, []); assert.deepEqual(f.state.disclosures, []);
+}));
+
+test("column candidates route returns metadata-only fields and audited attempt without data rows", () => fixture(async f => {
+  const response = await f.request("/1/column-candidates");
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const result = await response.json() as any;
+  assert.equal(result.trust, "UNBOUND_CANDIDATE");
+  assert.equal(result.metadataState, "NOT_INITIALIZED");
+  assert.equal(result.deliveryAllowed, false);
+  assert.deepEqual(result.columns, [{ name: "OPAQUE_A", dataType: "int", ordinal: 1 }]);
+  assert.ok(!JSON.stringify(result).includes(rawName));
+  assert.ok(!JSON.stringify(result).includes(rawId));
+  assert.ok(!("rows" in result) && !("result" in result));
+  assert.equal(f.state.candidateCalls, 1);
+  assert.deepEqual(f.state.executions, []);
+  assert.deepEqual(f.state.disclosures, []);
+  assert.equal(f.state.operationStatus, "SUCCESS");
+}));
+test("column candidate metadata cannot be requested without both permissions", () => fixture(async f => {
+  f.state.session.permissions = ["DESIGN_QUERY"];
+  const response = await f.request("/1/column-candidates");
+  assert.equal(response.status, 403); assert.equal(f.state.candidateCalls, 0);
+  assert.equal(f.state.startAudits, 0);
+}));
+test("column candidate description failure returns no result and records failed attempt", () => fixture(async f => {
+  f.state.candidateFailure = true;
+  const response = await f.request("/1/column-candidates");
+  assert.equal(response.status, 503);
+  const body = await response.json() as any;
+  assert.equal(body.error.code, "DATASET_COLUMN_DESCRIPTION_FAILED");
+  assert.ok(!JSON.stringify(body).includes(rawName));
+  assert.equal(f.state.operationStatus, "FAILED");
+  assert.deepEqual(f.state.executions, []);
+}));
+test("column candidate source revision change before audit confirmation rejects metadata", () => fixture(async f => {
+  f.state.phase = "operation-audit"; f.state.change = () => { f.state.candidateDrift = true; };
+  const response = await f.request("/1/column-candidates");
+  assert.equal(response.status, 409);
+  assert.equal((await response.json() as any).error.code, "DATASET_COLUMN_DESCRIPTION_CONFLICT");
+  assert.equal(f.state.operationStatus, "FAILED");
+}));
+test("column candidate audit writer failure never releases described fields", () => fixture(async f => {
+  f.state.operationFailure = true;
+  const response = await f.request("/1/column-candidates");
+  assert.equal(response.status, 500);
+  assert.equal(f.state.operationStatus, "FAILED");
+  assert.equal(f.state.candidateCalls, 1);
+  assert.deepEqual(f.state.executions, []);
 }));
