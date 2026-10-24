@@ -303,13 +303,13 @@ for (const format of formats) {
       rows: [{ "姓名": rawName, "手術室": "OR-1", "手術動向": "準備中", "住院床號": "5-12", MRN: rawId }],
       rowCount: 1, truncated: false, elapsedMs: 1,
     };
-    f.state.snapshot.policy.rules = [
+    f.state.snapshot = { ...f.state.snapshot, policy: { ...f.state.snapshot.policy, rules: [
       { columnName: "姓名", mode: "CUSTOM", customMask: { prefix: 1, suffix: 1, symbol: "○" } },
       { columnName: "手術室", mode: "NONE" },
       { columnName: "手術動向", mode: "NONE" },
       { columnName: "住院床號", mode: "NONE" },
       { columnName: "MRN", mode: "OMIT" },
-    ] as typeof f.state.snapshot.policy.rules;
+    ] } };
     f.state.reports = ["姓名", "手術室", "手術動向", "住院床號", "MRN"].map(report);
     const response = await f.request(`/${format}`);
     assert.equal(response.status, 200);
