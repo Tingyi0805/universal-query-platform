@@ -1,3 +1,4 @@
+import { suggestSensitivityRule } from "../dashboard/sensitivitySuggestions";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 
@@ -219,6 +220,16 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
       <option value="">請選擇欄位</option>
       {[...new Map([...availableColumns, ...rules.map(rule => rule.columnName)].map(name => [name.toUpperCase(), name])).values()].map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
+    {column && !selectedRule && suggestSensitivityRule(column) && <div className="notice" role="status">
+      系統建議：{suggestSensitivityRule(column)!.label}（僅供參考，尚未套用或授權）。
+      <button type="button" disabled={!loaded || busy || conflict} onClick={() => {
+        const suggestion = suggestSensitivityRule(column);
+        if (!suggestion || rules.some(rule => rule.columnName.toUpperCase() === column.toUpperCase())) return;
+        setAction(suggestion.mode); setPlacement("RETAIN");
+        setPrefix(suggestion.prefix); setSuffix(suggestion.suffix); setSymbol(suggestion.symbol);
+        setMessage("已帶入建議至編輯表單；請確認、加入欄位規則並儲存。此操作尚未變更伺服器政策。");
+      }}>帶入建議（不自動儲存）</button>
+    </div>}
     <fieldset className="dataset-batch-fields" disabled={!loaded || busy || conflict || normalizedColumns.length === 0}>
       <legend>批次選取查詢結果欄位</legend>
       <p>只有勾選欄位會套用下方處理方式；未設定欄位預設不傳送。個別規則仍可在下方覆寫。</p>
