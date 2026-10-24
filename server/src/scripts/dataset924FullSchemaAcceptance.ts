@@ -261,6 +261,9 @@ async function main(){
     const columnRepository=createDatasetColumnRepository({getPool:async()=>app!,transaction:p=>new sql.Transaction(p),request:t=>{
       const request=new sql.Request(t),query=request.query;
       request.query=function(...args:unknown[]){
+        const statement=String(args[0]);
+        const object=["DatasetSensitiveColumn","DatasetParameter","DatasetColumn","AuditLog","Dataset"].find(name=>statement.includes("uqp."+name))??"SESSION";
+        console.log("COLUMN_SYNC_STEP="+object);
         return Reflect.apply(query,request,args).catch((error:unknown)=>{
           const number=(error as {number?:unknown})?.number;
           const statement=String(args[0]);
@@ -274,9 +277,12 @@ async function main(){
     const versions=async()=> (await root!.request().query(`SELECT LOWER(CONVERT(varchar(16),d.DefinitionRowVersion,2)) D,
       LOWER(CONVERT(varchar(16),s.ConfigurationRowVersion,2)) S FROM uqp.Dataset d JOIN uqp.DataSource s ON s.Id=d.DataSourceId WHERE d.Id=77`)).recordset[0];
     const opts=async()=>{const v=await versions();return {dataSourceId:201,definitionVersion:v.D as string,configurationVersion:v.S as string,userId:303,
-      reauthorize:async(t:sql.Transaction)=>{check((await new sql.Request(t).query("SELECT Id FROM uqp.AppUser WHERE Id=303")).recordset.length===1,"COLUMN_ACTOR_MISSING");}};};
+      reauthorize:async(t:sql.Transaction)=>{console.log("COLUMN_SYNC_AUTH_RECHECK");check((await new sql.Request(t).query("SELECT Id FROM uqp.AppUser WHERE Id=303")).recordset.length===1,"COLUMN_ACTOR_MISSING");}};};
     const fields=[{name:"NAME",dataType:"nvarchar(30)"},{name:"PHONE",dataType:"varchar(20)"},{name:"MRN",dataType:"varchar(20)"},{name:"HIDDEN",dataType:"int"}];
-    await columnRepository.syncDatasetColumns(77,fields,await opts());
+    const firstColumnOptions=await opts();
+    check(typeof firstColumnOptions.definitionVersion==="string"&&/^[0-9a-f]{16}$/.test(firstColumnOptions.definitionVersion),"COLUMN_DEFINITION_FORMAT");
+    check(typeof firstColumnOptions.configurationVersion==="string"&&/^[0-9a-f]{16}$/.test(firstColumnOptions.configurationVersion),"COLUMN_SOURCE_FORMAT");
+    await columnRepository.syncDatasetColumns(77,fields,firstColumnOptions);
     const displayColumns=async()=> (await root!.request().query("SELECT ColumnName,[Ordinal] FROM uqp.DatasetColumn WHERE DatasetId=77 ORDER BY [Ordinal]")).recordset;
     check(JSON.stringify((await displayColumns()).map(r=>r.ColumnName))===JSON.stringify(fields.map(f=>f.name)),"COLUMN_SYNC_ORDER");
     const beforeColumns=JSON.stringify(await displayColumns());
