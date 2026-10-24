@@ -25,7 +25,19 @@ export function MaskTemplatesPage(){
  </div><div style={{overflowX:"auto"}}><table style={{width:"100%",minWidth:780,borderCollapse:"collapse"}}><thead><tr><th>範本／別名</th><th>模式／版本</th><th>狀態</th><th>使用中的 Dataset／衝突</th><th>修改人／時間</th><th>操作</th></tr></thead><tbody>{rows.filter(t=>(filter==="ALL"||t.isActive===(filter==="ACTIVE"))&&[t.name,...t.aliases].some(a=>a.toUpperCase().includes(search.toUpperCase()))).map(t=><tr key={t.id}><td>{t.name}<br/>{t.aliases.join("、")}</td><td>{t.mode}／{t.revision}</td><td>{t.isActive?"啟用":"停用"}</td><td>{t.uses?.map((u,i)=><div key={i}>{u.Code??u.DatasetId}／{u.ColumnName}：{u.State}</div>)}</td><td>{t.updatedBy??"初始範本"}／{t.updatedAtUtc}</td><td><button type="button" disabled={busy} onClick={()=>edit(t)}>編輯 {t.name}</button></td></tr>)}</tbody></table></div>{rows.length===0&&<p role="status">目前沒有載入的資料庫範本；上方建議範本不代表已成功載入資料庫。請檢查權限及載入錯誤。</p>}</section>
  <section style={panelStyle} aria-label="範本編輯"><h2>{editing?"編輯範本":"新增範本"}</h2><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:18,alignItems:"start"}}><label style={labelStyle}>範本名稱<input style={inputStyle} value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label style={{...labelStyle,gridColumn:"1/-1"}}>欄位別名（每行一個）<textarea style={{...inputStyle,minHeight:90}} value={form.aliases} onChange={e=>setForm({...form,aliases:e.target.value})}/></label>
  <label style={labelStyle}>範本遮蔽模式<select style={inputStyle} value={form.mode} onChange={e=>setForm({...form,mode:e.target.value as MaskTemplate["mode"],suggestedPublicAllowed:e.target.value==="OMIT"?false:form.suggestedPublicAllowed})}>{["NONE","CUSTOM","FULL","OMIT"].map(m=><option key={m}>{m}</option>)}</select></label>
- </div>{form.mode==="CUSTOM"&&<><label><input type="checkbox" checked={form.range} onChange={e=>setForm({...form,range:e.target.checked})}/>指定遮蔽位置</label>{(form.range?["start","end"]:["prefix","suffix"]).map(k=><label key={k}>{({start:"開始位置",end:"結束位置",prefix:"保留前碼",suffix:"保留後碼"} as Record<string,string>)[k]}<input type="number" min={form.range?1:0} value={form[k as "prefix"]} onChange={e=>setForm({...form,[k]:Number(e.target.value)})}/></label>)}<label>遮蔽符號<input value={form.symbol} onChange={e=>setForm({...form,symbol:e.target.value})}/></label></>}
+ </div>{form.mode==="CUSTOM"&&<div style={{display:"grid",gap:16,marginTop:20}}>
+  <label style={{display:"inline-flex",alignItems:"center",gap:10,justifySelf:"start",fontWeight:600}}>
+   <input type="checkbox" style={{width:18,height:18,margin:0,flex:"0 0 auto"}} checked={form.range} onChange={e=>setForm({...form,range:e.target.checked})}/>
+   <span>指定遮蔽位置</span>
+  </label>
+  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,200px),1fr))",gap:"16px 20px"}}>
+   {(form.range?["start","end"]:["prefix","suffix"]).map(k=><label style={labelStyle} key={k}>
+    <span>{({start:"開始位置",end:"結束位置",prefix:"保留前碼",suffix:"保留後碼"} as Record<string,string>)[k]}</span>
+    <input style={inputStyle} type="number" min={form.range?1:0} value={form[k as "prefix"]} onChange={e=>setForm({...form,[k]:Number(e.target.value)})}/>
+   </label>)}
+   <label style={labelStyle}><span>遮蔽符號</span><input style={inputStyle} value={form.symbol} onChange={e=>setForm({...form,symbol:e.target.value})}/></label>
+  </div>
+ </div>}
  <p style={{background:"#f1f5f9",padding:14,borderRadius:8}}>合成範例：{templatePreview(form.mode,custom)}（不使用真實患者資料）</p><label><input type="checkbox" checked={form.isActive} onChange={e=>setForm({...form,isActive:e.target.checked})}/>範本啟用</label><label><input type="checkbox" disabled={form.mode==="OMIT"} checked={form.suggestedPublicAllowed} onChange={e=>setForm({...form,suggestedPublicAllowed:e.target.checked})}/>建議適合公共顯示（不自動核准）</label>
  <button type="button" style={{marginLeft:12}} disabled={busy||conflict} onClick={()=>void save()}>儲存範本</button>{conflict&&<p role="alert">版本衝突，草稿保留；重新載入並重新選擇最新範本後再修改。</p>}<button type="button" disabled={busy} onClick={()=>void read()}>重新載入範本清單</button>
  </section>{message&&<p role="status">{message}</p>}</main>;
