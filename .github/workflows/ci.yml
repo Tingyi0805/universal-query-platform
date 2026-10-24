@@ -263,6 +263,12 @@ jobs:
           } finally { Pop-Location }
           # Do not ship installed development dependencies: install from package.json after extraction.
           Remove-Item (Join-Path $client 'node_modules') -Recurse -Force
+          # Rebuild the checksum manifest after packaging validation, since npm install/build
+          # may generate package-lock.json and tsbuildinfo inside payload/client.
+          $root=(Resolve-Path release).Path
+          $files=Get-ChildItem release/payload -Recurse -File
+          $lines=foreach($f in $files){$rel=$f.FullName.Substring($root.Length+1).Replace('\\','/');"$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $rel"}
+          $lines | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
           Write-Host 'UQP_CLIENT_SOURCE_INSTALL_REBUILD_PASS'
 
       - name: Test installer preflight and simulated rollback guard
