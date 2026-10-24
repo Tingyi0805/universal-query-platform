@@ -218,29 +218,30 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          New-Item -ItemType Directory -Path release/server,release/client,release/tools,release/docs -Force | Out-Null
-          Copy-Item server/dist release/server/dist -Recurse
-          Copy-Item server/package.json release/server/
-          Copy-Item server/src release/server/src -Recurse
-          Copy-Item server/tsconfig.json release/server/
-          Copy-Item client/dist release/client/dist -Recurse
-          Copy-Item client/package.json,client/index.html,client/vite.config.ts,client/tsconfig.json,client/tsconfig.app.json,client/tsconfig.node.json,client/tsconfig.e2e.json release/client/
-          Copy-Item client/src release/client/src -Recurse
-          if(Test-Path client/package-lock.json){Copy-Item client/package-lock.json release/client/}
-          if(Test-Path client/.env.example){Copy-Item client/.env.example release/client/}
-          Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/tools/
-          New-Item -ItemType Directory -Path release/tools/sqlserver-acceptance/drafts/925 -Force | Out-Null
-          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/tools/sqlserver-acceptance/drafts/925/
-          New-Item -ItemType Directory -Path release/database -Force | Out-Null
-          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/database/925_dataset_display_policy.sql
+          New-Item -ItemType Directory -Path release/payload/server,release/payload/client,release/payload/tools,release/payload/docs -Force | Out-Null
+          Copy-Item server/dist release/payload/server/dist -Recurse
+          Copy-Item server/package.json release/payload/server/
+          Copy-Item server/src release/payload/server/src -Recurse
+          Copy-Item server/tsconfig.json release/payload/server/
+          Copy-Item client/dist release/payload/client/dist -Recurse
+          Copy-Item client/package.json,client/index.html,client/vite.config.ts,client/tsconfig.json,client/tsconfig.app.json,client/tsconfig.node.json,client/tsconfig.e2e.json release/payload/client/
+          Copy-Item client/src release/payload/client/src -Recurse
+          if(Test-Path client/package-lock.json){Copy-Item client/package-lock.json release/payload/client/}
+          if(Test-Path client/.env.example){Copy-Item client/.env.example release/payload/client/}
+          Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/payload/tools/
+          New-Item -ItemType Directory -Path release/payload/tools/sqlserver-acceptance/drafts/925 -Force | Out-Null
+          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/tools/sqlserver-acceptance/drafts/925/
+          New-Item -ItemType Directory -Path release/payload/database -Force | Out-Null
+          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/database/925_dataset_display_policy.sql
           Copy-Item tools/install-uqp-pr66-offline.ps1,tools/prepare-uqp-pr66-steps1-4.ps1 release/
-          Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md,docs/windows-pr66-overwrite-package.md release/docs/
-          Set-Location release/server
+          Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md,docs/windows-pr66-overwrite-package.md release/payload/docs/
+          Copy-Item tools/install-uqp-pr66-offline.ps1 release/
+          Set-Location release/payload/server
           npm install --ignore-scripts=false
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUNTIME_DEPENDENCIES_FAILED'}
           Set-Location ../../..
           $root=(Resolve-Path release).Path
-          $files=Get-ChildItem release -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' }
+          $files=Get-ChildItem release/payload -Recurse -File
           $lines=foreach($f in $files){$rel=$f.FullName.Substring($root.Length+1).Replace('\','/');"$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $rel"}
           $lines | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
           if($files.Count -lt 20){throw 'WINDOWS_RELEASE_INCOMPLETE'}
@@ -248,7 +249,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference='Stop'
-          $client='release/client'
+          $client='release/payload/client'
           foreach($file in @('package.json','index.html','vite.config.ts','tsconfig.json','src/main.tsx')){
             if(-not (Test-Path (Join-Path $client $file))){throw "UQP_CLIENT_SOURCE_MISSING: $file"}
           }
@@ -263,9 +264,9 @@ jobs:
           # Do not ship installed development dependencies: install from package.json after extraction.
           Remove-Item (Join-Path $client 'node_modules') -Recurse -Force
           # Rebuild the checksum manifest after packaging validation, since npm install/build
-          # may generate package-lock.json and tsbuildinfo inside client.
+          # may generate package-lock.json and tsbuildinfo inside payload/client.
           $root=(Resolve-Path release).Path
-          $files=Get-ChildItem release -Recurse -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' }
+          $files=Get-ChildItem release/payload -Recurse -File
           $lines=foreach($f in $files){$rel=$f.FullName.Substring($root.Length+1).Replace('\','/');"$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $rel"}
           $lines | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
           Write-Host 'UQP_CLIENT_SOURCE_INSTALL_REBUILD_PASS'
@@ -302,7 +303,7 @@ jobs:
           Move-Item SHA256SUMS-WINDOWS-RC.txt output/
       - uses: actions/upload-artifact@v4
         with:
-          name: uqp-pr66-windows-flat
+          name: uqp-pr66-windows-release-candidate
           path: output/
           retention-days: 7
           if-no-files-found: error
