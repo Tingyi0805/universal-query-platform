@@ -18,3 +18,5 @@ test("SQL Server IN expansion compares exactly without erasing CHECK grouping or
  assert.notEqual(c("(Mode='CUSTOM' AND Json IS NOT NULL) OR (Mode<>'CUSTOM' AND Json IS NULL)"),c("Mode='CUSTOM' AND (Json IS NOT NULL OR Mode<>'CUSTOM') AND Json IS NULL"));
  assert.notEqual(c("Json IS NULL"),c("Json = NULL"));assert.notEqual(c("Mode='OMIT'"),c("Mode='omit'"));assert.throws(()=>c("Unknown!()"));
 });
+
+test("925 upgrade acceptance preserves the existing 923/924 Audit identity instead of reseeding into its history",async()=>{const source=await readFile(new URL("./datasetDisplay925Acceptance.ts",import.meta.url),"utf8");assert.doesNotMatch(source,/DBCC\s+CHECKIDENT\s*\(\s*'uqp\.AuditLog'/i);assert.match(source,/reason.code,"DATASET_DISPLAY_VERSION_CONFLICT"/);});

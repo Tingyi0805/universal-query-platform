@@ -52,11 +52,12 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
   console.log("925_STEP_INITIAL_GET");const s=await store.get(79,actor);assert.equal(s.status,"UNCONFIRMED");
   const command=(v= s)=>({expectedVersion:v.version,expectedSensitivityVersion:v.sensitivityVersion,expectedDefinitionVersion:v.definitionVersion,expectedConfigurationVersion:v.configurationVersion,requestId:randomUUID(),grants:[{columnName:"NAME",permitted:true},{columnName:"PHONE",permitted:true},{columnName:"SECRET",permitted:false}]});
   await assert.rejects(store.save(79,actor,{...command(),grants:[{columnName:"SECRET",permitted:true}]}));
-  await root.request().query("DBCC CHECKIDENT ('uqp.AuditLog',RESEED,9007199254740993) WITH NO_INFOMSGS");
+  // Full-schema baseline already has AuditLog IDs above 2^53. Never reseed
+  // backwards into the preserved 923/924 audit history.
   console.log("925_STEP_FIRST_CONFIRM");const c=command(),first=await store.save(79,actor,c);assert.equal(first.status,"CONFIRMED");assert.deepEqual(await store.save(79,actor,c),first);
   const exact=(await root.request().query("SELECT CONVERT(varchar(20),AuditLogId) A FROM uqp.DatasetPublicDisplayPolicy WHERE DatasetId=79")).recordset[0].A;assert.ok(BigInt(exact)>9007199254740992n);
   await assert.rejects(store.save(79,actor,{...c,grants:[]}));
-  console.log("925_STEP_RACE");const race=await Promise.allSettled([store.save(79,actor,command(first)),store.save(79,actor,command(first))]);assert.equal(race.filter(r=>r.status==="fulfilled").length,1);
+  console.log("925_STEP_RACE");const race=await Promise.allSettled([store.save(79,actor,command(first)),store.save(79,actor,command(first))]);assert.equal(race.filter(r=>r.status==="fulfilled").length,1);assert.equal((race.find(r=>r.status==="rejected") as PromiseRejectedResult).reason.code,"DATASET_DISPLAY_VERSION_CONFLICT");
   console.log("925_STEP_AUDIT_DENIAL");const current=await store.get(79,actor);await root.request().query(`DENY INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);
   await assert.rejects(store.save(79,actor,{...command(current),grants:[]}));assert.equal((await store.get(79,actor)).version,current.version);await root.request().query(`GRANT INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);
   console.log("925_STEP_VERSION_INVALIDATION");await root.request().query("UPDATE uqp.DatasetSensitivePolicyVersion SET VersionNumber=VersionNumber+2 WHERE DatasetId=79");assert.equal((await store.get(79,actor)).status,"STALE");
