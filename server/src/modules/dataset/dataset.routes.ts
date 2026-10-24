@@ -1,3 +1,4 @@
+import {DatasetDisplayError,exactPositiveId} from "./datasetDisplaySchema.js";
 import { validCustomMask } from "../dashboard/dashboardDeviceMasking.js";
 import { listDatasetColumns } from "./column.repository.js";
 import { createDatasetDataRouter } from "./datasetData.routes.js";
@@ -590,7 +591,7 @@ datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
 datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
-    const parsed = z.object({ columns: z.array(sensitiveColumnSchema).max(300), expectedVersion: z.number().int().nonnegative().safe() }).safeParse(req.body);
+    const parsed = z.object({ columns: z.array(sensitiveColumnSchema).max(300), expectedVersion: z.number().int().nonnegative().safe(), templateApplications:z.array(z.object({columnName:z.string().min(1).max(256),templateId:z.string().refine(exactPositiveId),templateRevision:z.string().refine(exactPositiveId)}).strict()).max(300).optional() }).strict().safeParse(req.body);
     if (!id.success || !parsed.success || !req.authUser) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "敏感欄位設定格式不正確。" } }); return;
     }
@@ -598,9 +599,10 @@ datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
     if (new Set(names.map((name) => name.toUpperCase())).size !== names.length) {
       res.status(400).json({ error: { code: "DUPLICATE_SENSITIVE_COLUMN", message: "欄位名稱不可重複。" } }); return;
     }
-    const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion);
+    const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion,parsed.data.templateApplications);
     res.json({ status: "OK", version, columns: parsed.data.columns });
   } catch (error) {
+    if(error instanceof DatasetDisplayError){res.status(error.status).json({error:{code:error.code,message:"範本或政策版本已改變，請重新載入後確認；未覆寫現有規則。",requestId:req.id}});return;}
     if (error instanceof Error && error.message === "SENSITIVITY_ACTIVE_DASHBOARD") {
       res.status(409).json({ error: { code: "SENSITIVITY_ACTIVE_DASHBOARD", message: "此 Dataset 仍有啟用中的 Dashboard，不能清空敏感欄位規則；請先停用相關 Dashboard，再進行規則調整。" } });
       return;

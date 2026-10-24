@@ -1,5 +1,6 @@
 import { DatasetPublicDisplayEditor } from "./DatasetPublicDisplayEditor";
-import { suggestSensitivityRule } from "../dashboard/sensitivitySuggestions";
+import { DatasetMaskTemplateSuggestion } from "./DatasetMaskTemplateSuggestion";
+import type {MaskTemplate} from "../dashboard/maskTemplates";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 
@@ -16,6 +17,8 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     const code = (error as { code?: string } | null)?.code;
     return `${typeof code === "string" && /^[A-Z0-9_]{1,80}$/.test(code) ? `[${code}] ` : ""}${error instanceof Error ? error.message : "操作失敗，請重新載入。"}`;
   };
+  const [applications,setApplications]=useState<(Rule & {templateId:string;templateRevision:string})[]>([]);
+  const applyTemplate=(t:MaskTemplate)=>{if(!column||!loaded||busy||conflict)return;const old=rules.find(r=>r.columnName.toUpperCase()===column.toUpperCase());if(t.mode==="NONE"&&old&&old.sensitivityType!=="OTHER"){setMessage("既有敏感分類不可用原值範本覆寫；請明確審查現有設定。");return;}const rule:Rule={columnName:column,sensitivityType:old?.sensitivityType??"OTHER",deviceMaskMode:t.mode,customMask:t.customMask};setRules(previous=>[...previous.filter(r=>r.columnName.toUpperCase()!==column.toUpperCase()),rule]);setApplications(previous=>[...previous.filter(r=>r.columnName.toUpperCase()!==column.toUpperCase()),{...rule,templateId:t.id,templateRevision:t.revision}]);setDirty(true);setEmptyConfirmed(false);setMessage(`已套用範本「${t.name}」至草稿（版本 ${t.revision}）；須儲存才生效，不會自動取得公共授權。`);};
   const [rules, setRules] = useState<Rule[]>([]);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
   const [batchSelected, setBatchSelected] = useState<string[]>([]);
@@ -68,7 +71,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     let active = true;
     const fieldsRead = ++fieldReadRevision.current;
     setBusy(false);
-    setRules([]); setAvailableColumns([]); setBatchSelected([]);
+    setApplications([]); setRules([]); setAvailableColumns([]); setBatchSelected([]);
     setLoaded(false);
     setVersion(null);
     setDirty(false);
@@ -188,9 +191,10 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     try {
       const result = await apiRequest<{ columns: Rule[]; version: number }>(`/datasets/${datasetId}/sensitive-columns`, { method: "PUT", body: JSON.stringify({ columns: emptyConfirmed && rules.length === 0
         ? [...new Map(availableColumns.map(name => [name.toUpperCase(), name])).values()].map(columnName => ({ columnName, sensitivityType: "OTHER", deviceMaskMode: "NONE", customMask: null }))
-        : rules, expectedVersion: version }) }, accessToken);
+        : rules, expectedVersion: version, templateApplications:applications.filter(a=>rules.some(r=>r.columnName===a.columnName&&r.deviceMaskMode===a.deviceMaskMode&&JSON.stringify(r.customMask??null)===JSON.stringify(a.customMask??null))).map(a=>({columnName:a.columnName,templateId:a.templateId,templateRevision:a.templateRevision})) }) }, accessToken);
       if (sequence !== scope.current) return;
       setRules(result.columns);
+      setApplications([]);
       setVersion(result.version);
       setDirty(false);
       setEmptyConfirmed(false);
@@ -221,16 +225,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
       <option value="">請選擇欄位</option>
       {[...new Map([...availableColumns, ...rules.map(rule => rule.columnName)].map(name => [name.toUpperCase(), name])).values()].map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
-    {column && !selectedRule && suggestSensitivityRule(column) && <div className="notice" role="status">
-      系統建議：{suggestSensitivityRule(column)!.label}（僅供參考，尚未套用或授權）。
-      <button type="button" disabled={!loaded || busy || conflict} onClick={() => {
-        const suggestion = suggestSensitivityRule(column);
-        if (!suggestion || rules.some(rule => rule.columnName.toUpperCase() === column.toUpperCase())) return;
-        setAction(suggestion.mode); setPlacement("RETAIN");
-        setPrefix(suggestion.prefix); setSuffix(suggestion.suffix); setSymbol(suggestion.symbol);
-        setMessage("已帶入建議至編輯表單；請確認、加入欄位規則並儲存。此操作尚未變更伺服器政策。");
-      }}>帶入建議（不自動儲存）</button>
-    </div>}
+    <DatasetMaskTemplateSuggestion column={column} accessToken={accessToken} disabled={!loaded||busy||conflict} onApply={applyTemplate} />
     <fieldset className="dataset-batch-fields" disabled={!loaded || busy || conflict || normalizedColumns.length === 0}>
       <legend>批次選取查詢結果欄位</legend>
       <p>只有勾選欄位會套用下方處理方式；未設定欄位預設不傳送。個別規則仍可在下方覆寫。</p>

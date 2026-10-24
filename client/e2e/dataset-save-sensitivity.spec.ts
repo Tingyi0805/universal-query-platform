@@ -8,6 +8,7 @@ async function setup(page: Page) {
     user: { id: 5, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY"] } })));
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const request = route.request(); const path = new URL(request.url()).pathname;
+    if(path==="/api/dataset-mask-templates"){await route.fulfill({json:{templates:[{id:"1",revision:"1",version:"0000000000000001",name:"病歷號",aliases:["MRN"],mode:"CUSTOM",customMask:{prefix:0,suffix:4,symbol:"*"},isActive:true,suggestedPublicAllowed:false}]}});return;}
     if (path === "/api/datasets/2" && request.method() === "PUT") {
       state.writes.push("dataset");
       if (state.failSql) { await route.fulfill({ status: 409, json: { error: { code: "DATASET_SENSITIVITY_REVIEW_REQUIRED", message: "無法可靠驗證遮蔽適用性；現有設定已保留。" } } }); return; }
@@ -163,12 +164,11 @@ test("Dataset alias suggestion requires explicit apply and save; never grants Da
   await policy.getByLabel("查詢結果欄位").selectOption("MRN");
   await expect(policy.getByText(/系統建議：病歷號/)).toBeVisible();
   expect(state.writes).toEqual([]);
-  await policy.getByRole("button", { name: "帶入建議（不自動儲存）" }).click();
-  await expect(policy.getByLabel("保留後幾碼")).toHaveValue("4");
+  await policy.getByRole("button", { name: "使用建議遮蔽" }).click();
+  await expect(policy.getByText(/已套用範本/)).toBeVisible();
   expect(state.writes).toEqual([]);
-  await policy.getByRole("button", { name: "加入／更新欄位規則" }).click();
   expect(state.writes).toEqual([]);
-  await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則" }).click();
+  await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact:true }).click();
   await expect.poll(() => state.writes).toEqual(["sensitivity"]);
   expect(state.rules.find(rule => rule.columnName === "MRN")).toMatchObject({
     deviceMaskMode: "CUSTOM", customMask: { prefix: 0, suffix: 4, symbol: "*" },

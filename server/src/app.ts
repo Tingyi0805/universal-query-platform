@@ -1,3 +1,4 @@
+import { createMaskTemplateRouter } from "./modules/dataset/datasetMaskTemplate.routes.js";
 import { createDatasetPublicDisplayRouter } from "./modules/dataset/datasetPublicDisplay.routes.js";
 import { randomUUID } from "node:crypto";
 import cors from "cors";
@@ -64,6 +65,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/audit", auditRouter);
 app.use("/api/datasources", dataSourceRouter);
+app.use("/api/dataset-mask-templates", createMaskTemplateRouter());
 app.use("/api/datasets", createDatasetPublicDisplayRouter());
 app.use("/api/datasets", datasetRouter);
 app.use("/api/dataset-field-initialization", createDatasetFieldInitializationRouter());

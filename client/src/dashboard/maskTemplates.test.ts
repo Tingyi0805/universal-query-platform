@@ -1,0 +1,6 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {templateSuggestion,templatePreview,type MaskTemplate} from "./maskTemplates.js";
+const t=(name:string,aliases:string[],active=true)=>({id:"9007199254740993",revision:"2",version:"0000000000000001",name,aliases,mode:"CUSTOM",customMask:{prefix:1,suffix:1,symbol:"*"},suggestedPublicAllowed:false,isActive:active}) as MaskTemplate;
+test("managed templates prioritize exact name, then explicit alias, never auto-save or use disabled/ambiguous aliases",()=>{const rows=[t("MRN",["ALIAS"]),t("Other",["MRN"])],before=structuredClone(rows);assert.equal(templateSuggestion("MRN",rows)?.kind,"EXACT");assert.equal(templateSuggestion("ALIAS",rows)?.kind,"ALIAS");assert.equal(templateSuggestion("ALIAS_NEW",rows),null);assert.equal(templateSuggestion("ALIAS",[t("A",["ALIAS"]),t("B",["alias"])]),null);assert.equal(templateSuggestion("MRN",[t("MRN",["MRN"],false)]),null);assert.deepEqual(rows,before);});
+test("managed CUSTOM uses synthetic samples only, including Unicode position/full/omit",()=>{assert.equal(templatePreview("CUSTOM",{prefix:0,suffix:0,symbol:"#",start:2,end:3}),"合##料123456");assert.equal(templatePreview("FULL",null),"○○○○");assert.equal(templatePreview("OMIT",null),"不傳送");});
