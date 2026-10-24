@@ -300,3 +300,22 @@ test("approval reload waits for this read's Dataset policy before enabling recon
   await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
   await expect.poll(() => state.approval?.expectedVersion).toBe("c".repeat(64));
 });
+
+test("managed batch disclosure requires confirmation and inherits only Dataset-approved Query columns", async ({ page }) => {
+  const state = await setup(page, true);
+  await page.goto("/designer/dashboards");
+  await page.getByRole("button", { name: "編輯", exact: true }).first().click();
+  const batch = page.getByRole("button", { name: "確認授權本來源可傳送欄位（全部沿用 Dataset）" });
+  await expect(batch).toBeEnabled();
+  page.once("dialog", dialog => void dialog.dismiss());
+  await batch.click();
+  expect(state.approval).toBeNull();
+  page.once("dialog", dialog => void dialog.accept());
+  await batch.click();
+  await expect.poll(() => state.approval?.masks?.NAME).toBe("INHERIT");
+  expect(state.approval.masks.MRN).toBe("INHERIT");
+  // ROOM lacks an explicit Dataset rule; it cannot be newly granted by batch.
+  expect(state.approval.masks.ROOM).toBe("NONE");
+  expect(state.approval.masks.SECRET).toBeUndefined();
+  expect(state.approval.sourceKey).toBe("PRIMARY");
+});
