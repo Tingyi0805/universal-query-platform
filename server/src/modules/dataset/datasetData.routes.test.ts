@@ -193,11 +193,18 @@ test("a parent OMIT rule cannot replace the lookup source's confirmed policy", (
   assert.deepEqual(f.state.executions, [2]);
 }));
 
-for (const enabled of [false, true]) test(`raw design refuses absent or disabled patient audit evidence (enabled=${enabled})`, () => fixture(async f => {
+for (const enabled of [false, true]) test(`raw design only requires patient audit when enabled (enabled=${enabled})`, () => fixture(async f => {
   const current = f.state.snapshots.get(1)!;
   f.state.snapshots.set(1, { ...current, patientAudit: { configured: !enabled, enabled, patientKeyColumn: enabled ? "MRN" : null } });
   const response = await f.request("/1/design-preview", { values: {}, expectedDefinitionVersion: version });
-  assert.equal(response.status, 503); assert.deepEqual(f.state.executions, []);
+  if (enabled) {
+    assert.equal(response.status, 503);
+    assert.deepEqual(f.state.executions, []);
+  } else {
+    assert.equal(response.status, 200);
+    assert.equal((await response.json() as any).result.rows[0].NAME, "王○明");
+    assert.deepEqual(f.state.disclosures, []);
+  }
 }));
 
 for (const mode of ["CUSTOM", "FULL", "OMIT"] as const) for (const field of ["CODE", "LABEL"]) {
