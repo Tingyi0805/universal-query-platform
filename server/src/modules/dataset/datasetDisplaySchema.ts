@@ -65,8 +65,8 @@ export function validateDisplayCatalog(sets: Record<string, any>[][], ddl: strin
         if(c.length!==1 || ![type,...(type==="rowversion"?["timestamp"]:[])].includes(c[0]!.type) || type!=="datetime2"&&c[0]!.length!==length || type==="datetime2"&&c[0]!.scale!==Number(col[3]) || !!c[0]!.nullable!==(col[6]==="NULL") || !!c[0]!.identityColumn!==!!col[5] || col[4]&&c[0]!.collation!==col[4])return fail("COLUMN_"+table+"_"+col[1]);
         const inline=/CONSTRAINT (\w+) PRIMARY KEY/.exec(line); if(inline)indexes.push({table,name:inline[1]!,keys:[col[1]!],include:[],unique:true});
       }
-      const ck=/CONSTRAINT (\w+) CHECK\((.*)\),?$/.exec(line);
-      const def=/CONSTRAINT (\w+) DEFAULT (.*),?$/.exec(line) ?? /CONSTRAINT (\w+) DEFAULT(\(.*\)),?$/.exec(line);
+      const ck=/\bCONSTRAINT\s+(\w+)\s+CHECK\s*\((.*)\)\s*,?\s*$/.exec(line);
+      const def=/\bCONSTRAINT\s+(\w+)\s+DEFAULT\s*(\(.+\)|\S.*)\s*,?\s*$/.exec(line);
       if(ck||def){const m=(ck??def)!;constraintCount++;const found=sets[2]!.filter(c=>c.table===table&&c.name===m[1]);if(found.length!==1||found[0]!.disabled||found[0]!.untrusted||found[0]!.nfr||def&&found[0]!.defaultColumn!==col?.[1]||norm(found[0]!.definition)!==norm(m[2]!.replace(/,$/,"")))return fail("CONSTRAINT_"+m[1]);}
       const uq=/CONSTRAINT (\w+) UNIQUE\(([^)]+)\)/.exec(line);if(uq)indexes.push({table,name:uq[1]!,keys:uq[2]!.split(","),include:[],unique:true});
       const fk=/CONSTRAINT (\w+) FOREIGN KEY\((\w+)\) REFERENCES uqp\.(\w+)\((\w+)\)( ON DELETE CASCADE)?/.exec(line);
