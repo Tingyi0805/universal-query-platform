@@ -1,3 +1,4 @@
+import { DatasetPublicDisplayEditor } from "./DatasetPublicDisplayEditor";
 import { suggestSensitivityRule } from "../dashboard/sensitivitySuggestions";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
@@ -287,5 +288,6 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     <button type="button" disabled={busy} onClick={reload}>重新載入伺服器規則</button>
     {conflict && <p role="alert">版本衝突：請重新載入規則後再次檢查。重新載入前不允許儲存。</p>}
     {message && <p role="status">{message}</p>}
+    <DatasetPublicDisplayEditor datasetId={datasetId} accessToken={accessToken} sensitivityVersion={version} rules={rules} dirty={dirty||!loaded} />
   </section>;
 }

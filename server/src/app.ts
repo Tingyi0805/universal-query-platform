@@ -1,3 +1,4 @@
+import { createDatasetPublicDisplayRouter } from "./modules/dataset/datasetPublicDisplay.routes.js";
 import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
@@ -63,6 +64,7 @@ app.use("/api/auth", authRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/audit", auditRouter);
 app.use("/api/datasources", dataSourceRouter);
+app.use("/api/datasets", createDatasetPublicDisplayRouter());
 app.use("/api/datasets", datasetRouter);
 app.use("/api/dataset-field-initialization", createDatasetFieldInitializationRouter());
 app.use("/api/dataset-security", createDatasetScopeManagementRouter());
