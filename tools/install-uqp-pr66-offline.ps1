@@ -30,9 +30,9 @@ if(-not (Test-Path -LiteralPath (Join-Path $source 'client\dist\index.html'))){t
 # Independently validate every shipped file hash before any filesystem changes.
 $expected=@{}
 foreach($line in Get-Content -LiteralPath $manifest) {
- if($line -notmatch '^([0-9a-fA-F]{64})  (payload/[A-Za-z0-9_.\\/-]+)$'){throw 'UQP_MANIFEST_INVALID'}
+ if($line -notmatch '^([0-9a-fA-F]{64})  (payload/.+)$'){throw 'UQP_MANIFEST_INVALID'}
  $relative=$Matches[2].Replace('/','\')
- if($relative -match '(^|\\)\.\.' -or $expected.ContainsKey($relative)){throw 'UQP_MANIFEST_INVALID'}
+ if($relative -match '(^|\\)\.\.' -or $relative -match '[:<>|?*]' -or $expected.ContainsKey($relative)){throw 'UQP_MANIFEST_INVALID'}
  $expected[$relative]=$Matches[1].ToUpperInvariant()
 }
 $present=@(Get-ChildItem -LiteralPath $source -File -Recurse)
