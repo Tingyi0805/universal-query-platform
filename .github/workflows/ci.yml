@@ -230,7 +230,7 @@ jobs:
           Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/tools/sqlserver-acceptance/drafts/925/
           New-Item -ItemType Directory -Path release/payload/database -Force | Out-Null
           Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/database/925_dataset_display_policy.sql
-          Copy-Item tools/install-uqp-pr66-offline.ps1,tools/prepare-uqp-pr66-steps1-4.ps1 release/payload/tools/
+          Copy-Item tools/install-uqp-pr66-offline.ps1,tools/prepare-uqp-pr66-steps1-4.ps1 release/
           Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md,docs/windows-pr66-overwrite-package.md release/payload/docs/
           Copy-Item tools/install-uqp-pr66-offline.ps1 release/
           Set-Location release/payload/server
