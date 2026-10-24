@@ -54,3 +54,25 @@
 8. 如需回復程式，先停止服務與公共播放；將目前 C:\UQP 改名保留，將剛才的 C:\UQP.backup.<時間> 還原為 C:\UQP。SQL 925 結構不要自動 DROP，稽核紀錄不可刪除。
 
 **未通過 SQL 925、Runtime 權限與實際環境驗收時，不應解讀為可立即全面使用所有 PR #66 新功能。**
+
+
+## 一次完成步驟 1～4（程式不覆蓋）
+
+CI 更新包根目錄新增 `prepare-uqp-pr66-steps1-4.ps1`。先安排維護時間停止 UQP 寫入與服務，讓程式檔案備份一致；**資料庫完整備份與還原演練仍必須由 DBA 獨立完成**。
+
+```powershell
+cd C:\UQP_Update
+.\prepare-uqp-pr66-steps1-4.ps1 -Target C:\UQP -BackupRoot C:\UQP_Backup
+```
+
+上述指令一次執行 ZIP 雜湊驗證、現有程式目錄完整備份、確認 SQL Server 備份及還原驗證已完成，然後呼叫專用 925 Preflight；**不會新增資料表**。
+
+只有在 DBA 已核准 Schema 925 且已完成上述前提時，才使用：
+
+```powershell
+.\prepare-uqp-pr66-steps1-4.ps1 -Target C:\UQP -BackupRoot C:\UQP_Backup -Apply925
+```
+
+`-Apply925` 會要求額外輸入精確核准字串，然後呼叫專用 Apply 及 Verify；若 SQL Server 版本、身分、既有 Schema 不符，專用工具會拒絕安裝。這個旗標**不代表 DBA 已授權**，必須由操作人員先完成實際核准。
+
+此腳本只負責步驟 1～4，不會自動切換程式、重啟服務或測試 Oracle 11g；第 5～6 項仍須另外執行並驗收。
