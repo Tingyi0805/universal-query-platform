@@ -64,7 +64,7 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
       "此 Dashboard 尚未完成 PRIMARY 資料來源轉換。此操作會設定資料量上限，並啟用新版資料來源管理狀態。原有遮蔽及核准規則會保留；請確認 Dashboard 已停用，且已檢查 Query 與參數。是否繼續？"
     )) return;
     const pendingConversion = !removal && configuration.sources.some(source => source.id === draft.id && source.queryDefinitionId === null);
-    if (pendingConversion && !window.confirm(`確認將來源 ${draft.sourceKey} 轉換為所選 Query？不推測 Dataset 對應；既有引用及 Source ID 保留，敏感欄位須重新核准。`)) return;
+    if (pendingConversion && !window.confirm(`確認將來源 ${draft.sourceKey} 轉換為所選 Query？不推測 Dataset 對應；既有引用及 Source ID 保留，公共顯示依所選 Dataset 的已確認政策。`)) return;
     setBusy(true); setMessage("");
     try {
       const primary = !removal && draft.sourceKey === "PRIMARY";
@@ -77,7 +77,7 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
       await apiRequest(base + (primary ? "/primary" : ""), { method: "PATCH", body: JSON.stringify(body) }, accessToken);
       if(requestEpoch!==epoch.current)return;
       const converted = !removal && draft.sourceKey !== "PRIMARY" && configuration.sources.some(source => source.id === draft.id && source.queryDefinitionId === null);
-      setRemove(null); setDraft(initial); setParametersJson("{}"); setMessage(converted ? "來源已轉換；敏感欄位需要重新核准。未啟用播放。" : "設定已儲存。");
+      setRemove(null); setDraft(initial); setParametersJson("{}"); setMessage(converted ? "來源已轉換；請確認所選 Dataset 的公共顯示政策。未啟用播放。" : "設定已儲存。");
       await reload();
       if (requestEpoch !== epoch.current) return;
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId,origin:"sources"}}));
@@ -94,11 +94,11 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
       if (requestEpoch !== epoch.current) return;
       if (value.dashboardId !== dashboardId || value.sourceId !== source.id || value.sourceKey !== source.sourceKey || !/^[a-f0-9]{64}$/.test(value.version) || typeof value.hasApprovals !== "boolean" || value.reapprovalRequired !== true) throw new Error("RESPONSE_INVALID");
       if (!value.hasApprovals) { setMessage("此 pending 來源沒有待撤銷核准；請明確選擇 Query 轉換。"); return; }
-      if (!window.confirm(`確認撤銷 pending 來源 ${source.sourceKey}（ID ${source.id}）的既有核准？只清理此來源核准，保留 Source ID、歷史 Dataset 與引用。之後須明確選 Query 轉換並重新核准；不會自動恢復舊授權。`)) return;
+      if (!window.confirm(`確認撤銷 pending 來源 ${source.sourceKey}（ID ${source.id}）的既有核准？只清理此來源核准，保留 Source ID、歷史 Dataset 與引用。之後須明確選 Query 轉換並確認 Dataset 公共政策；不會自動恢復舊授權。`)) return;
       await apiRequest(path, { method: "POST", body: JSON.stringify({ sourceId: source.id, expectedVersion: value.version, confirmed: true }) }, accessToken);
       if (requestEpoch !== epoch.current) return;
       await reload(); if (requestEpoch !== epoch.current) return; setDraft(initial); setParametersJson("{}");
-      setMessage("此來源舊核准已撤銷；請重新選取來源，明確選擇 Query 轉換。轉換後敏感欄位需要重新核准。撤銷與轉換為獨立交易，不會自動恢復核准。");
+      setMessage("此來源舊核准已撤銷；請重新選取來源，明確選擇 Query 轉換。轉換後請確認所選 Dataset 的公共顯示政策。撤銷與轉換為獨立交易，不會自動恢復核准。");
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "sources" } }));
     } catch (error) { if (requestEpoch === epoch.current) { setConfiguration(previous => previous ? { ...previous, editable: false } : null); setMessage(managementError(error)); } }
     finally { if (requestEpoch === epoch.current) setBusy(false); }

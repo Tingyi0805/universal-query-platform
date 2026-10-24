@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { getPlatformDbPool } from "../../config/database.js";
 import { getEffectiveQueryAccess } from "../queryDefinition/queryDefinition.repository.js";
 import { confirmDatasetPublicDisplay, publicDisplayDigest } from "./datasetPublicDisplayConfirmation.js";
-import type { PublicDisplayPolicy, PublicDisplayGrant } from "./datasetPublicDisplayPolicy.js";
+import {validPublicDisplayGrants, type PublicDisplayPolicy, type PublicDisplayGrant } from "./datasetPublicDisplayPolicy.js";
 import type { DatasetSensitiveColumn } from "./datasetSensitiveColumn.repository.js";
 import { DatasetDisplayError, exactPositiveId, exactRevision, requireDisplaySchema } from "./datasetDisplaySchema.js";
 import { QueryDeliveryError,type RuntimeIdentity } from "../queryDefinition/queryDelivery.js";
@@ -38,6 +38,7 @@ export function createDatasetPublicDisplayRepository(deps=displayRepositoryDefau
     const definitionVersion=exactRevision(ds.DefinitionRowVersion),configurationVersion=exactRevision(ds.ConfigurationRowVersion);
     const policy:PublicDisplayPolicy|null=row?{confirmed:true,sensitivityVersion:Number(row.SensitivityVersion),grants:JSON.parse(row.GrantsJson)}:null;
 
+    if(policy&&(!validPublicDisplayGrants(policy.grants)||!Number.isSafeInteger(policy.sensitivityVersion)||policy.sensitivityVersion<1))throw new DatasetDisplayError("DATASET_DISPLAY_SENSITIVITY_INVALID");
     const current=!!row&&exactRevision(row.DefinitionVersion)===definitionVersion&&exactRevision(row.ConfigurationVersion)===configurationVersion&&row.SourceExact===ds.SourceId&&Number(row.SensitivityVersion)===version;
     if(current&&policy)confirmDatasetPublicDisplay(sensitivity,null,{expectedSensitivityVersion:policy.sensitivityVersion,expectedPolicyDigest:null,grants:policy.grants});
     const snapshot:PublicDisplaySnapshot={status:row?(current?"CONFIRMED":"STALE"):"UNCONFIRMED",policy:policy?{...policy,confirmed:current}:null,

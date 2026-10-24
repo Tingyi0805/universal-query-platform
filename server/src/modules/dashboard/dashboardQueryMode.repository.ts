@@ -1,3 +1,4 @@
+import {dashboardSecurityFailure} from "./dashboardSecurityFailure.js";
 import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
@@ -31,7 +32,8 @@ export async function queryModeSchemaReady(request: sql.Request): Promise<boolea
     THEN 1 ELSE 0 END AS Ready`);
   return Boolean(result.recordset[0]?.Ready);
 }
-export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDependencies,
+export function createQueryModeStore(deps=defaultQuerySourceDependencies) {
+return createQuerySourceStore({ ...deps,
   extend(transaction, base) {
     const request = () => new sql.Request(transaction);
     const scoped = (id: number) => request().input("id", sql.BigInt, id);
@@ -70,8 +72,8 @@ export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDepe
         const recordsets = result.recordsets as unknown as Record<string, unknown>[][];
         if (!recordsets[0]?.length || Number(recordsets[0][0]!.VersionNumber) < 1 || !recordsets[1]?.length)
           throw new QuerySourceError("QUERY_SOURCE_SENSITIVITY_NOT_READY");
-        const display=await datasetPublicDisplayRepository.getInTransaction(transaction,datasetId);
-        if(display.status!=="CONFIRMED"||!display.policy?.confirmed)throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
+        const display=await datasetPublicDisplayRepository.getInTransaction(transaction,datasetId).catch(error=>{const safe=dashboardSecurityFailure(error);throw new QuerySourceError(safe?.code??"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",safe?.status??503);});
+        if(display.status!=="CONFIRMED"||!display.policy?.confirmed||!display.policy.grants.some(g=>g.permitted))throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
         if (recordsets[2]?.[0]?.IsEnabled) {
         if(!recordsets[2][0].PatientKeyColumn)throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED",503);
         try { parsePatientAuditKeyring(process.env.PATIENT_AUDIT_ACTIVE_KEY_VERSION, process.env.PATIENT_AUDIT_HMAC_KEYRING_JSON); }
@@ -119,3 +121,5 @@ export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDepe
     } satisfies Partial<ModeTransaction>);
   },
 });
+}
+export const queryModeStore=createQueryModeStore();

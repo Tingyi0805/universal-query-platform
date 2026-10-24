@@ -43,3 +43,8 @@ test("explicit rejection overrides any otherwise valid public display grant", ()
   assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, sensitivityVersion: 3,
     grants: [{ columnName: "NAME", permitted: false }] }, ["NAME"]), {});
 });
+
+test("stored public grant JSON rejects unknown keys, truthy confirmation strings and malformed shapes",()=>{
+ const sensitivity={version:1,columns:[{columnName:"VALUE",sensitivityType:"OTHER",deviceMaskMode:"NONE" as const}]};
+ for(const policy of [{confirmed:"CONFIRMED",sensitivityVersion:1,grants:[{columnName:"VALUE",permitted:true}]},{confirmed:true,sensitivityVersion:1,grants:[{columnName:"VALUE",permitted:true,privateInput:"SYNTHETIC"}]},{confirmed:true,sensitivityVersion:0,grants:[{columnName:"VALUE",permitted:true}]}])assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity,policy as never,["VALUE"]),{});
+});

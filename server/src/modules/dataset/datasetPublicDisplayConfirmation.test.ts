@@ -29,3 +29,7 @@ test("unknown, duplicate, OMIT and invalid grants are refused", () => {
   ]) assert.throws(() => confirmDatasetPublicDisplay(sensitivity, null, { expectedSensitivityVersion: 4, expectedPolicyDigest: null, grants }),
     /PUBLIC_DISPLAY_/);
 });
+
+test("confirmation never persists additional unknown grant fields",()=>{
+ assert.throws(()=>confirmDatasetPublicDisplay({version:1,columns:[{columnName:"VALUE",sensitivityType:"OTHER",deviceMaskMode:"NONE"}]},null,{expectedSensitivityVersion:1,expectedPolicyDigest:null,grants:[{columnName:"VALUE",permitted:true,sql:"SYNTHETIC"}] as never}),/PUBLIC_DISPLAY_GRANTS_INVALID/);
+});

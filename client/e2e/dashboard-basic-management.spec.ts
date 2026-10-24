@@ -96,7 +96,7 @@ test("Legacy disable confirms the latest dedicated version and cannot re-enable 
   await expect(stop).toHaveCount(0); expect(state.presentation.name).toBe("保存名稱");
 });
 
-test("pending approval revoke is confirmed and followed by explicit Query selection and reapproval notice", async ({ page }) => {
+test("historical approval cleanup is confirmed and explicit Query selection points to Dataset public policy", async ({ page }) => {
   const state = await setup(page); await edit(page);
   const revoke = page.getByRole("button", { name: "撤銷 WARD 舊核准", exact: true });
   page.once("dialog", d => void d.dismiss()); await revoke.click(); await expect(revoke).toBeEnabled(); expect(state.approved).toBe(true); expect(state.writes).toEqual([]);
@@ -105,7 +105,7 @@ test("pending approval revoke is confirmed and followed by explicit Query select
   await page.getByRole("button", { name: "編輯 WARD", exact: true }).click(); await expect(page.getByLabel("已發布 Query", { exact: true })).toHaveValue("");
   await page.getByRole("button", { name: "儲存目前來源", exact: true }).click(); expect(state.writes).toHaveLength(1);
   await page.getByLabel("已發布 Query", { exact: true }).selectOption("21"); page.once("dialog", d => void d.accept()); await page.getByRole("button", { name: "儲存目前來源", exact: true }).click();
-  await expect(page.getByText(/來源已轉換；敏感欄位需要重新核准/)).toBeVisible(); expect(state.source).toMatchObject({ id: 10, sourceKey: "WARD", queryDefinitionId: 21 }); expect(state.active).toBe(false); expect(state.approved).toBe(false);
+  await expect(page.getByText(/來源已轉換；請確認所選 Dataset 的公共顯示政策/)).toBeVisible(); expect(state.source).toMatchObject({ id: 10, sourceKey: "WARD", queryDefinitionId: 21 }); expect(state.active).toBe(false); expect(state.approved).toBe(false);
 });
 
 test("version conflict preserves draft and requires reload without automatic overwrite", async ({ page }) => {
@@ -161,5 +161,5 @@ test("failed explicit conversion keeps previously revoked approvals revoked", as
   state.fail = "/query-sources/v1"; state.status = 403;
   await page.getByRole("button", { name: "儲存目前來源", exact: true }).click(); await expect(page.getByText(/FORBIDDEN/).first()).toBeVisible();
   expect(state.approved).toBe(false); expect(state.source.queryDefinitionId).toBeNull(); expect(state.active).toBe(false); expect(state.writes).toHaveLength(2);
-  await expect(page.getByText(/來源已轉換；敏感欄位需要重新核准/)).toHaveCount(0);
+  await expect(page.getByText(/來源已轉換；請確認所選 Dataset 的公共顯示政策/)).toHaveCount(0);
 });

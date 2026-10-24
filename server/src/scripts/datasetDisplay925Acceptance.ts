@@ -1,3 +1,6 @@
+import {createQueryModeStore} from "../modules/dashboard/dashboardQueryMode.repository.js";
+import {defaultQuerySourceDependencies} from "../modules/dashboard/dashboardQuerySources.repository.js";
+import type {ModeTransaction} from "../modules/dashboard/dashboardQueryMode.service.js";
 /** Invoked only by the fixed-target disposable full-schema SQL2019 CI harness. */
 import sql from "mssql";
 import assert from "node:assert/strict";
@@ -64,6 +67,13 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
   let next=await store.get(79,actor);await store.save(79,actor,command(next));
   await root.request().query("UPDATE uqp.DataSource SET Name=Name WHERE Id=202");assert.equal((await store.get(79,actor)).status,"STALE");
   next=await store.get(79,actor);await store.save(79,actor,command(next));
+  const modeStore=createQueryModeStore({...defaultQuerySourceDependencies,getPool:async()=>app});
+  const modePolicy=()=>modeStore.transaction(async tx=>(tx as ModeTransaction).policy(79));
+  await modePolicy();
+  await store.save(79,actor,{...command(await store.get(79,actor)),grants:[]});
+  await assert.rejects(modePolicy,{code:"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED"});
+  await store.save(79,actor,command(await store.get(79,actor)));await modePolicy();
+  console.log("925_MODE_DATASET_POLICY_GATE_WITHOUT_DASHBOARD_APPROVAL_JSON_PASS");
   const published=await store.get(79,actor);const input=maskTemplateInput.parse({name:"SYNTHETIC925",aliases:["NAME"],mode:"FULL",customMask:null,suggestedPublicAllowed:false,isActive:true,expectedVersion:null});
   const created=await templates.save(actor,null,input),template=created.templates.find(t=>t.id===created.id)!;
   const use=new sql.Transaction(app);await use.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);await recordTemplateApplications(use,79,next.sensitivityVersion,303,[{columnName:"NAME",templateId:template.id,templateRevision:template.revision}],[{columnName:"NAME",deviceMaskMode:"FULL"}]);await use.commit();

@@ -1,3 +1,4 @@
+import {resolveDatasetPublicDisplayMasks} from "../dataset/datasetPublicDisplayPolicy.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { serialize, deserialize } from "node:v8";
@@ -197,9 +198,9 @@ for (const failure of ["token", "permission", "account", "917", "918", "919", "p
   });
 }
 
-test("explicit pending approval revocation permits same-Dataset conversion, preserves references and requires reapproval", async () => {
+test("optional historical cleanup and same-Dataset conversion preserve guards without creating Dataset public grants", async () => {
   const f = fixture(); f.pending(); const before = f.snapshot();
-  await assert.rejects(f.convert(), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
+  const probe=fixture();probe.pending();const originalJson=probe.db().parent.ParametersJson;await probe.convert();assert.equal(probe.db().parent.ParametersJson,originalJson);assert.equal(probe.db().parent.IsActive,false);
   const view = await f.service.readPending(1, "WARD", actor);
   assert.equal(view.hasApprovals, true); assert.equal(JSON.stringify(view).includes("SYNTHETIC"), false);
   const revoked = await f.service.revokePending(1, "WARD", actor, { sourceId: view.sourceId, expectedVersion: view.version, confirmed: true });
@@ -217,6 +218,7 @@ test("explicit pending approval revocation permits same-Dataset conversion, pres
   await f.sources.disclosure(1, 1, { expectedVersion: (await f.sources.configuration(1, 1)).version, sourceKey: "WARD", masks: { NAME: "INHERIT" } });
   masks = resolveDashboardDisclosureMasks(JSON.parse(f.db().parent.ParametersJson), "WARD", policy);
   assert.notDeepEqual(maskDeviceRows([{ NAME: "SYNTHETIC" }], masks), [{}]);
+  assert.deepEqual(resolveDatasetPublicDisplayMasks({version:1,columns:policy},null,["NAME"]),{});
   assert.equal(f.db().audits[0]!.eventType, "DASHBOARD_PENDING_APPROVALS_REVOKED");
   assert.equal(JSON.stringify(f.db().audits).includes("SYNTHETIC"), false);
 });
@@ -253,13 +255,13 @@ for (const change of ["active", "playing", "bound", "disabled-capability", "prim
   assert.deepEqual(f.snapshot(), before);
 });
 
-test("case-equivalent historical approvals cannot bypass conversion and cleanup revokes only that source", async () => {
+test("case-equivalent historical JSON stays non-authoritative and optional cleanup revokes only that source", async () => {
   const f = fixture(); f.pending();
   const params = JSON.parse(f.db().parent.ParametersJson);
   params.deviceSourceColumnMasks.ward = { MRN: "CUSTOM" };
   delete params.deviceSourceColumnMasks.WARD;
   f.db().parent.ParametersJson = JSON.stringify(params);
-  await assert.rejects(f.convert(), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
+  const probe=fixture();probe.pending();probe.db().parent.ParametersJson=JSON.stringify(params);await probe.convert();assert.equal(probe.db().parent.ParametersJson,JSON.stringify(params));
   const view = await f.service.readPending(1, "WARD", actor);
   await f.service.revokePending(1, "WARD", actor, { sourceId: 10, expectedVersion: view.version, confirmed: true });
   await f.convert();

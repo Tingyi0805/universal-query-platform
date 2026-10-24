@@ -144,54 +144,10 @@ function clientKey(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-type MaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC";
-
-const maskModeLabels: Record<MaskMode, string> = {
-  NONE: "不遮蔽",
-  NAME: "姓名遮蔽（王○佑）",
-  MRN: "病歷號遮蔽",
-  PHONE: "電話遮蔽",
-  GENERIC: "一般遮蔽",
-};
-
 function textValue(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
-}
-
-function maskText(value: unknown, mode: unknown): string {
-  const text = textValue(value);
-  const maskMode = String(mode ?? "NONE") as MaskMode;
-  if (!text || maskMode === "NONE") return text;
-
-  if (maskMode === "NAME") {
-    const chars = Array.from(text);
-    if (chars.length <= 1) return "○";
-    if (chars.length === 2) return `${chars[0]}○`;
-    return `${chars[0]}${"○".repeat(chars.length - 2)}${chars[chars.length - 1]}`;
-  }
-
-  if (maskMode === "MRN") {
-    if (text.length <= 4) return "○".repeat(text.length);
-    const head = text.slice(0, Math.min(4, text.length - 2));
-    const tail = text.slice(-2);
-    return `${head}${"○".repeat(Math.max(1, text.length - head.length - tail.length))}${tail}`;
-  }
-
-  if (maskMode === "PHONE") {
-    if (text.length <= 5) return "○".repeat(text.length);
-    return `${text.slice(0, 4)}${"○".repeat(Math.max(1, text.length - 7))}${text.slice(-3)}`;
-  }
-
-  if (text.length <= 2) return "○".repeat(text.length);
-  return `${text.slice(0, 1)}${"○".repeat(text.length - 2)}${text.slice(-1)}`;
-}
-
-function getColumnMask(widget: LayoutWidget, columnName: string): MaskMode {
-  const masks = widget.config?.columnMasks;
-  if (!masks || typeof masks !== "object" || Array.isArray(masks)) return "NONE";
-  return String((masks as Record<string, unknown>)[columnName] ?? "NONE") as MaskMode;
 }
 
 function withClientKeys(profile: Omit<LayoutProfile, "clientKey" | "widgets"> & {
@@ -635,7 +591,7 @@ export function DashboardLayoutDesignerPage() {
               {rows.map((row, index) => (
                 <tr key={index}>
                   {widgetColumns.map((column) => (
-                    <td key={column.columnName}>{formatDashboardValue(maskText(row[column.columnName], getColumnMask(widget, column.columnName)), (widget.config.columnFormats as Record<string, unknown> | undefined)?.[column.columnName])}</td>
+                    <td key={column.columnName}>{formatDashboardValue(textValue(row[column.columnName]), (widget.config.columnFormats as Record<string, unknown> | undefined)?.[column.columnName])}</td>
                   ))}
                 </tr>
               ))}
@@ -655,7 +611,7 @@ export function DashboardLayoutDesignerPage() {
         break;
       case "FIELD":
         value = widget.sourceKey
-          ? formatDashboardValue(maskText(firstRow[widget.sourceKey], widget.config?.maskMode), widget.config.displayFormat)
+          ? formatDashboardValue(textValue(firstRow[widget.sourceKey]), widget.config.displayFormat)
           : "選擇資料欄位";
         break;
       case "CLOCK":
@@ -985,26 +941,14 @@ export function DashboardLayoutDesignerPage() {
                       ))}
                     </select>
                   </label>
-                  <label>
-                    敏感資料遮蔽
-                    <select
-                      value={String(selectedWidget.config?.maskMode ?? "NONE")}
-                      onChange={(e) => updateSelectedWidget({
-                        config: { ...selectedWidget.config, maskMode: e.target.value },
-                      })}
-                    >
-                      {(Object.keys(maskModeLabels) as MaskMode[]).map((mode) => (
-                        <option key={mode} value={mode}>{maskModeLabels[mode]}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <p className="layout-hint">欄位顯示與遮蔽統一使用 Dataset 政策，本版型不另設遮蔽。</p>
                 </>
               )}
 
               {selectedWidget.widgetType === "TABLE" && (
                 <div className="layout-mask-settings">
-                  <strong>表格欄位遮蔽</strong>
-                  <p className="layout-hint">顯示設定僅能增加遮蔽；患者資料的實際遮蔽與欄位授權由後端執行。</p>
+                  <strong>表格欄位顯示格式</strong>
+                  <p className="layout-hint">此處只調整顯示格式；Dataset 遮蔽與公共顯示授權由後端執行，不在瀏覽器再次遮蔽。</p>
                   {(String(selectedWidget.config?.dataSourceKey ?? "PRIMARY") === "PRIMARY"
                     ? visibleColumns
                     : (supplementalPreviews[String(selectedWidget.config?.dataSourceKey)]?.result.columns ?? []).map((column, index) => ({
@@ -1019,30 +963,7 @@ export function DashboardLayoutDesignerPage() {
                           ...(selectedWidget.config.columnFormats as Record<string,unknown> ?? {}),[column.columnName]:event.target.value}}})}>
                         {Object.entries(displayFormats).map(([key,label]) => <option key={key} value={key}>{label}</option>)}
                       </select>
-                      <select
-                        value={getColumnMask(selectedWidget, column.columnName)}
-                        onChange={(e) => {
-                          const currentMasks =
-                            selectedWidget.config?.columnMasks &&
-                            typeof selectedWidget.config.columnMasks === "object" &&
-                            !Array.isArray(selectedWidget.config.columnMasks)
-                              ? selectedWidget.config.columnMasks as Record<string, unknown>
-                              : {};
-                          updateSelectedWidget({
-                            config: {
-                              ...selectedWidget.config,
-                              columnMasks: {
-                                ...currentMasks,
-                                [column.columnName]: e.target.value,
-                              },
-                            },
-                          });
-                        }}
-                      >
-                        {(Object.keys(maskModeLabels) as MaskMode[]).map((mode) => (
-                          <option key={mode} value={mode}>{maskModeLabels[mode]}</option>
-                        ))}
-                      </select>
+
                     </label>
                   ))}
                 </div>

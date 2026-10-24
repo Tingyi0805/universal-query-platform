@@ -482,15 +482,16 @@ test("disclosure management retains staging, schema and ACL guards", async () =>
   f.control.queries.get(21)!.allowed = false; await assert.rejects(f.service.disclosure(1, 7, input()), { code: "QUERY_SOURCE_QUERY_FORBIDDEN" });
 });
 
-test("Query binding routes cannot carry Legacy approvals to another primary or source binding", async () => {
-  const f = fixture();
-  f.state().dashboard.parameters = { deviceColumnMasks: { NAME: "FULL" } };
-  await assert.rejects(f.service.primary(1, 1, { ...primaryInput(f), queryDefinitionId: 21, parameters: { WARD: "SYNTHETIC_PRIVATE_VALUE" } }), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
-  f.state().dashboard.parameters = { deviceSourceColumnMasks: { WARD: { NAME: "INHERIT" } } };
-  await assert.rejects(f.service.patch(1, 1, f.patch()), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
-  f.state().references = [];
-  await assert.rejects(f.service.patch(1, 1, { expectedVersion: sourceVersion(f.state()), upserts: [], removals: [{ id: 10, sourceKey: "WARD" }] }), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
-  assert.equal(f.control.writes, 0);
+test("managed binding changes retain historical JSON without carrying public authority; CAS and source-in-use still protect", async () => {
+  const f = fixture();f.state().dashboard.parameters = { deviceColumnMasks: { NAME: "FULL" } };
+  const input={...primaryInput(f),queryDefinitionId:21,parameters:{WARD:"SYNTHETIC_PRIVATE_VALUE"}};
+  await f.service.primary(1,1,input);assert.deepEqual(f.state().dashboard.parameters.deviceColumnMasks,{NAME:"FULL"});
+  await assert.rejects(f.service.primary(1,1,input),{code:"QUERY_SOURCE_VERSION_CONFLICT"});
+  f.state().dashboard.parameters={...f.state().dashboard.parameters,deviceSourceColumnMasks:{WARD:{NAME:"INHERIT"}}};
+  await f.service.patch(1,1,f.patch());assert.equal(f.state().sources[0]!.queryDefinitionId,21);
+  await assert.rejects(f.service.patch(1,1,{expectedVersion:sourceVersion(f.state()),upserts:[],removals:[{id:10,sourceKey:"WARD"}]}),{code:"QUERY_SOURCE_IN_USE"});
+  f.state().references=[];await f.service.patch(1,1,{expectedVersion:sourceVersion(f.state()),upserts:[],removals:[{id:10,sourceKey:"WARD"}]});
+  assert.deepEqual(f.state().dashboard.parameters.deviceSourceColumnMasks,{WARD:{NAME:"INHERIT"}});assert.equal(f.state().sources.length,0);
 });
 
 test("disclosure API rejects a new independent Dashboard mask instead of overriding Dataset policy", async () => {

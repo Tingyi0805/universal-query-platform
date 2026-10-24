@@ -3,14 +3,13 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { trustedConfiguration, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
-import { columnApprovals, type ColumnApprovals } from "../security/securityContracts";
 import { playbackPlacement, type PlaybackPlacement, dashboardMode, dashboardPreflight, dashboardOperationError, deviceArchived, deviceMayIssue, deviceStatus, type DashboardMode, type Preflight, type Check, type ManagedDevice } from "../dashboard/managementStatus";
 import { forgetDashboardToken, prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { DashboardLegacyDisable } from "./DashboardLegacyDisable";
 const labels: Record<string, string> = { inactive: "停用狀態", capacity: "含 PRIMARY 最多 8 個來源", primaryConversion: "PRIMARY 資料來源已完成轉換", bindings: "來源已轉換與識別有效", references: "元件來源引用", devices: "有效裝置綁定" };
 export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
   const [mode, setMode] = useState<DashboardMode | null>(null), [configuration, setConfiguration] = useState<QuerySourceConfiguration | null>(null);
-  const [preflight, setPreflight] = useState<Preflight | null>(null), [approvals, setApprovals] = useState<ColumnApprovals | null>(null);
+  const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [devices, setDevices] = useState<ManagedDevice[]>([]), [busy, setBusy] = useState(false), [message, setMessage] = useState("");
   const [readMessages, setReadMessages] = useState<string[]>([]), [issuedDeviceId, setIssuedDeviceId] = useState<number | null>(null);
   const [placement, setPlacement] = useState<{ deviceId: number; settings: PlaybackPlacement } | null>(null);
@@ -21,7 +20,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
   function clearCredential() { cleanup.current?.(); cleanup.current = null; issued.current = null; setIssuedDeviceId(null); forgetDashboardToken(dashboardId); }
   async function refresh() {
     const current = epoch.current, read = ++readSequence.current;
-    clearCredential(); setPlacement(null); setBusy(true); setMode(null); setPreflight(null); setConfiguration(null); setApprovals(null); setDevices([]); setReadMessages([]);
+    clearCredential(); setPlacement(null); setBusy(true); setMode(null); setPreflight(null); setConfiguration(null); setDevices([]); setReadMessages([]);
     const configRead = apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken).then(trustedConfiguration);
     const results = await Promise.allSettled([
       apiRequest<DashboardMode>(base, {}, accessToken).then(dashboardMode),
@@ -30,11 +29,10 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
         if (!Array.isArray(value.devices) || value.devices.some(d => !Number.isSafeInteger(d.id) || d.id < 1 || typeof d.deviceName !== "string" || typeof d.isActive !== "boolean")) throw new Error("DEVICES_INVALID");
         return value.devices;
       }),
-      configRead.then(() => apiRequest(`/dashboards/${dashboardId}/column-approvals`, {}, accessToken)).then(columnApprovals).then(value => { if (value.dashboardId !== dashboardId) throw new Error("APPROVAL_INVALID"); return value; }),
     ]);
     if (current !== epoch.current || read !== readSequence.current) return;
-    const [m, c, d, a] = results;
-    if (c.status === "fulfilled" && a.status === "fulfilled") {
+    const [m, c, d] = results;
+    if (c.status === "fulfilled") {
       try {
         const after = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken));
         if (after.version !== c.value.version) throw Object.assign(new Error(), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
@@ -47,7 +45,6 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     if (m.status === "fulfilled") setMode(m.value);
     if (c.status === "fulfilled") setConfiguration(c.value);
     if (d.status === "fulfilled") setDevices(d.value);
-    if (a.status === "fulfilled") setApprovals(a.value);
     setReadMessages([...new Set(results.flatMap(r => r.status === "rejected" ? [dashboardOperationError(r.reason)] : []))]); setBusy(false);
   }
   useEffect(() => {
@@ -65,11 +62,8 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
   useEffect(() => {
     if (issued.current && !devices.some(device => device.id === issued.current!.deviceId && deviceMayIssue(device, now))) clearCredential();
   }, [devices, now]);
-  const approvalSources = configuration ? [configuration.primary, ...configuration.sources.filter(s => s.isEnabled)] : [];
-  const missingApprovals = approvalSources.filter(source => !Object.keys(source.sourceKey === "PRIMARY" ? approvals?.deviceColumnMasks ?? {} : approvals?.deviceSourceColumnMasks[source.sourceKey] ?? {}).length).map(s => s.sourceKey);
-  const approvalRecorded = !!approvals && approvalSources.length > 0 && missingApprovals.length === 0;
-  const canActivate = readMessages.length === 0 && !!mode && !!configuration?.editable && approvalRecorded && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
-  const canIssue = (device: ManagedDevice, time = Date.now()) => readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && approvalRecorded && deviceMayIssue(device, time);
+  const canActivate = readMessages.length === 0 && !!mode && !!configuration?.editable && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
+  const canIssue = (device: ManagedDevice, time = Date.now()) => readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && deviceMayIssue(device, time);
   function failed(error: unknown) { clearCredential(); setPreflight(null); setMode(null); setMessage(dashboardOperationError(error)); }
   async function check() {
     if (busy || !mode) return;
@@ -133,8 +127,8 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <DashboardLegacyDisable dashboardId={dashboardId} accessToken={accessToken}/>
     <p>目前模式：{mode?.mode ?? configuration?.dashboardMode ?? "尚未取得可信狀態"}{mode ? `（版本 ${mode.modeVersion}）` : ""}</p>
     {configuration && <p role="status">{configuration.primary.requiresConversion || configuration.sources.some(s => s.queryDefinitionId === null) ? "尚有 Legacy／pending 來源，須先明確轉換。" : "來源已完成 Query 綁定。"} {configuration.editable ? "停用草稿可進行版型設計；設計預覽仍須通過執行安全驗證。" : "目前僅供查看；修改前須安全停用。"}</p>}
-    {approvals && <p role="status">{approvalRecorded ? "已讀取各啟用來源的明確核准紀錄；完整政策仍由預檢與逐頁執行重驗。" : `尚未確認敏感核准：${missingApprovals.join("、") || "來源版本未知"}。請至敏感核准區明確處理，不會自動批准。`}</p>}
-    <p>建立停用草稿 → 來源 → 核准 → <Link to={`/designer/dashboards/${dashboardId}/layout`}>版型設計／預覽</Link> → 預檢 → 啟用 → 裝置授權。順序不代表授權證據，預檢只代表檢查當下。</p>
+    <p role="status">公共顯示政策統一於 Dataset 確認；後端預檢、啟用、裝置核發與逐頁交付都會驗證目前政策，不讀取 Dashboard 的第二套欄位核准。</p>
+    <p>建立停用草稿 → 來源 → Dataset 公共政策 → <Link to={`/designer/dashboards/${dashboardId}/layout`}>版型設計／預覽</Link> → 預檢 → 啟用 → 裝置授權。順序不代表授權證據，預檢只代表檢查當下。</p>
     <button type="button" disabled={busy} onClick={() => { setMessage(""); void refresh(); }}>重新載入播放狀態</button>
     <button type="button" disabled={busy || !mode} onClick={() => void check()}>執行啟用前檢查</button>
     {preflight && <div role="status"><p>來源：{preflight.sourceCount}/8；待轉換：{preflight.pendingCount}。{preflight.ready ? "後端預檢通過，啟用與核發仍會重新驗證。" : "後端預檢未通過，禁止啟用。"}</p>

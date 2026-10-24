@@ -72,42 +72,12 @@ type LayoutProfile = {
   widgets: LayoutWidget[];
 };
 
-type MaskMode = "NONE" | "NAME" | "MRN" | "PHONE" | "GENERIC";
 
 function textValue(value: unknown): string {
   if (value == null) return "";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
-
-function maskText(value: unknown, mode: unknown): string {
-  const text = textValue(value);
-  const maskMode = String(mode ?? "NONE") as MaskMode;
-  if (!text || maskMode === "NONE") return text;
-
-  if (maskMode === "NAME") {
-    const chars = Array.from(text);
-    if (chars.length <= 1) return "○";
-    if (chars.length === 2) return `${chars[0]}○`;
-    return `${chars[0]}${"○".repeat(chars.length - 2)}${chars[chars.length - 1]}`;
-  }
-
-  if (maskMode === "MRN") {
-    if (text.length <= 4) return "○".repeat(text.length);
-    const head = text.slice(0, Math.min(4, text.length - 2));
-    const tail = text.slice(-2);
-    return `${head}${"○".repeat(Math.max(1, text.length - head.length - tail.length))}${tail}`;
-  }
-
-  if (maskMode === "PHONE") {
-    if (text.length <= 5) return "○".repeat(text.length);
-    return `${text.slice(0, 4)}${"○".repeat(Math.max(1, text.length - 7))}${text.slice(-3)}`;
-  }
-
-  if (text.length <= 2) return "○".repeat(text.length);
-  return `${text.slice(0, 1)}${"○".repeat(text.length - 2)}${text.slice(-1)}`;
-}
-
 
 function configNumber(config: Record<string, unknown>, key: string, fallback: number) {
   const value = Number(config[key]);
@@ -141,13 +111,6 @@ function widgetStyle(widget: LayoutWidget): CSSProperties {
     borderRadius: configNumber(widget.config, "borderRadius", 0),
     padding: configNumber(widget.config, "padding", 0),
   };
-}
-
-function tableColumnMask(widget: LayoutWidget, columnName: string): MaskMode {
-  const masks = widget.config?.columnMasks;
-  if (!masks || typeof masks !== "object" || Array.isArray(masks)) return "NONE";
-  const value = (masks as Record<string, unknown>)[columnName];
-  return String(value ?? "NONE") as MaskMode;
 }
 
 export function DashboardDisplayPage() {
@@ -869,7 +832,7 @@ export function DashboardDisplayPage() {
                       key={column.columnName}
                       style={{ textAlign: column.alignment.toLowerCase() as "left" | "center" | "right" }}
                     >
-                      {formatDashboardValue(maskText(row[column.columnName], tableColumnMask(widget, column.columnName)), (widget.config.columnFormats as Record<string,unknown> | undefined)?.[column.columnName])}
+                      {formatDashboardValue(textValue(row[column.columnName]), (widget.config.columnFormats as Record<string,unknown> | undefined)?.[column.columnName])}
                     </td>
                   ))}
                 </tr>
@@ -892,7 +855,7 @@ export function DashboardDisplayPage() {
       case "FIELD":
         if (sourceFailure) { value = sourceFailure; break; }
         value = widget.sourceKey
-          ? formatDashboardValue(maskText(firstRow[widget.sourceKey], widget.config?.maskMode), widget.config.displayFormat)
+          ? formatDashboardValue(textValue(firstRow[widget.sourceKey]), widget.config.displayFormat)
           : "";
         break;
       case "CLOCK":

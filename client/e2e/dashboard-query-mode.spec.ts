@@ -1,7 +1,7 @@
 import {test,expect,type Page} from "@playwright/test";
 const token="A".repeat(43),version="a".repeat(64);
 async function setup(page:Page){
-  const state={disabled:false,ready:true,pending:false,missingApprovals:false,expiry:null as string|null|undefined,archived:false,preflightDenied:false,mode:"LEGACY",revision:0,failStatus:0,revoked:false,writes:[] as {path:string;method:string;body:any}[],legacyExecutions:0};
+  const state={disabled:false,ready:true,pending:false,missingPublicPolicy:false,expiry:null as string|null|undefined,archived:false,preflightDenied:false,mode:"LEGACY",revision:0,failStatus:0,revoked:false,writes:[] as {path:string;method:string;body:any}[],legacyExecutions:0};
   await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic",user:{id:1,username:"synthetic",displayName:"測試",permissions:["DESIGN_QUERY","VIEW_QUERY","EXECUTE_QUERY"]}})));
   const primary={sourceKey:"PRIMARY",queryDefinitionId:20,parameters:{},refreshSeconds:5,pageSeconds:5,pageSize:1,maxRows:100};
   await page.context().route(url=>url.pathname.startsWith("/api/"),async route=>{
@@ -10,8 +10,8 @@ async function setup(page:Page){
     if(state.disabled && path.includes("/query-mode/v1")){await route.fulfill({status:404,json:{error:{code:"QUERY_DEVICE_PLAYBACK_DISABLED",message:"SQL SECRET TOKEN"}}});return;}
     if(path.endsWith("/preflight")){
       if(state.preflightDenied){await route.fulfill({status:403,json:{error:{code:"FORBIDDEN",message:"SQL SECRET TOKEN"}}});return;}
-      await route.fulfill({json:{mode:state.mode,modeVersion:state.revision,version,ready:state.ready&&!state.pending,sourceCount:state.pending?2:1,pendingCount:state.pending?1:0,
-      checks:["inactive","capacity","primaryConversion","bindings","references","devices"].map(name=>({name,ok:!state.pending||name!=="bindings",code:state.pending&&name==="bindings"?"QUERY_SOURCE_PENDING_CONVERSION":null})),queries:[{sourceKey:"PRIMARY",ok:state.ready,code:state.ready?null:"PATIENT_AUDIT_NOT_CONFIGURED"},...(state.pending?[{sourceKey:"WARD",ok:false,code:"QUERY_SOURCE_PENDING_CONVERSION"}]:[])],delegators:[{deviceId:7,ok:true,code:null}]}});return;}
+      await route.fulfill({json:{mode:state.mode,modeVersion:state.revision,version,ready:state.ready&&!state.pending&&!state.missingPublicPolicy,sourceCount:state.pending?2:1,pendingCount:state.pending?1:0,
+      checks:["inactive","capacity","primaryConversion","bindings","references","devices"].map(name=>({name,ok:!state.pending||name!=="bindings",code:state.pending&&name==="bindings"?"QUERY_SOURCE_PENDING_CONVERSION":null})),queries:[{sourceKey:"PRIMARY",ok:state.ready&&!state.missingPublicPolicy,code:state.missingPublicPolicy?"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED":state.ready?null:"PATIENT_AUDIT_NOT_CONFIGURED"},...(state.pending?[{sourceKey:"WARD",ok:false,code:"QUERY_SOURCE_PENDING_CONVERSION"}]:[])],delegators:[{deviceId:7,ok:true,code:null}]}});return;}
     if(path.endsWith("/query-mode/v1")){
       if(req.method()==="POST"){
         if(state.failStatus){await route.fulfill({status:state.failStatus,json:{error:{code:state.failStatus===409?"QUERY_SOURCE_VERSION_CONFLICT":state.failStatus===403?"QUERY_SOURCE_QUERY_FORBIDDEN":state.failStatus===400?"PARAMETER_REQUIRED":"QUERY_MODE_SCHEMA_REQUIRED",message:"SQL SECRET TOKEN"}}});return;}
@@ -26,7 +26,7 @@ async function setup(page:Page){
       if(path.endsWith("/layout")){await route.fulfill({json:{profiles:[{id:1,isDefault:true,canvasWidth:1080,canvasHeight:1920,config:{},widgets:[{id:1,widgetType:"TABLE",x:10,y:10,width:1000,height:500,fontSize:24,alignment:"LEFT",config:{},sortOrder:0}]}]}});return;}
       await route.fulfill({json:{page:1,totalPages:1,snapshotId:"snapshot",dashboard:{id:1,name:"合成播放",parameters:{},refreshSeconds:5,pageSeconds:5,pageSize:1},reportColumns:[],result:{columns:[{name:"NAME"}],rows:[{NAME:"合○測試"}]}}});return;
     }
-    if(path.endsWith("/column-approvals")){await route.fulfill({json:{dashboardId:1,isActive:state.mode==="QUERY_ONLY",version,sources:[{id:1,sourceKey:"PRIMARY",datasetId:3}],deviceColumnMasks:state.missingApprovals?{}:{NAME:"FULL"},deviceColumnTypes:{NAME:"NAME"},deviceSourceColumnMasks:{}}});return;}
+    if(path.endsWith("/column-approvals")){await route.fulfill({json:{dashboardId:1,isActive:state.mode==="QUERY_ONLY",version,sources:[{id:1,sourceKey:"PRIMARY",datasetId:3}],deviceColumnMasks:state.missingPublicPolicy?{}:{NAME:"FULL"},deviceColumnTypes:{NAME:"NAME"},deviceSourceColumnMasks:{}}});return;}
     if(path.endsWith("/playback-settings")){await route.fulfill({json:{browser:"edge",screenNumber:2,fullscreen:true,windowX:-1920,windowY:0,windowWidth:1920,windowHeight:1080}});return;}
     if(path.endsWith("/configuration")){await route.fulfill({json:{version,dashboardMode:state.mode,isActive:state.mode==="QUERY_ONLY",editable:state.mode!=="QUERY_ONLY",primary,sources:state.pending?[{...primary,id:10,sourceKey:"WARD",queryDefinitionId:null,isEnabled:true}]:[]}});return;}
     if(path==="/api/dashboards"){await route.fulfill({json:{dashboards:[{id:1,code:"SYNTHETIC",name:"合成看板",queryDefinitionId:20,parameters:{},refreshSeconds:5,pageSize:1,pageSeconds:5,isActive:false}],total:1,totalPages:1}});return;}
@@ -90,12 +90,12 @@ test("expiry, archive and missing expiry evidence deny issuance without changing
   await expect(page.getByText("已封存（裝置，不代表 Dashboard 退役）",{exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"撤銷 合成平板",exact:true})).toBeDisabled(); expect(state.writes).toHaveLength(0);
 });
-test("pending sources and missing explicit approvals cannot become activation evidence", async ({page}) => {
-  const state = await setup(page); state.pending = true; state.missingApprovals = true;
+test("pending sources and missing Dataset public policy cannot become activation evidence", async ({page}) => {
+  const state = await setup(page); state.pending = true; state.missingPublicPolicy = true;
   await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
   await expect(page.getByText(/後端預檢未通過/)).toBeVisible(); await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeDisabled();
   state.pending = false; await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
-  await expect(page.getByText(/後端預檢通過，啟用與核發仍會重新驗證/)).toBeVisible();
+  await expect(page.getByText(/QUERY_SOURCE_PUBLIC_POLICY_REQUIRED/)).toBeVisible();
   await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeDisabled(); expect(state.writes).toHaveLength(0);
 });
 test("policy and permission refusals clear cached readiness without automatic activation", async ({page}) => {
@@ -122,4 +122,12 @@ test("existing screen placement is readable without issuing a token or writing u
   await page.getByRole("button",{name:"檢視 合成平板 播放位置（唯讀）",exact:true}).click();
   await expect(page.getByText(/edge，螢幕 2，全螢幕，位置 -1920／0，尺寸 1920×1080/)).toBeVisible();
   expect(state.writes).toHaveLength(0); await expect(page.getByRole("button",{name:"固定播放",exact:true})).toHaveCount(0);
+});
+
+test("server Dataset public preflight permits explicit activation without a second Dashboard approval read",async({page})=>{
+ const state=await setup(page);let oldReads=0;
+ await page.route("**/api/dashboards/1/column-approvals",async route=>{oldReads++;await route.fulfill({status:503,json:{error:{code:"LEGACY_APPROVAL_UNAVAILABLE"}}});});
+ await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
+ await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
+ await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeEnabled();expect(oldReads).toBe(0);expect(state.writes).toHaveLength(0);
 });

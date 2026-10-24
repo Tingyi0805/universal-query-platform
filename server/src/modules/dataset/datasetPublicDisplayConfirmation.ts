@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { DatasetSensitiveColumn } from "./datasetSensitiveColumn.repository.js";
 import { assertDatasetSensitivityPolicy } from "../dashboard/dashboardDeviceMasking.js";
-import type { PublicDisplayGrant, PublicDisplayPolicy } from "./datasetPublicDisplayPolicy.js";
+import {validPublicDisplayGrants, type PublicDisplayGrant, type PublicDisplayPolicy } from "./datasetPublicDisplayPolicy.js";
 
 /** Pure, fail-closed write contract. Persistence/API must provide locked current
  * sensitivity revision and the last confirmed digest in the same transaction. */
@@ -23,7 +23,7 @@ export function confirmDatasetPublicDisplay(
     throw new PublicDisplayConfirmationError("PUBLIC_DISPLAY_SENSITIVITY_VERSION_CONFLICT");
   if (publicDisplayDigest(previous) !== input.expectedPolicyDigest)
     throw new PublicDisplayConfirmationError("PUBLIC_DISPLAY_VERSION_CONFLICT");
-  if (!Array.isArray(input.grants) || input.grants.length > 300)
+  if (!validPublicDisplayGrants(input.grants) || sensitivity.version<1)
     throw new PublicDisplayConfirmationError("PUBLIC_DISPLAY_GRANTS_INVALID");
   const seen = new Set<string>();
   for (const grant of input.grants) {

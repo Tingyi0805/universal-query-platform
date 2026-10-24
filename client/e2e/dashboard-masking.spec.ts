@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const rawName = "合成患者甲", rawMrn = "SYNTHETIC987654";
 async function setup(page: Page, managed = false, canManage = true) {
-  const state = { legacyPreviewRequests: 0, bindingFailure: false, schemaMissing: false, active: false, persisted: null as any, approval: null as any, conflict: false, version: "a".repeat(64), authFail: false, fail: false, primaryFail: false, extraFail: false, saved: null as any };
+  const state = { layoutMasks:false, legacyPreviewRequests: 0, bindingFailure: false, schemaMissing: false, active: false, persisted: null as any, approval: null as any, conflict: false, version: "a".repeat(64), authFail: false, fail: false, primaryFail: false, extraFail: false, saved: null as any };
   const dashboard = { id: 1, code: "SYNTHETIC", name: "合成保護看板", queryDefinitionId: 2, refreshSeconds: 30, displayMode: "TABLE", pageSize: 5, pageSeconds: 10,
     showClock: false, showPageNumber: false, showCountdown: false, isActive: false,
     parameters: { WARD: "OR01", LIST: [1, 2], LEGACY: { keep: true }, deviceColumnMasks: { NAME: "NAME", MRN: "FULL", ROOM: "NONE" }, deviceColumnTypes: { NAME: "NAME", MRN: "MRN", ROOM: "OTHER" }, snapshotKind: "OTHER", snapshotSeconds: 60, deviceSourceColumnMasks: {} as Record<string, Record<string, string>> } };
@@ -60,7 +60,8 @@ async function setup(page: Page, managed = false, canManage = true) {
     if (path === "/api/datasets/3/sensitive-columns") { await route.fulfill({ json: { version: 1, columns: [{ columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "FULL" }, { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM", customMask: { prefix: 0, suffix: 2, symbol: "*" } }, { columnName: "SECRET", sensitivityType: "HEALTH", deviceMaskMode: "OMIT" }] } }); return; }
     if (path.endsWith("/data-sources")) { await route.fulfill({ json: { sources: [{ sourceKey: "WARD", datasetId: 3, isEnabled: true, refreshSeconds: 30 }] } }); return; }
     if (path.endsWith("/layout")) { await route.fulfill({ json: { profiles: [{ id: 1, dashboardId: 1, name: "合成版型", isDefault: true, sortOrder: 0, canvasWidth: 1920, canvasHeight: 1080, config: {}, widgets: [
-      { id: 1, widgetType: "TABLE", title: null, x: 0, y: 0, width: 800, height: 500, fontSize: 20, alignment: "LEFT", config: { dataSourceKey: "PRIMARY" }, sortOrder: 0, sourceKey: null },
+      { id: 1, widgetType: "TABLE", title: null, x: 0, y: 0, width: 800, height: 500, fontSize: 20, alignment: "LEFT", config: { dataSourceKey: "PRIMARY", ...(state.layoutMasks?{columnMasks:{MRN:"MRN"}}:{}) }, sortOrder: 0, sourceKey: null },
+      ...(state.layoutMasks?[{id:3,widgetType:"FIELD",title:null,x:800,y:0,width:500,height:150,fontSize:20,alignment:"LEFT",config:{dataSourceKey:"PRIMARY",maskMode:"MRN"},sortOrder:2,sourceKey:"MRN"}]:[]),
       { id: 2, widgetType: "TEXT", title: null, x: 0, y: 500, width: 800, height: 60, fontSize: 20, alignment: "LEFT", config: {}, sortOrder: 1, sourceKey: null, staticText: "固定合成標題" },
     ] }] } }); return; }
     if (path.endsWith("/preview")) state.legacyPreviewRequests++;
@@ -156,4 +157,15 @@ test("Dashboard Designer does not duplicate Dataset masking or field authorizati
   await expect(page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "確認授權本來源可傳送欄位（全部沿用 Dataset）" })).toHaveCount(0);
   await expect(page.getByText("PRIMARY", { exact: true }).first()).toBeVisible();
+});
+
+for(const path of ["/designer/dashboards/1/layout","/designer/dashboards/1/display"])test(`Dataset server mask is displayed once and historical widget masks are not editable: ${path}`,async({page})=>{
+ const state=await setup(page,path.endsWith("/layout"));state.layoutMasks=true;
+ await page.goto(path);
+ await expect(page.getByText("*************54",{exact:true}).first()).toBeVisible();
+ await expect(page.getByText("表格欄位遮蔽",{exact:true})).toHaveCount(0);
+ await expect(page.getByText("敏感資料遮蔽",{exact:true})).toHaveCount(0);
+ await expect(page.getByRole("option",{name:"姓名遮蔽（王○佑）",exact:true})).toHaveCount(0);
+ for(const value of [rawName,rawMrn])await expect(page.locator("body")).not.toContainText(value);
+ expect(state.approval).toBeNull();expect(state.saved).toBeNull();
 });

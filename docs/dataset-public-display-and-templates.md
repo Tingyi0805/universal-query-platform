@@ -10,10 +10,10 @@
 
 ## Dashboard
 
-- 設計器移除重複逐欄遮蔽／授權，只顯示 Dataset 政策入口。PRIMARY／額外 Query、參數、版型、裝置及啟停仍使用原本 managed endpoints／CAS，不走被停用的 Legacy writer。
+- 設計器及大螢幕版型移除重複逐欄遮蔽／授權，只顯示 Dataset 政策入口。TABLE／FIELD 僅顯示後端已處理值並套用顯示格式，不再解讀歷史 widget maskMode／columnMasks 或二次遮蔽；歷史 JSON 保留。播放管理亦不再讀取第二套 column-approvals，啟用及核發依後端 Dataset 公共政策預檢／交易重驗。PRIMARY／額外 Query、參數、版型、裝置及啟停仍使用原本 managed endpoints／CAS，不走被停用的 Legacy writer。
 - Designer Preview 使用 Dataset 預覽遮蔽與現有權限／必要患者稽核，不要求 Device Token 或公共核准。舊 JSON 不能提高揭露權限。
 - 公共 user/device Query-only 執行每次載入最新 Dataset 遮蔽與公開確認，納入完整 fingerprint；執行後、頁面傳送前、必要稽核後重驗。實際列鍵亦須屬於結果 metadata，防止未宣告欄位外洩。政策修改（含 ABA）、ACL、TokenVersion、綁定及來源變動使舊快照拒絕。只交付正向核准欄位，先在後端遮蔽。明確設定的患者稽核專用鍵沿用 Query／Excel 的同一驗證器，必須 OMIT，不能用公共核准揭露。
-- Device 保留 Token／有效期／IP／delegator／裝置檢查；Legacy mode 不能透過舊 device page 繞過 Query-only。歷史 JSON 原樣保留但不轉成 Dataset 授權。既有 legacy-to-managed conversion、source-in-use、pending conversion 及 binding-change guards 不刪除；歷史綁定衝突仍需走既有明確撤銷／轉換，不能默默搬用核准。
+- Device 保留 Token／有效期／IP／delegator／裝置檢查；Legacy mode 不能透過舊 device page 繞過 Query-only。歷史 JSON 原樣保留但不轉成 Dataset 授權。保留即時 ACL、SERIALIZABLE/CAS、active/source-in-use、pending 同 Dataset 轉換及交易內 binding-change abort。僅在 managed API 移除「歷史 JSON 非空就禁止換綁」的過時條件；JSON 原樣保留且不授權新來源，啟用與交付必須重驗所選 Dataset 公共政策。舊 whole-form writer／鎖簽章保護不變，明確清理歷史核准仍可使用既有稽核程序。
 - 普通 Dataset 未啟用患者稽核時不要求患者 receipt；明確啟用者仍需完整確認、HMAC 及持久化，失敗拒絕。沒有 SOURCE_BOUND、SQL_LOCK_VERIFIED 或 Native Runtime 的新增能力。
 
 ## 可維護範本

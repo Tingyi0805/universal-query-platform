@@ -97,7 +97,7 @@ export function DashboardBasicSettingsEditor({ dashboardId, code, accessToken, o
         <button className="dashboard-draft-submit" type="submit" disabled={busy || (!dashboardId && !queryId)}>{dashboardId ? "儲存一般顯示設定（新版）" : "建立 Dashboard"}</button>
       </fieldset>
     </form>
-    {!dashboardId && <p>新建一律停用、沒有敏感欄位核准。建立後須在 PRIMARY 明確設定參數、更新／換頁秒數、每頁筆數及 maxRows，再重新核准。此處不啟用播放。</p>}
+    {!dashboardId && <p>新建一律停用。建立後須在 PRIMARY 明確設定參數、更新／換頁秒數、每頁筆數及 maxRows；公共顯示請至 Dataset 管理並確認政策。此處不啟用播放。</p>}
     {dashboardId && <p>目前狀態：{configuration ? configuration.isActive ? "啟用" : "停用" : "尚未確認，禁止寫入"}。PRIMARY 與額外來源的參數、更新／換頁秒數、每頁筆數及 maxRows 統一在資料來源區儲存。既有版型保留；舊 snapshotKind／snapshotSeconds 不在新版編輯契約內，保留原值，不提供假儲存。</p>}
     {message && <p role="status">{message}</p>}
   </section>;

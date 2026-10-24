@@ -6,6 +6,12 @@ import { assertDatasetSensitivityPolicy, type DeviceMaskMode } from "../dashboar
  * This evaluator alone supplies neither authority nor persistence evidence. */
 export type PublicDisplayGrant = { columnName: string; permitted: boolean };
 export type PublicDisplayPolicy = { confirmed: boolean; sensitivityVersion: number; grants: PublicDisplayGrant[] };
+export function validPublicDisplayGrants(value:unknown):value is PublicDisplayGrant[]{
+ if(!Array.isArray(value)||value.length>300)return false;
+ const seen=new Set<string>();
+ for(const grant of value){if(!grant||typeof grant!=="object"||Array.isArray(grant)||Object.keys(grant).length!==2||!Object.hasOwn(grant,"columnName")||!Object.hasOwn(grant,"permitted")||typeof grant.columnName!=="string"||!grant.columnName.trim()||grant.columnName.trim()!==grant.columnName||grant.columnName.length>256||/[\x00-\x1f\x7f]/u.test(grant.columnName)||typeof grant.permitted!=="boolean"||seen.has(grant.columnName.toUpperCase()))return false;seen.add(grant.columnName.toUpperCase());}
+ return true;
+}
 export function resolveDatasetPublicDisplayMasks(
   sensitivity: { version: number; columns: DatasetSensitiveColumn[] },
   publicPolicy: PublicDisplayPolicy | null | undefined,
@@ -18,7 +24,7 @@ export function resolveDatasetPublicDisplayMasks(
   if (aliases.some(name => !name.trim()) || new Set(aliases).size !== aliases.length)
     throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
   // Every sensitivity-policy edit invalidates older public display confirmations.
-  if (!publicPolicy?.confirmed || publicPolicy.sensitivityVersion !== sensitivity.version || !Array.isArray(publicPolicy.grants)) return result;
+  if (publicPolicy?.confirmed !== true || !Number.isSafeInteger(publicPolicy.sensitivityVersion) || publicPolicy.sensitivityVersion<1 || publicPolicy.sensitivityVersion !== sensitivity.version || !validPublicDisplayGrants(publicPolicy.grants)) return result;
   const grantNames = new Set<string>();
   for (const grant of publicPolicy.grants) {
     if (!grant || typeof grant.columnName !== "string" || !grant.columnName.trim() ||
