@@ -224,7 +224,10 @@ jobs:
           Copy-Item server/src release/payload/server/src -Recurse
           Copy-Item server/tsconfig.json release/payload/server/
           Copy-Item client/dist release/payload/client/dist -Recurse
-          Copy-Item client/package.json release/payload/client/
+          Copy-Item client/package.json,client/index.html,client/vite.config.ts,client/tsconfig.json,client/tsconfig.app.json,client/tsconfig.node.json,client/tsconfig.e2e.json release/payload/client/
+          Copy-Item client/src release/payload/client/src -Recurse
+          if(Test-Path client/package-lock.json){Copy-Item client/package-lock.json release/payload/client/}
+          if(Test-Path client/.env.example){Copy-Item client/.env.example release/payload/client/}
           Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/payload/tools/
           New-Item -ItemType Directory -Path release/payload/tools/sqlserver-acceptance/drafts/925 -Force | Out-Null
           Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/tools/sqlserver-acceptance/drafts/925/
@@ -242,6 +245,26 @@ jobs:
           $lines=foreach($f in $files){$rel=$f.FullName.Substring($root.Length+1).Replace('\','/');"$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $rel"}
           $lines | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
           if($files.Count -lt 20){throw 'WINDOWS_RELEASE_INCOMPLETE'}
+      - name: Check packaged client can install, build and launch with UQP API proxy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $client='release/payload/client'
+          foreach($file in @('package.json','index.html','vite.config.ts','tsconfig.json','src/main.tsx')){
+            if(-not (Test-Path (Join-Path $client $file))){throw "UQP_CLIENT_SOURCE_MISSING: $file"}
+          }
+          if(-not ((Get-Content (Join-Path $client 'vite.config.ts') -Raw) -match 'http://localhost:3200')){throw 'UQP_CLIENT_PROXY_NOT_3200'}
+          Push-Location $client
+          try {
+            npm install --ignore-scripts
+            if($LASTEXITCODE -ne 0){throw 'UQP_CLIENT_INSTALL_FAILED'}
+            npm run build
+            if($LASTEXITCODE -ne 0){throw 'UQP_CLIENT_REBUILD_FAILED'}
+          } finally { Pop-Location }
+          # Do not ship installed development dependencies: install from package.json after extraction.
+          Remove-Item (Join-Path $client 'node_modules') -Recurse -Force
+          Write-Host 'UQP_CLIENT_SOURCE_INSTALL_REBUILD_PASS'
+
       - name: Test installer preflight and simulated rollback guard
         shell: powershell
         run: |
