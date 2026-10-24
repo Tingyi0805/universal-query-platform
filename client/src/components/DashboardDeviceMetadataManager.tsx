@@ -1,3 +1,4 @@
+import "./DashboardDeviceMetadataManager.css";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 import { dashboardOperationError, deviceMayIssue, playbackPlacement, type ManagedDevice, type PlaybackPlacement } from "../dashboard/managementStatus";
@@ -65,7 +66,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     } catch (error) { if (read === sequence.current) { setVersion(null); setMessage(`${dashboardOperationError(error)} 草稿已保留；請明確重新載入，不會自動覆寫。`); } }
     finally { if (read === sequence.current) setBusy(false); }
   }
-  return <section aria-label="版本化裝置基本管理">
+  return <section className="uqp-device-manager" aria-label="版本化裝置基本管理">
     <h3>裝置建立與基本設定</h3>
     <p>新建僅保存 metadata，委派者固定為目前操作人員，不會取得播放權限。名稱／IP／到期修改會使舊憑證失效；已失效裝置不可在此恢復。工作站換綁與封存仍為唯讀。</p>
     <button type="button" disabled={busy} onClick={() => void load(true)}>重新載入裝置設定</button>
@@ -74,19 +75,19 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
     </li>)}</ul>
-    {draft && <fieldset disabled={busy} aria-label="裝置設定草稿"><legend>{draft.deviceId === null ? "建立未授權裝置" : `裝置 ${draft.deviceId} 設定草稿`}</legend>
-      {draft.operation === "metadata" ? <>
+    {draft && <fieldset className="uqp-device-fieldset" disabled={busy} aria-label="裝置設定草稿"><legend>{draft.deviceId === null ? "建立未授權裝置" : `裝置 ${draft.deviceId} 設定草稿`}</legend>
+      {draft.operation === "metadata" ? <div className="uqp-device-fields">
         <label>裝置名稱<input aria-label="裝置名稱" maxLength={200} value={metadata.deviceName} onChange={e => setMetadata({ ...metadata, deviceName: e.target.value })}/></label>
-        <label><input type="checkbox" checked={metadata.enforceIpRestriction} onChange={e => setMetadata({ ...metadata, enforceIpRestriction: e.target.checked, allowedIp: null, allowedCidr: null })}/>限制來源 IP</label>
+        <label className="uqp-device-checkbox"><input type="checkbox" checked={metadata.enforceIpRestriction} onChange={e => setMetadata({ ...metadata, enforceIpRestriction: e.target.checked, allowedIp: null, allowedCidr: null })}/>限制來源 IP</label>
         <label>允許 IP<input aria-label="允許 IP" disabled={!metadata.enforceIpRestriction} value={metadata.allowedIp ?? ""} onChange={e => setMetadata({ ...metadata, allowedIp: e.target.value || null })}/></label>
         <label>允許 IPv4 CIDR<input aria-label="允許 IPv4 CIDR" disabled={!metadata.enforceIpRestriction} value={metadata.allowedCidr ?? ""} onChange={e => setMetadata({ ...metadata, allowedCidr: e.target.value || null })}/></label>
         <label>到期時間（UTC ISO，留空為無到期日）<input aria-label="裝置到期時間 UTC" placeholder="2030-01-01T00:00:00Z" value={metadata.expiresAtUtc ?? ""} onChange={e => setMetadata({ ...metadata, expiresAtUtc: e.target.value || null })}/></label>
-      </> : <>
+      </div> : <div className="uqp-device-fields">
         <label>瀏覽器<select aria-label="播放瀏覽器" value={placement.browser} onChange={e => setPlacement({ ...placement, browser: e.target.value as "edge" | "chrome" })}><option value="edge">Edge</option><option value="chrome">Chrome</option></select></label>
-        <label><input type="checkbox" checked={placement.fullscreen} onChange={e => setPlacement({ ...placement, fullscreen: e.target.checked })}/>全螢幕</label>
+        <label className="uqp-device-checkbox"><input type="checkbox" checked={placement.fullscreen} onChange={e => setPlacement({ ...placement, fullscreen: e.target.checked })}/>全螢幕</label>
         {([['screenNumber', '指定螢幕'], ['windowX', '視窗 X'], ['windowY', '視窗 Y'], ['windowWidth', '視窗寬度'], ['windowHeight', '視窗高度']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" aria-label={label} value={placement[key]} onChange={e => setPlacement({ ...placement, [key]: Number(e.target.value) })}/></label>)}
-      </>}
-      <button type="button" disabled={!version || (draft.operation === "metadata" && !metadata.deviceName.trim())} onClick={() => void save()}>確認保存裝置設定</button>
+      </div>}
+      <div className="uqp-device-actions"><button type="button" disabled={!version || (draft.operation === "metadata" && !metadata.deviceName.trim())} onClick={() => void save()}>確認保存裝置設定</button></div>
     </fieldset>}
     {message && <p role="status">{message}</p>}
   </section>;
