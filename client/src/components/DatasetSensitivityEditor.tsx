@@ -167,7 +167,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     <p role="status">欄位來自已同步清單與既有規則；未設定的欄位不傳送。清單為空時，請先儲存 SQL，再按「取得並同步欄位清單」。這僅同步欄位選項，不建立可信型別或患者稽核證據，不解除資料預覽限制。</p>
     <button type="button" disabled={!canSyncColumns || busy || dirty || conflict} onClick={() => void syncColumns()}>取得並同步欄位清單</button>
     {!canSyncColumns && <p role="status">同步欄位目前不可用：請先儲存 SQL／資料來源，確認無未儲存修改，且帳號具備 DESIGN_QUERY 與 EXECUTE_QUERY 權限。</p>}
-    {syncAttempted && availableColumns.length > 0 && <p role="status">目前可選擇 {availableColumns.length} 個已同步查詢欄位。</p>}}
+    {syncAttempted && availableColumns.length > 0 && <p role="status">目前可選擇 {availableColumns.length} 個已同步查詢欄位。</p>}
     {dirty && <p role="status">請先儲存或重新載入規則，再同步欄位，避免遺失草稿。</p>}
     <label>查詢結果欄位 <select value={column} onChange={(event) => editRule(event.target.value)}>
       <option value="">請選擇欄位</option>
