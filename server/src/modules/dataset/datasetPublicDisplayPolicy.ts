@@ -13,14 +13,12 @@ export function resolveDatasetPublicDisplayMasks(
 ): Record<string, DeviceMaskMode> {
   assertDatasetSensitivityPolicy(sensitivity);
   const result: Record<string, DeviceMaskMode> = {};
+  // Reject ambiguous result aliases even before any approval can be evaluated.
+  const aliases = resultColumns.map(name => name.toUpperCase());
+  if (aliases.some(name => !name.trim()) || new Set(aliases).size !== aliases.length)
+    throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
   // Every sensitivity-policy edit invalidates older public display confirmations.
   if (!publicPolicy?.confirmed || publicPolicy.sensitivityVersion !== sensitivity.version || !Array.isArray(publicPolicy.grants)) return result;
-  const seen = new Set<string>();
-  for (const name of resultColumns) {
-    const normalized = name.toUpperCase();
-    if (seen.has(normalized)) throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
-    seen.add(normalized);
-  }
   const grantNames = new Set<string>();
   for (const grant of publicPolicy.grants) {
     if (!grant || typeof grant.columnName !== "string" || !grant.columnName.trim() ||
