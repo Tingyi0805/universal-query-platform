@@ -8,17 +8,28 @@ const sensitivity = { version: 3, columns: [
 ] };
 test("public display always denies absent or unconfirmed grants", () => {
   assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, null, ["NAME"]), {});
-  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: false, grants: [{ columnName: "NAME", permitted: true }] }, ["NAME"]), {});
+  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: false, sensitivityVersion: 3, grants: [{ columnName: "NAME", permitted: true }] }, ["NAME"]), {});
 });
 test("confirmed explicit grants inherit Dataset masks but never grant OMIT or unknown columns", () => {
-  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, grants: [
+  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, sensitivityVersion: 3, grants: [
     { columnName: "NAME", permitted: true }, { columnName: "ROOM", permitted: true },
     { columnName: "SECRET", permitted: true }, { columnName: "NEW_FIELD", permitted: true },
   ] }, ["NAME", "ROOM", "SECRET", "NEW_FIELD"]), { NAME: "CUSTOM", ROOM: "NONE" });
 });
 test("duplicate grants and result aliases never authorize disclosure", () => {
-  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, grants: [
+  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, sensitivityVersion: 3, grants: [
     { columnName: "NAME", permitted: true }, { columnName: "name", permitted: true },
   ] }, ["NAME"]), {});
-  assert.throws(() => resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, grants: [] }, ["ROOM", "room"]), /DASHBOARD_COLUMNS_AMBIGUOUS/);
+  assert.throws(() => resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, sensitivityVersion: 3, grants: [] }, ["ROOM", "room"]), /DASHBOARD_COLUMNS_AMBIGUOUS/);
+});
+
+test("sensitivity policy revision change revokes earlier public display confirmations", () => {
+  const policy = { confirmed: true, sensitivityVersion: 3, grants: [{ columnName: "NAME", permitted: true }] };
+  assert.deepEqual(resolveDatasetPublicDisplayMasks({ ...sensitivity, version: 4 }, policy, ["NAME"]), {});
+  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, policy, ["NAME"]), { NAME: "CUSTOM" });
+});
+test("a malformed public display grant cannot create accidental approval", () => {
+  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, sensitivityVersion: 3, grants: [
+    { columnName: "NAME", permitted: true }, { columnName: " name ", permitted: true },
+  ] }, ["NAME"]), {});
 });
