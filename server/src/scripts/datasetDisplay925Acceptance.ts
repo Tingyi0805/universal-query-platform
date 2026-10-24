@@ -14,7 +14,7 @@ import {resolveDatasetPublicDisplayMasks} from "../modules/dataset/datasetPublic
 export async function testDisplay925CleanCatalog(root:sql.ConnectionPool){
  assert.equal(process.env.GITHUB_ACTIONS,"true");
  const ddl=await readFile(displayDdlUrl,"utf8"),t=new sql.Transaction(root);await t.begin();
- try{await new sql.Request(t).batch(ddl);const r=await new sql.Request(t).query(displayCatalogSql);assert.equal(validateDisplayCatalog(r.recordsets as unknown as Record<string,any>[][],ddl),"EXACT_MATCH");}
+ try{await new sql.Request(t).batch(ddl);const r=await new sql.Request(t).query(displayCatalogSql);assert.equal(validateDisplayCatalog(r.recordsets as unknown as Record<string,any>[][],ddl,reason=>console.log("925_CATALOG_"+reason)),"EXACT_MATCH");}
  finally{await t.rollback();}
  console.log("DATASET_DISPLAY_925_CLEAN_FULL_SCHEMA_ROUNDTRIP_ROLLBACK_PASS");
 }

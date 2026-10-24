@@ -131,6 +131,10 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
           if ($parseErrors.Count -gt 0) { throw '924_WINDOWS_INSTALLER_SYNTAX_INVALID' }
           Write-Host '924_WINDOWS_POWERSHELL_51_SYNTAX_OK'
+          $file = (Resolve-Path '.\tools\install-uqp-925.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw '925_WINDOWS_INSTALLER_SYNTAX_INVALID' }
+          Write-Host '925_WINDOWS_POWERSHELL_51_SYNTAX_OK'
       - uses: actions/setup-node@v4
         with:
           node-version: 22

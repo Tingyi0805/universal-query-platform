@@ -29,10 +29,26 @@ SELECT t.name AS [table],f.name,c.name AS [column],rt.name AS target,rc.name AS 
 SELECT tr.name FROM sys.triggers tr JOIN sys.tables t ON t.object_id=tr.parent_id WHERE t.schema_id=SCHEMA_ID(N'uqp') AND t.name IN ('DatasetPublicDisplayPolicy','DatasetMaskTemplate','DatasetMaskTemplateUse');
 SELECT CASE WHEN HAS_PERMS_BY_NAME(DB_NAME(),'DATABASE','VIEW DEFINITION')=1 OR
  (HAS_PERMS_BY_NAME('uqp.DatasetPublicDisplayPolicy','OBJECT','VIEW DEFINITION')=1 AND HAS_PERMS_BY_NAME('uqp.DatasetMaskTemplate','OBJECT','VIEW DEFINITION')=1 AND HAS_PERMS_BY_NAME('uqp.DatasetMaskTemplateUse','OBJECT','VIEW DEFINITION')=1) THEN 1 ELSE 0 END AS visible;`;
-const norm = (s: string) => s.replace(/[\s\[\]()]/g, "").toUpperCase();
+/** Restricted SQL CHECK/default grammar. Preserve grouping and three-valued logic;
+ * normalize SQL Server's IN -> OR serialization, never discard parentheses. */
+export function canonicalDisplayExpression(text:string):string{
+ const tokens=text.match(/N?'(?:''|[^'])*'|\[[A-Za-z_][A-Za-z0-9_]*\]|[A-Za-z_][A-Za-z0-9_]*|[0-9]+|<>|<=|>=|[(),=<>]/g)??[];
+ if(tokens.join("").replace(/\s/g,"")!==text.replace(/\s/g,""))throw new Error("CATALOG_EXPRESSION_UNKNOWN");
+ let i=0;type Node={kind:string;args:Node[];value?:string};
+ const atom=(value:string):Node=>({kind:"ATOM",args:[],value});
+ const key=(n:Node):string=>n.kind==="ATOM"?JSON.stringify(n.value):`${n.kind}(${n.args.map(key).join(",")})`;
+ const combine=(kind:string,args:Node[]):Node=>{const flat=args.flatMap(n=>n.kind===kind&&["AND","OR"].includes(kind)?n.args:[n]);if(["AND","OR","=" ,"<>"].includes(kind))flat.sort((a,b)=>key(a).localeCompare(key(b)));return {kind,args:flat};};
+ const peek=()=>tokens[i]?.toUpperCase();const expect=(t:string)=>{if(peek()!==t)throw new Error("CATALOG_EXPRESSION_UNKNOWN");i++;};
+ const operand=():Node=>{const t=tokens[i++];if(!t)throw new Error("CATALOG_EXPRESSION_UNKNOWN");if(t==="("){const n=or();expect(")");return n;}if(t==="N'"||t==="'"||["AND","OR","IS","IN",",", ")"].includes(t.toUpperCase()))throw new Error("CATALOG_EXPRESSION_UNKNOWN");if(t.startsWith("'")||t.startsWith("N'"))return atom(t.replace(/^N/,""));const name=t.replace(/[\[\]]/g,"").toUpperCase();if(peek()==="("){i++;const args:Node[]=[];if(peek()!==")"){args.push(or());while(peek()===","){i++;args.push(or());}}expect(")");return {kind:"CALL:"+name,args};}return atom(name);};
+ const predicate=():Node=>{const lhs=operand(),next=peek();if(["=","<>","<",">","<=",">="].includes(next??"")){i++;return combine(next!,[lhs,operand()]);}if(next==="IS"){i++;const not=peek()==="NOT";if(not)i++;expect("NULL");return {kind:not?"IS_NOT_NULL":"IS_NULL",args:[lhs]};}if(next==="IN"){i++;expect("(");const list=[operand()];while(peek()===","){i++;list.push(operand());}expect(")");return combine("OR",list.map(n=>combine("=",[lhs,n])));}return lhs;};
+ const and=():Node=>{let n=predicate();while(peek()==="AND"){i++;n=combine("AND",[n,predicate()]);}return n;};
+ const or=():Node=>{let n=and();while(peek()==="OR"){i++;n=combine("OR",[n,and()]);}return n;};
+ const result=or();if(i!==tokens.length)throw new Error("CATALOG_EXPRESSION_UNKNOWN");return key(result);
+}
+const norm=canonicalDisplayExpression;
 /** Compare against reviewed source, not names alone. SQL Server adds parentheses to CHECK/DEFAULT text. */
-export function validateDisplayCatalog(sets: Record<string, any>[][], ddl: string): "ABSENT" | "EXACT_MATCH" {
-  const fail = () => { throw new DatasetDisplayError("DATASET_DISPLAY_SCHEMA_REQUIRED",503); };
+export function validateDisplayCatalog(sets: Record<string, any>[][], ddl: string, diagnostic?:(reason:string)=>void): "ABSENT" | "EXACT_MATCH" {
+  const fail = (reason="CATALOG_MISMATCH") => { diagnostic?.(reason); throw new DatasetDisplayError("DATASET_DISPLAY_SCHEMA_REQUIRED",503); };
   if (!Array.isArray(sets) || sets.length !== 7 || sets[6]?.[0]?.visible !== 1) return fail();
   if (!sets[0]!.length && sets.slice(1,6).every(s=>!s.length)) return "ABSENT";
   if (sets[0]!.length !== 3 || sets[5]!.length) return fail();
@@ -46,20 +62,20 @@ export function validateDisplayCatalog(sets: Record<string, any>[][], ddl: strin
         count++;
         const c=sets[1]!.filter(c=>c.table===table&&c.name===col[1]);
         const type=col[2]!.toLowerCase(),length=col[3]==="MAX"?-1:col[3]?Number(col[3])*(type==="nvarchar"?2:1):({bigint:8,bit:1,uniqueidentifier:16,rowversion:8,datetime2:7} as Record<string,number>)[type];
-        if(c.length!==1 || ![type,...(type==="rowversion"?["timestamp"]:[])].includes(c[0]!.type) || type!=="datetime2"&&c[0]!.length!==length || type==="datetime2"&&c[0]!.scale!==Number(col[3]) || !!c[0]!.nullable!==(col[6]==="NULL") || !!c[0]!.identityColumn!==!!col[5] || col[4]&&c[0]!.collation!==col[4])return fail();
+        if(c.length!==1 || ![type,...(type==="rowversion"?["timestamp"]:[])].includes(c[0]!.type) || type!=="datetime2"&&c[0]!.length!==length || type==="datetime2"&&c[0]!.scale!==Number(col[3]) || !!c[0]!.nullable!==(col[6]==="NULL") || !!c[0]!.identityColumn!==!!col[5] || col[4]&&c[0]!.collation!==col[4])return fail("COLUMN_"+table+"_"+col[1]);
         const inline=/CONSTRAINT (\w+) PRIMARY KEY/.exec(line); if(inline)indexes.push({table,name:inline[1]!,keys:[col[1]!],include:[],unique:true});
       }
       const ck=/CONSTRAINT (\w+) CHECK\((.*)\),?$/.exec(line);
       const def=/CONSTRAINT (\w+) DEFAULT (.*),?$/.exec(line) ?? /CONSTRAINT (\w+) DEFAULT(\(.*\)),?$/.exec(line);
-      if(ck||def){const m=(ck??def)!;constraintCount++;const found=sets[2]!.filter(c=>c.table===table&&c.name===m[1]);if(found.length!==1||found[0]!.disabled||found[0]!.untrusted||norm(found[0]!.definition)!==norm(m[2]!.replace(/,$/,"")))return fail();}
+      if(ck||def){const m=(ck??def)!;constraintCount++;const found=sets[2]!.filter(c=>c.table===table&&c.name===m[1]);if(found.length!==1||found[0]!.disabled||found[0]!.untrusted||norm(found[0]!.definition)!==norm(m[2]!.replace(/,$/,"")))return fail("CONSTRAINT_"+m[1]);}
       const uq=/CONSTRAINT (\w+) UNIQUE\(([^)]+)\)/.exec(line);if(uq)indexes.push({table,name:uq[1]!,keys:uq[2]!.split(","),include:[],unique:true});
       const fk=/CONSTRAINT (\w+) FOREIGN KEY\((\w+)\) REFERENCES uqp\.(\w+)\((\w+)\)( ON DELETE CASCADE)?/.exec(line);
       if(fk){fkCount++;const f=sets[4]!.filter(f=>f.table===table&&f.name===fk[1]);if(f.length!==1||f[0]!.column!==fk[2]||f[0]!.target!==fk[3]||f[0]!.targetColumn!==fk[4]||f[0]!.deleteAction!==(fk[5]?"CASCADE":"NO_ACTION")||f[0]!.updateAction!=="NO_ACTION"||f[0]!.targetSchema!=="uqp"||f[0]!.disabled||f[0]!.untrusted)return fail();}
     }
   }
   for(const m of ddl.matchAll(/CREATE INDEX (\w+) ON uqp\.(\w+)\(([^)]+)\)(?: INCLUDE\(([^)]+)\))?/g))indexes.push({name:m[1]!,table:m[2]!,keys:m[3]!.split(","),include:m[4]?.split(",")??[],unique:false});
-  for(const i of indexes){const found=sets[3]!.filter(r=>r.table===i.table&&r.name===i.name);indexCount+=found.length;const keys=found.filter(r=>r.ordinal>0).sort((a,b)=>a.ordinal-b.ordinal).map(r=>r.column),includes=found.filter(r=>r.included).map(r=>r.column).sort();if(JSON.stringify(keys)!==JSON.stringify(i.keys)||JSON.stringify(includes)!==JSON.stringify([...i.include].sort())||found.some(r=>r.disabled||r.filtered||!!r.uniqueIndex!==i.unique))return fail();}
-  if(count!==sets[1]!.length||constraintCount!==sets[2]!.length||fkCount!==sets[4]!.length||indexCount!==sets[3]!.length)return fail();
+  for(const i of indexes){const found=sets[3]!.filter(r=>r.table===i.table&&r.name===i.name);indexCount+=found.length;const keys=found.filter(r=>r.ordinal>0).sort((a,b)=>a.ordinal-b.ordinal).map(r=>r.column),includes=found.filter(r=>r.included).map(r=>r.column).sort();if(JSON.stringify(keys)!==JSON.stringify(i.keys)||JSON.stringify(includes)!==JSON.stringify([...i.include].sort())||found.some(r=>r.disabled||r.filtered||!!r.uniqueIndex!==i.unique))return fail("INDEX_"+i.name);}
+  if(count!==sets[1]!.length||constraintCount!==sets[2]!.length||fkCount!==sets[4]!.length||indexCount!==sets[3]!.length)return fail("CATALOG_COUNTS");
   return "EXACT_MATCH";
 }
 export async function requireDisplaySchema(request: sql.Request): Promise<void> {

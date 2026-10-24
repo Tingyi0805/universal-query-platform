@@ -10,3 +10,11 @@ test("925 requires explicit target/confirmation, never picked up by automatic mi
 });
 test("925 DDL only creates new objects/suggestions; no historical public approvals or Scope",async()=>{const ddl=await readFile(displayDdlUrl,"utf8");assert.doesNotMatch(ddl,/INSERT\s+(?:INTO\s+)?uqp\.(DatasetPublicDisplayPolicy|DatasetSecurityScope)|UPDATE\s+uqp\.|DELETE\s+FROM|ALTER\s+TABLE|SchemaMigration/i);assert.match(ddl,/PublicAllowed BIT NOT NULL.*DEFAULT\(0\)/);});
 test("925 catalog absent/partial/invisible fail closed and exact BIGINT is never Number-repaired",async()=>{const ddl=await readFile(displayDdlUrl,"utf8"),absent=[[],[],[],[],[],[],[{visible:1}]];assert.equal(validateDisplayCatalog(absent,ddl),"ABSENT");assert.throws(()=>validateDisplayCatalog([...absent.slice(0,6),[{visible:0}]],ddl));assert.throws(()=>validateDisplayCatalog([[{name:"DatasetPublicDisplayPolicy"}],...absent.slice(1)],ddl));for(const id of [0,9007199254740992,"01","9223372036854775808"])assert.equal(exactPositiveId(id),false);assert.equal(exactPositiveId("9007199254740993"),true);});
+
+test("SQL Server IN expansion compares exactly without erasing CHECK grouping or NULL semantics",async()=>{
+ const {canonicalDisplayExpression:c}=await import("../modules/dataset/datasetDisplaySchema.js");
+ assert.equal(c("Mode IN ('NONE','CUSTOM','FULL','OMIT')"),c("([Mode]='OMIT' OR [Mode]='FULL' OR [Mode]='CUSTOM' OR [Mode]='NONE')"));
+ assert.equal(c("ISJSON(Json)=1 AND Version>0"),c("(([Version]>(0)) AND (isjson([Json])=(1)))"));
+ assert.notEqual(c("(Mode='CUSTOM' AND Json IS NOT NULL) OR (Mode<>'CUSTOM' AND Json IS NULL)"),c("Mode='CUSTOM' AND (Json IS NOT NULL OR Mode<>'CUSTOM') AND Json IS NULL"));
+ assert.notEqual(c("Json IS NULL"),c("Json = NULL"));assert.notEqual(c("Mode='OMIT'"),c("Mode='omit'"));assert.throws(()=>c("Unknown!()"));
+});
