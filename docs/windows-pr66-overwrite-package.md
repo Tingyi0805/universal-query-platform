@@ -1,18 +1,18 @@
 # PR #66 — C:\UQP 覆蓋式更新包操作說明
 
-本 ZIP 不使用 payload 資料夾；解壓後根目錄直接為 server、client、database、tools、docs，且以既有 C:\UQP 為目標、採「同磁碟整個目錄先備份再切換」的 Windows 更新包。
+本 ZIP 是以既有 C:\UQP 為目標、採「同磁碟整個目錄先備份再切換」的 Windows 更新包。
 不得在服務執行中直接解壓縮覆蓋 node_modules 或 .env。本更新腳本**不會執行 SQL Migration、不會停止或啟動服務**。
 
 ## 更新包內容
 
-- `server/dist`：已編譯 Server
-- `server/node_modules`：Windows Runner 安裝的相依套件
-- `client/dist`：已編譯 Client
-- `client/src`、`index.html`、`vite.config.ts`、`tsconfig*.json`、`package.json`：本機編譯與啟動 Client 的完整開發來源（預設 API 代理 Port 3200）
-- `server/src`：專用 925 安裝程式來源（非供直接取代已編譯 Runtime）
-- `tools/install-uqp-925.ps1`：需明確 DBA 核准的 925 Preflight／Apply／Verify
-- `tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql`：925 結構定義，**供核對，不得直接以 SSMS 跳過專用安裝檢查執行**
-- `database/925_dataset_display_policy.sql`：供 DBA 閱讀的同份 925 定義
+- `payload/server/dist`：已編譯 Server
+- `payload/server/node_modules`：Windows Runner 安裝的相依套件
+- `payload/client/dist`：已編譯 Client
+- `payload/client/src`、`index.html`、`vite.config.ts`、`tsconfig*.json`、`package.json`：本機編譯與啟動 Client 的完整開發來源（預設 API 代理 Port 3200）
+- `payload/server/src`：專用 925 安裝程式來源（非供直接取代已編譯 Runtime）
+- `payload/tools/install-uqp-925.ps1`：需明確 DBA 核准的 925 Preflight／Apply／Verify
+- `payload/tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql`：925 結構定義，**供核對，不得直接以 SSMS 跳過專用安裝檢查執行**
+- `payload/database/925_dataset_display_policy.sql`：供 DBA 閱讀的同份 925 定義
 - `install-uqp-pr66-offline.ps1`：驗證雜湊、更新、備份與失敗回復
 - `SHA256SUMS.txt`：更新包內部檔案雜湊
 
@@ -95,19 +95,3 @@ Chrome 開啟 Vite 顯示的 Local 網址，通常為 http://localhost:5173/。
 Server 的實際健康檢查網址是 http://localhost:3200/api/status（不是 /health）。
 若 5173 已被占用，請先停止舊版 Client，避免混用版本。
 正式 Windows Server 應沿用既有靜態網站部署，不使用 Vite 開發服務。
-
-
-## PR66 扁平目錄版（無 payload）
-
-本次 Windows ZIP 解壓後根目錄直接包含 server、client、database、tools、docs，以及 install-uqp-pr66-offline.ps1。請勿再使用舊版 payload 目錄。不要將整個更新包直接解壓覆蓋運作中的 C:\UQP，因為會誤覆本機 .env 或舊檔混雜；請在維護時段先停止 Server 與 Client，使用已驗證的離線切換工具。既有已通過的 925_EXACT_MATCH 不需要重做建表。
-
-~~~powershell
-cd C:\UQP_Update
-.\install-uqp-pr66-offline.ps1 -Target C:\UQP -PreflightOnly
-# 確認服務已停止、備份完整、925 已驗證且維護已核准後：
-.\install-uqp-pr66-offline.ps1 -Target C:\UQP -Schema925Verified -ServiceStopped -AcceptMaintenance
-cd C:\UQP\client
-npm install
-npm run build
-npm run dev
-~~~
