@@ -168,7 +168,18 @@ jobs:
           test -s "dist/$file"
           unzip -l "dist/$file" | grep -q 'tools/install-uqp-925.ps1'
           unzip -l "dist/$file" | grep -q 'docs/windows-dataset-display-925-rollout.md'
-          if unzip -Z1 "dist/$file" | grep -Ei '(^|/)(\.env($|\.)|node_modules/|\.git/|\.pem$|\.pfx$|\.key$)'; then
+          if unzip -Z1 "dist/$file" | grep -Ei '(^|/)(\.env($|\.)|node_modules/|\.git/|[^/]+\.(pem|pfx|key)$)' | grep -Ev '(^|/)\.env\.example
+            echo 'BUNDLE_CONTAINS_FORBIDDEN_FILE'
+            exit 1
+          fi
+          echo "D0_SOURCE_BUNDLE_ONLY_NOT_DEPLOYABLE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr66-d0-source
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+; then
             echo 'BUNDLE_CONTAINS_FORBIDDEN_FILE'
             exit 1
           fi
