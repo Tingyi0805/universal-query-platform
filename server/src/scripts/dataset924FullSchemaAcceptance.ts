@@ -258,7 +258,19 @@ async function main(){
       SET IDENTITY_INSERT uqp.Dataset OFF;
       GRANT SELECT,INSERT,DELETE ON OBJECT::uqp.DatasetColumn TO [${login}];
       GRANT SELECT ON OBJECT::uqp.DatasetSensitiveColumn TO [${login}];`);
-    const columnRepository=createDatasetColumnRepository({getPool:async()=>app!,transaction:p=>new sql.Transaction(p),request:t=>new sql.Request(t)});
+    const columnRepository=createDatasetColumnRepository({getPool:async()=>app!,transaction:p=>new sql.Transaction(p),request:t=>{
+      const request=new sql.Request(t),query=request.query;
+      request.query=function(...args:unknown[]){
+        return Reflect.apply(query,request,args).catch((error:unknown)=>{
+          const number=(error as {number?:unknown})?.number;
+          const statement=String(args[0]);
+          const object=["DatasetSensitiveColumn","DatasetParameter","DatasetColumn","AuditLog","Dataset"].find(name=>statement.includes("uqp."+name))??"SESSION";
+          console.error("COLUMN_SYNC_SQL_FAILURE object="+object+";number="+(Number.isSafeInteger(number)?number:0));
+          throw error;
+        });
+      } as typeof request.query;
+      return request;
+    }});
     const versions=async()=> (await root!.request().query(`SELECT LOWER(CONVERT(varchar(16),d.DefinitionRowVersion,2)) D,
       LOWER(CONVERT(varchar(16),s.ConfigurationRowVersion,2)) S FROM uqp.Dataset d JOIN uqp.DataSource s ON s.Id=d.DataSourceId WHERE d.Id=77`)).recordset[0];
     const opts=async()=>{const v=await versions();return {dataSourceId:201,definitionVersion:v.D as string,configurationVersion:v.S as string,userId:303,
