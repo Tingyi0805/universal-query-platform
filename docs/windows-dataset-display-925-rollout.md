@@ -36,3 +36,7 @@ Runtime 維持非 dbo，925 最小新增權限：三表 SELECT／VIEW DEFINITION
 需要 DB 還原時由 DBA 核准：停止所有 Writer，評估備份後交易及必須保存的 Audit／PatientDisclosure／TemplateUse，還原於副本先驗證，再決定正式回復；不能覆寫或丟失應保存的稽核歷史。密碼／JWT/HMAC key 不因回復重設。
 
 **發布判定：程式與 CI 通過不等於共享正式升級授權；925 未安裝、Runtime 權限未驗證或 Oracle／Windows 實測未完成，正式切換仍 BLOCKED。不要求使用者逐階段下載覆蓋。**
+
+## D0 驗收紀錄
+
+獨立 Windows／SQL Server 副本及真實 OR_001／Oracle 11g Thick 實機驗收，請依 [D0 驗收清單](d0-or001-windows-isolated-acceptance.md) 留存 PASS／FAIL／BLOCKED 證據。CI Success 或來源 ZIP 不構成共用正式環境升級核准。
