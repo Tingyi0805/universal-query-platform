@@ -65,7 +65,7 @@ async function setup() {
     auditPatient: async (input: { rows: ReadonlyArray<Record<string, unknown>>; masked: boolean }) => {
       state.patientAudits++;
       assert.equal(input.rows[0]?.MRN, rawId);
-      assert.equal(input.rows[0]?.NAME, rawName);
+      assert.equal(input.rows[0]?.NAME ?? input.rows[0]?.["姓名"], rawName);
       assert.equal(input.masked, true);
       if (state.phase === "patient-audit") state.change();
       if (state.auditFailure) throw new Error("SYNTHETIC_AUDIT_FAILURE");
