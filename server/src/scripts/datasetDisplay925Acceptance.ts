@@ -42,22 +42,24 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
   GRANT VIEW DEFINITION ON OBJECT::uqp.DatasetPublicDisplayPolicy TO [${login}];GRANT VIEW DEFINITION ON OBJECT::uqp.DatasetMaskTemplate TO [${login}];GRANT VIEW DEFINITION ON OBJECT::uqp.DatasetMaskTemplateUse TO [${login}];
   GRANT SELECT ON OBJECT::uqp.QueryDefinition TO [${login}];GRANT SELECT ON OBJECT::uqp.DatasetSensitivePolicyVersion TO [${login}];`);
  console.log("DATASET_DISPLAY_925_STAGE_RESTRICTED_WRITE");
- const deps={...displayRepositoryDefaults,getPool:async()=>app};const store=createDatasetPublicDisplayRepository(deps),templates=createMaskTemplateRepository(deps);
+ const deps={...displayRepositoryDefaults,getPool:async()=>app,request:(tx:sql.Transaction)=>{
+  const r=new sql.Request(tx),query=r.query;r.query=function(...args:unknown[]){return Reflect.apply(query,r,args).catch((e:unknown)=>{const n=(e as {number?:unknown})?.number;console.error("925_SQL_FAILURE_NUMBER="+(Number.isSafeInteger(n)?n:0));throw e;});} as typeof r.query;return r;
+ }};const store=createDatasetPublicDisplayRepository(deps),templates=createMaskTemplateRepository(deps);
  const tokenVersion=Number((await root.request().query("SELECT TokenVersion FROM uqp.AppUser WHERE Id=303")).recordset[0].TokenVersion);
  const secret=env.JWT_SECRET;env.JWT_SECRET="SYNTHETIC_925_CI";
  try{
   const token=jwt.sign({sub:"303",tokenVersion},env.JWT_SECRET);const identity=createRuntimeIdentityVerifier();const actor=(tx:sql.Transaction)=>identity("Bearer "+token,tx);
-  const s=await store.get(79,actor);assert.equal(s.status,"UNCONFIRMED");
+  console.log("925_STEP_INITIAL_GET");const s=await store.get(79,actor);assert.equal(s.status,"UNCONFIRMED");
   const command=(v= s)=>({expectedVersion:v.version,expectedSensitivityVersion:v.sensitivityVersion,expectedDefinitionVersion:v.definitionVersion,expectedConfigurationVersion:v.configurationVersion,requestId:randomUUID(),grants:[{columnName:"NAME",permitted:true},{columnName:"PHONE",permitted:true},{columnName:"SECRET",permitted:false}]});
   await assert.rejects(store.save(79,actor,{...command(),grants:[{columnName:"SECRET",permitted:true}]}));
   await root.request().query("DBCC CHECKIDENT ('uqp.AuditLog',RESEED,9007199254740993) WITH NO_INFOMSGS");
-  const c=command(),first=await store.save(79,actor,c);assert.equal(first.status,"CONFIRMED");assert.deepEqual(await store.save(79,actor,c),first);
+  console.log("925_STEP_FIRST_CONFIRM");const c=command(),first=await store.save(79,actor,c);assert.equal(first.status,"CONFIRMED");assert.deepEqual(await store.save(79,actor,c),first);
   const exact=(await root.request().query("SELECT CONVERT(varchar(20),AuditLogId) A FROM uqp.DatasetPublicDisplayPolicy WHERE DatasetId=79")).recordset[0].A;assert.ok(BigInt(exact)>9007199254740992n);
   await assert.rejects(store.save(79,actor,{...c,grants:[]}));
-  const race=await Promise.allSettled([store.save(79,actor,command(first)),store.save(79,actor,command(first))]);assert.equal(race.filter(r=>r.status==="fulfilled").length,1);
-  const current=await store.get(79,actor);await root.request().query(`DENY INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);
+  console.log("925_STEP_RACE");const race=await Promise.allSettled([store.save(79,actor,command(first)),store.save(79,actor,command(first))]);assert.equal(race.filter(r=>r.status==="fulfilled").length,1);
+  console.log("925_STEP_AUDIT_DENIAL");const current=await store.get(79,actor);await root.request().query(`DENY INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);
   await assert.rejects(store.save(79,actor,{...command(current),grants:[]}));assert.equal((await store.get(79,actor)).version,current.version);await root.request().query(`GRANT INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);
-  await root.request().query("UPDATE uqp.DatasetSensitivePolicyVersion SET VersionNumber=VersionNumber+2 WHERE DatasetId=79");assert.equal((await store.get(79,actor)).status,"STALE");
+  console.log("925_STEP_VERSION_INVALIDATION");await root.request().query("UPDATE uqp.DatasetSensitivePolicyVersion SET VersionNumber=VersionNumber+2 WHERE DatasetId=79");assert.equal((await store.get(79,actor)).status,"STALE");
   let next=await store.get(79,actor);await store.save(79,actor,command(next));
   await root.request().query("UPDATE uqp.DataSource SET Name=Name WHERE Id=202");assert.equal((await store.get(79,actor)).status,"STALE");
   next=await store.get(79,actor);await store.save(79,actor,command(next));
