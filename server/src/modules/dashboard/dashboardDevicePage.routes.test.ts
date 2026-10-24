@@ -31,7 +31,7 @@ async function openFixture() {
       { columnName: "SECRET", sensitivityType: "HEALTH", deviceMaskMode: "OMIT" as const },
     ] },
     sources: [{ id: 10, dashboardId: 1, sourceKey: "ORACLE", datasetId: 3, refreshSeconds: 10, pageSize: 1, pageSeconds: 5, parameters: { WARD: "TEST" }, isEnabled: true }],
-    afterSql: () => {}, afterAudit: () => {}, sqlFailure: false, auditFailure: false, auditEnabled: true,
+    afterSql: () => {}, afterAudit: () => {}, sqlFailure: false, auditFailure: false, auditEnabled: true, patientConfigured: true,
   };
   const deps: DevicePageDependencies = {
     getApprovalEvidence: async () => { if (state.schemaMissing) throw new SecurityContractError("SECURITY_SCHEMA_REQUIRED"); return state.approvalEpoch; },
@@ -56,6 +56,7 @@ async function openFixture() {
         rows: [{ NAME: "測試患者甲", MRN: "00000123", SECRET: "synthetic diagnosis", ROOM: "TEST" },
           { NAME: "測試患者乙", MRN: "00000456", SECRET: "synthetic diagnosis", ROOM: "TEST2" }], rowCount: 2, elapsedMs: 1, truncated: false };
     },
+    getPatientAuditConfig: async () => state.patientConfigured ? { isEnabled: true, patientKeyColumn: "MRN" } : null,
     auditPatientListIfConfigured: async input => {
       if (!state.auditEnabled) return null;
       if (state.auditFailure) throw new Error("synthetic audit unavailable");
@@ -148,6 +149,13 @@ for (const path of [primary, supplemental]) {
     assert.equal((await f.request(path, { page: 1 })).body.result, undefined);
   }));
 }
+for (const path of [primary, supplemental]) test(`${path}: ordinary Dataset without patient audit can display its masked page`, () => fixture(async f => {
+  f.state.patientConfigured = false; f.state.auditEnabled = false;
+  const response = await f.request(path, { page: 1 });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.disclosureId, null);
+  assert.ok(!JSON.stringify(response.body).includes("00000123"));
+}));
 test("supplemental parameter, page settings and source replacement invalidate snapshots", () => fixture(async f => {
   for (const change of [() => { f.state.sources[0]!.parameters.WARD = "OTHER"; },
     () => { f.state.sources[0]!.pageSize = 2; }, () => { f.state.sources[0]!.id++; }]) {
