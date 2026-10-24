@@ -198,7 +198,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Location server
-          npm ci
+          npm install
           if($LASTEXITCODE -ne 0){throw 'SERVER_NPM_CI_FAILED'}
           npm run typecheck
           if($LASTEXITCODE -ne 0){throw 'SERVER_TYPECHECK_FAILED'}
@@ -208,7 +208,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Location client
-          npm ci
+          npm install
           if($LASTEXITCODE -ne 0){throw 'CLIENT_NPM_CI_FAILED'}
           npm run typecheck
           if($LASTEXITCODE -ne 0){throw 'CLIENT_TYPECHECK_FAILED'}
@@ -220,14 +220,14 @@ jobs:
           $ErrorActionPreference='Stop'
           New-Item -ItemType Directory -Path release/payload/server,release/payload/client,release/payload/tools,release/payload/docs -Force | Out-Null
           Copy-Item server/dist release/payload/server/dist -Recurse
-          Copy-Item server/package.json,server/package-lock.json release/payload/server/
+          Copy-Item server/package.json release/payload/server/
           Copy-Item client/dist release/payload/client/dist -Recurse
-          Copy-Item client/package.json,client/package-lock.json release/payload/client/
+          Copy-Item client/package.json release/payload/client/
           Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/payload/tools/
           Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md release/payload/docs/
           Copy-Item tools/install-uqp-pr66-offline.ps1 release/
           Set-Location release/payload/server
-          npm ci --omit=dev --ignore-scripts=false
+          npm install --omit=dev --ignore-scripts=false
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUNTIME_DEPENDENCIES_FAILED'}
           Set-Location ../../..
           $root=(Resolve-Path release).Path
