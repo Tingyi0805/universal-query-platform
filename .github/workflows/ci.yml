@@ -143,3 +143,39 @@ jobs:
         run: |
           npm install
           node --import tsx --test src/scripts/installDataset924.test.ts src/scripts/installDataset925.test.ts
+
+  d0-source-bundle:
+    # D0 inspection source only: no production secrets, no database connections,
+    # no built release, and no permission to publish or deploy.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Package tracked sources with SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          mkdir -p dist
+          file="UQP-PR66-${sha:0:8}-source.zip"
+          git archive --format=zip --output="dist/$file" HEAD
+          (cd dist && sha256sum "$file" > SHA256SUMS.txt)
+          test -s "dist/$file"
+          unzip -l "dist/$file" | grep -q 'tools/install-uqp-925.ps1'
+          unzip -l "dist/$file" | grep -q 'docs/windows-dataset-display-925-rollout.md'
+          if unzip -Z1 "dist/$file" | grep -Ei '(^|/)(\.env($|\.)|node_modules/|\.git/|\.pem$|\.pfx$|\.key$)'; then
+            echo 'BUNDLE_CONTAINS_FORBIDDEN_FILE'
+            exit 1
+          fi
+          echo "D0_SOURCE_BUNDLE_ONLY_NOT_DEPLOYABLE"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr66-d0-source
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
