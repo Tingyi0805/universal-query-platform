@@ -1,4 +1,5 @@
 import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
+import { getDatasetPatientAuditConfig } from "../dataset/patientAuditConfig.repository.js";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { Router, type Request } from "express";
 import jwt from "jsonwebtoken";
@@ -21,6 +22,7 @@ export type DashboardPreviewDependencies = {
   legacyGuard: (id: number) => Promise<void>;
   execute: typeof import("../dataset/dataset.service.js").executeSavedDataset;
   audit: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
+  getPatientAuditConfig?: typeof getDatasetPatientAuditConfig;
 };
 class PreviewFailure extends Error {
   constructor(readonly code: string, readonly status: number) { super(code); }
@@ -74,7 +76,10 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
       try { disclosureId = await deps.audit({ datasetId: dataset.id, queryDefinitionId: query.id, userId: req.authUser!.id,
         sourceScope: `datasource:${dataset.dataSourceId}`, deliveryType: "DASHBOARD", masked: true, rows: raw.rows }); }
       catch (error) { const safe = dashboardSecurityFailure(error); if (safe) throw new PreviewFailure(safe.code, safe.status); throw new PreviewFailure("PATIENT_AUDIT_FAILED", 503); }
-      if (raw.rows.length && disclosureId === null) throw new PreviewFailure("PATIENT_AUDIT_NOT_CONFIGURED", 503);
+      // Ordinary Datasets have no patient-disclosure receipt to require.
+      if (raw.rows.length && disclosureId === null &&
+        (await (deps.getPatientAuditConfig ?? getDatasetPatientAuditConfig)(dataset.id))?.isEnabled)
+        throw new PreviewFailure("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       if ((await readState(req, id, key)).fingerprint !== initial.fingerprint) throw new PreviewFailure("DASHBOARD_PREVIEW_STATE_CHANGED", 409);
       const result = { ...raw, columns, rows };
       if (source) res.json({ sourceKey: key, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize,
