@@ -26,6 +26,14 @@ async function openConnection(config: DataSourceConfig) {
   });
 }
 
+/** Thin metadata requires 12.1+, while Thick metadata supports 11.2+ when
+ * the installed Oracle Client and server combination is compatible.
+ * This checks version only; connection/getStatementInfo capability checks remain mandatory. */
+export function supportsOracleDescriptionServer(thin: boolean, serverVersion: number): boolean {
+  return Number.isFinite(serverVersion) &&
+    serverVersion >= (thin ? 1201000000 : 1102000000);
+}
+
 export class OracleAdapter implements DataSourceAdapter {
   async describeQuery(config: DataSourceConfig, input: ColumnDescribeInput) {
     const compiled = isUnboundDescription(input) ? compileUnboundDescription(input, "ORACLE") : compileDescription(input, "ORACLE");
@@ -42,7 +50,7 @@ export class OracleAdapter implements DataSourceAdapter {
       }
       connection = await acquireDescriptionConnection(() => openConnection(config), c => c.close(), input.timeoutSec * 1000);
       if (typeof connection.getStatementInfo !== "function" || typeof connection.break !== "function"
-        || connection.thin !== oracledb.thin || !(connection.oracleServerVersion >= 1201000000)) {
+        || connection.thin !== oracledb.thin || !supportsOracleDescriptionServer(connection.thin, connection.oracleServerVersion)) {
         throw new QueryDescriptionError("DESCRIPTION_UNSUPPORTED");
       }
       connection.callTimeout = input.timeoutSec * 1000;
