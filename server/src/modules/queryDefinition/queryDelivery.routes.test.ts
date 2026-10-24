@@ -295,3 +295,45 @@ test("all standard delivery routes reject OMIT group and aggregate references", 
   }
   assert.equal(f.state.successes, 0);
 }));
+
+for (const format of formats) {
+  test(`${format}: Oracle surgery dashboard-style Chinese columns preserve masking and omit patient key`, () => fixture(async f => {
+    f.state.raw = {
+      columns: [{ name: "姓名" }, { name: "手術室" }, { name: "手術動向" }, { name: "住院床號" }, { name: "MRN" }],
+      rows: [{ "姓名": rawName, "手術室": "OR-1", "手術動向": "準備中", "住院床號": "5-12", MRN: rawId }],
+      rowCount: 1, truncated: false, elapsedMs: 1,
+    };
+    f.state.snapshot.policy.rules = [
+      { columnName: "姓名", mode: "CUSTOM", customMask: { prefix: 1, suffix: 1, symbol: "○" } },
+      { columnName: "手術室", mode: "NONE" },
+      { columnName: "手術動向", mode: "NONE" },
+      { columnName: "住院床號", mode: "NONE" },
+      { columnName: "MRN", mode: "OMIT" },
+    ] as typeof f.state.snapshot.policy.rules;
+    f.state.reports = ["姓名", "手術室", "手術動向", "住院床號", "MRN"].map(report);
+    const response = await f.request(`/${format}`);
+    assert.equal(response.status, 200);
+    let output: string;
+    if (format === "execute") {
+      const json = await response.json() as any;
+      assert.deepEqual(json.result.columns.map((c: any) => c.name), ["姓名", "手術室", "手術動向", "住院床號"]);
+      assert.deepEqual(json.result.rows, [{ "姓名": "王○明", "手術室": "OR-1", "手術動向": "準備中", "住院床號": "5-12" }]);
+      output = JSON.stringify(json);
+    } else {
+      const bytes = Buffer.from(await response.arrayBuffer());
+      const workbook = new ExcelJS.Workbook();
+      if (format === "export/excel") await workbook.xlsx.load(bytes as any);
+      else await workbook.csv.read(Readable.from([bytes]));
+      const sheet = workbook.worksheets[0]!;
+      const headings = sheet.getRow(1).values as unknown[];
+      assert.deepEqual(headings.slice(1), ["姓名", "手術室", "手術動向", "住院床號"]);
+      assert.deepEqual((sheet.getRow(2).values as unknown[]).slice(1), ["王○明", "OR-1", "準備中", "5-12"]);
+      output = JSON.stringify(sheet.getSheetValues());
+    }
+    assert.ok(!output.includes(rawName));
+    assert.ok(!output.includes(rawId));
+    assert.ok(!output.includes("MRN"));
+    assert.equal(f.state.patientAudits, 1);
+    assert.equal(f.state.successes, 1);
+  }));
+}
