@@ -111,7 +111,7 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
     const candidates = inheritable.filter(name => !Object.entries(masks).some(
       ([key, value]) => key.toUpperCase() === name.toUpperCase() && value === "INHERIT"));
     if (!candidates.length) return;
-    if (!window.confirm(`確認授權此 Dashboard 的 ${sourceKey} 來源傳送以下 ${candidates.length} 個欄位？\\n${candidates.join("、")}\\n只沿用 Dataset 已確認的遮蔽規則；不包含 OMIT 欄位、不修改 Dataset，可能顯示於公共螢幕。`)) return;
+    if (!window.confirm(`確認授權此 Dashboard 的 ${sourceKey} 來源傳送以下 ${candidates.length} 個欄位？\n${candidates.join("、")}\n只沿用 Dataset 已確認的遮蔽規則；不包含 OMIT 欄位、不修改 Dataset，可能顯示於公共螢幕。`)) return;
     const next = { ...masks };
     for (const name of candidates) {
       const old = Object.keys(next).find(key => key.toUpperCase() === name.toUpperCase());
@@ -136,7 +136,8 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
     <h3>Dashboard 播放欄位授權（沿用 Dataset）</h3>
     <p>本區只管理裝置可接收的欄位，不另設遮蔽。核准後一律沿用 Dataset；未核准與 OMIT 欄位不傳送。舊版獨立遮蔽與 Dataset 不相容時停止傳送，需管理者明確改為沿用 Dataset。此處不修改 Dataset。</p>
     <button type="button" disabled={!editable || !loaded || !inheritable.some(name => !Object.entries(masks).some(([key, value]) => key.toUpperCase() === name.toUpperCase() && value === "INHERIT"))} onClick={() => void approveInheritedColumns()}>確認授權本來源可傳送欄位（全部沿用 Dataset）</button>
-    <p>僅包含 Query 顯示欄位中已有唯一 Dataset 規則、且非 OMIT 的欄位；需管理者逐次確認。既有舊規則不會自動清除，欄位政策變更仍由後端重新驗證。</p>\n    <label>核准欄位<select disabled={!loaded || !approvalReady || saving} value={column} onChange={e => { setColumn(e.target.value); setMode("OMIT"); }}><option value="">請選擇欄位</option>{[...new Set([...columns, ...policy.map(p => p.columnName), ...Object.keys(masks)])].map(name => <option key={name} value={name}>{name}</option>)}</select></label>
+    <p>僅包含 Query 顯示欄位中已有唯一 Dataset 規則、且非 OMIT 的欄位；需管理者逐次確認。既有舊規則不會自動清除，欄位政策變更仍由後端重新驗證。</p>
+    <label>核准欄位<select disabled={!loaded || !approvalReady || saving} value={column} onChange={e => { setColumn(e.target.value); setMode("OMIT"); }}><option value="">請選擇欄位</option>{[...new Set([...columns, ...policy.map(p => p.columnName), ...Object.keys(masks)])].map(name => <option key={name} value={name}>{name}</option>)}</select></label>
     <label>欄位遮蔽模式<select disabled={!loaded || !approvalReady || saving} value={mode} onChange={e => setMode(e.target.value)}>{modes.map(candidate => <option key={candidate} value={candidate} disabled={!allowed(candidate)}>{modeNames[candidate]}</option>)}</select></label>
     {column && matching.length === 0 && <p role="status">Dataset 尚未定義此欄位的政策；不可核准傳送，原 JSON 保留。</p>}
     <p role="status">合成資料預覽：{(mode === "INHERIT" || mode === "CUSTOM") ? inheritedMaskSample(matching[0]) : mode === "OMIT" ? "欄位不傳送" : mode === "FULL" ? "○○○○" : mode === "NONE" ? "合成非敏感文字" : ({ NAME: "測○料", MRN: "0000○○34", PHONE: "0912○○○678", GENERIC: "測○○料" } as Record<string, string>)[mode]}。Dataset 規則仍為最低要求。</p>
