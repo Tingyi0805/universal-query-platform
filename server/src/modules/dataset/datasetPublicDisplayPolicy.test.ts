@@ -33,3 +33,13 @@ test("a malformed public display grant cannot create accidental approval", () =>
     { columnName: "NAME", permitted: true }, { columnName: " name ", permitted: true },
   ] }, ["NAME"]), {});
 });
+
+
+test("unconfirmed display policy cannot mask duplicate or empty result aliases as a valid result", () => {
+  assert.throws(() => resolveDatasetPublicDisplayMasks(sensitivity, null, ["NAME", "name"]), /DASHBOARD_COLUMNS_AMBIGUOUS/);
+  assert.throws(() => resolveDatasetPublicDisplayMasks(sensitivity, null, [""]), /DASHBOARD_COLUMNS_AMBIGUOUS/);
+});
+test("explicit rejection overrides any otherwise valid public display grant", () => {
+  assert.deepEqual(resolveDatasetPublicDisplayMasks(sensitivity, { confirmed: true, sensitivityVersion: 3,
+    grants: [{ columnName: "NAME", permitted: false }] }, ["NAME"]), {});
+});
