@@ -1,11 +1,16 @@
 # Explicitly approved, separate installer identity only. PowerShell 5.1.
-param([ValidateSet('Preflight','Verify','Apply')][string]$Mode='Preflight')
+param([ValidateSet('Preflight','Verify','Apply')][string]$Mode='Preflight', [string]$ExistingServerEnv='')
 $ErrorActionPreference='Stop'
 $serverDir=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\server'))
-$names=@('PLATFORM_DB_USER','PLATFORM_DB_PASSWORD','UQP_925_EXPECTED_SERVER','UQP_925_EXPECTED_DATABASE','UQP_925_EXPECTED_LOGIN')
+$names=@('PLATFORM_DB_USER','PLATFORM_DB_PASSWORD','UQP_925_EXPECTED_SERVER','UQP_925_EXPECTED_DATABASE','UQP_925_EXPECTED_LOGIN','DOTENV_CONFIG_PATH')
 $previous=@{}
 foreach($name in $names){$previous[$name]=[Environment]::GetEnvironmentVariable($name,'Process')}
 try {
+ if(-not [string]::IsNullOrWhiteSpace($ExistingServerEnv)){
+   $resolvedEnv=[IO.Path]::GetFullPath($ExistingServerEnv)
+   if(-not (Test-Path -LiteralPath $resolvedEnv -PathType Leaf)){throw '925_EXISTING_CONFIG_NOT_FOUND'}
+   $env:DOTENV_CONFIG_PATH=$resolvedEnv
+ }
  $env:UQP_925_EXPECTED_SERVER=Read-Host 'Expected SQL @@SERVERNAME (confirm independently in SSMS)'
  $env:UQP_925_EXPECTED_DATABASE=Read-Host 'Expected database (approved maintenance target)'
  $env:UQP_925_EXPECTED_LOGIN=Read-Host 'Separate installer login (effective dbo, never elevate runtime)'
