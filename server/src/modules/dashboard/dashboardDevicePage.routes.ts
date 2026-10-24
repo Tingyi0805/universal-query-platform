@@ -1,4 +1,5 @@
 import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
+import { getDatasetPatientAuditConfig } from "../dataset/patientAuditConfig.repository.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -20,6 +21,7 @@ export type DevicePageDependencies = {
   listDashboardDataSources: typeof import("./dashboardDataSource.repository.js").listDashboardDataSources;
   executeSavedDataset: typeof import("../dataset/dataset.service.js").executeSavedDataset;
   auditPatientListIfConfigured: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
+  getPatientAuditConfig?: typeof getDatasetPatientAuditConfig;
   listReportColumns: typeof import("../queryDefinition/reportColumn.repository.js").listReportColumns;
   listDatasetParameters: typeof import("../dataset/parameter.repository.js").listDatasetParameters;
   getDataSourcePlaybackState: typeof import("../datasource/datasource.repository.js").getDataSourcePlaybackState;
@@ -143,7 +145,11 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         masked,
         rows: rawRows,
       });
-      if (rawRows.length > 0 && disclosureId === null) throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
+      // A disabled/absent patient-audit configuration must not block ordinary
+      // Dataset rows; a configured patient disclosure still requires a receipt.
+      if (rawRows.length > 0 && disclosureId === null &&
+        (await (deps.getPatientAuditConfig ?? getDatasetPatientAuditConfig)(dataset.id))?.isEnabled)
+        throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
       if (!getDashboardPageSnapshot(snapshot.id, verification.device.id, id.data)) throw new DeliveryError(409, "DASHBOARD_SNAPSHOT_EXPIRED");
       res.setHeader("Cache-Control", "no-store");
       const reportColumns = state.reportColumns.filter((column) => resolveDeviceColumnMask(column.columnName, masks) !== "OMIT");
@@ -211,7 +217,11 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         sourceScope, deliveryType: "PAGE",
         pageNumber: input.data.page, masked: true, rows: rawRows,
       });
-      if (rawRows.length > 0 && disclosureId === null) throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
+      // A disabled/absent patient-audit configuration must not block ordinary
+      // Dataset rows; a configured patient disclosure still requires a receipt.
+      if (rawRows.length > 0 && disclosureId === null &&
+        (await (deps.getPatientAuditConfig ?? getDatasetPatientAuditConfig)(dataset.id))?.isEnabled)
+        throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
       if (!getDashboardPageSnapshot(snapshot.id, verification.device.id, id.data)) throw new DeliveryError(409, "DASHBOARD_SNAPSHOT_EXPIRED");
       res.setHeader("Cache-Control", "no-store");
       await stillCurrent(state, id.data, token, getRequestSourceIp(req), key.data);
