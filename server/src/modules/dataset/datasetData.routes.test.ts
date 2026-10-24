@@ -261,24 +261,40 @@ test("fixed options do not execute a Dataset and require the same parent authori
   assert.deepEqual(f.state.executions, []);
 }));
 
-// BUG-002: classification claims and candidate metadata never grant admission.
-for (const kind of ["A_ORDINARY", "B_SENSITIVE_NON_PATIENT", "C_PATIENT_UNCONFIRMED"] as const) {
-  for (const claim of [false, true]) test(`${kind}: initialization remains closed (client claim=${claim})`, () => fixture(async f => {
-    const current = f.state.snapshots.get(1)!;
-    f.state.snapshots.set(1, { ...current, patientAuditVersion: "0",
-      patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
-      policy: { state: "CONFIRMED", version: "1", rules: kind === "A_ORDINARY" ? [] : current.policy.rules } });
-    const input = { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText, expectedDefinitionVersion: version,
-      values: {}, ...(claim ? { nonPatientConfirmed: true } : {}) };
-    const before = structuredClone(f.state.snapshots);
-    const response = await f.request("/preview/run", input);
-    assert.equal(response.status, claim ? 400 : 503);
-    const body = await response.json() as any;
-    assert.equal(body.error.code, claim ? "VALIDATION_ERROR" : "DATASET_PREVIEW_INITIALIZATION_REQUIRED");
-    assert.deepEqual(f.state.executions, []); assert.deepEqual(f.state.disclosures, []);
-    assert.equal(f.state.startAudits, 0); assert.deepEqual(f.state.snapshots, before);
-  }));
-}
+// Ordinary Dataset previews use the same confirmed display policy as Query,
+ // without being forced through patient-only disclosure setup.
+test("new ordinary Dataset can preview its explicitly configured masked fields without patient disclosure", () => fixture(async f => {
+  const prior = f.state.snapshots.get(1)!;
+  f.state.snapshots.set(1, { ...prior, patientAuditVersion: "0",
+    patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
+    policy: { ...prior.policy, patientAuditOnlyColumns: [] } });
+  const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
+  assert.equal(response.status, 200);
+  const body = await response.json() as any;
+  assert.equal(body.result.rows[0].NAME, "王○明");
+  assert.equal(body.result.rows[0].MRN, undefined);
+  assert.equal(body.result.rows[0].CODE, "A");
+  assert.deepEqual(f.state.disclosures, []);
+  assert.equal(f.state.operationStatus, "SUCCESS");
+}));
+test("ordinary Dataset saved-definition preview works; caller cannot forge classification proof", () => fixture(async f => {
+  const prior = f.state.snapshots.get(1)!;
+  f.state.snapshots.set(1, { ...prior, patientAuditVersion: "0",
+    patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
+    policy: { ...prior.policy, patientAuditOnlyColumns: [] } });
+  const input = { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText, expectedDefinitionVersion: version, values: {} };
+  const response = await f.request("/preview/run", input);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as any).result.rows[0].NAME, "王○明");
+  assert.deepEqual(f.state.disclosures, []);
+  assert.equal((await f.request("/preview/run", { ...input, nonPatientConfirmed: true })).status, 400);
+}));
+test("enabled but unconfirmed patient-audit configuration still rejects preview", () => fixture(async f => {
+  f.state.patientStatus = "METADATA_UNCONFIRMED";
+  const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
+  assert.equal(response.status, 503);
+  assert.deepEqual(f.state.executions, []);
+}));
 for (const injection of [{ nonPatientConfirmed: true }, { metadata: { trust: "CONFIRMED", columns: ["NAME"] } },
   { metadata: { trust: "UNBOUND_CANDIDATE", columns: ["OPAQUE"] } }, { sensitivityConfirmed: true }, { purpose: "NON_PATIENT_DESIGN" }]) {
   test(`client-provided proof cannot authorize preview: ${JSON.stringify(Object.keys(injection))}`, () => fixture(async f => {
