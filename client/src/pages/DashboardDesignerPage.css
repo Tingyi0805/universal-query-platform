@@ -404,3 +404,26 @@
   .dashboard-editor-form > .dashboard-draft-fields { grid-template-columns: 1fr; }
   .dashboard-editor-form .dashboard-draft-fields .dashboard-draft-submit { width: 100%; min-width: 0; }
 }
+
+/* Query source enable flag: never inherit full-width text-input rules. */
+.dashboard-editor-form > .dashboard-source-enabled {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  align-self: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  cursor: pointer;
+}
+.dashboard-editor-form > .dashboard-source-enabled input[type="checkbox"] {
+  appearance: auto;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  padding: 0;
+  margin: 0;
+}
+.dashboard-editor-form > .dashboard-source-enabled span {
+  line-height: 1.5;
+}
