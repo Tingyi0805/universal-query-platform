@@ -138,4 +138,4 @@ jobs:
         working-directory: server
         run: |
           npm install
-          node --import tsx --test src/scripts/installDataset924.test.ts
+          node --import tsx --test src/scripts/installDataset924.test.ts src/scripts/installDataset925.test.ts

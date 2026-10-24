@@ -1,3 +1,4 @@
+import {testDatasetDisplay925,testDisplay925CleanCatalog} from "./datasetDisplay925Acceptance.js";
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
 import {createDatasetColumnCandidate,readColumnCandidateSnapshot,defaultColumnCandidateDependencies} from "../modules/dataset/datasetColumnCandidate.js";
@@ -90,6 +91,7 @@ async function main(){
       }catch(e){if(!aborted)await tx.rollback().catch(()=>undefined);throw e;}
     }
     check((await root.request().query("SELECT COUNT(*) C FROM sys.tables WHERE schema_id=SCHEMA_ID(N'uqp')")).recordset[0].C===46,"FULL_TABLE_COUNT");
+    stage="925_CLEAN_FULL_BASELINE";await testDisplay925CleanCatalog(root);
     stage="INSTALL_923";passed(await cli("923","apply"),"923_APPLY=COMMITTED_EXACT_MATCH_NO_DELIVERY_AUTHORITY");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_BASELINE");
     stage="SYNTHETIC_BUSINESS_FIXTURE";
@@ -332,6 +334,8 @@ async function main(){
     await assert.rejects(()=>columnContext.revalidateParameters(),{code:"DATASET_COLUMN_DESCRIPTION_CONFLICT"});
     await assert.rejects(()=>columnRepository.syncDatasetColumns(78,[...description.columns],columnOptions));
     console.log("DATASET_PARAMETER_METADATA: REAL_SQL2019_INFERENCE_DESCRIBE_ZERO_ROW_COLUMNS_PERSIST_PARAMETER_CAS_PASS; NO_ACTUAL_VALUES_BOUND_OR_RETURNED");
+    stage="DATASET_DISPLAY_925";
+    await testDatasetDisplay925(root,app,login);
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");

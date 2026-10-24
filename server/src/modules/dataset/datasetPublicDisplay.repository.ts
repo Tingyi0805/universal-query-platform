@@ -44,7 +44,7 @@ export function createDatasetPublicDisplayRepository(deps=displayRepositoryDefau
   };
   const authorize=async(tx:sql.Transaction,id:number,actor:DisplayActor)=>{
     const a=await actor(tx);if(!a.permissions.includes("DESIGN_QUERY")||!a.permissions.includes("EXECUTE_QUERY"))throw new DatasetDisplayError("FORBIDDEN",403);
-    const queries=(await req(tx,id).query("SELECT Id FROM uqp.QueryDefinition WITH(HOLDLOCK) WHERE DatasetId=@id ORDER BY Id")).recordset;
+    const queries=(await req(tx,id).query("SELECT Id FROM uqp.QueryDefinition WITH(HOLDLOCK) WHERE DatasetId=@id AND IsPublished=1 AND IsActive=1 AND IsArchived=0 ORDER BY Id")).recordset;
     for(const q of queries){const access=await deps.access(a.userId,Number(q.Id),tx,false);if(!access?.canView||!access.canExecute)throw new DatasetDisplayError("DATASET_DISPLAY_DATASET_FORBIDDEN",403);}
     return a;
   };

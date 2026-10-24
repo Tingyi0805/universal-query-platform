@@ -25,3 +25,11 @@
 001～924 不改；922 不假設存在，923/924 專用安裝方式不變。925 僅在 CI disposable SQL2019 實際安裝；正式安裝需獨立預檢、備份／還原驗證、權限審查與明確授權。舊 Schema 的 Query／Excel／Dataset 遮蔽繼續運作；新公共播放沒有有效政策時 fail-closed。新功能不啟用 Dashboard／Device flags，不授予 Scope，不改 JWT、患者稽核或 Source Fence。
 
 Oracle11g／OR_001 真實環境、共用 SQL Server 與 Windows ZIP 本機驗收皆待使用者最後執行；不能用 Mock 結果宣稱實機成功。
+
+## 分階段提交／證據
+
+- C6 `d93277a`：盤點，既有公共契約 13/13；基底 CI #1023 成功。
+- C7 `3294612`：公共政策 Repository／API／Dataset UI；相關純函式與 Repository 23/23。925 DB 驗收於 C10 執行，提交當時 PENDING。
+- C8 `096cc8e`：Dataset 權威公共播放／設計預覽分離；相關 Server 202/202。Windows／SQL／全量 CI 於 C10，提交當時 PENDING。
+- C9 `b6c7d2d`：範本管理／引用；Server 全量初輪1746/1746、政策 API／範本／離線 installer42/42，新增 E2E 以最後 C10 結果為準。
+- C10：完整回歸、925專用安裝與隔離實機、Windows／ZIP回復文件。狀態以最新提交 CI 為準；正式共享 DB／Oracle11g／Windows切換仍需獨立核准及人工驗收，不因 CI 轉為 PASS。
