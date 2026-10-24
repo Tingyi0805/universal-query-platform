@@ -181,3 +181,92 @@ jobs:
           path: dist/
           retention-days: 7
           if-no-files-found: error
+
+  windows-release-candidate:
+    if: github.event.pull_request.number == 66
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build server
+        shell: pwsh
+        run: |
+          Set-Location server
+          npm ci
+          if($LASTEXITCODE -ne 0){throw 'SERVER_NPM_CI_FAILED'}
+          npm run typecheck
+          if($LASTEXITCODE -ne 0){throw 'SERVER_TYPECHECK_FAILED'}
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'SERVER_BUILD_FAILED'}
+      - name: Build client
+        shell: pwsh
+        run: |
+          Set-Location client
+          npm ci
+          if($LASTEXITCODE -ne 0){throw 'CLIENT_NPM_CI_FAILED'}
+          npm run typecheck
+          if($LASTEXITCODE -ne 0){throw 'CLIENT_TYPECHECK_FAILED'}
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'CLIENT_BUILD_FAILED'}
+      - name: Package isolated Windows runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Path release/payload/server,release/payload/client,release/payload/tools,release/payload/docs -Force | Out-Null
+          Copy-Item server/dist release/payload/server/dist -Recurse
+          Copy-Item server/package.json,server/package-lock.json release/payload/server/
+          Copy-Item client/dist release/payload/client/dist -Recurse
+          Copy-Item client/package.json,client/package-lock.json release/payload/client/
+          Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/payload/tools/
+          Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md release/payload/docs/
+          Copy-Item tools/install-uqp-pr66-offline.ps1 release/
+          Set-Location release/payload/server
+          npm ci --omit=dev --ignore-scripts=false
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUNTIME_DEPENDENCIES_FAILED'}
+          Set-Location ../../..
+          $root=(Resolve-Path release).Path
+          $files=Get-ChildItem release/payload -Recurse -File
+          $lines=foreach($f in $files){$rel=$f.FullName.Substring($root.Length+1).Replace('\','/');"$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $rel"}
+          $lines | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
+          if($files.Count -lt 20){throw 'WINDOWS_RELEASE_INCOMPLETE'}
+      - name: Test installer preflight and simulated rollback guard
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $tokens=$null;$errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'release/install-uqp-pr66-offline.ps1'),[ref]$tokens,[ref]$errors)|Out-Null
+          if($errors.Count){throw 'WINDOWS_INSTALLER_SYNTAX_INVALID'}
+          $testRoot=Join-Path $env:RUNNER_TEMP 'UQP_RC_Test'
+          New-Item -ItemType Directory -Path $testRoot -Force|Out-Null
+          $target=Join-Path $testRoot 'UQP'
+          New-Item -ItemType Directory -Path $target|Out-Null
+          'original'|Set-Content (Join-Path $target 'marker.txt')
+          & .\release\install-uqp-pr66-offline.ps1 -Target $target -PreflightOnly
+          if($LASTEXITCODE -ne 0){throw 'PREFLIGHT_FAILED'}
+          $failed=$false
+          try { & .\release\install-uqp-pr66-offline.ps1 -Target $target -Schema925Verified -ServiceStopped -AcceptMaintenance -SimulateFailure } catch {$failed=$true}
+          if(-not $failed){throw 'FAILURE_INJECTION_NOT_TRIGGERED'}
+          if((Get-Content (Join-Path $target 'marker.txt')) -ne 'original'){throw 'ROLLBACK_GUARD_FAILED'}
+          Write-Host 'OFFLINE_FAILURE_GUARD_PASS'
+      - name: Compress release candidate and hash
+        shell: pwsh
+        run: |
+          $sha='${{ github.event.pull_request.head.sha }}'
+          $name="UQP-PR66-$($sha.Substring(0,8))-Windows-RC.zip"
+          Compress-Archive -Path release/* -DestinationPath $name -CompressionLevel Optimal
+          (Get-FileHash -Algorithm SHA256 $name).Hash.ToLowerInvariant()+"  "+$name | Set-Content SHA256SUMS-WINDOWS-RC.txt -Encoding ascii
+          New-Item -ItemType Directory -Path output|Out-Null
+          Move-Item $name output/
+          Move-Item SHA256SUMS-WINDOWS-RC.txt output/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr66-windows-release-candidate
+          path: output/
+          retention-days: 7
+          if-no-files-found: error
