@@ -171,7 +171,7 @@ test("CUSTOM inheritance and source approvals save/reload without copying custom
   await expect(modes.locator('option[value="MRN"]')).toHaveCount(0);
   await modes.selectOption("INHERIT"); await expect(page.getByText(/合成資料預覽：\*{8}56/)).toBeVisible();
   await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
-  await page.getByLabel("遮蔽核准來源", { exact: true }).selectOption("WARD");
+  await page.getByLabel("欄位授權來源", { exact: true }).selectOption("WARD");
   await expect(page.getByText(/Dataset 最低保護規則（WARD）/)).toBeVisible();
   await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
   await modes.selectOption("INHERIT"); await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
@@ -181,7 +181,7 @@ test("CUSTOM inheritance and source approvals save/reload without copying custom
   expect(JSON.stringify(state.persisted)).not.toContain("prefix"); expect(JSON.stringify(state.persisted)).not.toContain("suffix");
   await page.reload(); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
   await expect(page.getByRole("row").filter({ hasText: /MRN沿用 Dataset 遮蔽規則/ })).toBeVisible();
-  await page.getByLabel("遮蔽核准來源", { exact: true }).selectOption("WARD");
+  await page.getByLabel("欄位授權來源", { exact: true }).selectOption("WARD");
   await expect(page.getByRole("row").filter({ hasText: /MRN沿用 Dataset 遮蔽規則/ })).toBeVisible();
 });
 
@@ -209,7 +209,7 @@ test("managed disclosure removes only confirmed MRN approval and retains classif
   await expect.poll(() => state.approval?.masks).toEqual({ NAME: "NAME", ROOM: "NONE" });
   expect(state.approval.sourceKey).toBe("PRIMARY");
   expect(state.persisted.deviceColumnMasks).not.toHaveProperty("MRN"); expect(state.persisted.deviceColumnTypes.MRN).toBe("MRN");
-  await page.getByLabel("遮蔽核准來源", { exact: true }).selectOption("WARD");
+  await page.getByLabel("欄位授權來源", { exact: true }).selectOption("WARD");
   await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("MRN");
   await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("INHERIT");
   await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則" }).click();
