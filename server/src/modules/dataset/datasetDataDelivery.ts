@@ -41,9 +41,11 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
       if (!dataset?.isActive || dataset.isArchived || dataset.id !== datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
       const source = await deps.source(dataset.dataSourceId, transaction);
       if (!source?.isActive) throw new QueryDeliveryError("DATASOURCE_NOT_AVAILABLE");
-      if (purpose === "RAW_DESIGN" && !snapshot.patientAudit.configured)
-        throw new QueryDeliveryError("DATASET_PREVIEW_INITIALIZATION_REQUIRED", 503);
-      if (purpose === "RAW_DESIGN" && !snapshot.patientAudit.enabled)
+      // A non-patient Dataset does not require the patient-only disclosure
+      // configuration merely to use the ordinary, masked Designer preview.
+      // When patient disclosure auditing is enabled, its existing confirmation
+      // and durable-receipt requirements below remain mandatory.
+      if (snapshot.patientAudit.enabled && !snapshot.patientAudit.configured)
         throw new QueryDeliveryError("PATIENT_AUDIT_NOT_CONFIRMED", 503);
       const patient = snapshot.patientAudit.enabled ? await deps.patientState(datasetId, transaction) : null;
       if (patient && patient.status !== "CONFIRMED") throw new QueryDeliveryError("PATIENT_AUDIT_NOT_CONFIRMED", 503);
