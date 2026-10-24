@@ -86,15 +86,15 @@ export function DashboardBasicSettingsEditor({ dashboardId, code, accessToken, o
       if (window.confirm("重新載入會取代本區未儲存內容，是否繼續？")) void reload();
     }}>重新載入基本設定</button>}
     <form onSubmit={save} className="dashboard-editor-form">
-      <label>代碼<input value={dashboardId ? code : draftCode} disabled={!!dashboardId || busy} required onChange={e => setDraftCode(e.target.value.toUpperCase())}/></label>
-      <fieldset className="wide dashboard-editor-form" disabled={busy || (!!dashboardId && !configuration?.editable)}>
+      <label className="dashboard-draft-code">代碼<input value={dashboardId ? code : draftCode} disabled={!!dashboardId || busy} required onChange={e => setDraftCode(e.target.value.toUpperCase())}/></label>
+      <fieldset className="dashboard-draft-fields" disabled={busy || (!!dashboardId && !configuration?.editable)}>
         <label>名稱<input required value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}/></label>
         <label>說明<input value={draft.description ?? ""} onChange={e => setDraft({ ...draft, description: e.target.value })}/></label>
         {!dashboardId && <label>草稿初始 Query<select aria-label="草稿初始 Query" required value={queryId} onChange={e => setQueryId(e.target.value)}><option value="">請明確選取已發布且有權限的 Query</option>{queries.map(q => <option key={q.id} value={q.id}>{q.name}（{q.code}）</option>)}</select></label>}
         <label>顯示模式<select aria-label="顯示模式" value={draft.displayMode} onChange={e => setDraft({ ...draft, displayMode: e.target.value as DashboardPresentation["displayMode"] })}><option value="BIG_SCREEN">大螢幕看板</option><option value="TABLE">一般表格</option></select></label>
         <label>播放標題<input value={draft.displayTitle ?? ""} onChange={e => setDraft({ ...draft, displayTitle: e.target.value })}/></label>
-        {([["showClock", "顯示系統時間"], ["showPageNumber", "顯示頁碼"], ["showCountdown", "顯示換頁倒數"]] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={draft[key]} onChange={e => setDraft({ ...draft, [key]: e.target.checked })}/>{label}</label>)}
-        <button type="submit" disabled={!dashboardId && !queryId}>{dashboardId ? "儲存一般顯示設定（新版）" : "建立 Dashboard"}</button>
+        {([["showClock", "顯示系統時間"], ["showPageNumber", "顯示頁碼"], ["showCountdown", "顯示換頁倒數"]] as const).map(([key, label]) => <label className="dashboard-draft-check" key={key}><input type="checkbox" checked={draft[key]} onChange={e => setDraft({ ...draft, [key]: e.target.checked })}/><span>{label}</span></label>)}
+        <button className="dashboard-draft-submit" type="submit" disabled={busy || (!dashboardId && !queryId)}>{dashboardId ? "儲存一般顯示設定（新版）" : "建立 Dashboard"}</button>
       </fieldset>
     </form>
     {!dashboardId && <p>新建一律停用、沒有敏感欄位核准。建立後須在 PRIMARY 明確設定參數、更新／換頁秒數、每頁筆數及 maxRows，再重新核准。此處不啟用播放。</p>}
