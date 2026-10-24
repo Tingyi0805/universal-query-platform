@@ -298,7 +298,7 @@ test("all standard delivery routes reject OMIT group and aggregate references", 
 
 for (const format of formats) {
   test(`${format}: Oracle surgery dashboard-style Chinese columns preserve masking and omit patient key`, () => fixture(async f => {
-    f.state.raw = {
+    (f.state as any).raw = {
       columns: [{ name: "姓名" }, { name: "手術室" }, { name: "手術動向" }, { name: "住院床號" }, { name: "MRN" }],
       rows: [{ "姓名": rawName, "手術室": "OR-1", "手術動向": "準備中", "住院床號": "5-12", MRN: rawId }],
       rowCount: 1, truncated: false, elapsedMs: 1,
