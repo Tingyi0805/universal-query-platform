@@ -29,7 +29,7 @@ try {
     else{Add-Check $entry[0] 'REVIEW' 'package.json missing'}
   }
   $oracle=Get-ChildItem Env: -ErrorAction SilentlyContinue | Where-Object { $_.Name -in @('ORACLE_HOME','TNS_ADMIN') }
-  Add-Check 'Oracle environment' 'REVIEW' ('Oracle environment variable names present: '+@($oracle.Name -join ', ').Count+'; verify Thick Client path/bitness manually')
+  Add-Check 'Oracle environment' 'REVIEW' ('Oracle environment variable names: '+ (($oracle | ForEach-Object { $_.Name }) -join ', ') + '; verify Thick Client path/bitness manually')
   Add-Check 'Oracle 11g connectivity' 'BLOCKED' 'Not tested: requires separate authorized read-only acceptance'
   Add-Check 'SQL Server 925' 'BLOCKED' 'Not tested: DBA must run dedicated approved Preflight on an isolated replica'
   Add-Check 'Production deployment' 'BLOCKED' 'Read-only D0 check cannot authorize migration or deployment'
