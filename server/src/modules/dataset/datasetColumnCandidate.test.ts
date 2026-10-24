@@ -46,7 +46,7 @@ test("saved parameters or SQL bind tokens fail closed before RPC", async () => {
   await assert.rejects(f.service.open(7), { code: "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" });
   assert.equal(f.describes, 0);
   const g = fixture(); g.s.sqlText = "SELECT {{A}} AS FIELD_A";
-  await assert.rejects(g.service.open(7), { code: "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" });
+  await assert.rejects(g.service.open(7), { code: "DATASET_COLUMN_PARAMETERS_NOT_SYNCED" });
   assert.equal(g.describes, 0);
 });
 
@@ -71,7 +71,7 @@ test("Oracle zero-bind metadata uses the existing statement-info contract and re
   const result = await (await f.service.open(7)).describe();
   assert.equal(result.evidenceType, "ORACLE_STATEMENT_INFO"); assert.equal(result.trust, "UNBOUND_CANDIDATE");
   f.s.sqlText = "SELECT {{A}} AS FIELD_A FROM DUAL";
-  await assert.rejects(f.service.open(7), { code: "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" });
+  await assert.rejects(f.service.open(7), { code: "DATASET_COLUMN_PARAMETERS_NOT_SYNCED" });
 });
 test("duplicate aliases, bad ordinals or oversize names/types fail before field synchronization", async () => {
   for (const columns of [
@@ -84,4 +84,27 @@ test("duplicate aliases, bad ordinals or oversize names/types fail before field 
       evidenceType: "SQLSERVER_DESCRIBE_FIRST_RESULT_SET", columns }) as never;
     await assert.rejects((await f.service.open(7)).describe(), { code: "DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS" });
   }
+});
+
+for (const source of ["SQLSERVER", "ORACLE"]) test(`${source}: scalar metadata needs neither policy nor actual parameter values`, async () => {
+  const f = fixture(); f.s.sourceType = source; f.s.sqlText = "SELECT FIELD_A FROM T WHERE Id={{P}}";
+  f.setParameters([{ name: "P", dataType: "NUMBER", controlType: "NUMBER", defaultValue: "SYNTHETIC_PRIVATE_DEFAULT" }]);
+  f.deps.config = async () => ({ type: source, isActive: true }) as never;
+  f.deps.describe = (async (_config: unknown, input: unknown) => {
+    assert.ok(!JSON.stringify(input).includes("SYNTHETIC_PRIVATE_DEFAULT"));
+    assert.deepEqual(input, { purpose: "COLUMN_OPTIONS_ONLY", sql: f.s.sqlText, parameterNames: ["P"], timeoutSec: 10 });
+    return { trust: "UNBOUND_CANDIDATE", requiresExecutionComparison: true,
+      evidenceType: source === "SQLSERVER" ? "SQLSERVER_DESCRIBE_FIRST_RESULT_SET" : "ORACLE_STATEMENT_INFO",
+      columns: [{ name: "FIELD_A", dataType: "int", ordinal: 1 }] };
+  }) as never;
+  const ctx = await f.service.open(7);
+  assert.equal((await ctx.describe()).columns[0]!.name, "FIELD_A");
+  f.setParameters([{ name: "P", dataType: "NUMBER", controlType: "NUMBER", defaultValue: "CHANGED" }]);
+  await assert.rejects(ctx.revalidateParameters(), /DATASET_COLUMN_DESCRIPTION_CONFLICT/);
+});
+test("variable lists remain explicitly unsupported without guessing arity", async () => {
+  const f = fixture(); f.s.sqlText = "SELECT FIELD_A FROM T WHERE Id IN ({{P}})";
+  f.setParameters([{ name: "P", dataType: "STRING", controlType: "MULTISELECT" }]);
+  await assert.rejects(f.service.open(7), /DATASET_COLUMN_DESCRIPTION_LIST_UNSUPPORTED/);
+  assert.equal(f.describes, 0);
 });

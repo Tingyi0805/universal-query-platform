@@ -13,6 +13,13 @@ export type DescribeQueryInput = {
   timeoutSec: number;
 };
 
+/** Column-name discovery only. Native binding authority is deliberately absent. */
+export type UnboundDescribeQueryInput = {
+  purpose: "COLUMN_OPTIONS_ONLY"; sql: string; parameterNames: readonly string[]; timeoutSec: number;
+};
+export type ColumnDescribeInput = DescribeQueryInput | UnboundDescribeQueryInput;
+export const isUnboundDescription = (input: ColumnDescribeInput): input is UnboundDescribeQueryInput => !!input && "purpose" in input && input.purpose === "COLUMN_OPTIONS_ONLY";
+
 export type DescriptionColumn = Readonly<{ name: string; dataType: string; ordinal: number }>;
 export type CandidateQueryDescription = Readonly<{
   trust: "UNBOUND_CANDIDATE";
@@ -62,17 +69,12 @@ function sqlServerType(value: DescriptionParameterType): string {
   throw new QueryDescriptionError("DESCRIPTION_PARAMETER_UNSUPPORTED");
 }
 
-export function compileDescription(input: DescribeQueryInput, source: "SQLSERVER" | "ORACLE") {
-  if (!input || typeof input.sql !== "string" || !Array.isArray(input.parameters)
-    || !Number.isInteger(input.timeoutSec) || input.timeoutSec < 1 || input.timeoutSec > 30) {
-    throw new QueryDescriptionError("DESCRIPTION_INVALID_INPUT");
-  }
-  try { assertSelectOnlySql(input.sql); } catch { throw new QueryDescriptionError("DESCRIPTION_SELECT_ONLY"); }
-
+function lexDescription(sqlText: string, source: "SQLSERVER" | "ORACLE") {
+  try { assertSelectOnlySql(sqlText); } catch { throw new QueryDescriptionError("DESCRIPTION_SELECT_ONLY"); }
   // Conservative lexer: quoted tokens, comments, alternate Oracle quoting and
   // unmanaged native binds are unsupported, rather than compiled ambiguously.
   const tokens = new Set<string>();
-  const sql = input.sql.replace(/'(?:''|[^'])*'|"(?:""|[^"])*"|\[(?:\]\]|[^\]])*\]|\{\{[A-Z][A-Z0-9_]*\}\}|--|\/\*|[@:]|[{}]/g, part => {
+  const sql = sqlText.replace(/'(?:''|[^'])*'|"(?:""|[^"])*"|\[(?:\]\]|[^\]])*\]|\{\{[A-Z][A-Z0-9_]*\}\}|--|\/\*|[@:]|[{}]/g, part => {
     if (part.startsWith("{{") && part.endsWith("}}")) {
       const name = part.slice(2, -2);
       tokens.add(name);
@@ -81,6 +83,55 @@ export function compileDescription(input: DescribeQueryInput, source: "SQLSERVER
     if ((part.startsWith("'") || part.startsWith('"') || part.startsWith("[")) && !part.includes("{{")) return part;
     throw new QueryDescriptionError("DESCRIPTION_PARAMETER_UNSUPPORTED");
   });
+  if (/\b[qQ]'/.test(sqlText)) throw new QueryDescriptionError("DESCRIPTION_PARAMETER_UNSUPPORTED");
+  return { sql, tokens };
+}
+
+/** No values/defaults enter this path. Binding names use the same strict lexer
+ * as typed descriptions; inferred metadata can never verify Runtime types. */
+export function compileUnboundDescription(input: UnboundDescribeQueryInput, source: "SQLSERVER" | "ORACLE") {
+  if (!input || input.purpose !== "COLUMN_OPTIONS_ONLY" || typeof input.sql !== "string" || !Array.isArray(input.parameterNames)
+    || !Number.isInteger(input.timeoutSec) || input.timeoutSec < 1 || input.timeoutSec > 30 || input.parameterNames.length > 100)
+    throw new QueryDescriptionError("DESCRIPTION_INVALID_INPUT");
+  const {sql, tokens} = lexDescription(input.sql, source);
+  if (new Set(input.parameterNames).size !== input.parameterNames.length || tokens.size !== input.parameterNames.length
+    || input.parameterNames.some(name => typeof name !== "string" || !/^[A-Z][A-Z0-9_]{0,99}$/.test(name) || !tokens.has(name)))
+    throw new QueryDescriptionError("DESCRIPTION_PARAMETER_UNSUPPORTED");
+  return { sql, parameterNames: input.parameterNames };
+}
+
+/** Accept only closed built-in SQL Server types returned by the metadata RPC.
+ * User-defined/CLR types and SQL fragments are never declaration text. */
+export function inferredDescriptionDeclarations(rows: readonly Record<string, unknown>[], names: readonly string[]): string | null {
+  if (!Array.isArray(rows) || !Array.isArray(names) || names.length > 100 || new Set(names).size !== names.length
+    || names.some(name => typeof name !== "string" || !/^[A-Z][A-Z0-9_]{0,99}$/.test(name)) || rows.length !== names.length) throw new QueryDescriptionError("DESCRIPTION_PARAMETER_UNSUPPORTED");
+  const found = new Map<string, string>();
+  for (const row of rows) {
+    const name = typeof row.name === "string" && row.name.startsWith("@") ? row.name.slice(1) : "";
+    const type = typeof row.suggested_system_type_name === "string" ? row.suggested_system_type_name.toLowerCase() : "";
+    let valid = /^(tinyint|smallint|int|bigint|bit|real|float|money|smallmoney|date|datetime|smalldatetime|uniqueidentifier)$/.test(type)
+      || /^float\((24|53)\)$/.test(type)
+      || /^(datetime2|datetimeoffset|time)\([0-7]\)$/.test(type);
+    const text = /^(nvarchar|varchar|nchar|char|varbinary|binary)\((max|[1-9][0-9]{0,3})\)$/.exec(type);
+    if (text) valid = text[2] === "max" ? ["nvarchar", "varchar", "varbinary"].includes(text[1]!)
+      : Number(text[2]) <= (text[1]!.startsWith("n") ? 4000 : 8000);
+    const decimal = /^(decimal|numeric)\(([1-9][0-9]?),([0-9]{1,2})\)$/.exec(type);
+    if (decimal) valid = Number(decimal[2]) <= 38 && Number(decimal[3]) <= Number(decimal[2]);
+    if (!names.includes(name) || found.has(name) || !valid || row.suggested_user_type_name != null
+      || row.suggested_assembly_qualified_type_name != null) throw new QueryDescriptionError("DESCRIPTION_PARAMETER_UNSUPPORTED");
+    found.set(name, type);
+  }
+  return names.length ? names.map(name => `@${name} ${found.get(name)!}`).join(", ") : null;
+}
+
+export function compileDescription(input: DescribeQueryInput, source: "SQLSERVER" | "ORACLE") {
+  if (!input || typeof input.sql !== "string" || !Array.isArray(input.parameters)
+    || !Number.isInteger(input.timeoutSec) || input.timeoutSec < 1 || input.timeoutSec > 30) {
+    throw new QueryDescriptionError("DESCRIPTION_INVALID_INPUT");
+  }
+  try { assertSelectOnlySql(input.sql); } catch { throw new QueryDescriptionError("DESCRIPTION_SELECT_ONLY"); }
+
+  const { sql, tokens } = lexDescription(input.sql, source);
   const names = new Set<string>();
   const declarations: string[] = [];
   for (const parameter of input.parameters) {

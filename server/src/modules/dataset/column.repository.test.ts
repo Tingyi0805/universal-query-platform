@@ -7,7 +7,7 @@ const v = "0000000000000001";
 function fixture() {
   const state = { columns: [{ name: "OLD", dataType: "int", ordinal: 0 }], rules: [] as string[], audits: 0 };
   let staged = structuredClone(state), checks = 0, authorizations = 0, rollbacks = 0;
-  const control = { fault: "", parameters: false, definition: v, source: v, invalidVersionShape: false };
+  const control = { fault: "", parameters: false, definition: v, source: v, invalidVersionShape: false, parameterValidator: undefined as undefined | ((transaction: sql.Transaction) => Promise<void>) };
   const tx = {
     begin: async (isolation: number) => { assert.equal(isolation, sql.ISOLATION_LEVEL.SERIALIZABLE); staged = structuredClone(state); },
     commit: async () => { if (control.fault === "commit") throw new Error("synthetic-private-driver-message"); Object.assign(state, staged); },
@@ -37,7 +37,7 @@ function fixture() {
     },
   });
   const sync = (columns = [{ name: "FIELD", dataType: "nvarchar(30)" }]) => repository.syncDatasetColumns(7, columns, {
-    dataSourceId: 11, definitionVersion: v, configurationVersion: v, userId: 2,
+    dataSourceId: 11, definitionVersion: v, configurationVersion: v, userId: 2, revalidateParameters: control.parameterValidator,
     reauthorize: async passed => {
       assert.equal(passed, tx); authorizations++;
       if (control.fault === "authorization" || control.fault === "late-authorization" && authorizations > 1) throw new Error("revoked");
@@ -86,4 +86,15 @@ test("version evidence must come from native binary(8), never coerced text or Nu
   const f = fixture(); f.control.invalidVersionShape = true;
   const before = structuredClone(f.state);
   await assert.rejects(f.sync(), /DATASET_COLUMN_SYNC_CONFLICT/); assert.deepEqual(f.state, before);
+});
+
+test("parameterized sync requires the captured definition validator in the same owner and rejects late drift atomically", async () => {
+  const f = fixture(); f.control.parameters = true;
+  let validations = 0;
+  f.control.parameterValidator = async transaction => { assert.ok(transaction); validations++; };
+  await f.sync(); assert.equal(validations, 2);
+  const before = structuredClone(f.state);
+  f.control.parameterValidator = async () => { if (++validations === 4) throw new Error("SYNTHETIC_PARAMETER_DRIFT"); };
+  await assert.rejects(f.sync([{ name: "NEW", dataType: "int" }]), /DATASET_COLUMN_SYNC_FAILED/);
+  assert.deepEqual(f.state, before);
 });

@@ -236,3 +236,46 @@ test("SQL Server existing execution still binds values and returns its bounded r
   assert.deepEqual(fake.procedures, []);
   assert.equal(fake.counts().closed, 1);
 });
+
+test("SQL Server column discovery derives scalar types by metadata RPC only, and sends no actual values", async t => {
+  const fake = sqlServer(t);
+  t.mock.method(fake.request, "execute", async (name: string) => {
+    fake.procedures.push(name);
+    return { recordset: name === "sys.sp_describe_undeclared_parameters"
+      ? [{ name: "@P", suggested_system_type_name: "int" }]
+      : [{ name: "Synthetic", system_type_name: "int", column_ordinal: 1, is_hidden: false }] };
+  });
+  const result = await new SqlServerAdapter().describeQuery(config, { purpose: "COLUMN_OPTIONS_ONLY",
+    sql: "SELECT Synthetic FROM SyntheticTable WHERE Id={{P}}", parameterNames: ["P"], timeoutSec: 1 });
+  assert.deepEqual(fake.procedures, ["sys.sp_describe_undeclared_parameters", "sys.sp_describe_first_result_set"]);
+  assert.equal(fake.calls.find(c => c.name === "params")!.value, "@P int");
+  assert.ok(!fake.calls.some(c => c.name === "P"));
+  assert.deepEqual(result.columns, [{ name: "Synthetic", dataType: "int", ordinal: 1 }]);
+  assert.equal(result.trust, "UNBOUND_CANDIDATE");
+});
+
+test("SQL Server cannot turn unknown or injected inferred types into a query or declaration", async t => {
+  const fake = sqlServer(t);
+  t.mock.method(fake.request, "execute", async (name: string) => {
+    fake.procedures.push(name);
+    return { recordset: [{ name: "@P", suggested_system_type_name: "int);EXEC injected" }] };
+  });
+  await assert.rejects(new SqlServerAdapter().describeQuery(config, { purpose: "COLUMN_OPTIONS_ONLY",
+    sql: "SELECT Id FROM T WHERE Id={{P}}", parameterNames: ["P"], timeoutSec: 1 }), /DESCRIPTION_PARAMETER_UNSUPPORTED/);
+  assert.deepEqual(fake.procedures, ["sys.sp_describe_undeclared_parameters"]);
+});
+
+for (const thick of [false, true]) test(`Oracle ${thick ? "thick" : "thin"} scalar discovery verifies binds and never executes or fetches rows`, async t => {
+  const fake = oracle(t, thick);
+  t.mock.method(fake.connection, "getStatementInfo", async (statement: string) => {
+    fake.statements.push(statement);
+    return { statementType: oracledb.STMT_TYPE_SELECT, bindNames: ["P", "P"], metaData: [{ name: "Synthetic", dbTypeName: "NUMBER" }] };
+  });
+  const actual = { purpose: "COLUMN_OPTIONS_ONLY" as const, sql: "SELECT Id FROM T WHERE Id={{P}} OR {{P}} IS NULL", parameterNames: ["P"], timeoutSec: 1 };
+  const result = await new OracleAdapter().describeQuery(config, actual);
+  assert.deepEqual(fake.statements, ["SELECT Id FROM T WHERE Id=:P OR :P IS NULL"]);
+  assert.equal(result.trust, "UNBOUND_CANDIDATE");
+  t.mock.method(fake.connection, "getStatementInfo", async () => ({ statementType: oracledb.STMT_TYPE_SELECT,
+    bindNames: ["FORGED"], metaData: [{ name: "Synthetic", dbTypeName: "NUMBER" }] }));
+  await assert.rejects(new OracleAdapter().describeQuery(config, actual), /DESCRIPTION_METADATA_INVALID/);
+});

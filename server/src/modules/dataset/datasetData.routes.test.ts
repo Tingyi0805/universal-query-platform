@@ -42,7 +42,7 @@ async function setup() {
     sqlText: "SELECT NAME, MRN, CODE, LABEL WHERE CODE={{WARD}}", phase: "", change: () => {},
     auditFailure: false, operationFailure: false, failureWriteFailure: false, missingDisclosure: false,
     operationStatus: "NONE", schemaMissing: false, startAudits: 0, candidateCalls: 0, candidateDrift: false, candidateFailure: false,
-    lookupValue: "A" as unknown, syncedColumns: [] as string[], syncFailure: false,
+    zeroRows: false, candidateNames: ["OPAQUE_A"], lookupValue: "A" as unknown, syncedColumns: [] as string[], syncFailure: false,
   };
   const deps = {
     ...defaultDatasetDataDependencies,
@@ -57,7 +57,7 @@ async function setup() {
     execute: async (id: number) => {
       state.executions.push(id); if (state.phase === "sql") state.change();
       return { columns: ["NAME", "MRN", "CODE", "LABEL"].map(name => ({ name })),
-        rows: [{ NAME: rawName, MRN: rawId, CODE: state.lookupValue, LABEL: "Synthetic option" }], rowCount: 1, truncated: false, elapsedMs: 1 };
+        rows: state.zeroRows ? [] : [{ NAME: rawName, MRN: rawId, CODE: state.lookupValue, LABEL: "Synthetic option" }], rowCount: state.zeroRows ? 0 : 1, truncated: false, elapsedMs: 1 };
     },
     auditPatient: async (input: { datasetId: number; masked: boolean; rows: ReadonlyArray<Record<string, unknown>> }) => {
       state.disclosures.push({ datasetId: input.datasetId, masked: input.masked, identity: input.rows[0]?.MRN });
@@ -80,6 +80,7 @@ async function setup() {
       assert.equal(id, 1);
       return {
         definitionVersion: version, configurationVersion: version, dataSourceId: 11,
+        revalidateParameters: async () => {},
         revalidate: async () => {
           if (state.candidateDrift) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_CONFLICT");
         },
@@ -88,7 +89,7 @@ async function setup() {
           if (state.candidateFailure) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
           return { trust: "UNBOUND_CANDIDATE" as const,
             requiresExecutionComparison: true as const, evidenceType: "SQLSERVER_DESCRIBE_FIRST_RESULT_SET" as const,
-            columns: [{ name: "OPAQUE_A", dataType: "int", ordinal: 1 }] };
+            columns: state.candidateNames.map((name, index) => ({ name, dataType: "int", ordinal: index + 1 })) };
         },
       };
     } },
@@ -390,3 +391,33 @@ for (const kind of ["permission", "token", "audit", "drift", "describe", "sync",
     assert.deepEqual(f.state.executions, []); assert.deepEqual(f.state.disclosures, []);
   }));
 }
+
+
+test("policy-independent HTTP cycle: unsaved policy blocks rows, metadata sync works, acknowledged rules admit masked preview", () => fixture(async f => {
+  f.state.policyUnconfirmed = true;
+  const input = { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText, expectedDefinitionVersion: version, values: {} };
+  assert.equal((await f.request("/preview/run", input)).status, 409);
+  assert.deepEqual(f.state.executions, []);
+  f.state.candidateNames = ["NAME", "MRN", "CODE", "LABEL"];
+  assert.equal((await f.request("/1/columns/sync", {})).status, 200);
+  assert.deepEqual(f.state.syncedColumns, f.state.candidateNames); assert.deepEqual(f.state.executions, []);
+  // Synthetic acknowledgement of the independently audited policy PUT. Do not
+  // grant authority from the metadata itself.
+  f.state.policyUnconfirmed = false;
+  const snapshot = f.state.snapshots.get(1)!;
+  f.state.snapshots.set(1, { ...snapshot, patientAuditVersion: "0", patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
+    policy: { ...snapshot.policy, patientAuditOnlyColumns: [] } });
+  const response = await f.request("/preview/run", input);
+  assert.equal(response.status, 200);
+  const body = await response.json() as any;
+  assert.equal(body.result.rows[0].NAME, "王○明"); assert.equal(body.result.rows[0].MRN, undefined);
+  assert.deepEqual(f.state.disclosures, []);
+}));
+test("zero-row SQL preview still exposes only explicitly permitted column structure after confirmation", () => fixture(async f => {
+  f.state.zeroRows = true;
+  const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
+  assert.equal(response.status, 200);
+  const result = (await response.json() as any).result;
+  assert.equal(result.rowCount, 0); assert.deepEqual(result.rows, []);
+  assert.deepEqual(result.columns.map((c: any) => c.name), ["NAME", "CODE", "LABEL"]);
+}));

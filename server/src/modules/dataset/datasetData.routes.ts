@@ -125,7 +125,7 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
       descriptionAudited = true;
       await deps.syncColumns(id, [...description.columns], { dataSourceId: context.dataSourceId,
         definitionVersion: context.definitionVersion, configurationVersion: context.configurationVersion,
-        userId: actor.userId, reauthorize: authorize });
+        userId: actor.userId, reauthorize: authorize, revalidateParameters: context.revalidateParameters });
       res.json({ columns: description.columns, trust: "UNBOUND_CANDIDATE", purpose: "DISPLAY_COLUMN_OPTIONS_ONLY",
         deliveryAllowed: false });
     } catch (error) {
@@ -206,11 +206,13 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
 // Fixed messages only: never expose candidate SQL, driver errors or policy values.
 export function datasetPreviewGuidance(code: string): string {
   const messages: Record<string, string> = {
+    DATASET_COLUMN_PARAMETERS_NOT_SYNCED: "SQL 參數尚未同步至已儲存定義，請先在參數設定中同步並儲存，再取得欄位；不需要先確認敏感政策。",
+    DATASET_COLUMN_DESCRIPTION_LIST_UNSUPPORTED: "MULTISELECT 缺少固定展開長度契約，無法安全探索欄位；請先以標量參數查詢設定欄位，不會猜測清單長度或執行資料查詢。",
     DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS: "結果欄位需有唯一且非空白的別名、連續順序及可支援型別。請用 AS 設定不同欄名（最多 256 字元）後儲存再同步。",
     DATASET_COLUMN_SYNC_CONFLICT: "Dataset、來源或參數已變更，請重新儲存並取得欄位。",
     DATASET_SENSITIVITY_COLUMNS_STALE: "同步將移除既有規則的欄位，已停止同步並保留設定，請檢查 SQL 別名。",
     DATASET_COLUMN_SYNC_FAILED: "欄位同步、授權重驗或稽核失敗；未回報成功，請重新載入確認。",
-    DATASET_COLUMN_DESCRIPTION_UNSUPPORTED: "僅支援已儲存、無參數且可安全描述的 SQL Server／Oracle SELECT；請先儲存 SQL 並檢查驅動支援。欄位清單不代表可預覽資料。",
+    DATASET_COLUMN_DESCRIPTION_UNSUPPORTED: "無法安全解析 SQL 或參數型別。請先儲存 SQL、同步參數定義，並確認使用標量 {{參數}}；SQL Server 必須能推導型別，Oracle 必須支援 statement-info。請為未知型別加上明確 CAST；不會執行資料查詢補救。",
     DATASET_COLUMN_DESCRIPTION_CONFLICT: "欄位描述期間 Dataset、來源或權限發生變更，請重新載入再試。",
     DATASET_COLUMN_DESCRIPTION_FAILED: "無法取得欄位候選描述，請管理者檢查來源與稽核服務；未執行資料列查詢。",
     DATASET_CANDIDATE_PREVIEW_UNAVAILABLE: "請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。",

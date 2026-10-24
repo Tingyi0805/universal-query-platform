@@ -1,5 +1,9 @@
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
+import {createDatasetColumnCandidate,readColumnCandidateSnapshot,defaultColumnCandidateDependencies} from "../modules/dataset/datasetColumnCandidate.js";
+import {createParameterRepository} from "../modules/dataset/parameter.repository.js";
+import {SqlServerAdapter} from "../modules/datasource/adapters/sqlServerAdapter.js";
+import type {DataSourceConfig} from "../modules/datasource/datasource.types.js";
 import {createDatasetColumnRepository} from "../modules/dataset/column.repository.js";
 import {testF3SourceMetadata} from "./datasetF3SourceAcceptance.js";
 import {readFile,readdir} from "node:fs/promises";
@@ -302,6 +306,32 @@ async function main(){
       (SELECT COUNT(*) FROM uqp.DatasetPatientAuditMetadata WHERE DatasetId=77) PatientProof,
       (SELECT COUNT(*) FROM uqp.DatasetFieldSnapshot WHERE DatasetId=77) NativeProof`)).recordset.every(r=>r.Rules===0&&r.PatientProof===0&&r.NativeProof===0),"COLUMN_OPTIONS_GAINED_AUTHORITY");
     console.log("DATASET_COLUMN_OPTIONS: RESTRICTED_SQL2019_WRITE_ORDER_AUDIT_ROLLBACK_VERSION_CONFLICT_PASS; NO_POLICY_OR_PATIENT_PROOF_CREATED");
+    stage="PARAMETERIZED_METADATA_WITH_ZERO_ROWS";
+    await root.request().batch(`UPDATE uqp.DataSource SET Host=N'127.0.0.1',Port=14334,DatabaseName=N'${db}' WHERE Id=202;
+      SET IDENTITY_INSERT uqp.Dataset ON;
+      INSERT uqp.Dataset(Id,Code,Name,DataSourceId,SqlText) VALUES(78,N'CI_PARAM_COLUMNS',N'SYNTHETIC',202,
+        N'SELECT CONVERT(nvarchar(30),NULL) AS NAME,CONVERT(varchar(20),NULL) AS PHONE,CONVERT(int,NULL) AS MRN WHERE 1=0 AND {{FILTER}}=CONVERT(int,1)');
+      SET IDENTITY_INSERT uqp.Dataset OFF;
+      INSERT uqp.DatasetParameter(DatasetId,Name,Label,DataType,ControlType,IsRequired,DefaultValue)
+        VALUES(78,N'FILTER',N'SYNTHETIC',N'STRING',N'TEXT',1,N'SYNTHETIC_PRIVATE_PARAMETER');`);
+    const parameterReader=createParameterRepository({getPool:async()=>app!,createTransaction:p=>new sql.Transaction(p),createRequest:t=>new sql.Request(t),
+      snapshotVersion:async()=>{throw new Error("READ_ONLY_FIXTURE");}});
+    const columnSource={id:202,code:"CI",name:"SYNTHETIC",type:"SQLSERVER",host:"127.0.0.1",port,databaseName:db,username:login,password,
+      isActive:true,encryptConnection:true,trustServerCertificate:true,connectionTimeoutSec:5,queryTimeoutSec:5} as DataSourceConfig;
+    const columnService=createDatasetColumnCandidate({...defaultColumnCandidateDependencies,
+      snapshot:id=>readColumnCandidateSnapshot(app!,id),parameters:parameterReader.listDatasetParameters,
+      config:async()=>columnSource,describe:(cfg,input)=>new SqlServerAdapter().describeQuery(cfg,input)});
+    const columnContext=await columnService.open(78),description=await columnContext.describe();
+    check(JSON.stringify(description.columns.map(c=>c.name))===JSON.stringify(["NAME","PHONE","MRN"]),"PARAMETERIZED_FIELDS");
+    check(!JSON.stringify(description).includes("SYNTHETIC_PRIVATE_PARAMETER"),"PARAMETER_VALUE_LEAK");
+    const columnOptions={dataSourceId:202,definitionVersion:columnContext.definitionVersion,configurationVersion:columnContext.configurationVersion,
+      userId:303,reauthorize:async()=>{},revalidateParameters:columnContext.revalidateParameters};
+    await columnRepository.syncDatasetColumns(78,[...description.columns],columnOptions);
+    check((await root.request().query("SELECT COUNT(*) C FROM uqp.DatasetColumn WHERE DatasetId=78")).recordset[0].C===3,"PARAMETERIZED_FIELDS_NOT_SAVED");
+    await root.request().query("UPDATE uqp.DatasetParameter SET Label=N'CHANGED' WHERE DatasetId=78");
+    await assert.rejects(()=>columnContext.revalidateParameters(),{code:"DATASET_COLUMN_DESCRIPTION_CONFLICT"});
+    await assert.rejects(()=>columnRepository.syncDatasetColumns(78,[...description.columns],columnOptions));
+    console.log("DATASET_PARAMETER_METADATA: REAL_SQL2019_INFERENCE_DESCRIBE_ZERO_ROW_COLUMNS_PERSIST_PARAMETER_CAS_PASS; NO_ACTUAL_VALUES_BOUND_OR_RETURNED");
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");

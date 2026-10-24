@@ -287,7 +287,7 @@ export function DatasetDesignerPage() {
         }, accessToken);
         savedId = created.id;
         setForm((current) => ({ ...current, id: created.id }));
-        setNotice("Dataset 已建立。請先檢查並確認敏感欄位政策，可信 metadata 初始化尚未就緒時請停止預覽，不可用聲明替代安全證據。");
+        setNotice("Dataset 已建立。請先同步欄位並明確儲存顯示政策，再執行預覽；患者資料的既有稽核要求不變。");
       }
 
       // The save API trims SQL. Keep the editor aligned with the saved definition.
@@ -727,7 +727,7 @@ export function DatasetDesignerPage() {
 
             <section className="preview-panel" aria-label="SQL 欄位候選預覽">
               <h3>SQL 欄位候選預覽（不讀取資料列）</h3>
-              <p>僅支援已儲存、無參數且可安全描述的 SQL Server／Oracle SELECT。此處是未認證的候選描述；請在下方欄位規則區按「取得並同步欄位清單」後設定顯示方式，不代表來源未漂移，也不解除資料預覽限制。</p>
+              <p>支援已儲存且可安全描述的 SQL Server／Oracle SELECT 與標量參數；MULTISELECT 缺少固定長度契約時拒絕。此處是未認證的候選描述；請在下方欄位規則區按「取得並同步欄位清單」後設定顯示方式，不代表來源未漂移，也不解除資料預覽限制。</p>
               <button type="button" disabled={busy || columnCandidateBusy || !form.id || form.isArchived}
                 onClick={() => void describeColumns()}>{columnCandidateBusy ? "讀取欄位中…" : "取得 SQL 欄位名稱及型別"}</button>
               {columnCandidateError && <p role="alert">{columnCandidateError}</p>}
@@ -744,15 +744,10 @@ export function DatasetDesignerPage() {
             </section>
             {form.id&&<DatasetFieldSnapshotPanel key={`${form.id}:${sqlSaveRevision}:${accessToken}`} datasetId={form.id} token={accessToken} enabled={hasPermission("CONFIRM_DATASET_CLASSIFICATION")&&!busy&&!form.isArchived&&form.sqlText===savedSql&&form.dataSourceId===savedDataSourceId} />}
             <section aria-label="Dataset 安全初始化狀態">
-              <h3>安全初始化：BLOCKED</h3>
-              <p>下方可同步欄位清單並儲存顯示規則；可信欄位及資料預覽仍受既有安全 Gate 限制。不執行資料列查詢來推測欄位，也不把清單當作患者稽核證據。</p>
-              <p>必要條件尚未就緒：來源結構變更驗證、可信欄位發證、資料負責人分類確認。請管理者完成審查後再初始化；僅查看候選描述不會寫入欄位選項；必須明確按下同步欄位清單。</p>
-              <ul>
-                <li>普通 Dataset：先儲存定義、取得可信欄位並確認空政策；空政策或使用者聲明不能證明沒有敏感／患者資料，目前新建預覽仍受阻。</li>
-                <li>非患者敏感 Dataset：可信欄位就緒後，由使用者選擇敏感欄位及遮蔽方式；非患者分類的安全確認流程尚未就緒，不應啟用患者稽核來繞過。</li>
-                <li>患者 Dataset：除敏感規則外，須由授權使用者選擇並確認患者識別欄位，完成金鑰與揭露稽核設定。</li>
-              </ul>
-              <p>已有可信設定的 Dataset 可使用既有預覽檢查；本次不重新發證。新建者請管理者安排可信 metadata 流程，不能以未設定遮蔽推定無敏感性。</p>
+              <h3>先同步欄位、設定政策，再執行預覽</h3>
+              <p>欄位結構探索不需要已確認的敏感政策，也不讀取資料列或實際參數值。請在下方取得並同步欄位清單，再逐欄設定；無需遮蔽時可明確確認目前清單全部原樣顯示。</p>
+              <p>未儲存政策不得交付資料。預覽保留即時權限、版本與操作稽核；已設定患者稽核時仍須完成識別欄位、HMAC 及揭露稽核，不會由欄名推定敏感性。</p>
+              <p>欄位描述不是 SOURCE_BOUND 或 Native Type 確認，不會變更既有遮蔽與患者稽核證據。同步失敗會顯示錯誤代碼與 Request ID，請依指引處理。</p>
             </section>
             <div className="form-actions">
               {!form.isArchived ? (
@@ -818,7 +813,7 @@ export function DatasetDesignerPage() {
 
           {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
 
-          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} canSyncColumns={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY")} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
+          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} canSyncColumns={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY")} onSaved={() => { void loadPreviewParameterDefinitions(form.id); }} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
 
           {preview && (
             <section className="preview-panel">

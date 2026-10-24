@@ -12,7 +12,7 @@
 | 自訂遮蔽 | `CUSTOM`、`CustomMaskJson` | 只傳遮蔽結果 |
 | 全部遮蔽 | `FULL` | 非 null 值固定 `○○○○` |
 | 完全不傳送 | `OMIT` | 不傳欄位名稱、值及相關交付 metadata |
-| 未明確設定／移除規則 | 無規則 | 不傳送；空政策也不授予原值 |
+| 未明確設定／移除規則 | 無規則 | 不傳送；空規則陣列不授予原值 |
 
 選擇「原始資料」是使用者明示的變更：依 910 既有 CHECK，該列敏感標記改為 OTHER；介面事先說明，原交易稽核保留前後差異。其他模式保留既有標記。不依名稱或內容推定分類。既有 NAME／MRN／PHONE／GENERIC 規則僅按已儲存的明示模式相容執行，沒有自動選取這些模式。
 
@@ -33,8 +33,8 @@
 | Gate／程式 | 原因與處理 |
 | --- | --- |
 | `datasetSensitiveColumn.repository.ts:replaceDatasetSensitiveColumns` | 新 Dataset 現可使用 metadata-only 欄位選項同步後設定規則，詳見 [欄位同步](dataset-new-column-options-sync.md)。這不升級為患者／Native 可信證據。 |
-| `datasetDataDelivery.ts:open` 的 RAW_DESIGN | 未設定或未確認患者稽核仍拒絕 Designer 預覽。普通 Dataset 的新初始化途徑本次未解除；不以空政策取代證據，不擴充分類流程。 |
-| `dashboardQuerySourceExecution.ts:page`／`dashboardDevicePage.routes.ts`／`dashboardPreview.routes.ts` | 有資料列但必要揭露稽核未回傳有效紀錄時，仍停止交付；顯示規則不代替稽核設定，普通資料也不以使用者聲明跳過這些既有 Gate。 |
+| `datasetDataDelivery.ts:open` 的 RAW_DESIGN | 政策未確認仍拒絕；患者稽核啟用時須確認有效識別／HMAC。普通 Dataset 可在明確儲存欄位政策後預覽，欄位選項不冒充患者證據。 |
+| `dashboardQuerySourceExecution.ts:page`／`dashboardDevicePage.routes.ts`／`dashboardPreview.routes.ts` | 已啟用患者稽核且有資料列時，必要揭露稽核未回傳有效紀錄仍停止交付；停用／未設定患者稽核的普通資料不要求患者 receipt，既有裝置／來源授權與操作稽核不變。 |
 | `datasetDeliveryPolicy.ts:validatePolicy` 的 patientAuditOnlyColumns | 既有稽核專用鍵仍必須 OMIT；不能藉四模式將它傳到前端。驗收用 MRN 與內部 AUDIT_ID 分欄。若需將同一稽核專用鍵改為 FULL，最小提案須另審原 audit-only 契約，而非本次刪掉檢查。 |
 | `dashboardDeviceMasking.ts:resolveDashboardDisclosureMasks`／`enforceClassifiedDeviceMasks` | 不自動授權未核准來源／欄位、不清除舊分類限制。歷史分類拒絕 raw 或歷史更強保護時，無法保證該欄位立即與 Query 同時顯示。最小方案是既有管理者明確重新核准／審查歷史分類；本次不批次清除。 |
 
@@ -46,4 +46,4 @@
 
 操作：選擇已有已同步欄位的 Dataset → 分別設定四模式 → 儲存本區 → 使用既有授權 Query 與已核准 INHERIT 的 Dashboard 重取資料 → 再改 Dataset 規則並重新取頁。用無權限帳號確認拒絕。全部範例使用合成資料；Mock／瀏覽器結果不代表實際 SQL Server 驗收。
 
-正式 Native Runtime、SOURCE_BOUND、SQL_LOCK_VERIFIED 與新 Dataset 初始化的既有阻擋保持不變。
+正式 Native Runtime、SOURCE_BOUND、SQL_LOCK_VERIFIED 的既有阻擋不變。欄位同步與普通預覽操作見 [循環阻擋修復](dataset-column-policy-cycle-fix.md)。

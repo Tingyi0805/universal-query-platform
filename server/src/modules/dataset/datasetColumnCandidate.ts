@@ -1,10 +1,11 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
-import { candidateDescription, compileDescription, QueryDescriptionError, type CandidateQueryDescription, type DescribeQueryInput } from "../../query/queryDescription.js";
+import { candidateDescription, compileDescription, compileUnboundDescription, QueryDescriptionError, type CandidateQueryDescription, type ColumnDescribeInput } from "../../query/queryDescription.js";
 import { OracleAdapter } from "../datasource/adapters/oracleAdapter.js";
 import { SqlServerAdapter } from "../datasource/adapters/sqlServerAdapter.js";
 import { getDataSourceConfig } from "../datasource/datasource.repository.js";
 import type { DataSourceConfig } from "../datasource/datasource.types.js";
+import { runtimeParameterDefinitions, parameterPreview } from "./parameterSync.js";
 import { listDatasetParameters } from "./parameter.repository.js";
 
 /**
@@ -14,7 +15,7 @@ import { listDatasetParameters } from "./parameter.repository.js";
  * A source DDL fence and source-generation witness are still missing.
  */
 export class DatasetColumnCandidateError extends Error {
-  constructor(readonly code: "DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS" | "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_CONFLICT"
+  constructor(readonly code: "DATASET_COLUMN_PARAMETERS_NOT_SYNCED" | "DATASET_COLUMN_DESCRIPTION_LIST_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS" | "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_CONFLICT"
     | "DATASET_COLUMN_DESCRIPTION_FAILED" | "DATASET_NOT_AVAILABLE" | "DATASOURCE_NOT_AVAILABLE",
     readonly status = 409) { super(code); this.name = "DatasetColumnCandidateError"; }
 }
@@ -24,10 +25,7 @@ export type ColumnCandidateSnapshot = Readonly<{
   definitionVersion: string; configurationVersion: string;
   datasetActive: boolean; datasetArchived: boolean; sourceActive: boolean; sourceType: string;
 }>;
-export const defaultColumnCandidateDependencies = {
-  async snapshot(datasetId: number): Promise<ColumnCandidateSnapshot | null> {
-    const pool = await getPlatformDbPool();
-    if (!pool) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
+export async function readColumnCandidateSnapshot(pool: sql.ConnectionPool, datasetId: number): Promise<ColumnCandidateSnapshot | null> {
     const result = await pool.request().input("id", sql.BigInt, datasetId).query(`
       SELECT d.Id AS DatasetId, d.DataSourceId, d.SqlText,
         d.IsActive AS DatasetActive, d.IsArchived AS DatasetArchived,
@@ -45,10 +43,17 @@ export const defaultColumnCandidateDependencies = {
       datasetActive: Boolean(row.DatasetActive), datasetArchived: Boolean(row.DatasetArchived),
       sourceActive: Boolean(row.SourceActive), sourceType: String(row.SourceType),
     } : null;
+}
+
+export const defaultColumnCandidateDependencies = {
+  async snapshot(datasetId: number): Promise<ColumnCandidateSnapshot | null> {
+    const pool = await getPlatformDbPool();
+    if (!pool) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
+    return readColumnCandidateSnapshot(pool, datasetId);
   },
   parameters: listDatasetParameters,
   config: getDataSourceConfig,
-  describe: (config: DataSourceConfig, input: DescribeQueryInput) => (config.type === "ORACLE" ? new OracleAdapter() : new SqlServerAdapter()).describeQuery(config, input),
+  describe: (config: DataSourceConfig, input: ColumnDescribeInput) => (config.type === "ORACLE" ? new OracleAdapter() : new SqlServerAdapter()).describeQuery(config, input),
 };
 
 export function createDatasetColumnCandidate(deps = defaultColumnCandidateDependencies) {
@@ -73,15 +78,38 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
       || initial.sqlText.length === 0 || initial.sqlText.length > 200000)
       throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
 
+    let saved: Awaited<ReturnType<typeof listDatasetParameters>>;
+    let names: string[];
+    try {
+      saved = await deps.parameters(datasetId);
+      if (!Array.isArray(saved) || saved.length > 100 || new Set(saved.map(p => p.name)).size !== saved.length
+        || saved.some(p => !/^[A-Z][A-Z0-9_]{0,99}$/.test(p.name) || !["STRING", "NUMBER", "DATE", "DATETIME", "BOOLEAN"].includes(p.dataType)))
+        throw new Error();
+      const active = runtimeParameterDefinitions(initial.sqlText, saved);
+      if (active.some(p => p.controlType === "MULTISELECT")) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_LIST_UNSUPPORTED");
+      names = active.map(p => p.name);
+    } catch (error) {
+      if (error instanceof DatasetColumnCandidateError) throw error;
+      if (error instanceof Error && error.message === "PARAMETER_DEFINITION_MISMATCH")
+        throw new DatasetColumnCandidateError("DATASET_COLUMN_PARAMETERS_NOT_SYNCED");
+      throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
+    }
+    const parameterToken = parameterPreview(datasetId, initial.sqlText, saved).previewToken;
+    const revalidateParameters = async (transaction?: sql.Transaction) => {
+      const current = await deps.parameters(datasetId, transaction);
+      if (parameterPreview(datasetId, initial.sqlText, current).previewToken !== parameterToken)
+        throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_CONFLICT");
+    };
+    const input: ColumnDescribeInput = names.length
+      ? { purpose: "COLUMN_OPTIONS_ONLY", sql: initial.sqlText, parameterNames: names, timeoutSec: 10 }
+      : { sql: initial.sqlText, parameters: [], timeoutSec: 10 };
     const revalidate = async () => {
       try {
         const current = await deps.snapshot(datasetId);
         if (!current || Object.keys(initial).some(key =>
           current[key as keyof ColumnCandidateSnapshot] !== initial[key as keyof ColumnCandidateSnapshot]))
           throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_CONFLICT");
-        const parameters = await deps.parameters(datasetId);
-        if (!Array.isArray(parameters) || parameters.length)
-          throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
+        await revalidateParameters();
       } catch (error) {
         if (error instanceof DatasetColumnCandidateError) throw error;
         throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
@@ -90,7 +118,8 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
 
     // The saved-parameter check and the SQL lexer both fail closed.
     await revalidate();
-    try { compileDescription({ sql: initial.sqlText, parameters: [], timeoutSec: 10 }, initial.sourceType as "SQLSERVER" | "ORACLE"); }
+    try { if ("purpose" in input) compileUnboundDescription(input, initial.sourceType as "SQLSERVER" | "ORACLE");
+      else compileDescription(input, initial.sourceType as "SQLSERVER" | "ORACLE"); }
     catch { throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED"); }
 
     const describe = async (): Promise<CandidateQueryDescription> => {
@@ -102,7 +131,7 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
       await revalidate();
       let candidate: CandidateQueryDescription;
       try {
-        candidate = await deps.describe(source, { sql: initial.sqlText, parameters: [], timeoutSec: 10 });
+        candidate = await deps.describe(source, input);
       } catch (error) {
         if (error instanceof QueryDescriptionError && error.code === "DESCRIPTION_METADATA_INVALID")
           throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS");
@@ -122,7 +151,7 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
       await revalidate();
       return candidate;
     };
-    return { revalidate, describe, dataSourceId: initial.dataSourceId, definitionVersion: initial.definitionVersion,
+    return { revalidate, revalidateParameters, describe, dataSourceId: initial.dataSourceId, definitionVersion: initial.definitionVersion,
       configurationVersion: initial.configurationVersion };
   }
   return { open };

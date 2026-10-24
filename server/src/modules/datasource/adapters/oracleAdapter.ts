@@ -3,8 +3,8 @@ import type { DataSourceAdapter, ExecuteQueryInput } from "./datasourceAdapter.j
 import type { ConnectionTestResult, DataSourceConfig } from "../datasource.types.js";
 import type { QueryResult } from "../../../query/query.types.js";
 import { ensureOracleClientInitialized, getOracleRuntimeDiagnostics } from "./oracleClient.js";
-import { acquireDescriptionConnection, candidateDescription, compileDescription, descriptionDeadline,
-  descriptionError, QueryDescriptionError, type DescribeQueryInput } from "../../../query/queryDescription.js";
+import { acquireDescriptionConnection, candidateDescription, compileDescription, compileUnboundDescription, isUnboundDescription, descriptionDeadline,
+  descriptionError, QueryDescriptionError, type ColumnDescribeInput } from "../../../query/queryDescription.js";
 
 function buildConnectString(config: DataSourceConfig): string {
   const target = config.oracleServiceName?.trim();
@@ -27,8 +27,9 @@ async function openConnection(config: DataSourceConfig) {
 }
 
 export class OracleAdapter implements DataSourceAdapter {
-  async describeQuery(config: DataSourceConfig, input: DescribeQueryInput) {
-    const compiled = compileDescription(input, "ORACLE");
+  async describeQuery(config: DataSourceConfig, input: ColumnDescribeInput) {
+    const compiled = isUnboundDescription(input) ? compileUnboundDescription(input, "ORACLE") : compileDescription(input, "ORACLE");
+    const expectedNames = "parameterNames" in compiled ? compiled.parameterNames : [];
     let connection: any;
     try {
       ensureOracleClientInitialized();
@@ -48,7 +49,8 @@ export class OracleAdapter implements DataSourceAdapter {
       const info = await descriptionDeadline<any>(connection.getStatementInfo(compiled.sql), input.timeoutSec * 1000,
         () => connection.break());
       if (!info || info.statementType !== oracledb.STMT_TYPE_SELECT || !Array.isArray(info.bindNames)
-        || info.bindNames.length !== 0 || !Array.isArray(info.metaData)) {
+        || info.bindNames.length > 10000 || new Set(info.bindNames).size !== expectedNames.length
+        || info.bindNames.some((name: unknown) => typeof name !== "string" || !expectedNames.includes(name)) || !Array.isArray(info.metaData)) {
         throw new QueryDescriptionError("DESCRIPTION_METADATA_INVALID");
       }
       return candidateDescription("ORACLE_STATEMENT_INFO", info.metaData.map((column: any, index: number) => ({

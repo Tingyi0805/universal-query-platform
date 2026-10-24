@@ -90,3 +90,22 @@ test("deadline cancels pending native describe, and a late failure is consumed",
   await new Promise(r => setImmediate(r));
   assert.equal(cancelled, 1);
 });
+
+test("column-only compiler safely preserves literals, translates named scalar bindings and never guesses native types", async () => {
+  const { compileUnboundDescription, inferredDescriptionDeclarations } = await import("./queryDescription.js");
+  for (const source of ["SQLSERVER", "ORACLE"] as const) {
+    const result = compileUnboundDescription({ purpose: "COLUMN_OPTIONS_ONLY", sql: "SELECT 'x:@literal' AS Label FROM T WHERE Id={{ID}}",
+      parameterNames: ["ID"], timeoutSec: 5 }, source);
+    assert.equal(result.sql, `SELECT 'x:@literal' AS Label FROM T WHERE Id=${source === "ORACLE" ? ":" : "@"}ID`);
+  }
+  assert.equal(inferredDescriptionDeclarations([{ name: "@ID", suggested_system_type_name: "bigint" }], ["ID"]), "@ID bigint");
+  for (const type of ["int);DELETE FROM T", "nvarchar(9999)", "decimal(39,0)", "decimal(2,3)", "dbo.CustomType"]) {
+    assert.throws(() => inferredDescriptionDeclarations([{ name: "@ID", suggested_system_type_name: type }], ["ID"]), /DESCRIPTION_PARAMETER_UNSUPPORTED/);
+  }
+  for (const rows of [[], [{ name: "@OTHER", suggested_system_type_name: "int" }],
+    [{ name: "@ID", suggested_system_type_name: "int", suggested_user_type_name: "AliasType" }]])
+    assert.throws(() => inferredDescriptionDeclarations(rows, ["ID"]), /DESCRIPTION_PARAMETER_UNSUPPORTED/);
+  for (const sql of ["EXEC T", "SELECT @ID", "SELECT :ID", "SELECT '{{ID}}'", "SELECT {{ID}};DELETE FROM T"]) {
+    assert.throws(() => compileUnboundDescription({ purpose: "COLUMN_OPTIONS_ONLY", sql, parameterNames: ["ID"], timeoutSec: 5 }, "SQLSERVER"));
+  }
+});

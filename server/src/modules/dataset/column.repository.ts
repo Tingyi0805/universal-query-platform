@@ -15,6 +15,7 @@ export class DatasetColumnSyncError extends Error {
 }
 type SyncOptions = {
   dataSourceId: number; definitionVersion: string; configurationVersion: string; userId: number;
+  revalidateParameters?: (transaction: sql.Transaction) => Promise<void>;
   reauthorize: (transaction: sql.Transaction) => Promise<void>;
 };
 export function createDatasetColumnRepository(deps = {
@@ -45,9 +46,12 @@ export function createDatasetColumnRepository(deps = {
           || row.DefinitionVersion.toString("hex") !== options.definitionVersion
           || row.ConfigurationVersion.toString("hex") !== options.configurationVersion)
           throw new DatasetColumnSyncError("DATASET_COLUMN_SYNC_CONFLICT");
-        const parameters = await request().input("datasetId", sql.BigInt, datasetId)
-          .query("SELECT TOP (1) Id FROM uqp.DatasetParameter WITH (HOLDLOCK) WHERE DatasetId=@datasetId");
-        if (parameters.recordset.length) throw new DatasetColumnSyncError("DATASET_COLUMN_SYNC_CONFLICT");
+        if (options.revalidateParameters) await options.revalidateParameters(tx);
+        else {
+          const parameters = await request().input("datasetId", sql.BigInt, datasetId)
+            .query("SELECT TOP (1) Id FROM uqp.DatasetParameter WITH (HOLDLOCK) WHERE DatasetId=@datasetId");
+          if (parameters.recordset.length) throw new DatasetColumnSyncError("DATASET_COLUMN_SYNC_CONFLICT");
+        }
         await options.reauthorize(tx);
       };
       await check();
