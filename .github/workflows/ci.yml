@@ -224,6 +224,9 @@ jobs:
           Copy-Item client/dist release/payload/client/dist -Recurse
           Copy-Item client/package.json release/payload/client/
           Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/payload/tools/
+          New-Item -ItemType Directory -Path release/payload/database -Force | Out-Null
+          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/database/925_dataset_display_policy.sql
+          Copy-Item tools/install-uqp-pr66-offline.ps1 release/payload/tools/
           Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md release/payload/docs/
           Copy-Item tools/install-uqp-pr66-offline.ps1 release/
           Set-Location release/payload/server
