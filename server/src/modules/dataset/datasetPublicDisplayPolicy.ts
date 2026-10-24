@@ -5,7 +5,7 @@ import { assertDatasetSensitivityPolicy, type DeviceMaskMode } from "../dashboar
  * This pure evaluator is intentionally NOT wired to playback until persistent
  * versioned confirmation and migration gates are implemented. */
 export type PublicDisplayGrant = { columnName: string; permitted: boolean };
-export type PublicDisplayPolicy = { confirmed: boolean; grants: PublicDisplayGrant[] };
+export type PublicDisplayPolicy = { confirmed: boolean; sensitivityVersion: number; grants: PublicDisplayGrant[] };
 export function resolveDatasetPublicDisplayMasks(
   sensitivity: { version: number; columns: DatasetSensitiveColumn[] },
   publicPolicy: PublicDisplayPolicy | null | undefined,
@@ -13,7 +13,7 @@ export function resolveDatasetPublicDisplayMasks(
 ): Record<string, DeviceMaskMode> {
   assertDatasetSensitivityPolicy(sensitivity);
   const result: Record<string, DeviceMaskMode> = {};
-  if (!publicPolicy?.confirmed || !Array.isArray(publicPolicy.grants)) return result;
+  // Every sensitivity-policy edit invalidates older public display confirmations.\n  if (!publicPolicy?.confirmed || publicPolicy.sensitivityVersion !== sensitivity.version || !Array.isArray(publicPolicy.grants)) return result;
   const seen = new Set<string>();
   for (const name of resultColumns) {
     const normalized = name.toUpperCase();
