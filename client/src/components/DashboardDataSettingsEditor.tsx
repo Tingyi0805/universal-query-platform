@@ -128,8 +128,8 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
   return <div className="wide" id="column-approvals">
     <button type="button" disabled={saving} onClick={() => void reloadApprovals()}>重新載入核准版本</button>
     {managed && !managed.editable && <p role="alert">須先停用 Dashboard 才可修改。不會自動停用或重新啟用。</p>}
-    {!selectedQueryId && <p role="status">來源尚未轉換，請先明確選擇 Query；轉換後敏感欄位需要重新核准。</p>}
-    <label>遮蔽核准來源<select aria-label="遮蔽核准來源" value={sourceKey} onChange={e => { setLoaded(false); setSourceKey(e.target.value); }} disabled={saving}><option value="PRIMARY">PRIMARY 主來源</option>{managed?.sources.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}</option>)}</select></label>
+    {!selectedQueryId && <p role="status">目前無法取得此來源的 Query 綁定。請先在「Query-only 資料來源」完成 PRIMARY 轉換並重新載入；轉換後須重新確認欄位傳送授權。</p>}
+    <label>欄位授權來源<select aria-label="欄位授權來源" value={sourceKey} onChange={e => { setLoaded(false); setSourceKey(e.target.value); }} disabled={saving}><option value="PRIMARY">PRIMARY 主來源</option>{managed?.sources.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}</option>)}</select></label>
     <h3>Dataset 最低保護規則（{sourceKey}）</h3>
     {!loaded && <p role="status">尚未確認 Dataset 保護；暫停欄位規則編輯。</p>}
     {policy.map(rule => <p key={rule.columnName}>{rule.columnName}：{modeNames[rule.deviceMaskMode] ?? "未知規則，禁止變更"}{rule.customMask ? `（${rule.customMask.start === undefined ? `前 ${rule.customMask.prefix}／後 ${rule.customMask.suffix}` : `位置 ${rule.customMask.start}～${rule.customMask.end}`}，符號 ${rule.customMask.symbol}）` : ""}</p>)}
