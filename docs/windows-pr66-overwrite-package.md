@@ -8,6 +8,7 @@
 - `payload/server/dist`：已編譯 Server
 - `payload/server/node_modules`：Windows Runner 安裝的相依套件
 - `payload/client/dist`：已編譯 Client
+- `payload/client/src`、`index.html`、`vite.config.ts`、`tsconfig*.json`、`package.json`：本機編譯與啟動 Client 的完整開發來源（預設 API 代理 Port 3200）
 - `payload/server/src`：專用 925 安裝程式來源（非供直接取代已編譯 Runtime）
 - `payload/tools/install-uqp-925.ps1`：需明確 DBA 核准的 925 Preflight／Apply／Verify
 - `payload/tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql`：925 結構定義，**供核對，不得直接以 SSMS 跳過專用安裝檢查執行**
@@ -76,3 +77,21 @@ cd C:\UQP_Update
 `-Apply925` 會要求額外輸入精確核准字串，然後呼叫專用 Apply 及 Verify；若 SQL Server 版本、身分、既有 Schema 不符，專用工具會拒絕安裝。這個旗標**不代表 DBA 已授權**，必須由操作人員先完成實際核准。
 
 此腳本只負責步驟 1～4，不會自動切換程式、重啟服務或測試 Oracle 11g；第 5～6 項仍須另外執行並驗收。
+
+
+## Windows 11 本機 Client 標準啟動
+
+新版更新包包含 Client 原始碼與 Vite 設定。完成程式切換後，在 PowerShell 執行：
+
+~~~powershell
+cd C:\UQP\client
+npm install
+npm run build
+npm run dev
+~~~
+
+Chrome 開啟 Vite 顯示的 Local 網址，通常為 http://localhost:5173/。
+預設 /api 代理到 http://localhost:3200，若需覆寫可使用 VITE_API_PROXY_TARGET。
+Server 的實際健康檢查網址是 http://localhost:3200/api/status（不是 /health）。
+若 5173 已被占用，請先停止舊版 Client，避免混用版本。
+正式 Windows Server 應沿用既有靜態網站部署，不使用 Vite 開發服務。
