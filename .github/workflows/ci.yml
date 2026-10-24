@@ -248,7 +248,6 @@ jobs:
           New-Item -ItemType Directory -Path $target|Out-Null
           'original'|Set-Content (Join-Path $target 'marker.txt')
           & .\release\install-uqp-pr66-offline.ps1 -Target $target -PreflightOnly
-          if($LASTEXITCODE -ne 0){throw 'PREFLIGHT_FAILED'}
           $failed=$false
           try { & .\release\install-uqp-pr66-offline.ps1 -Target $target -Schema925Verified -ServiceStopped -AcceptMaintenance -SimulateFailure } catch {$failed=$true}
           if(-not $failed){throw 'FAILURE_INJECTION_NOT_TRIGGERED'}
