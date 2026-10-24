@@ -156,3 +156,21 @@ test("raw display is an explicit designer choice, never inferred from a saved se
   await expect(policy.getByText(/敏感欄位規則已儲存/)).toBeVisible();
   expect(state.rules).toEqual([{ columnName: "PHONE", sensitivityType: "OTHER", deviceMaskMode: "NONE", customMask: null }]);
 });
+
+
+test("Dataset alias suggestion requires explicit apply and save; never grants Dashboard disclosure", async ({ page }) => {
+  const { state, policy } = await setup(page);
+  await policy.getByLabel("查詢結果欄位").selectOption("MRN");
+  await expect(policy.getByText(/系統建議：病歷號/)).toBeVisible();
+  expect(state.writes).toEqual([]);
+  await policy.getByRole("button", { name: "帶入建議（不自動儲存）" }).click();
+  await expect(policy.getByLabel("保留後幾碼")).toHaveValue("4");
+  expect(state.writes).toEqual([]);
+  await policy.getByRole("button", { name: "加入／更新欄位規則" }).click();
+  expect(state.writes).toEqual([]);
+  await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則" }).click();
+  await expect.poll(() => state.writes).toEqual(["sensitivity"]);
+  expect(state.rules.find(rule => rule.columnName === "MRN")).toMatchObject({
+    deviceMaskMode: "CUSTOM", customMask: { prefix: 0, suffix: 4, symbol: "*" },
+  });
+});
