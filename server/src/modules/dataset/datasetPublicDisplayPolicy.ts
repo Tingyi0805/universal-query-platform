@@ -13,12 +13,20 @@ export function resolveDatasetPublicDisplayMasks(
 ): Record<string, DeviceMaskMode> {
   assertDatasetSensitivityPolicy(sensitivity);
   const result: Record<string, DeviceMaskMode> = {};
-  // Every sensitivity-policy edit invalidates older public display confirmations.\n  if (!publicPolicy?.confirmed || publicPolicy.sensitivityVersion !== sensitivity.version || !Array.isArray(publicPolicy.grants)) return result;
+  // Every sensitivity-policy edit invalidates older public display confirmations.
+  if (!publicPolicy?.confirmed || publicPolicy.sensitivityVersion !== sensitivity.version || !Array.isArray(publicPolicy.grants)) return result;
   const seen = new Set<string>();
   for (const name of resultColumns) {
     const normalized = name.toUpperCase();
     if (seen.has(normalized)) throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
     seen.add(normalized);
+  }
+  const grantNames = new Set<string>();
+  for (const grant of publicPolicy.grants) {
+    if (!grant || typeof grant.columnName !== "string" || !grant.columnName.trim() ||
+      grant.columnName !== grant.columnName.trim() || typeof grant.permitted !== "boolean" ||
+      grantNames.has(grant.columnName.toUpperCase())) return result;
+    grantNames.add(grant.columnName.toUpperCase());
   }
   for (const name of resultColumns) {
     const grants = publicPolicy.grants.filter(g => g && typeof g.columnName === "string" && g.columnName.toUpperCase() === name.toUpperCase());
