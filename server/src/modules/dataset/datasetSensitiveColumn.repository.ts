@@ -1,3 +1,4 @@
+import {assertDatasetAuditOnlyPolicy} from "./datasetAuditOnlyPolicy.js";
 import { recordTemplateApplications, type TemplateApplication } from "./datasetMaskTemplate.repository.js";
 import { patientAuditService } from "./patientAuditContract.repository.js";
 import sql from "mssql";
@@ -120,5 +121,6 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
 export async function getDashboardSensitivitySnapshot(datasetId: number) {
   const sensitivity = await getDatasetSensitivitySnapshot(datasetId);
   const patientAudit = await patientAuditService.dashboardState(datasetId);
+  try{assertDatasetAuditOnlyPolicy(sensitivity,patientAudit.config?.patientKeyColumn??null);}catch{throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");}
   return { ...sensitivity, patientAudit };
 }

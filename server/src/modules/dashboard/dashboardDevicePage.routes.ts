@@ -7,7 +7,7 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
 import { getClientIp } from "../../utils/clientIp.js";
-import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, dashboardQueryParameters, resolveDashboardDisclosureMasks, maskDeviceRows, resolveDeviceColumnMask } from "./dashboardDeviceMasking.js";
+import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, dashboardQueryParameters, maskDeviceRows, resolveDeviceColumnMask } from "./dashboardDeviceMasking.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 
@@ -67,6 +67,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
     assertDatasetSensitivityPolicy(sensitivity);
     const publicDisplay=await (deps.getPublicDisplay ?? getDatasetPublicDisplay)(dataset.id);
     if(publicDisplay.status!=="CONFIRMED"||!publicDisplay.policy?.confirmed||publicDisplay.sensitivityVersion!==sensitivity.version)throw new DeliveryError(403,"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED");
+    if(!Object.keys(resolveDatasetPublicDisplayMasks(sensitivity,publicDisplay.policy,sensitivity.columns.map(r=>r.columnName))).length)throw new DeliveryError(403,"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED");
     const definitions = await listDatasetParameters(dataset.id);
     const reportColumns = source ? [] : await listReportColumns(query.id);
     const accessRevision = await getQueryAccessRevision(query.id);
@@ -138,9 +139,10 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE", message: "頁碼超出資料範圍。" } });
         return;
       }
-      assertDashboardResultColumns(snapshot.columns);
+      assertDashboardResultColumns(snapshot.columns,snapshot.rows);
       const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
       const masks = resolveDatasetPublicDisplayMasks(sensitivity,state.publicDisplay.policy,snapshot.columns.map(c=>c.name));
+      if(!snapshot.columns.some(c=>resolveDeviceColumnMask(c.name,masks)!=="OMIT"))throw new DeliveryError(403,"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED");
       const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
       const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
       const disclosureId = await auditPatientListIfConfigured({
@@ -211,7 +213,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
           sourceScope, columns: result.columns, rows: result.rows,
         });
       }
-      assertDashboardResultColumns(snapshot.columns);
+      assertDashboardResultColumns(snapshot.columns,snapshot.rows);
       const masks = resolveDatasetPublicDisplayMasks(policy,state.publicDisplay.policy,snapshot.columns.map(c=>c.name));
       const columns = snapshot.columns.filter(column => resolveDeviceColumnMask(column.name, masks) !== "OMIT");
       const pageSize = source.pageSize;
@@ -220,6 +222,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE" } }); return;
       }
       const rawRows = snapshot.rows.slice((input.data.page - 1) * pageSize, input.data.page * pageSize);
+      if(!columns.length)throw new DeliveryError(403,"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED");
       const rows = maskDeviceRows(rawRows, masks, policy.columns);
       const disclosureId = await auditPatientListIfConfigured({
         datasetId: source.datasetId, dashboardDeviceId: verification.device.id, userId: null,

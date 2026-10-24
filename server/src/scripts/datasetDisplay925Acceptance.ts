@@ -32,7 +32,7 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
  assert.equal((await root.request().query("SELECT COUNT(*) C FROM uqp.DatasetMaskTemplate")).recordset[0].C,8);
  assert.equal((await root.request().query("SELECT COUNT(*) C FROM uqp.DatasetPublicDisplayPolicy")).recordset[0].C,0);
  // Same-name altered metadata must fail; rollback restores the exact baseline.
- for(const change of ["ALTER TABLE uqp.DatasetPublicDisplayPolicy ADD Extra int NULL","ALTER TABLE uqp.DatasetMaskTemplate NOCHECK CONSTRAINT CK_MaskTemplate_Custom","CREATE INDEX IX_UNREVIEWED ON uqp.DatasetMaskTemplate(IsActive)"]){const t=new sql.Transaction(root);await t.begin();try{await new sql.Request(t).query(change); }catch{}finally{const r=await new sql.Request(t).query(displayCatalogSql);assert.throws(()=>validateDisplayCatalog(r.recordsets as unknown as Record<string,any>[][],ddl));await t.rollback();}assert.equal(await catalog(),"EXACT_MATCH");}
+ for(const change of ["ALTER TABLE uqp.DatasetPublicDisplayPolicy ADD Extra int NULL","ALTER TABLE uqp.DatasetMaskTemplate NOCHECK CONSTRAINT CK_MaskTemplate_Custom","CREATE INDEX IX_UNREVIEWED ON uqp.DatasetMaskTemplate(IsActive)","DROP INDEX IX_MaskTemplateUse_Dataset ON uqp.DatasetMaskTemplateUse;CREATE INDEX IX_MaskTemplateUse_Dataset ON uqp.DatasetMaskTemplateUse(DatasetId DESC,ColumnName,Id)","ALTER TABLE uqp.DatasetMaskTemplate DROP CONSTRAINT DF_MaskTemplate_Public,DF_MaskTemplate_Active;ALTER TABLE uqp.DatasetMaskTemplate ADD CONSTRAINT DF_MaskTemplate_Public DEFAULT(0) FOR IsActive;ALTER TABLE uqp.DatasetMaskTemplate ADD CONSTRAINT DF_MaskTemplate_Active DEFAULT(1) FOR SuggestedPublicAllowed"]){const t=new sql.Transaction(root);await t.begin();try{await new sql.Request(t).query(change); }catch{}finally{const r=await new sql.Request(t).query(displayCatalogSql);assert.throws(()=>validateDisplayCatalog(r.recordsets as unknown as Record<string,any>[][],ddl));await t.rollback();}assert.equal(await catalog(),"EXACT_MATCH");}
  await root.request().batch(`SET IDENTITY_INSERT uqp.Dataset ON;INSERT uqp.Dataset(Id,Code,Name,DataSourceId,SqlText) VALUES(79,N'DISPLAY925',N'SYNTHETIC',202,N'SELECT NULL AS NAME,NULL AS PHONE,NULL AS SECRET');SET IDENTITY_INSERT uqp.Dataset OFF;
   INSERT uqp.DatasetColumn(DatasetId,ColumnName,DataType,[Ordinal]) VALUES(79,N'NAME',N'nvarchar',0),(79,N'PHONE',N'nvarchar',1),(79,N'SECRET',N'nvarchar',2);
   INSERT uqp.DatasetSensitivePolicyVersion(DatasetId,VersionNumber) VALUES(79,1);
@@ -40,7 +40,7 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
   GRANT SELECT,INSERT,UPDATE ON OBJECT::uqp.DatasetPublicDisplayPolicy TO [${login}];
   GRANT SELECT,INSERT,UPDATE ON OBJECT::uqp.DatasetMaskTemplate TO [${login}];GRANT SELECT,INSERT ON OBJECT::uqp.DatasetMaskTemplateUse TO [${login}];
   GRANT VIEW DEFINITION ON OBJECT::uqp.DatasetPublicDisplayPolicy TO [${login}];GRANT VIEW DEFINITION ON OBJECT::uqp.DatasetMaskTemplate TO [${login}];GRANT VIEW DEFINITION ON OBJECT::uqp.DatasetMaskTemplateUse TO [${login}];
-  GRANT SELECT ON OBJECT::uqp.QueryDefinition TO [${login}];GRANT SELECT ON OBJECT::uqp.DatasetSensitivePolicyVersion TO [${login}];`);
+  GRANT SELECT ON OBJECT::uqp.QueryDefinition TO [${login}];GRANT SELECT ON OBJECT::uqp.DatasetSensitivePolicyVersion TO [${login}];GRANT SELECT ON OBJECT::uqp.DatasetPatientAuditConfig TO [${login}];`);
  console.log("DATASET_DISPLAY_925_STAGE_RESTRICTED_WRITE");
  const deps={...displayRepositoryDefaults,getPool:async()=>app,request:(tx:sql.Transaction)=>{
   const r=new sql.Request(tx),query=r.query;r.query=function(...args:unknown[]){return Reflect.apply(query,r,args).catch((e:unknown)=>{const n=(e as {number?:unknown})?.number;console.error("925_SQL_FAILURE_NUMBER="+(Number.isSafeInteger(n)?n:0));throw e;});} as typeof r.query;return r;
@@ -48,7 +48,7 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
  const tokenVersion=Number((await root.request().query("SELECT TokenVersion FROM uqp.AppUser WHERE Id=303")).recordset[0].TokenVersion);
  const secret=env.JWT_SECRET;env.JWT_SECRET="SYNTHETIC_925_CI";
  try{
-  const token=jwt.sign({sub:"303",tokenVersion},env.JWT_SECRET);const identity=createRuntimeIdentityVerifier();const actor=(tx:sql.Transaction)=>identity("Bearer "+token,tx);
+  let token=jwt.sign({sub:"303",tokenVersion},env.JWT_SECRET);const identity=createRuntimeIdentityVerifier();const actor=(tx:sql.Transaction)=>identity("Bearer "+token,tx);
   console.log("925_STEP_INITIAL_GET");const s=await store.get(79,actor);assert.equal(s.status,"UNCONFIRMED");
   const command=(v= s)=>({expectedVersion:v.version,expectedSensitivityVersion:v.sensitivityVersion,expectedDefinitionVersion:v.definitionVersion,expectedConfigurationVersion:v.configurationVersion,requestId:randomUUID(),grants:[{columnName:"NAME",permitted:true},{columnName:"PHONE",permitted:true},{columnName:"SECRET",permitted:false}]});
   await assert.rejects(store.save(79,actor,{...command(),grants:[{columnName:"SECRET",permitted:true}]}));
@@ -71,7 +71,7 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
   assert.equal((await store.get(79,actor)).version,published.version);assert.equal((await templates.list(actor)).find(t=>t.id===created.id)!.uses[0]!.State,"NEEDS_RECONFIRMATION");
   const again=new sql.Transaction(app);await again.begin();await assert.rejects(recordTemplateApplications(again,79,next.sensitivityVersion,303,[{columnName:"NAME",templateId:template.id,templateRevision:template.revision}],[{columnName:"NAME",deviceMaskMode:"FULL"}]));await again.rollback();
   const deny=async(tx:sql.Transaction)=>({...await actor(tx),permissions:["DESIGN_QUERY"]});await assert.rejects(store.save(79,deny,command(await store.get(79))));await assert.rejects(templates.save(deny,null,input));
-  await root.request().query("UPDATE uqp.AppUser SET TokenVersion=TokenVersion+1 WHERE Id=303");await assert.rejects(store.get(79,actor));await root.request().query("UPDATE uqp.AppUser SET TokenVersion=TokenVersion-1 WHERE Id=303");
+  await root.request().query("UPDATE uqp.AppUser SET TokenVersion=TokenVersion+1 WHERE Id=303");await assert.rejects(store.get(79,actor));token=jwt.sign({sub:"303",tokenVersion:tokenVersion+1},env.JWT_SECRET);
   const final=await store.get(79,actor);assert.deepEqual(resolveDatasetPublicDisplayMasks({version:next.sensitivityVersion,columns:[{columnName:"NAME",sensitivityType:"NAME",deviceMaskMode:"FULL"},{columnName:"PHONE",sensitivityType:"OTHER",deviceMaskMode:"NONE"},{columnName:"SECRET",sensitivityType:"OTHER",deviceMaskMode:"OMIT"}]},final.policy,["NAME","PHONE","SECRET","NEW"]),{NAME:"FULL",PHONE:"NONE"});
   console.log("DATASET_DISPLAY_925: REAL_FULL_SCHEMA_ABSENT_INSTALL_REPEAT_PARTIAL_FAILURE_ROLLBACK_EXACT; RESTRICTED_ACTOR_CAS_RACE_EXACT_AUDIT_ABA_SOURCE_TOKEN_INVALIDATION; TEMPLATE_HISTORY_NO_DATASET_MUTATION_PASS");
  }finally{env.JWT_SECRET=secret;}

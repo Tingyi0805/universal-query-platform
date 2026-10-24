@@ -9,7 +9,7 @@ import { runtimeParameterDefinitions } from "../dataset/parameterSync.js";
 import { coerceRuntimeParameters } from "../dataset/parameter.service.js";
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 import { createDashboardPageSnapshot, getDashboardPageSnapshot } from "./dashboardPageSnapshot.js";
-import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, resolveDashboardDisclosureMasks, maskDeviceRows, resolveDeviceColumnMask, validDashboardColumnMasks } from "./dashboardDeviceMasking.js";
+import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, maskDeviceRows, resolveDeviceColumnMask } from "./dashboardDeviceMasking.js";
 
 export type ExecutionBinding = {
   dashboardId: number; sourceId: number; sourceKey: string; queryDefinitionId: number | null; bindingRevision: number;
@@ -91,6 +91,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     const publicDisplay = context === "designer" ? null : await (deps.getPublicDisplay ?? getDatasetPublicDisplay)(dataset.id);
     if (publicDisplay && (publicDisplay.status !== "CONFIRMED" || !publicDisplay.policy?.confirmed || publicDisplay.sensitivityVersion !== sensitivity.version))
       throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
+    if(publicDisplay&&!Object.keys(resolveDatasetPublicDisplayMasks(sensitivity,publicDisplay.policy,sensitivity.columns.map(r=>r.columnName))).length)throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
     const accessRevision = await deps.getAccessRevision(query.id);
     // Binding/masks and policy are read independently. Bracket those reads so a
     // concurrent write (including A→B→A) cannot produce an apparently current mix.
@@ -157,11 +158,12 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / binding.pageSize));
       if (input.page > totalPages) throw new QuerySourceError("DASHBOARD_PAGE_OUT_OF_RANGE", 400);
       const rawRows = snapshot.rows.slice((input.page - 1) * binding.pageSize, input.page * binding.pageSize);
-      assertDashboardResultColumns(snapshot.columns);
+      assertDashboardResultColumns(snapshot.columns,rawRows);
       const masks = initial.publicDisplay
         ? resolveDatasetPublicDisplayMasks(sensitivity, initial.publicDisplay.policy, snapshot.columns.map(c=>c.name))
-        : Object.fromEntries(sensitivity.columns.map(r=>[r.columnName,r.deviceMaskMode]));
+        : Object.fromEntries(sensitivity.columns.filter(r=>snapshot!.columns.some(c=>c.name.toUpperCase()===r.columnName.toUpperCase())).map(r=>[r.columnName,r.deviceMaskMode]));
       const columns = snapshot.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
+      if(initial.publicDisplay&&!columns.length)throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
       const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
       // Cached and fresh pages must still match immediately before disclosure audit,
       // as well as after SQL and after the mandatory audit below.

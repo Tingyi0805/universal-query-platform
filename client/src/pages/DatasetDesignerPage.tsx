@@ -813,7 +813,7 @@ export function DatasetDesignerPage() {
 
           {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
 
-          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} canSyncColumns={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY")} onSaved={() => { void loadPreviewParameterDefinitions(form.id); }} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
+          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} definitionRevision={sqlSaveRevision} canSyncColumns={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY")} onSaved={() => { void loadPreviewParameterDefinitions(form.id); }} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
 
           {preview && (
             <section className="preview-panel">

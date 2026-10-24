@@ -19,7 +19,8 @@ export function createDatasetPublicDisplayRouter(deps={repository:datasetPublicD
    res.json(result);
   }catch(e){const code=e instanceof DatasetDisplayError||e instanceof QueryDeliveryError?e.code:e instanceof z.ZodError?"VALIDATION_ERROR":"DATASET_DISPLAY_UNAVAILABLE";
    const status=e instanceof DatasetDisplayError||e instanceof QueryDeliveryError?e.status:e instanceof z.ZodError?400:503;
-   res.status(status).json({error:{code,message:code.endsWith("VERSION_CONFLICT")?"政策或資料來源版本已改變，草稿保留；請重新載入確認。":"公共顯示政策未完成，請檢查權限、925 Schema 與欄位政策；資料不會自動公開。",requestId:req.id}});
+   const guidance:Record<string,string>={DATASET_DISPLAY_SCHEMA_REQUIRED:"925 Schema 尚未安裝、可見性不足或定義不符；請管理者依專用預檢程序處理，不可跳過檢查。",DATASET_DISPLAY_SENSITIVITY_REQUIRED:"請先同步欄位並明確儲存 Dataset 遮蔽政策，再設定公共顯示。",DATASET_DISPLAY_SENSITIVITY_INVALID:"Dataset 遮蔽政策無效；已設定的患者稽核專用識別鍵必須為不傳送（OMIT）。如需顯示識別資料，請另外使用顯示欄位別名並明確設定規則，不可公開稽核專用鍵。"};
+   res.status(status).json({error:{code,message:guidance[code]??(code.endsWith("VERSION_CONFLICT")?"政策或資料來源版本已改變，草稿保留；請重新載入確認。":"公共顯示政策未完成，請檢查權限、925 Schema 與欄位政策；資料不會自動公開。"),requestId:req.id}});
   }
  });return router;
 }

@@ -1,3 +1,4 @@
+import {DatasetDisplayError} from "../dataset/datasetDisplaySchema.js";
 import { createUserPlaybackSourcesReader } from "./dashboardQuerySourceExecution.repository.js";
 import { advanceDashboardAccessEvidence } from "../queryDefinition/queryAccess.repository.js";
 import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
@@ -669,4 +670,21 @@ for(const ctx of ["designer","user","device"] as const)test(`Dataset public poli
  f.control.publicAllowed=false;
  if(ctx==="designer"){assert.equal((await f.service.page(1,"PRIMARY",subjectFor,{page:1})).result.rows.length,1);}
  else {await assert.rejects(f.service.page(1,"PRIMARY",subjectFor,{page:1}),{code:"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED"});assert.equal(f.control.executions.length,0);f.control.publicAllowed=true;const r=await f.service.page(1,"PRIMARY",subjectFor,{page:1});assert.equal(r.result.rows[0]!.NAME,"測○○○甲");f.control.publicEpoch+=2;await assert.rejects(f.service.page(1,"PRIMARY",subjectFor,{page:1,snapshotId:r.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});}
+});
+
+test("missing public Schema is a traceable rejection before SQL, never a Legacy grant fallback",async()=>{
+ const f=userFixture();f.deps.getPublicDisplay=async()=>{throw new DatasetDisplayError("DATASET_DISPLAY_SCHEMA_REQUIRED",503);};
+ await assert.rejects(f.service.page(1,"PRIMARY",userSubject(),{page:1}),{code:"DATASET_DISPLAY_SCHEMA_REQUIRED",status:503});assert.equal(f.control.executions.length,0);
+});
+
+test("a stale configured column absent from result metadata cannot leak through preview row keys",async()=>{
+ const f=fixture();f.deps.getSensitivity=async()=>({version:1,columns:[{columnName:"NAME",sensitivityType:"OTHER",deviceMaskMode:"FULL"},{columnName:"PHONE",sensitivityType:"OTHER",deviceMaskMode:"NONE"}]});
+ f.deps.execute=async()=>({columns:[{name:"NAME"}],rows:[{NAME:"SYNTHETIC",PHONE:"SYNTHETIC_PRIVATE_PHONE"}],rowCount:1,elapsedMs:1,truncated:false});
+ await assert.rejects(f.service.page(1,"WARD",subject,{page:1}),/DASHBOARD_COLUMNS_AMBIGUOUS/);
+ assert.equal(f.control.audits.length,0);
+});
+
+test("confirmed all-deny public policy cannot reveal row counts or run SQL",async()=>{
+ const f=userFixture();f.deps.getPublicDisplay=async()=>({status:"CONFIRMED",sensitivityVersion:1,policy:{confirmed:true,sensitivityVersion:1,grants:[]}}) as never;
+ await assert.rejects(f.service.page(1,"PRIMARY",userSubject(),{page:1}),{code:"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED"});assert.equal(f.control.executions.length,0);
 });

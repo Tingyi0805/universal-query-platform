@@ -1,3 +1,4 @@
+import {assertDatasetAuditOnlyPolicy} from "./datasetAuditOnlyPolicy.js";
 import sql from "mssql";
 import { createHash } from "node:crypto";
 import { getPlatformDbPool } from "../../config/database.js";
@@ -6,7 +7,7 @@ import { confirmDatasetPublicDisplay, publicDisplayDigest } from "./datasetPubli
 import type { PublicDisplayPolicy, PublicDisplayGrant } from "./datasetPublicDisplayPolicy.js";
 import type { DatasetSensitiveColumn } from "./datasetSensitiveColumn.repository.js";
 import { DatasetDisplayError, exactPositiveId, exactRevision, requireDisplaySchema } from "./datasetDisplaySchema.js";
-import type { RuntimeIdentity } from "../queryDefinition/queryDelivery.js";
+import { QueryDeliveryError,type RuntimeIdentity } from "../queryDefinition/queryDelivery.js";
 
 export type PublicDisplaySnapshot = { status: "UNCONFIRMED"|"CONFIRMED"|"STALE"; policy: PublicDisplayPolicy|null;
   version: string|null; digest: string|null; sensitivityVersion: number; definitionVersion: string; configurationVersion: string;
@@ -19,7 +20,7 @@ export function createDatasetPublicDisplayRepository(deps=displayRepositoryDefau
     const pool=await deps.getPool();if(!pool)throw new DatasetDisplayError("DATASET_DISPLAY_UNAVAILABLE",503);
     const tx=deps.transaction(pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     try {await deps.request(tx).query("SET XACT_ABORT ON");await deps.schema(deps.request(tx));const result=await work(tx);await tx.commit();return result;}
-    catch(e){try{await tx.rollback();}catch{}if(e instanceof DatasetDisplayError)throw e;throw new DatasetDisplayError("DATASET_DISPLAY_WRITE_FAILED",503);}
+    catch(e){try{await tx.rollback();}catch{}if(e instanceof DatasetDisplayError||e instanceof QueryDeliveryError)throw e;throw new DatasetDisplayError("DATASET_DISPLAY_WRITE_FAILED",503);}
   };
   const req=(tx:sql.Transaction,id:number)=>deps.request(tx).input("id",sql.BigInt,id);
   const read = async (tx:sql.Transaction,id:number) => {
@@ -31,6 +32,8 @@ export function createDatasetPublicDisplayRepository(deps=displayRepositoryDefau
     const version=Number(v?.VersionNumber??0);if(!Number.isSafeInteger(version)||version<1)throw new DatasetDisplayError("DATASET_DISPLAY_SENSITIVITY_REQUIRED");
     const rules=(await req(tx,id).query("SELECT ColumnName,SensitivityType,DeviceMaskMode,CustomMaskJson FROM uqp.DatasetSensitiveColumn WITH(HOLDLOCK) WHERE DatasetId=@id ORDER BY ColumnName")).recordset;
     const sensitivity={version,columns:rules.map(r=>({columnName:r.ColumnName,sensitivityType:r.SensitivityType,deviceMaskMode:r.DeviceMaskMode,customMask:r.CustomMaskJson?JSON.parse(r.CustomMaskJson):null})) as DatasetSensitiveColumn[]};
+    const auditConfig=(await req(tx,id).query("SELECT PatientKeyColumn FROM uqp.DatasetPatientAuditConfig WITH(HOLDLOCK) WHERE DatasetId=@id")).recordset[0];
+    try{assertDatasetAuditOnlyPolicy(sensitivity,auditConfig?.PatientKeyColumn??null);}catch{throw new DatasetDisplayError("DATASET_DISPLAY_SENSITIVITY_INVALID");}
     const row=(await req(tx,id).query("SELECT *,CONVERT(varchar(20),DataSourceId) AS SourceExact,CONVERT(varchar(20),ConfirmedBy) AS ActorExact,CONVERT(varchar(20),AuditLogId) AS AuditExact FROM uqp.DatasetPublicDisplayPolicy WITH(UPDLOCK,HOLDLOCK) WHERE DatasetId=@id")).recordset[0];
     const definitionVersion=exactRevision(ds.DefinitionRowVersion),configurationVersion=exactRevision(ds.ConfigurationRowVersion);
     const policy:PublicDisplayPolicy|null=row?{confirmed:true,sensitivityVersion:Number(row.SensitivityVersion),grants:JSON.parse(row.GrantsJson)}:null;

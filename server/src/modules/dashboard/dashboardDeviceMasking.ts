@@ -229,7 +229,8 @@ export function assertDatasetSensitivityPolicy(policy: { version: number; column
 }
 
 /** Case-insensitive policy matching cannot safely authorize ambiguous result aliases. */
-export function assertDashboardResultColumns(columns: Array<{ name: string }>) {
+export function assertDashboardResultColumns(columns: Array<{ name: string }>, rows: Record<string,unknown>[] = []) {
+  if(!Array.isArray(columns)||columns.some(c=>!c||typeof c.name!=="string"||!c.name.trim()||c.name!==c.name.trim()||c.name.length>256||/[\x00-\x1f\x7f]/u.test(c.name)))throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
   const names = columns.map(column => column.name.toUpperCase());
-  if (new Set(names).size !== names.length) throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
+  if (new Set(names).size !== names.length || rows.some(row=>{const keys=Object.keys(row).map(k=>k.toUpperCase());return new Set(keys).size!==keys.length||keys.some(k=>!names.includes(k));})) throw new Error("DASHBOARD_COLUMNS_AMBIGUOUS");
 }

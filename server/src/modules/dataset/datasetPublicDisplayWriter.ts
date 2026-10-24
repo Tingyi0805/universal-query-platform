@@ -2,9 +2,9 @@ import type { PublicDisplayPolicy, PublicDisplayGrant } from "./datasetPublicDis
 import type { DatasetSensitiveColumn } from "./datasetSensitiveColumn.repository.js";
 import { confirmDatasetPublicDisplay, publicDisplayDigest } from "./datasetPublicDisplayConfirmation.js";
 
-/** Persistence-neutral transaction contract. No production table access is enabled.
- * A future SQL Server adapter must lock both policy and sensitivity revision
- * in one SERIALIZABLE transaction and commit the audit record atomically. */
+/** Persistence-neutral sequence contract; these Mock tests are not SQL proof.
+ * The owned SQL Server implementation is datasetPublicDisplay.repository.ts,
+ * which additionally checks bindings, CAS, identity and exact atomic audit. */
 export interface DatasetPublicDisplayWriter {
   transaction<T>(datasetId: number, work: (tx: {
     readSensitivity(): Promise<{ version: number; columns: DatasetSensitiveColumn[] }>;

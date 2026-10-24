@@ -17,7 +17,7 @@
 
 需額外明示核准才能 `-Mode Apply`；安裝鎖與 DDL 同交易，最後 Catalog EXACT_MATCH 才提交。`-Mode Verify` 再確認。部分／異形或結果不明立即停止，先唯讀檢查；不自動 drop／修復／重建。工具不授 Runtime dbo、不保存安裝密碼、不改 `.env`，925 不寫 SchemaMigration。不得以返回碼假定 connection-loss 時一定 rollback。
 
-Runtime 維持非 dbo，925 最小新增權限：三表 SELECT／VIEW DEFINITION；PublicDisplayPolicy INSERT／UPDATE、MaskTemplate INSERT／UPDATE、MaskTemplateUse INSERT；既有 AuditLog INSERT 及現有身份／ACL／Dataset 政策讀取權限。**不授 DELETE、ALTER、CONTROL、db_owner、sa、VIEW SERVER STATE**。權限由 DBA 在核准環境配置；若既有 Runtime 已過度授權，需先完成最小權限切換驗收，不沿用高權限作為成功證據。
+Runtime 維持非 dbo，925 最小新增權限：三表 SELECT／VIEW DEFINITION；PublicDisplayPolicy INSERT／UPDATE、MaskTemplate INSERT／UPDATE、MaskTemplateUse INSERT；既有 AuditLog INSERT 及現有身份／ACL／DatasetColumn／DatasetSensitivePolicyVersion／DatasetSensitiveColumn／DatasetPatientAuditConfig 讀取權限。**不授 DELETE、ALTER、CONTROL、db_owner、sa、VIEW SERVER STATE**。權限由 DBA 在核准環境配置；若既有 Runtime 已過度授權，需先完成最小權限切換驗收，不沿用高權限作為成功證據。
 
 功能預設關閉：`DATASET_PUBLIC_DISPLAY_MANAGEMENT=false`、`DATASET_MASK_TEMPLATE_MANAGEMENT=false`。925 驗證與權限驗收後，經核准才在新部署的服務設定啟用所需管理功能；既有 Dashboard management／execution／playback flags 不自動更動。可先只開範本管理。公共播放要等 Dataset 規則及公共確認、Query ACL、Query-only mode、必要患者確認與裝置核發都完成，再由管理者明示啟用。
 

@@ -1,3 +1,4 @@
+import {QueryDeliveryError} from "../queryDefinition/queryDelivery.js";
 import sql from "mssql";
 import {z} from "zod";
 import {validCustomMask} from "../dashboard/dashboardDeviceMasking.js";
@@ -14,7 +15,7 @@ export function createMaskTemplateRepository(deps=displayRepositoryDefaults){
  const run=async<T>(actor:DisplayActor,admin:boolean,work:(tx:sql.Transaction,actorId:number)=>Promise<T>)=>{
   const pool=await deps.getPool();if(!pool)throw new DatasetDisplayError("DATASET_DISPLAY_UNAVAILABLE",503);const tx=deps.transaction(pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   const verify=async()=>{const a=await actor(tx);if(!a.permissions.includes(admin?"MANAGE_SETTINGS":"DESIGN_QUERY")&&!(!admin&&a.permissions.includes("MANAGE_SETTINGS")))throw new DatasetDisplayError("FORBIDDEN",403);return a;};
-  try{await deps.request(tx).query("SET XACT_ABORT ON");await deps.schema(deps.request(tx));const a=await verify();const r=await work(tx,a.userId);const b=await verify();if(a.userId!==b.userId||a.tokenVersion!==b.tokenVersion)throw new DatasetDisplayError("TOKEN_REVOKED",401);await tx.commit();return r;}catch(e){try{await tx.rollback();}catch{}if(e instanceof DatasetDisplayError)throw e;throw new DatasetDisplayError("MASK_TEMPLATE_WRITE_FAILED",503);}
+  try{await deps.request(tx).query("SET XACT_ABORT ON");await deps.schema(deps.request(tx));const a=await verify();const r=await work(tx,a.userId);const b=await verify();if(a.userId!==b.userId||a.tokenVersion!==b.tokenVersion)throw new DatasetDisplayError("TOKEN_REVOKED",401);await tx.commit();return r;}catch(e){try{await tx.rollback();}catch{}if(e instanceof DatasetDisplayError||e instanceof QueryDeliveryError)throw e;throw new DatasetDisplayError("MASK_TEMPLATE_WRITE_FAILED",503);}
  };
  const list=async(tx:sql.Transaction)=>{
   const rows=(await deps.request(tx).query("SELECT *,CONVERT(varchar(20),Id) AS ExactId,CONVERT(varchar(20),Revision) AS ExactRevision,CONVERT(varchar(20),CreatedBy) AS Creator,CONVERT(varchar(20),UpdatedBy) AS Updater FROM uqp.DatasetMaskTemplate ORDER BY Name")).recordset;

@@ -5,7 +5,7 @@ import { Router, type Request } from "express";
 import jwt from "jsonwebtoken";
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, dashboardQueryParameters, resolveDashboardDisclosureMasks,
+import { assertDatasetSensitivityPolicy, assertDashboardResultColumns, dashboardQueryParameters,
   maskDeviceRows, resolveDeviceColumnMask } from "./dashboardDeviceMasking.js";
 
 type Repositories = typeof import("./dashboard.repository.js");
@@ -68,8 +68,8 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
       // No raw-result cache/fallback; shared paging runtime remains unchanged.
       const raw = await deps.execute(dataset.id, source?.parameters ?? parameters, source ? 100 : undefined);
       if ((await readState(req, id, key)).fingerprint !== initial.fingerprint) throw new PreviewFailure("DASHBOARD_PREVIEW_STATE_CHANGED", 409);
-      assertDashboardResultColumns(raw.columns);
-      const masks = Object.fromEntries(policy.columns.map(r=>[r.columnName,r.deviceMaskMode]));
+      assertDashboardResultColumns(raw.columns,raw.rows);
+      const masks = Object.fromEntries(policy.columns.filter(r=>raw.columns.some(c=>c.name.toUpperCase()===r.columnName.toUpperCase())).map(r=>[r.columnName,r.deviceMaskMode]));
       const columns = raw.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
       const rows = maskDeviceRows(raw.rows, masks, policy.columns);
       let disclosureId: number | null;

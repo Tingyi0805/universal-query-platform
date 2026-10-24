@@ -2,6 +2,8 @@
 SET XACT_ABORT ON;
 IF OBJECT_ID(N'uqp.Dataset',N'U') IS NULL OR COL_LENGTH('uqp.Dataset','DefinitionRowVersion') IS NULL
  OR COL_LENGTH('uqp.DataSource','ConfigurationRowVersion') IS NULL
+ OR OBJECT_ID(N'uqp.DatasetPatientAuditConfig',N'U') IS NULL
+ OR COL_LENGTH('uqp.DatasetSensitiveColumn','CustomMaskJson') IS NULL
  OR OBJECT_ID(N'uqp.DatasetSensitivePolicyVersion',N'U') IS NULL OR OBJECT_ID(N'uqp.AuditLog',N'U') IS NULL
  THROW 51925,'DISPLAY_BASELINE_REQUIRED',1;
 CREATE TABLE uqp.DatasetPublicDisplayPolicy (

@@ -8,8 +8,8 @@ type CustomMask = { prefix: number; suffix: number; symbol: string; start?: numb
 type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: CustomMask | null };
 
 
-export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChanged, onSaved, canSyncColumns = false }: {
-  datasetId: number; accessToken: string | null; canSyncColumns?: boolean; onSaved?: () => void; onDirtyChanged?: (dirty: boolean) => void;
+export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChanged, onSaved, definitionRevision = 0, canSyncColumns = false }: {
+  datasetId: number; accessToken: string | null; definitionRevision?:number; canSyncColumns?: boolean; onSaved?: () => void; onDirtyChanged?: (dirty: boolean) => void;
 }) {
   const scope = useRef(0);
   const fieldReadRevision = useRef(0);
@@ -283,6 +283,6 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     <button type="button" disabled={busy} onClick={reload}>重新載入伺服器規則</button>
     {conflict && <p role="alert">版本衝突：請重新載入規則後再次檢查。重新載入前不允許儲存。</p>}
     {message && <p role="status">{message}</p>}
-    <DatasetPublicDisplayEditor datasetId={datasetId} accessToken={accessToken} sensitivityVersion={version} rules={rules} dirty={dirty||!loaded} />
+    <DatasetPublicDisplayEditor datasetId={datasetId} accessToken={accessToken} sensitivityVersion={version} definitionRevision={definitionRevision} rules={rules} dirty={dirty||!loaded||!canSyncColumns} />
   </section>;
 }

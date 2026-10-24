@@ -33,3 +33,5 @@ Oracle11g／OR_001 真實環境、共用 SQL Server 與 Windows ZIP 本機驗收
 - C8 `096cc8e`：Dataset 權威公共播放／設計預覽分離；相關 Server 202/202。Windows／SQL／全量 CI 於 C10，提交當時 PENDING。
 - C9 `b6c7d2d`：範本管理／引用；Server 全量初輪1746/1746、政策 API／範本／離線 installer42/42，新增 E2E 以最後 C10 結果為準。
 - C10：完整回歸、925專用安裝與隔離實機、Windows／ZIP回復文件。狀態以最新提交 CI 為準；正式共享 DB／Oracle11g／Windows切換仍需獨立核准及人工驗收，不因 CI 轉為 PASS。
+
+已觀測 CI #1027（`c5a804e`）的 Server／Client／Browser／Windows／923／完整 Schema 924+925 全部成功；925 真實 Catalog、受限交易、CAS／Audit 及範本歷史有成功 marker。後續安全修正額外涵蓋全數公開否決不執行查詢／不透露筆數、SQL 保存後狀態刷新、結果列鍵與 metadata 一致、患者稽核專用鍵必須 OMIT，以及 DEFAULT 綁定欄位／索引方向的精確查核；最終交付以最新 HEAD 的完整 CI 為準。

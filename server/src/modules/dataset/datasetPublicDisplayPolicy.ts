@@ -1,9 +1,9 @@
 import type { DatasetSensitiveColumn } from "./datasetSensitiveColumn.repository.js";
 import { assertDatasetSensitivityPolicy, type DeviceMaskMode } from "../dashboard/dashboardDeviceMasking.js";
 
-/** Proposed Dataset-owned public display policy: explicit positive grants only.
- * This pure evaluator is intentionally NOT wired to playback until persistent
- * versioned confirmation and migration gates are implemented. */
+/** Dataset-owned positive grants only. Production readers must first validate
+ * the installed 925 schema and locked Dataset/source/sensitivity revisions.
+ * This evaluator alone supplies neither authority nor persistence evidence. */
 export type PublicDisplayGrant = { columnName: string; permitted: boolean };
 export type PublicDisplayPolicy = { confirmed: boolean; sensitivityVersion: number; grants: PublicDisplayGrant[] };
 export function resolveDatasetPublicDisplayMasks(

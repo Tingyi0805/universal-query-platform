@@ -16,14 +16,14 @@ SELECT name FROM sys.tables WHERE schema_id=SCHEMA_ID(N'uqp') AND name IN ('Data
 SELECT t.name AS [table],c.name,ty.name AS type,c.max_length AS length,c.scale,c.is_nullable AS nullable,c.is_identity AS identityColumn,c.collation_name AS collation
  FROM sys.tables t JOIN sys.columns c ON c.object_id=t.object_id JOIN sys.types ty ON c.user_type_id=ty.user_type_id
  WHERE t.schema_id=SCHEMA_ID(N'uqp') AND t.name IN ('DatasetPublicDisplayPolicy','DatasetMaskTemplate','DatasetMaskTemplateUse');
-SELECT t.name AS [table],c.name,c.definition,c.is_disabled AS disabled,c.is_not_trusted AS untrusted,'CHECK' AS kind FROM sys.check_constraints c JOIN sys.tables t ON t.object_id=c.parent_object_id
+SELECT t.name AS [table],c.name,c.definition,c.is_disabled AS disabled,c.is_not_trusted AS untrusted,c.is_not_for_replication AS nfr,CONVERT(nvarchar(128),NULL) AS defaultColumn,'CHECK' AS kind FROM sys.check_constraints c JOIN sys.tables t ON t.object_id=c.parent_object_id
  WHERE t.schema_id=SCHEMA_ID(N'uqp') AND t.name IN ('DatasetPublicDisplayPolicy','DatasetMaskTemplate','DatasetMaskTemplateUse')
- UNION ALL SELECT t.name,c.name,c.definition,0,0,'DEFAULT' FROM sys.default_constraints c JOIN sys.tables t ON t.object_id=c.parent_object_id
+ UNION ALL SELECT t.name,c.name,c.definition,0,0,0,COL_NAME(c.parent_object_id,c.parent_column_id),'DEFAULT' FROM sys.default_constraints c JOIN sys.tables t ON t.object_id=c.parent_object_id
  WHERE t.schema_id=SCHEMA_ID(N'uqp') AND t.name IN ('DatasetPublicDisplayPolicy','DatasetMaskTemplate','DatasetMaskTemplateUse');
-SELECT t.name AS [table],i.name,c.name AS [column],ic.key_ordinal AS ordinal,ic.is_included_column AS included,i.is_unique AS uniqueIndex,i.is_disabled AS disabled,i.has_filter AS filtered
+SELECT t.name AS [table],i.name,c.name AS [column],ic.key_ordinal AS ordinal,ic.is_included_column AS included,i.is_unique AS uniqueIndex,i.is_disabled AS disabled,i.has_filter AS filtered,ic.is_descending_key AS descendingKey,i.type AS indexType
  FROM sys.tables t JOIN sys.indexes i ON i.object_id=t.object_id JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
  WHERE t.schema_id=SCHEMA_ID(N'uqp') AND t.name IN ('DatasetPublicDisplayPolicy','DatasetMaskTemplate','DatasetMaskTemplateUse') AND i.index_id>0;
-SELECT t.name AS [table],f.name,c.name AS [column],rt.name AS target,rc.name AS targetColumn,f.delete_referential_action_desc AS deleteAction,f.update_referential_action_desc AS updateAction,f.is_disabled AS disabled,f.is_not_trusted AS untrusted,SCHEMA_NAME(rt.schema_id) AS targetSchema
+SELECT t.name AS [table],f.name,c.name AS [column],rt.name AS target,rc.name AS targetColumn,f.delete_referential_action_desc AS deleteAction,f.update_referential_action_desc AS updateAction,f.is_disabled AS disabled,f.is_not_trusted AS untrusted,f.is_not_for_replication AS nfr,SCHEMA_NAME(rt.schema_id) AS targetSchema
  FROM sys.foreign_keys f JOIN sys.tables t ON t.object_id=f.parent_object_id JOIN sys.foreign_key_columns fc ON fc.constraint_object_id=f.object_id JOIN sys.columns c ON c.object_id=t.object_id AND c.column_id=fc.parent_column_id JOIN sys.tables rt ON rt.object_id=f.referenced_object_id JOIN sys.columns rc ON rc.object_id=rt.object_id AND rc.column_id=fc.referenced_column_id
  WHERE t.schema_id=SCHEMA_ID(N'uqp') AND t.name IN ('DatasetPublicDisplayPolicy','DatasetMaskTemplate','DatasetMaskTemplateUse');
 SELECT tr.name FROM sys.triggers tr JOIN sys.tables t ON t.object_id=tr.parent_id WHERE t.schema_id=SCHEMA_ID(N'uqp') AND t.name IN ('DatasetPublicDisplayPolicy','DatasetMaskTemplate','DatasetMaskTemplateUse');
@@ -67,14 +67,14 @@ export function validateDisplayCatalog(sets: Record<string, any>[][], ddl: strin
       }
       const ck=/CONSTRAINT (\w+) CHECK\((.*)\),?$/.exec(line);
       const def=/CONSTRAINT (\w+) DEFAULT (.*),?$/.exec(line) ?? /CONSTRAINT (\w+) DEFAULT(\(.*\)),?$/.exec(line);
-      if(ck||def){const m=(ck??def)!;constraintCount++;const found=sets[2]!.filter(c=>c.table===table&&c.name===m[1]);if(found.length!==1||found[0]!.disabled||found[0]!.untrusted||norm(found[0]!.definition)!==norm(m[2]!.replace(/,$/,"")))return fail("CONSTRAINT_"+m[1]);}
+      if(ck||def){const m=(ck??def)!;constraintCount++;const found=sets[2]!.filter(c=>c.table===table&&c.name===m[1]);if(found.length!==1||found[0]!.disabled||found[0]!.untrusted||found[0]!.nfr||def&&found[0]!.defaultColumn!==col?.[1]||norm(found[0]!.definition)!==norm(m[2]!.replace(/,$/,"")))return fail("CONSTRAINT_"+m[1]);}
       const uq=/CONSTRAINT (\w+) UNIQUE\(([^)]+)\)/.exec(line);if(uq)indexes.push({table,name:uq[1]!,keys:uq[2]!.split(","),include:[],unique:true});
       const fk=/CONSTRAINT (\w+) FOREIGN KEY\((\w+)\) REFERENCES uqp\.(\w+)\((\w+)\)( ON DELETE CASCADE)?/.exec(line);
-      if(fk){fkCount++;const f=sets[4]!.filter(f=>f.table===table&&f.name===fk[1]);if(f.length!==1||f[0]!.column!==fk[2]||f[0]!.target!==fk[3]||f[0]!.targetColumn!==fk[4]||f[0]!.deleteAction!==(fk[5]?"CASCADE":"NO_ACTION")||f[0]!.updateAction!=="NO_ACTION"||f[0]!.targetSchema!=="uqp"||f[0]!.disabled||f[0]!.untrusted)return fail();}
+      if(fk){fkCount++;const f=sets[4]!.filter(f=>f.table===table&&f.name===fk[1]);if(f.length!==1||f[0]!.column!==fk[2]||f[0]!.target!==fk[3]||f[0]!.targetColumn!==fk[4]||f[0]!.deleteAction!==(fk[5]?"CASCADE":"NO_ACTION")||f[0]!.updateAction!=="NO_ACTION"||f[0]!.targetSchema!=="uqp"||f[0]!.disabled||f[0]!.untrusted||f[0]!.nfr)return fail();}
     }
   }
   for(const m of ddl.matchAll(/CREATE INDEX (\w+) ON uqp\.(\w+)\(([^)]+)\)(?: INCLUDE\(([^)]+)\))?/g))indexes.push({name:m[1]!,table:m[2]!,keys:m[3]!.split(","),include:m[4]?.split(",")??[],unique:false});
-  for(const i of indexes){const found=sets[3]!.filter(r=>r.table===i.table&&r.name===i.name);indexCount+=found.length;const keys=found.filter(r=>r.ordinal>0).sort((a,b)=>a.ordinal-b.ordinal).map(r=>r.column),includes=found.filter(r=>r.included).map(r=>r.column).sort();if(JSON.stringify(keys)!==JSON.stringify(i.keys)||JSON.stringify(includes)!==JSON.stringify([...i.include].sort())||found.some(r=>r.disabled||r.filtered||!!r.uniqueIndex!==i.unique))return fail("INDEX_"+i.name);}
+  for(const i of indexes){const found=sets[3]!.filter(r=>r.table===i.table&&r.name===i.name);indexCount+=found.length;const keys=found.filter(r=>r.ordinal>0).sort((a,b)=>a.ordinal-b.ordinal).map(r=>r.column),includes=found.filter(r=>r.included).map(r=>r.column).sort();if(JSON.stringify(keys)!==JSON.stringify(i.keys)||JSON.stringify(includes)!==JSON.stringify([...i.include].sort())||found.some(r=>r.disabled||r.filtered||r.descendingKey||r.indexType!==(i.name.startsWith("PK_")?1:2)||!!r.uniqueIndex!==i.unique))return fail("INDEX_"+i.name);}
   if(count!==sets[1]!.length||constraintCount!==sets[2]!.length||fkCount!==sets[4]!.length||indexCount!==sets[3]!.length)return fail("CATALOG_COUNTS");
   return "EXACT_MATCH";
 }

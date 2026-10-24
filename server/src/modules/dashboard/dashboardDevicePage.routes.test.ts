@@ -195,7 +195,7 @@ for (const path of [primary, supplemental]) test(`${path}: legacy mask JSON cann
 }));
 test("Dataset explicit public denial overrides any Legacy PRIMARY or extra-source JSON", () => fixture(async f => {
   f.state.publicDenied=true;
-  for(const path of [primary,supplemental]){const result=await f.request(path,{page:1});assert.equal(result.status,200);assert.deepEqual(result.body.result.rows,[{}]);assert.deepEqual(result.body.result.columns,[]);}
+  for(const path of [primary,supplemental]){const result=await f.request(path,{page:1});assert.equal(result.status,403);assert.equal(result.body.result,undefined);assert.equal(f.state.sqlCalls,0);}
 }));
 test("legacy mode cannot use public device page even with valid token and old JSON",()=>fixture(async f=>{f.state.mode="LEGACY";const r=await f.request(primary,{page:1});assert.equal(r.status,409);assert.equal(f.state.sqlCalls,0);}));
 
