@@ -56,6 +56,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
   const [dirty, setDirty] = useState(false);
   const [emptyConfirmed, setEmptyConfirmed] = useState(false);
   const [message, setMessage] = useState("");
+  const [syncAttempted, setSyncAttempted] = useState(false);
   const [conflict, setConflict] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => { onDirtyChanged?.(dirty); }, [dirty, onDirtyChanged]);
@@ -70,6 +71,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     setDirty(false);
     setEmptyConfirmed(false);
     setMessage("");
+    setSyncAttempted(false);
     setConflict(false);
     void apiRequest<{ columns: Rule[]; version: number; availableColumns?: { name: string }[] }>(`/datasets/${datasetId}/sensitive-columns`, {}, accessToken)
       .then((result) => { if (active) { setRules(result.columns); if (fieldsRead === fieldReadRevision.current) setAvailableColumns((result.availableColumns ?? []).map(c => c.name)); setVersion(result.version); setLoaded(true); } })
@@ -84,7 +86,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     if (!canSyncColumns || busy || dirty || conflict) return;
     const sequence = scope.current;
     ++fieldReadRevision.current;
-    setBusy(true); setMessage("");
+    setBusy(true); setMessage(""); setSyncAttempted(true);
     try {
       const result = await apiRequest<{ columns: { name: string }[]; trust: string; purpose: string; deliveryAllowed: boolean }>(
         `/datasets/${datasetId}/columns/sync`, { method: "POST", body: "{}" }, accessToken);
@@ -92,6 +94,10 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
       if (result.trust !== "UNBOUND_CANDIDATE" || result.purpose !== "DISPLAY_COLUMN_OPTIONS_ONLY" || result.deliveryAllowed !== false
         || !Array.isArray(result.columns)) throw new Error("欄位同步回應不符合安全契約。");
       setAvailableColumns(result.columns.map(c => c.name));
+      if (result.columns.length === 0) {
+        setMessage("欄位同步 API 已成功回應，但未取得任何結果欄位。請確認已儲存的 SQL 具有明確的 SELECT 結果欄位；若確定有欄位，請檢查伺服器同步日誌。");
+        return;
+      }
       if (!loaded) {
         try {
           const policy = await apiRequest<{ columns: Rule[]; version: number }>(`/datasets/${datasetId}/sensitive-columns`, {}, accessToken);
@@ -160,18 +166,19 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     <p>選擇欄位後設定遮蔽位置及符號，無需選擇英文模式或敏感資料分類。系統不會依 NAME、MRN、PHONE 等欄位名稱推定分類或遮蔽方式；原有使用者儲存的分類與規則會保留。</p>
     <p role="status">欄位來自已同步清單與既有規則；未設定的欄位不傳送。清單為空時，請先儲存 SQL，再按「取得並同步欄位清單」。這僅同步欄位選項，不建立可信型別或患者稽核證據，不解除資料預覽限制。</p>
     <button type="button" disabled={!canSyncColumns || busy || dirty || conflict} onClick={() => void syncColumns()}>取得並同步欄位清單</button>
-    {!canSyncColumns && <p role="status">同步欄位需先儲存 SQL／來源，並具備 DESIGN_QUERY 與 EXECUTE_QUERY 權限。</p>}
+    {!canSyncColumns && <p role="status">同步欄位目前不可用：請先儲存 SQL／資料來源，確認無未儲存修改，且帳號具備 DESIGN_QUERY 與 EXECUTE_QUERY 權限。</p>}
+    {syncAttempted && availableColumns.length > 0 && <p role="status">目前可選擇 {availableColumns.length} 個已同步查詢欄位。</p>}}
     {dirty && <p role="status">請先儲存或重新載入規則，再同步欄位，避免遺失草稿。</p>}
     <label>查詢結果欄位 <select value={column} onChange={(event) => editRule(event.target.value)}>
       <option value="">請選擇欄位</option>
       {[...new Map([...availableColumns, ...rules.map(rule => rule.columnName)].map(name => [name.toUpperCase(), name])).values()].map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
-    <fieldset>
+    <fieldset className="dataset-mask-options">
       <legend>Dataset 統一資料處理方式（Query／Dashboard 共用）</legend>
-      <label><input type="radio" name="maskAction" checked={action === "NONE"} onChange={() => setAction("NONE")}/> 顯示原始資料</label>
-      <label><input type="radio" name="maskAction" checked={action === "CUSTOM"} onChange={() => setAction("CUSTOM")}/> 自訂遮蔽</label>
-      <label><input type="radio" name="maskAction" checked={action === "FULL"} onChange={() => setAction("FULL")}/> 全部遮蔽</label>
-      <label><input type="radio" name="maskAction" checked={action === "OMIT"} onChange={() => setAction("OMIT")}/> 完全不傳送</label>
+      <label className="dataset-mask-option"><input type="radio" name="maskAction" checked={action === "NONE"} onChange={() => setAction("NONE")}/> 顯示原始資料</label>
+      <label className="dataset-mask-option"><input type="radio" name="maskAction" checked={action === "CUSTOM"} onChange={() => setAction("CUSTOM")}/> 自訂遮蔽</label>
+      <label className="dataset-mask-option"><input type="radio" name="maskAction" checked={action === "FULL"} onChange={() => setAction("FULL")}/> 全部遮蔽</label>
+      <label className="dataset-mask-option"><input type="radio" name="maskAction" checked={action === "OMIT"} onChange={() => setAction("OMIT")}/> 完全不傳送</label>
     </fieldset>
     {action === "CUSTOM" && <div className="preview-panel">
       <h3>自訂遮蔽設定</h3>
