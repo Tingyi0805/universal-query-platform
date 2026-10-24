@@ -34,7 +34,14 @@
    ```
 
 3. 在 SQL 925 前置與資料庫權限已核實、完成備份且維護時間正式核准後，先停止現有 UQP Server 和背景工作（此腳本不會代為停止）。
-4. 僅在以上條件都實際符合後執行：
+4. 如需使用這次更新包內的專用 925 工具，在 DBA 核准且已有獨立副本測試證據後，可以從 ZIP 解壓目錄執行唯讀預檢，沿用現有設定而**不複製密碼至更新包**：
+
+   ```powershell
+   .\payload\tools\install-uqp-925.ps1 -Mode Preflight -ExistingServerEnv C:\UQP\server\.env
+   ```
+
+   此工具會要求手動輸入目標 Server／DB／安裝者 Login，以及獨立安裝帳號密碼；必須確實核對結果。正式 Apply 仍需額外維護核准，不能當作普通更新步驟無條件執行。
+5. 僅在以上條件都實際符合後執行：
 
    ```powershell
    .\install-uqp-pr66-offline.ps1 -Target C:\UQP -Schema925Verified -ServiceStopped -AcceptMaintenance
