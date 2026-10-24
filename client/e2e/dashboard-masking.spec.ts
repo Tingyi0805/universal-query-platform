@@ -92,20 +92,20 @@ test("list preview shows masked values and refresh failure clears previous rows"
   await expect(page.locator("body")).not.toContainText("driver SQL Bind");
 });
 test("data settings forms preserve legacy JSON and disallow weakening Dataset or saved policies", async ({ page }) => {
-  const state = await setup(page, true); await page.goto("/designer/dashboards");
+  const state = await setup(page, true); page.on("dialog", dialog => void dialog.accept()); await page.goto("/designer/dashboards");
   await page.getByRole("button", { name: "編輯", exact: true }).first().click();
   await expect(page.getByText("NAME：全部遮蔽", { exact: true })).toBeVisible();
   await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("NAME");
   const modes = page.getByRole("combobox", { name: /^欄位遮蔽模式/ });
-  await expect(modes.locator('option[value="NONE"]')).toHaveAttribute("disabled", ""); await expect(modes.locator('option[value="NAME"]')).toHaveAttribute("disabled", "");
-  await modes.selectOption("FULL"); await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
+  await expect(modes.locator('option')).toHaveCount(2); await expect(modes.locator('option[value="NONE"]')).toHaveCount(0);
+  await modes.selectOption("INHERIT"); await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
   await page.getByRole("button", { name: "編輯 PRIMARY", exact: true }).click();
   await page.getByRole("textbox", { name: "查詢參數 JSON", exact: true }).fill('{"WARD":"OR02","LIST":[1,2],"LEGACY":{"keep":true}}');
   await page.getByRole("button", { name: "儲存目前來源", exact: true }).click();
   await expect.poll(() => state.saved).not.toBeNull();
   expect(state.saved.parameters).toMatchObject({ WARD: "OR02", LIST: [1, 2], LEGACY: { keep: true } });
   expect(state.persisted.snapshotKind).toBe("OTHER"); expect(state.persisted.snapshotSeconds).toBe(60);
-  expect(state.persisted.deviceColumnMasks).toEqual({ NAME: "FULL", MRN: "FULL", ROOM: "NONE" });
+  expect(state.persisted.deviceColumnMasks).toEqual({ NAME: "INHERIT", MRN: "FULL", ROOM: "NONE" });
 });
 test("layout identifies failing PRIMARY and extra source without showing driver text or old values", async ({ page }) => {
   const state = await setup(page, true); state.primaryFail = true; state.extraFail = true;
@@ -168,7 +168,7 @@ test("CUSTOM inheritance and source approvals save/reload without copying custom
   });
   if (modeState.modeDisabled) console.log("CUSTOM_INHERIT_READINESS", JSON.stringify(modeState));
   await expect(modes.locator('option[value="INHERIT"]')).not.toHaveAttribute("disabled", "");
-  await expect(modes.locator('option[value="MRN"]')).toHaveAttribute("disabled", "");
+  await expect(modes.locator('option[value="MRN"]')).toHaveCount(0);
   await modes.selectOption("INHERIT"); await expect(page.getByText(/合成資料預覽：\*{8}56/)).toBeVisible();
   await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
   await page.getByLabel("遮蔽核准來源", { exact: true }).selectOption("WARD");
@@ -228,13 +228,13 @@ test("active Dashboard blocks approval edits without any automatic disable", asy
   expect(state.saved).toBeNull(); expect(state.approval).toBeNull(); expect(state.active).toBe(true);
 });
 test("managed conflict blocks all writes until reload and explicit source reconfirmation", async ({ page }) => {
-  const state = await setup(page, true);
+  const state = await setup(page, true); page.on("dialog", dialog => void dialog.accept());
   await page.goto("/designer/dashboards?dashboardId=1#column-approvals");
   // Wait for an existing persisted approval; absence of a loading message alone can race initial fetch.
   await expect(page.getByRole("button", { name: "移除 MRN 核准", exact: true })).toBeVisible();
   await expect(page.getByText("尚未確認 Dataset 保護；暫停欄位規則編輯。")).toHaveCount(0);
   await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("NAME");
-  await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("FULL");
+  await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("INHERIT");
   await expect(page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則" })).toBeEnabled();
   state.conflict = true; await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則" }).click();
   await expect(page.getByText(/QUERY_SOURCE_VERSION_CONFLICT/)).toBeVisible();
@@ -242,7 +242,7 @@ test("managed conflict blocks all writes until reload and explicit source reconf
   state.conflict = false; state.version = "c".repeat(64);
   await page.getByRole("button", { name: "重新載入核准版本" }).click();
   await expect(page.getByRole("combobox", { name: /^核准欄位/ })).toHaveValue(""); expect(state.approval).toBeNull();
-  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("NAME"); await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("FULL");
+  await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("NAME"); await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("INHERIT");
   await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則" }).click();
   await expect.poll(() => state.approval?.expectedVersion).toBe("c".repeat(64));
 });
@@ -259,8 +259,8 @@ test("Dataset OMIT cannot be weakened and Query rebinding cannot carry primary a
   await page.goto("/designer/dashboards?dashboardId=1#column-approvals");
   await page.getByRole("combobox", { name: /^核准欄位/ }).selectOption("SECRET");
   const modes = page.getByRole("combobox", { name: /^欄位遮蔽模式/ });
-  await expect(modes.locator('option[value="FULL"]')).toHaveAttribute("disabled", "");
-  await expect(modes.locator('option[value="NONE"]')).toHaveAttribute("disabled", "");
+  await expect(modes.locator('option[value="FULL"]')).toHaveCount(0);
+  await expect(modes.locator('option[value="NONE"]')).toHaveCount(0);
   await expect(modes.locator('option[value="INHERIT"]')).not.toHaveAttribute("disabled", "");
   await page.getByRole("button", { name: "編輯 PRIMARY", exact: true }).click();
   await page.getByLabel("已發布 Query", { exact: true }).selectOption("3");
@@ -284,6 +284,7 @@ test("management preview with its flag disabled shows safe status without Legacy
 });
 
 test("approval reload waits for this read's Dataset policy before enabling reconfirmation", async ({ page }) => {
+  page.on("dialog", dialog => void dialog.accept());
   const state = await setup(page, true); await page.goto("/designer/dashboards?dashboardId=1#column-approvals");
   const column = page.getByRole("combobox", { name: /^核准欄位/ }); await expect(column).toBeEnabled();
   state.version = "c".repeat(64);
@@ -295,7 +296,7 @@ test("approval reload waits for this read's Dataset policy before enabling recon
     expect(state.approval).toBeNull();
   } finally { release(); }
   await expect(column).toBeEnabled(); await column.selectOption("NAME");
-  await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("FULL");
+  await page.getByRole("combobox", { name: /^欄位遮蔽模式/ }).selectOption("INHERIT");
   await page.getByRole("button", { name: "加入／更新 Dashboard 欄位規則", exact: true }).click();
   await expect.poll(() => state.approval?.expectedVersion).toBe("c".repeat(64));
 });

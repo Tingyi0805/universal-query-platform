@@ -172,7 +172,7 @@ for (const path of [primary, supplemental]) test(`${path}: explicit CUSTOM inher
     if (path === primary) f.state.dashboard.parameters.deviceColumnMasks = { NAME: "INHERIT", MRN: mode, SECRET: "FULL" };
     else f.state.dashboard.parameters.deviceSourceColumnMasks = { ORACLE: { NAME: "INHERIT", MRN: mode, SECRET: "FULL" } };
     const r = await f.request(path, { page: 1 }); assert.equal(r.status, 200);
-    assert.equal(r.body.result.rows[0].MRN, mode === "INHERIT" ? "******23" : mode === "FULL" ? "○○○○" : undefined);
+    assert.equal(r.body.result.rows[0].MRN, mode === "INHERIT" ? "******23" : undefined);
     assert.equal(r.body.result.rows[0].SECRET, undefined);
     for (const value of ["00000123", "測試患者甲"]) assert.ok(!JSON.stringify(r.body).includes(value));
   }

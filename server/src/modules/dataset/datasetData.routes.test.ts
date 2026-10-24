@@ -19,6 +19,7 @@ function policy(datasetId: number): ConfirmedDatasetDeliverySnapshot {
     policy: { state: "CONFIRMED", version: "1", rules: [
       { columnName: "NAME", mode: "CUSTOM", customMask: { prefix: 1, suffix: 1, symbol: "○" } },
       { columnName: "MRN", mode: "OMIT" },
+      { columnName: "CODE", mode: "NONE" }, { columnName: "LABEL", mode: "NONE" },
     ], patientAuditOnlyColumns: ["MRN"] },
     patientAudit: { configured: true, enabled: true, patientKeyColumn: "MRN" } };
 }
@@ -112,13 +113,13 @@ async function setup() {
   return { state, server, request };
 }
 
-test("saved raw design preview returns original data only with required authorization, exact version and audits", () => fixture(async f => {
+test("saved design preview applies Dataset masks with required authorization, exact version and audits", () => fixture(async f => {
   const proof = await f.request("/1/design-preview/context"); assert.equal(proof.status, 200);
   assert.equal((await proof.json() as any).definitionVersion, version);
   const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
   assert.equal(response.status, 200); assert.equal(response.headers.get("cache-control"), "no-store");
-  assert.equal((await response.json() as any).result.rows[0].NAME, rawName);
-  assert.deepEqual(f.state.disclosures, [{ datasetId: 1, masked: false, identity: rawId }]);
+  assert.equal((await response.json() as any).result.rows[0].NAME, "王○明");
+  assert.deepEqual(f.state.disclosures, [{ datasetId: 1, masked: true, identity: rawId }]);
   assert.equal(f.state.operationStatus, "SUCCESS");
 }));
 
@@ -167,7 +168,7 @@ test("legacy preview URL admits only an exact saved/versioned definition and use
   const response = await f.request("/preview/run", { datasetId: 1, dataSourceId: 11, sqlText: f.state.sqlText,
     expectedDefinitionVersion: version, values: {} });
   assert.equal(response.status, 200); assert.deepEqual(f.state.executions, [1]);
-  assert.equal((await response.json() as any).result.rows[0].NAME, rawName);
+  assert.equal((await response.json() as any).result.rows[0].NAME, "王○明");
 }));
 
 test("lookup uses the actual source policy and audits raw source identities", () => fixture(async f => {
@@ -179,7 +180,7 @@ test("lookup uses the actual source policy and audits raw source identities", ()
 
 test("a parent OMIT rule cannot replace the lookup source's confirmed policy", () => fixture(async f => {
   const parent = f.state.snapshots.get(1)!;
-  f.state.snapshots.set(1, { ...parent, policy: { ...parent.policy, rules: [...parent.policy.rules, { columnName: "CODE", mode: "OMIT" }] } });
+  f.state.snapshots.set(1, { ...parent, policy: { ...parent.policy, rules: [...parent.policy.rules.filter(r => r.columnName !== "CODE"), { columnName: "CODE", mode: "OMIT" }] } });
   const response = await f.request("/1/parameters/WARD/options");
   assert.equal(response.status, 200); assert.equal((await response.json() as any).options[0].value, "A");
   assert.deepEqual(f.state.executions, [2]);
@@ -195,7 +196,7 @@ for (const enabled of [false, true]) test(`raw design refuses absent or disabled
 for (const mode of ["CUSTOM", "FULL", "OMIT"] as const) for (const field of ["CODE", "LABEL"]) {
   test(`source ${field} ${mode} blocks lookup before SQL despite permissive parent`, () => fixture(async f => {
     const source = f.state.snapshots.get(2)!;
-    f.state.snapshots.set(2, { ...source, policy: { ...source.policy, rules: [...source.policy.rules,
+    f.state.snapshots.set(2, { ...source, policy: { ...source.policy, rules: [...source.policy.rules.filter(r => r.columnName !== field),
       { columnName: field, mode, ...(mode === "CUSTOM" ? { customMask: { prefix: 0, suffix: 0, symbol: "*" } } : {}) }] } });
     const response = await f.request("/1/parameters/WARD/options"); assert.equal(response.status, 409);
     assert.equal((await response.json() as any).error.code, "PARAMETER_LOOKUP_PROTECTED_FIELD");

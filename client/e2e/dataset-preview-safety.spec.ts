@@ -76,7 +76,7 @@ test("all three missing-metadata flows show BLOCKED without automatic settings w
   await expect(panel).toContainText("普通 Dataset"); await expect(panel).toContainText("非患者敏感 Dataset"); await expect(panel).toContainText("患者 Dataset");
   await expect(panel).toContainText("來源結構變更驗證、可信欄位發證、資料負責人分類確認");
   await expect(panel).toContainText("候選欄位不會加入下方可選清單");
-  await expect(page.getByText(/新增欄位：BLOCKED/)).toBeVisible();
+  await expect(page.getByText(/新增欄位仍為 BLOCKED/)).toBeVisible();
   await expect(page.getByRole("combobox", { name: /查詢結果欄位/ }).getByRole("option")).toHaveCount(1);
   expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
 });
@@ -93,7 +93,7 @@ test("designer displays candidate metadata without unlocking sensitive policy or
   await expect(panel.getByText("UNBOUND_CANDIDATE", { exact: false })).toBeVisible();
   await expect(panel.getByRole("cell", { name: "VALUE" })).toBeVisible();
   await expect(panel.getByRole("cell", { name: "int" })).toBeVisible();
-  await expect(page.getByText(/新增欄位：BLOCKED/)).toBeVisible();
+  await expect(page.getByText(/新增欄位仍為 BLOCKED/)).toBeVisible();
   expect(state.runs).toEqual([]); expect(state.policyWrites).toBe(0);
   await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
   await expect(panel.getByRole("cell", { name: "VALUE" })).toHaveCount(0);
@@ -109,7 +109,7 @@ test("candidate-only masking rehearsal never writes policy, syncs trusted column
   await expect(draft.locator("table caption")).toHaveText("尚未儲存、未生效的遮蔽草稿");
   await expect(draft).toContainText("ABC01234");
   expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
-  await expect(page.getByText(/新增欄位：BLOCKED/)).toBeVisible();
+  await expect(page.getByText(/新增欄位仍為 BLOCKED/)).toBeVisible();
   await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
   await expect(panel.getByText("尚未儲存、未生效的遮蔽草稿")).toHaveCount(0);
   expect(state.policyWrites).toBe(0);

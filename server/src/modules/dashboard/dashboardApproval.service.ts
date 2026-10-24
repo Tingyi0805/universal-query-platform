@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { parseApprovalVersion } from "../securityContract/securityContract.js";
 import { assertDatasetSensitivityPolicy, dashboardMaskModes, resolveDashboardDisclosureMasks,
-  validDashboardColumnMasks, type DashboardMaskMode } from "./dashboardDeviceMasking.js";
+  validDashboardColumnMasks, validInheritedDashboardApprovalUpdate, type DashboardMaskMode } from "./dashboardDeviceMasking.js";
 import type { DatasetSensitiveColumn } from "../dataset/datasetSensitiveColumn.repository.js";
 
 export class DashboardApprovalError extends Error {
@@ -100,6 +100,7 @@ export function applyApprovalPatch(state: ApprovalState, patch: ApprovalPatch) {
     next.set(key, mode);
   }
   const masks = Object.fromEntries(next);
+  if (!validInheritedDashboardApprovalUpdate(old, masks)) throw new DashboardApprovalError("DASHBOARD_APPROVAL_MASK_INVALID", 400);
   if (!validDashboardColumnMasks(masks)) throw new DashboardApprovalError("DASHBOARD_APPROVAL_CONFIG_INVALID");
   const parameters = { ...state.parameters, ...(patch.sourceKey === "PRIMARY" ? { deviceColumnMasks: masks } : {
     deviceSourceColumnMasks: { ...approvalObject(state.parameters.deviceSourceColumnMasks), [patch.sourceKey]: masks } }) };

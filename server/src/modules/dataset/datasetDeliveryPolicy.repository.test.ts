@@ -114,12 +114,12 @@ test("patient audit identifier must retain OMIT and CUSTOM is never overwritten"
   }
 });
 
-test("legacy modes remain stored but cannot become a unified trusted policy", async () => {
+test("explicit legacy modes remain stored and use the same delivery engine", async () => {
   const f = fixture();
   f.state.patient = null;
   f.state.rules = [{ ColumnName: "NAME", DeviceMaskMode: "NAME", CustomMaskJson: null }];
   const before = structuredClone(f.state.rules);
-  await assert.rejects(f.repository.readConfirmedDatasetDeliverySnapshot(7), /DATASET_DELIVERY_POLICY_INVALID/);
+  assert.equal((await f.repository.readConfirmedDatasetDeliverySnapshot(7)).policy.rules[0]?.mode, "NAME");
   assert.deepEqual(f.state.rules, before);
 });
 

@@ -38,6 +38,7 @@ async function setup() {
       policy: { state: "CONFIRMED", version: "1", rules: [
         { columnName: "NAME", mode: "CUSTOM", customMask: { prefix: 1, suffix: 1, symbol: "○" } },
         { columnName: "MRN", mode: "OMIT" },
+        { columnName: "ROOM", mode: "NONE" },
       ], patientAuditOnlyColumns: ["MRN"] },
       patientAudit: { configured: true, enabled: true, patientKeyColumn: "MRN" },
     } as ConfirmedDatasetDeliverySnapshot,
@@ -265,8 +266,8 @@ test("legacy modes and mismatched policy evidence refuse before SQL", () => fixt
   assert.equal(f.state.executes, 0);
 }));
 
-test("unconfigured optional patient audit uses an explicitly confirmed empty policy", () => fixture(async f => {
-  f.state.snapshot = { ...f.state.snapshot, patientAuditVersion: "0", policy: { state: "CONFIRMED", version: "1", rules: [] },
+test("ordinary non-patient data requires explicit raw column configuration", () => fixture(async f => {
+  f.state.snapshot = { ...f.state.snapshot, patientAuditVersion: "0", policy: { state: "CONFIRMED", version: "1", rules: [{ columnName: "ROOM", mode: "NONE" }] },
     patientAudit: { configured: false, enabled: false, patientKeyColumn: null } };
   // This is ordinary synthetic data under an explicitly confirmed empty policy.
   f.state.raw = { ...f.state.raw, columns: [{ name: "ROOM" }], rows: [{ ROOM: "R,1" }] } as never;

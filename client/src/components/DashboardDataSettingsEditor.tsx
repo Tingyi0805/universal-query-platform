@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 import { datasetApprovalAllowed, inheritedMaskSample, maskAtLeastAsStrong } from "../dashboard/dataSettings";
 
-type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string } | null };
-const modes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "CUSTOM", "FULL", "OMIT", "INHERIT"];
+type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string; start?: number; end?: number } | null };
+const modes = ["OMIT", "INHERIT"];
 const modeNames: Record<string, string> = { NONE: "原樣顯示（非敏感欄位）", NAME: "姓名部分遮蔽", MRN: "病歷號部分遮蔽", PHONE: "電話部分遮蔽", GENERIC: "一般部分遮蔽", FULL: "全部遮蔽", OMIT: "不傳送", CUSTOM: "沿用 Dataset CUSTOM（既有設定）", INHERIT: "沿用 Dataset 遮蔽規則" };
 export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
   const scope = useRef(0), readSequence = useRef(0);
@@ -109,9 +109,9 @@ export function DashboardDataSettingsEditor({ dashboardId, accessToken }: { dash
     <label>遮蔽核准來源<select aria-label="遮蔽核准來源" value={sourceKey} onChange={e => { setLoaded(false); setSourceKey(e.target.value); }} disabled={saving}><option value="PRIMARY">PRIMARY 主來源</option>{managed?.sources.map(source => <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}</option>)}</select></label>
     <h3>Dataset 最低保護規則（{sourceKey}）</h3>
     {!loaded && <p role="status">尚未確認 Dataset 保護；暫停欄位規則編輯。</p>}
-    {policy.map(rule => <p key={rule.columnName}>{rule.columnName}：{modeNames[rule.deviceMaskMode] ?? "未知規則，禁止變更"}{rule.customMask ? `（前 ${rule.customMask.prefix}／後 ${rule.customMask.suffix}，符號 ${rule.customMask.symbol}）` : ""}</p>)}
-    <h3>Dashboard 核准欄位與額外遮蔽</h3>
-    <p>未列入 Dashboard 規則的 PRIMARY 欄位不傳送；OMIT 欄位不傳送。不得降低 Dataset 規則。改變既有額外保護須管理者明確確認。此處不修改 Dataset。</p>
+    {policy.map(rule => <p key={rule.columnName}>{rule.columnName}：{modeNames[rule.deviceMaskMode] ?? "未知規則，禁止變更"}{rule.customMask ? `（${rule.customMask.start === undefined ? `前 ${rule.customMask.prefix}／後 ${rule.customMask.suffix}` : `位置 ${rule.customMask.start}～${rule.customMask.end}`}，符號 ${rule.customMask.symbol}）` : ""}</p>)}
+    <h3>Dashboard 欄位傳送授權</h3>
+    <p>本區只管理裝置可接收的欄位，不另設遮蔽。核准後一律沿用 Dataset；未核准與 OMIT 欄位不傳送。舊版獨立遮蔽與 Dataset 不相容時停止傳送，需管理者明確改為沿用 Dataset。此處不修改 Dataset。</p>
     <label>核准欄位<select disabled={!loaded || !approvalReady || saving} value={column} onChange={e => { setColumn(e.target.value); setMode("OMIT"); }}><option value="">請選擇欄位</option>{[...new Set([...columns, ...policy.map(p => p.columnName), ...Object.keys(masks)])].map(name => <option key={name} value={name}>{name}</option>)}</select></label>
     <label>欄位遮蔽模式<select disabled={!loaded || !approvalReady || saving} value={mode} onChange={e => setMode(e.target.value)}>{modes.map(candidate => <option key={candidate} value={candidate} disabled={!allowed(candidate)}>{modeNames[candidate]}</option>)}</select></label>
     {column && matching.length === 0 && <p role="status">Dataset 尚未定義此欄位的政策；不可核准傳送，原 JSON 保留。</p>}

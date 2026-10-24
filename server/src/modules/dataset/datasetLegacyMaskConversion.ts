@@ -102,6 +102,8 @@ function validSensitivityType(value: unknown): value is string {
 function validCustomMask(value: unknown): value is CustomMaskConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const config = value as Partial<CustomMaskConfig>;
+  // This legacy conversion proof covers retention only, never new range rules.
+  if (config.start !== undefined || config.end !== undefined) return false;
   return Number.isInteger(config.prefix) && Number.isInteger(config.suffix)
     && Number(config.prefix) >= 0 && Number(config.prefix) <= 100
     && Number(config.suffix) >= 0 && Number(config.suffix) <= 100

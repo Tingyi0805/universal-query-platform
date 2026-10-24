@@ -157,7 +157,7 @@ test("dual policies inherit original CUSTOM settings, never weaken OMIT and neve
       const config = key === "PRIMARY" ? { deviceColumnMasks: approval } : { deviceSourceColumnMasks: { WARD: approval } };
       const masks = resolveDashboardDisclosureMasks(config, key, rules);
       const rows = maskDeviceRows(raw, masks, rules);
-      assert.deepEqual(rows, mode === "OMIT" ? [{}] : [{ MRN: mode === "FULL" ? "○○○○" : "S############54" }]);
+      assert.deepEqual(rows, mode === "OMIT" || mode === "FULL" ? [{}] : [{ MRN: "S############54" }]);
       assert.ok(!JSON.stringify(rows).includes("SYNTHETIC987654"));
     }
   }

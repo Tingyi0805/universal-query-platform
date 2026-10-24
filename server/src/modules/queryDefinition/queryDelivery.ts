@@ -41,7 +41,8 @@ export function createRuntimeIdentityVerifier(session = getTokenSessionState) {
 
 /** Metadata uses the same policy validator as rows; omitted grouping/aggregation cannot silently change meaning. */
 export function deliveryReportColumns(policy: ConfirmedDatasetDeliveryPolicy, reports: ReportColumnRecord[], result?: QueryResult): ReportColumnRecord[] {
-  const omitted = new Set(policy.rules.filter(r => r.mode === "OMIT").map(r => r.columnName.toUpperCase()));
+  const visible = new Set(policy.rules.filter(r => r.mode !== "OMIT").map(r => r.columnName.toUpperCase()));
+  const omitted = new Set(reports.filter(r => !visible.has(r.columnName.toUpperCase())).map(r => r.columnName.toUpperCase()));
   if (reports.some(r => omitted.has(r.columnName.toUpperCase()) && (r.groupOrder !== null || r.aggregateType !== "NONE")))
     throw new QueryDeliveryError("QUERY_REPORT_POLICY_CONFLICT");
   const columns = result?.columns ?? reports.map(r => ({ name: r.columnName }));

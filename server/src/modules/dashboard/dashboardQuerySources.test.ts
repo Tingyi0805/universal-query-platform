@@ -492,3 +492,11 @@ test("Query binding routes cannot carry Legacy approvals to another primary or s
   await assert.rejects(f.service.patch(1, 1, { expectedVersion: sourceVersion(f.state()), upserts: [], removals: [{ id: 10, sourceKey: "WARD" }] }), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
   assert.equal(f.control.writes, 0);
 });
+
+test("disclosure API rejects a new independent Dashboard mask instead of overriding Dataset policy", async () => {
+  const f = fixture(); await f.service.patch(1, 7, f.patch());
+  const before = structuredClone(f.state());
+  await assert.rejects(f.service.disclosure(1, 7, { expectedVersion: sourceVersion(f.state()), sourceKey: "WARD", masks: { MRN: "FULL" } }),
+    { code: "DASHBOARD_APPROVAL_MASK_INVALID", status: 400 });
+  assert.deepEqual(f.state(), before);
+});

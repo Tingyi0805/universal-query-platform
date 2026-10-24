@@ -1,8 +1,8 @@
-import { maskCustomValue, type CustomMaskConfig } from "../dashboard/dashboardDeviceMasking.js";
+import { maskDeviceValue, validCustomMask, type DeviceMaskMode, type CustomMaskConfig } from "../dashboard/dashboardDeviceMasking.js";
 
 export type DatasetDeliveryRule = Readonly<{
   columnName: string;
-  mode: "CUSTOM" | "FULL" | "OMIT";
+  mode: DeviceMaskMode;
   customMask?: CustomMaskConfig | null;
 }>;
 
@@ -60,16 +60,6 @@ function canonicalColumnName(value: unknown): string {
   return value.toUpperCase();
 }
 
-function validCustomMask(value: unknown): value is CustomMaskConfig {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  const config = value as Partial<CustomMaskConfig>;
-  return Number.isInteger(config.prefix) && Number.isInteger(config.suffix)
-    && Number(config.prefix) >= 0 && Number(config.prefix) <= 100
-    && Number(config.suffix) >= 0 && Number(config.suffix) <= 100
-    && typeof config.symbol === "string" && Array.from(config.symbol).length === 1
-    && !/[\r\n\t]/u.test(config.symbol);
-}
-
 function validatePolicy(policy: ConfirmedDatasetDeliveryPolicy | null | undefined): Map<string, DatasetDeliveryRule> {
   if (!policy || policy.state !== "CONFIRMED") fail("DATASET_DELIVERY_POLICY_REQUIRED");
   if (!/^[1-9][0-9]*$/u.test(policy.version) || !Array.isArray(policy.rules)) {
@@ -80,7 +70,7 @@ function validatePolicy(policy: ConfirmedDatasetDeliveryPolicy | null | undefine
   for (const rule of policy.rules) {
     if (!rule || typeof rule !== "object") fail("DATASET_DELIVERY_POLICY_INVALID");
     const key = canonicalColumnName(rule.columnName);
-    if (rules.has(key) || (rule.mode !== "CUSTOM" && rule.mode !== "FULL" && rule.mode !== "OMIT")) {
+    if (rules.has(key) || !["NONE", "CUSTOM", "FULL", "OMIT", "NAME", "MRN", "PHONE", "GENERIC"].includes(rule.mode)) {
       fail("DATASET_DELIVERY_POLICY_INVALID");
     }
     if (rule.mode === "CUSTOM" ? !validCustomMask(rule.customMask) : rule.customMask != null) {
@@ -144,7 +134,7 @@ export function applyDatasetDeliveryPolicy(input: DatasetDeliveryInput): Dataset
   const declaredColumns = validateColumns(input.columns);
   if (!Array.isArray(input.rows)) fail("DATASET_DELIVERY_RESULT_INVALID");
 
-  const visibleColumns = input.columns.filter((column) => rules.get(column.name.toUpperCase())?.mode !== "OMIT");
+  const visibleColumns = input.columns.filter((column) => { const rule = rules.get(column.name.toUpperCase()); return rule && rule.mode !== "OMIT"; });
   const visibleNames = new Set(visibleColumns.map((column) => column.name.toUpperCase()));
   const columns = visibleColumns.map((column) => ({ ...column }));
 
@@ -156,16 +146,10 @@ export function applyDatasetDeliveryPolicy(input: DatasetDeliveryInput): Dataset
       if (!values.has(key)) continue;
       const value = values.get(key);
       const rule = rules.get(key);
-      if (rule?.mode === "FULL" && value != null) {
-        entries.push([column.name, "○○○○"]);
-      } else if (rule?.mode === "CUSTOM" && value != null) {
-        try {
-          entries.push([column.name, maskCustomValue(value, rule.customMask)]);
-        } catch {
-          fail("DATASET_DELIVERY_RESULT_INVALID");
-        }
-      } else {
-        entries.push([column.name, value]);
+      try {
+        entries.push([column.name, maskDeviceValue(value, rule!.mode, rule!.customMask)]);
+      } catch {
+        fail("DATASET_DELIVERY_RESULT_INVALID");
       }
     }
     return Object.fromEntries(entries);

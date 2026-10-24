@@ -71,15 +71,14 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
     if (context.snapshot.patientAudit.enabled) {
       disclosureId = await deps.auditPatient({ datasetId: context.dataset.id, userId: context.actor.userId,
         sourceScope: `datasource:${context.dataset.dataSourceId}`, deliveryType: "MANUAL",
-        masked: context.purpose !== "RAW_DESIGN", rows: raw.rows });
+        masked: true, rows: raw.rows });
       if (raw.rows.length && (!Number.isSafeInteger(disclosureId) || Number(disclosureId) <= 0))
         throw new QueryDeliveryError("PATIENT_DISCLOSURE_REQUIRED", 503);
     }
     await context.revalidate();
-    // Validate result aliases/shape even for authorized raw preview. This also
-    // avoids passing adapter-specific metadata through an unreviewed raw path.
-    const safe = applyDatasetDeliveryPolicy({ policy: context.purpose === "RAW_DESIGN"
-      ? { state: "CONFIRMED", version: context.snapshot.sensitivityVersion, rules: [] } : context.snapshot.policy,
+    // Designer previews use the same Dataset policy as Query and Dashboard.
+    // RAW_DESIGN is an audited purpose, never permission to bypass masking.
+    const safe = applyDatasetDeliveryPolicy({ policy: context.snapshot.policy,
       columns: raw.columns, rows: raw.rows });
     const result: QueryResult = { columns: safe.columns, rows: safe.rows, rowCount: raw.rowCount,
       truncated: raw.truncated, elapsedMs: raw.elapsedMs };
@@ -97,7 +96,7 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
       || !parameter.lookupValueField || !parameter.lookupLabelField) throw new QueryDeliveryError("PARAMETER_LOOKUP_NOT_CONFIGURED");
     // Never substitute the parent Dataset policy for the actual lookup source.
     const source = await open(parameter.lookupDatasetId!, parent.identity, "STANDARD");
-    const protectedFields = new Set(source.snapshot.policy.rules.map(r => r.columnName.toUpperCase()));
+    const protectedFields = new Set(source.snapshot.policy.rules.filter(r => r.mode !== "NONE").map(r => r.columnName.toUpperCase()));
     if ([parameter.lookupValueField, parameter.lookupLabelField].some(field => protectedFields.has(field.toUpperCase())))
       throw new QueryDeliveryError("PARAMETER_LOOKUP_PROTECTED_FIELD");
     const active = runtimeParameterDefinitions(source.dataset.sqlText, source.parameters);

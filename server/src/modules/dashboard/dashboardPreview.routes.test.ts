@@ -88,7 +88,7 @@ for (const path of ["/1/preview", "/1/data-sources/WARD/preview"]) test(`${path}
   // State drives the real route policy, not a pre-masked response.
   f.state.mrnMode = "INHERIT";
   let r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, "*************54");
-  f.state.mrnMode = "FULL"; r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, "○○○○");
+  f.state.mrnMode = "FULL"; r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, undefined);
   f.state.mrnMode = "OMIT"; r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, undefined);
   f.state.mrnMode = "INHERIT"; f.state.policy.columns = f.state.policy.columns.filter((c: any) => c.columnName !== "MRN"); f.state.policy.version++;
   r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, undefined);

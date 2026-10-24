@@ -1,3 +1,5 @@
+import { validCustomMask } from "../dashboard/dashboardDeviceMasking.js";
+import { listDatasetColumns } from "./column.repository.js";
 import { createDatasetDataRouter } from "./datasetData.routes.js";
 import { Router, type RequestHandler } from "express";
 import { getDatasetSensitivitySnapshot, listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
@@ -568,17 +570,20 @@ const sensitiveColumnSchema = z.object({
   customMask: z.object({
     prefix: z.number().int().min(0).max(100),
     suffix: z.number().int().min(0).max(100),
+    start: z.number().int().min(1).max(10000).optional(),
+    end: z.number().int().min(1).max(10000).optional(),
     symbol: z.string().min(1).max(2).refine((v) => Array.from(v).length === 1 && !/[\r\n\t]/u.test(v)),
-  }).nullable().optional(),
+  }).strict().refine(validCustomMask).nullable().optional(),
 }).refine((rule) => rule.sensitivityType === "OTHER" || rule.deviceMaskMode !== "NONE", "敏感欄位不可原樣顯示")
-  .refine((rule) => rule.deviceMaskMode !== "CUSTOM" || !!rule.customMask, "自訂遮蔽必須提供合法的保留碼數及遮蔽符號");
+  .refine((rule) => rule.deviceMaskMode === "CUSTOM" ? !!rule.customMask : rule.customMask == null, "自訂遮蔽設定必須與模式一致");
 
 datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
     if (!await getDataset(id.data)) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
-    res.json(await getDatasetSensitivitySnapshot(id.data));
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ...await getDatasetSensitivitySnapshot(id.data), availableColumns: await listDatasetColumns(id.data) });
   } catch (error) { next(error); }
 });
 
@@ -601,7 +606,7 @@ datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
       return;
     }
     if (error instanceof Error && error.message === "SENSITIVITY_COLUMN_NOT_FOUND") {
-      res.status(400).json({ error: { code: "SENSITIVITY_COLUMN_NOT_FOUND", message: "敏感欄位不在目前 Dataset 的已同步欄位清單中，請先執行查詢預覽同步欄位，再重新設定。" } });
+      res.status(400).json({ error: { code: "SENSITIVITY_COLUMN_NOT_FOUND", message: "敏感欄位不在目前 Dataset 的已同步欄位清單中，請先完成已儲存 Dataset 的可信欄位初始化；候選描述不能代替已同步欄位。" } });
       return;
     }
     if (error instanceof Error && error.message === "SENSITIVITY_AUDIT_TOO_LARGE") {

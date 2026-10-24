@@ -259,10 +259,10 @@ test("Query-only malformed/conflicting policy cannot disclose cached data or poi
   f.deps.getSensitivity = async () => null as any;
   await assert.rejects(f.service.page(1, "ROOM", subject, { page: 1 }), { code: "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", status: 503 });
 });
-test("Query-only PRIMARY strengthens Dashboard masks without granting unapproved fields or affecting extra sources", async () => {
+test("Query-only PRIMARY omits incompatible legacy masks without granting unapproved fields or affecting extra sources", async () => {
   const f = fixture(); f.control.bindings.PRIMARY = { ...f.control.bindings.WARD!, sourceKey: "PRIMARY", sourceId: 1, deviceMasks: { NAME: "FULL", MRN: "NONE", UNAPPROVED: "NONE" } };
   const page = await f.service.page(1, "PRIMARY", subject, { page: 1 });
-  assert.deepEqual(page.result.rows[0], { NAME: "○○○○" });
+  assert.deepEqual(page.result.rows[0], {});
   const extra = await f.service.page(1, "WARD", subject, { page: 1 }); assert.equal(extra.result.rows[0]!.NAME, "測○○○甲");
   f.control.bindings.PRIMARY.deviceMasks = { NAME: "NONE" };
   await assert.rejects(f.service.page(1, "PRIMARY", subject, { page: 1, snapshotId: page.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
@@ -284,7 +284,7 @@ for (const key of ["PRIMARY", "WARD"]) test(`Query-only ${key}: CUSTOM inheritan
     else binding.sourceMasks = { WARD: { NAME: mode, MRN: "FULL" } };
   };
   select("INHERIT"); const first = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(first.result.rows, [{ NAME: "測###甲" }]);
-  select("FULL"); const full = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(full.result.rows, [{ NAME: "○○○○" }]);
+  select("FULL"); const full = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(full.result.rows, [{}]);
   select("OMIT"); assert.deepEqual((await f.service.page(1, key, subject, { page: 1 })).result.columns, []);
   select("INHERIT"); f.control.policyVersion++; await assert.rejects(f.service.page(1, key, subject, { page: 1, snapshotId: first.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
   f.deps.getSensitivity = async () => ({ version: f.control.policyVersion, columns: [{ columnName: "RENAMED", sensitivityType: "NAME", deviceMaskMode: "FULL" }] });

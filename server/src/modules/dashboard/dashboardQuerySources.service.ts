@@ -1,4 +1,4 @@
-import { dashboardQueryParameters, dashboardReservedParameters, validDashboardColumnMasks, validSourceColumnMasks } from "./dashboardDeviceMasking.js";
+import { dashboardQueryParameters, dashboardReservedParameters, validDashboardColumnMasks, validInheritedDashboardApprovalUpdate, validSourceColumnMasks } from "./dashboardDeviceMasking.js";
 import { hasPrimaryApprovals, sourceApprovals, DashboardApprovalError } from "./dashboardApproval.service.js";
 import type { DashboardProfileInput } from "./dashboardLayout.repository.js";
 import { createHash } from "node:crypto";
@@ -129,6 +129,9 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       const source = input.sourceKey === "PRIMARY" ? undefined : state.sources.find(source => source.sourceKey === input.sourceKey);
       if (input.sourceKey !== "PRIMARY" && !source) throw new QuerySourceError("DASHBOARD_SOURCE_NOT_FOUND", 404);
       if (source?.queryDefinitionId === null) throw new QuerySourceError("PENDING_CONVERSION", 409);
+      const existingGrants = input.sourceKey === "PRIMARY" ? state.dashboard.parameters.deviceColumnMasks
+        : sourceApprovals(state.dashboard.parameters, input.sourceKey);
+      if (!validInheritedDashboardApprovalUpdate(existingGrants, input.masks)) throw new QuerySourceError("DASHBOARD_APPROVAL_MASK_INVALID", 400);
       const queryId = source?.queryDefinitionId ?? state.dashboard.queryDefinitionId;
       await tx.validateQuery(userId, queryId, source?.parameters ?? dashboardQueryParameters(state.dashboard.parameters));
       const parameters = { ...state.dashboard.parameters };

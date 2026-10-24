@@ -1,7 +1,8 @@
 import { test, expect, type Page } from "@playwright/test";
 async function setup(page: Page) {
   const state = { sqlText: "SELECT {{REGNO_NAME}}", failSql: false, policyError: "", version: 1,
-    rules: [{ columnName: "SYNTHETIC", sensitivityType: "OTHER", deviceMaskMode: "FULL" }],
+    rules: [{ columnName: "SYNTHETIC", sensitivityType: "OTHER", deviceMaskMode: "FULL" }] as Array<{ columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string; start?: number; end?: number } | null }>,
+    availableColumns: ["SYNTHETIC", "NAME", "PHONE", "MRN", "HIDDEN"],
     writes: [] as string[] };
   await page.addInitScript(() => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic-token",
     user: { id: 5, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY"] } })));
@@ -20,7 +21,7 @@ async function setup(page: Page) {
         expect(request.postDataJSON().expectedVersion).toBe(state.version);
         state.rules = request.postDataJSON().columns; state.version++;
       }
-      await route.fulfill({ json: { columns: state.rules, version: state.version } }); return;
+      await route.fulfill({ json: { columns: state.rules, version: state.version, availableColumns: state.availableColumns.map(name => ({ name })) } }); return;
     }
     if (path === "/api/datasets/2/parameters") {
       await route.fulfill({ json: { parameters: [{ id: 10, datasetId: 2, name: "REGNO_NAME", label: "舊設定", dataType: "STRING", controlType: "TEXT", isRequired: false, defaultValue: "synthetic", displayOrder: 1, optionMode: "NONE" }],
@@ -100,4 +101,58 @@ for (const name of ["NAME", "MRN", "PHONE", "OPAQUE_7"]) test(`user selects ${na
   await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true }).click();
   await expect(policy.getByText(/敏感欄位規則已儲存/)).toBeVisible();
   expect(state.rules).toEqual([{ columnName: name, sensitivityType: "OTHER", deviceMaskMode: "FULL", customMask: null }]);
+});
+
+test("saved Dataset columns support four explicit modes and persist a single Dataset policy", async ({ page }) => {
+  const { state, policy } = await setup(page);
+  state.rules = [];
+  await policy.getByRole("button", { name: "重新載入伺服器規則" }).click();
+  await policy.getByRole("combobox", { name: /查詢結果欄位/ }).selectOption("NAME");
+  await policy.getByRole("radio", { name: "自訂遮蔽", exact: true }).check();
+  await policy.getByLabel("保留前幾碼").fill("1");
+  await policy.getByLabel("保留後幾碼").fill("0");
+  await policy.getByLabel("遮蔽符號", { exact: true }).fill("*");
+  await policy.getByRole("button", { name: "加入／更新欄位規則" }).click();
+  for (const [name, mode] of [["PHONE", "顯示原始資料"], ["MRN", "全部遮蔽"], ["HIDDEN", "完全不傳送"]]) {
+    await policy.getByRole("combobox", { name: /查詢結果欄位/ }).selectOption(name!);
+    await policy.getByRole("radio", { name: mode!, exact: true }).check();
+    await policy.getByRole("button", { name: "加入／更新欄位規則" }).click();
+  }
+  await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true }).click();
+  await expect(policy.getByText(/敏感欄位規則已儲存/)).toBeVisible();
+  expect(state.rules).toEqual([
+    { columnName: "NAME", sensitivityType: "OTHER", deviceMaskMode: "CUSTOM", customMask: { prefix: 1, suffix: 0, symbol: "*" } },
+    { columnName: "PHONE", sensitivityType: "OTHER", deviceMaskMode: "NONE", customMask: null },
+    { columnName: "MRN", sensitivityType: "OTHER", deviceMaskMode: "FULL", customMask: null },
+    { columnName: "HIDDEN", sensitivityType: "OTHER", deviceMaskMode: "OMIT", customMask: null },
+  ]);
+  expect(state.writes).toEqual(["sensitivity"]);
+  await policy.getByRole("button", { name: "重新載入伺服器規則" }).click();
+  await expect(policy.getByRole("cell", { name: "顯示原始資料", exact: true })).toBeVisible();
+  await policy.getByRole("combobox", { name: /查詢結果欄位/ }).selectOption("NAME");
+  await policy.getByRole("combobox", { name: "遮蔽位置", exact: true }).selectOption("RANGE");
+  await policy.getByLabel("起始位置（從 1 起）").fill("2");
+  await policy.getByLabel("結束位置（含）").fill("3");
+  await policy.getByRole("button", { name: "加入／更新欄位規則" }).click();
+  await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true }).click();
+  await expect(policy.getByText(/敏感欄位規則已儲存/)).toBeVisible();
+  expect(state.rules.find(rule => rule.columnName === "NAME")!.customMask).toEqual({ prefix: 0, suffix: 0, symbol: "*", start: 2, end: 3 });
+  await policy.getByRole("button", { name: "重新載入伺服器規則" }).click();
+  await policy.getByRole("combobox", { name: /查詢結果欄位/ }).selectOption("NAME");
+  await expect(policy.getByRole("combobox", { name: "遮蔽位置", exact: true })).toHaveValue("RANGE");
+  await expect(policy.getByLabel("起始位置（從 1 起）")).toHaveValue("2");
+});
+
+test("raw display is an explicit designer choice, never inferred from a saved sensitivity label", async ({ page }) => {
+  const { state, policy } = await setup(page);
+  state.rules = [{ columnName: "PHONE", sensitivityType: "PHONE", deviceMaskMode: "FULL" }];
+  await policy.getByRole("button", { name: "重新載入伺服器規則" }).click();
+  await policy.getByRole("combobox", { name: /查詢結果欄位/ }).selectOption("PHONE");
+  await policy.getByRole("radio", { name: "顯示原始資料", exact: true }).check();
+  await expect(policy.getByText(/您明確允許此欄位原始值/)).toBeVisible();
+  await policy.getByRole("button", { name: "加入／更新欄位規則" }).click();
+  expect(state.rules[0]!.sensitivityType).toBe("PHONE");
+  await policy.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true }).click();
+  await expect(policy.getByText(/敏感欄位規則已儲存/)).toBeVisible();
+  expect(state.rules).toEqual([{ columnName: "PHONE", sensitivityType: "OTHER", deviceMaskMode: "NONE", customMask: null }]);
 });
