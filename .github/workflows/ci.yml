@@ -221,16 +221,20 @@ jobs:
           New-Item -ItemType Directory -Path release/payload/server,release/payload/client,release/payload/tools,release/payload/docs -Force | Out-Null
           Copy-Item server/dist release/payload/server/dist -Recurse
           Copy-Item server/package.json release/payload/server/
+          Copy-Item server/src release/payload/server/src -Recurse
+          Copy-Item server/tsconfig.json release/payload/server/
           Copy-Item client/dist release/payload/client/dist -Recurse
           Copy-Item client/package.json release/payload/client/
           Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/payload/tools/
+          New-Item -ItemType Directory -Path release/payload/tools/sqlserver-acceptance/drafts/925 -Force | Out-Null
+          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/tools/sqlserver-acceptance/drafts/925/
           New-Item -ItemType Directory -Path release/payload/database -Force | Out-Null
           Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/database/925_dataset_display_policy.sql
           Copy-Item tools/install-uqp-pr66-offline.ps1 release/payload/tools/
           Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md release/payload/docs/
           Copy-Item tools/install-uqp-pr66-offline.ps1 release/
           Set-Location release/payload/server
-          npm install --omit=dev --ignore-scripts=false
+          npm install --ignore-scripts=false
           if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUNTIME_DEPENDENCIES_FAILED'}
           Set-Location ../../..
           $root=(Resolve-Path release).Path
