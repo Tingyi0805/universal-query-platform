@@ -54,7 +54,7 @@ if((Test-Path -LiteralPath $stage) -or (Test-Path -LiteralPath $backup)){throw '
 $swapped=$false
 try {
  New-Item -ItemType Directory -Path $stage | Out-Null
- foreach($item in @('server','client','tools','docs')){
+ foreach($item in @('server','client','tools','docs','database')){
    $src=Join-Path $source $item
    if(Test-Path -LiteralPath $src){Copy-Item -LiteralPath $src -Destination (Join-Path $stage $item) -Recurse -Force}
  }
