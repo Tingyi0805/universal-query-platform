@@ -1,7 +1,6 @@
 import { dashboardOperationError } from "../dashboard/managementStatus";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { DashboardBasicSettingsEditor } from "../components/DashboardBasicSettingsEditor";
-import { DashboardDataSettingsEditor } from "../components/DashboardDataSettingsEditor";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
 import { DashboardQueryPlaybackManager } from "../components/DashboardQueryPlaybackManager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -213,9 +212,8 @@ export function DashboardDesignerPage() {
           <button type="button" onClick={newDashboard}>新增另一個／取消編輯</button>
           <DashboardBasicSettingsEditor key={`basic-${form.id}`} dashboardId={form.id} code={form.code} accessToken={accessToken}
             onCreated={(id, code) => { setForm({ id, code }); setNotice("已建立停用草稿；請完成 PRIMARY 設定及敏感欄位重新核准。"); void load(); }} />
-          {form.id && <nav aria-label="Dashboard 管理步驟"><p>停用草稿 → PRIMARY／額外來源 → 播放欄位傳送授權 → <Link to={`/designer/dashboards/${form.id}/layout`}>版型設計／設計預覽</Link> → <a href="#dashboard-device-management">預檢、啟用與裝置授權</a></p><p>操作順序不代表已完成核准；以各區後端版本、核准與預檢結果為準。</p></nav>}
+          {form.id && <nav aria-label="Dashboard 管理步驟"><p>停用草稿 → PRIMARY／額外來源 → <Link to={`/designer/dashboards/${form.id}/layout`}>版型設計／設計預覽</Link> → <a href="#dashboard-device-management">預檢、啟用與裝置授權</a></p><p>操作順序不代表已完成核准；以各區後端版本、核准與預檢結果為準。</p></nav>}
           {form.id && <DashboardDataSourcesEditor key={form.id} dashboardId={form.id} accessToken={accessToken} />}
-          {form.id && <section className="dashboard-editor-card"><h2>Dashboard 欄位傳送授權</h2><DashboardDataSettingsEditor dashboardId={form.id} accessToken={accessToken}/></section>}
           {form.id && <DashboardQueryPlaybackManager key={`playback-${form.id}`} dashboardId={form.id} accessToken={accessToken} />}
 
           <section className="dashboard-list-card">
