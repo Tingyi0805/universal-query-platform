@@ -13,7 +13,7 @@ export async function installDisplay925(pool:sql.ConnectionPool,apply:boolean){
   if(gate.recordset[0]?.Code<0)throw new DatasetDisplayError("DISPLAY_INSTALL_LOCK_FAILED",503);
   const current=validateDisplayCatalog((await new sql.Request(tx).query(displayCatalogSql)).recordsets as unknown as Record<string,any>[][],ddl);
   if(current==="ABSENT"){await new sql.Request(tx).batch(ddl);}
-  const exact=validateDisplayCatalog((await new sql.Request(tx).query(displayCatalogSql)).recordsets as unknown as Record<string,any>[][],ddl);
+  const exact=validateDisplayCatalog((await new sql.Request(tx).query(displayCatalogSql)).recordsets as unknown as Record<string,any>[][],ddl,(reason)=>console.error("925_CATALOG_MISMATCH_"+reason));
   if(exact!=="EXACT_MATCH")throw new DatasetDisplayError("DATASET_DISPLAY_SCHEMA_REQUIRED",503);
   await tx.commit();return exact;
  }catch(e){try{await tx.rollback();}catch{}throw e;}
