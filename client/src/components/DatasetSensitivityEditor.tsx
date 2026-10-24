@@ -16,6 +16,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
   };
   const [rules, setRules] = useState<Rule[]>([]);
   const [availableColumns, setAvailableColumns] = useState<string[]>([]);
+  const [batchSelected, setBatchSelected] = useState<string[]>([]);
   const [placement, setPlacement] = useState<"RETAIN" | "RANGE">("RETAIN");
   const [start, setStart] = useState(1);
   const [end, setEnd] = useState(1);
@@ -65,7 +66,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     let active = true;
     const fieldsRead = ++fieldReadRevision.current;
     setBusy(false);
-    setRules([]); setAvailableColumns([]);
+    setRules([]); setAvailableColumns([]); setBatchSelected([]);
     setLoaded(false);
     setVersion(null);
     setDirty(false);
@@ -94,6 +95,7 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
       if (result.trust !== "UNBOUND_CANDIDATE" || result.purpose !== "DISPLAY_COLUMN_OPTIONS_ONLY" || result.deliveryAllowed !== false
         || !Array.isArray(result.columns)) throw new Error("欄位同步回應不符合安全契約。");
       setAvailableColumns(result.columns.map(c => c.name));
+      setBatchSelected([]);
       if (result.columns.length === 0) {
         setMessage("欄位同步 API 已成功回應，但未取得任何結果欄位。請確認已儲存的 SQL 具有明確的 SELECT 結果欄位；若確定有欄位，請檢查伺服器同步日誌。");
         return;
@@ -128,6 +130,50 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     }]);
     setDirty(true);
     setMessage("已加入編輯清單，請按儲存規則。");
+  };
+  const applyBatch = () => {
+    if (!loaded || version === null || busy || conflict || batchSelected.length === 0) return;
+    if (action === "CUSTOM" && !validSettings) {
+      setMessage("請先完成合法的自訂遮蔽設定。"); return;
+    }
+    const selected = new Set(batchSelected.map(name => name.toUpperCase()));
+    const recognized = new Set(availableColumns.map(name => name.toUpperCase()));
+    if ([...selected].some(name => !recognized.has(name))) {
+      setMessage("選取欄位已變動，請重新同步後再套用。"); return;
+    }
+    if (action === "NONE" && rules.some(rule => selected.has(rule.columnName.toUpperCase())
+      && rule.sensitivityType !== "OTHER")) {
+      setMessage("選取欄位包含既有敏感標記，無法批次改為原樣顯示；請逐欄確認處理。"); return;
+    }
+    if (action === "NONE" && !window.confirm(`確定將選取的 ${batchSelected.length} 個欄位設定為原始資料顯示？原值可能交付至已授權的 Query／Dashboard。`)) return;
+    const mask: CustomMask | null = action === "CUSTOM"
+      ? placement === "RANGE" ? { prefix: 0, suffix: 0, symbol, start, end } : { prefix, suffix, symbol }
+      : null;
+    setRules(previous => {
+      const byName = new Map(previous.map(rule => [rule.columnName.toUpperCase(), rule]));
+      for (const name of batchSelected) {
+        const old = byName.get(name.toUpperCase());
+        byName.set(name.toUpperCase(), {
+          columnName: name,
+          sensitivityType: action === "NONE" ? "OTHER" : old?.sensitivityType ?? "OTHER",
+          deviceMaskMode: action,
+          customMask: mask,
+        });
+      }
+      return [...byName.values()];
+    });
+    setDirty(true);
+    setEmptyConfirmed(false);
+    setMessage(`已批次更新 ${batchSelected.length} 個欄位（尚未儲存至伺服器），請檢查下方摘要並儲存。`);
+  };
+  const normalizedColumns = [...new Map(availableColumns.map(name => [name.toUpperCase(), name])).values()];
+  const configuredColumns = new Set(rules.map(rule => rule.columnName.toUpperCase()));
+  const pendingColumns = normalizedColumns.filter(name => !configuredColumns.has(name));
+  const summary = {
+    raw: rules.filter(rule => rule.deviceMaskMode === "NONE").length,
+    custom: rules.filter(rule => rule.deviceMaskMode === "CUSTOM").length,
+    full: rules.filter(rule => rule.deviceMaskMode === "FULL").length,
+    omit: rules.filter(rule => rule.deviceMaskMode === "OMIT").length,
   };
   const save = async () => {
     if (version === 0 && rules.length === 0 && !emptyConfirmed) return;
@@ -173,6 +219,18 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
       <option value="">請選擇欄位</option>
       {[...new Map([...availableColumns, ...rules.map(rule => rule.columnName)].map(name => [name.toUpperCase(), name])).values()].map((name) => <option key={name} value={name}>{name}</option>)}
     </select></label>
+    <fieldset className="dataset-batch-fields" disabled={!loaded || busy || conflict || normalizedColumns.length === 0}>
+      <legend>批次選取查詢結果欄位</legend>
+      <p>只有勾選欄位會套用下方處理方式；未設定欄位預設不傳送。個別規則仍可在下方覆寫。</p>
+      <label className="dataset-batch-option"><input type="checkbox" checked={normalizedColumns.length > 0 && batchSelected.length === normalizedColumns.length}
+        onChange={e => setBatchSelected(e.target.checked ? [...normalizedColumns] : [])}/> 全選目前同步欄位</label>
+      <div className="dataset-batch-list">
+        {normalizedColumns.map(name => <label key={name} className="dataset-batch-option"><input type="checkbox"
+          checked={batchSelected.includes(name)} onChange={e => setBatchSelected(previous =>
+            e.target.checked ? [...previous, name] : previous.filter(value => value !== name))}/> {name}</label>)}
+      </div>
+      <p role="status">已選取 {batchSelected.length} / {normalizedColumns.length} 欄位</p>
+    </fieldset>
     <fieldset className="dataset-mask-options">
       <legend>Dataset 統一資料處理方式（Query／Dashboard 共用）</legend>
       <label className="dataset-mask-option"><input type="radio" name="maskAction" checked={action === "NONE"} onChange={() => setAction("NONE")}/> 顯示原始資料</label>
@@ -196,6 +254,9 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     {action === "FULL" && <p role="status">全部遮蔽，例如：王小明 → ○○○○</p>}
     {action === "OMIT" && <p role="status">完全不傳送：Query 與 Dashboard 均不會收到此欄位。</p>}
     <button type="button" disabled={!loaded || conflict || !column || busy || (action === "CUSTOM" && !validSettings)} onClick={add}>加入／更新欄位規則</button>
+    <button type="button" disabled={!loaded || conflict || busy || batchSelected.length === 0 || (action === "CUSTOM" && !validSettings)}
+      onClick={applyBatch}>套用至已勾選的 {batchSelected.length} 個欄位</button>
+    <p role="status">儲存前摘要：原樣顯示 {summary.raw}、自訂遮蔽 {summary.custom}、全部遮蔽 {summary.full}、完全不傳送 {summary.omit}、未設定（不傳送） {pendingColumns.length}。</p>
     <table className="preview-table"><thead><tr><th>欄位</th><th>資料處理方式</th><th>操作</th></tr></thead>
       <tbody>{rules.map((rule) => <tr key={rule.columnName}><td>{rule.columnName}</td>
         <td>{rule.deviceMaskMode === "CUSTOM" && rule.customMask
