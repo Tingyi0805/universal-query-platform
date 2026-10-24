@@ -31,7 +31,7 @@ function fixture() {
     patientVersion: "1", metadataProof: "proof-v1", denied: new Set<number>(), revision: "acl-v1", policyVersion: 1, datasourceActive: true,
     parentRowVersion: 1n, sourceRowVersions: { WARD: 2n, ROOM: 3n },
     executions: [] as number[], audits: [] as Parameters<ExecutionDependencies["audit"]>[0][],
-    failExecute: false, failAudit: false, missingAudit: false,
+    failExecute: false, failAudit: false, missingAudit: false, patientConfigured: true,
     afterExecute: () => {}, afterAudit: () => {},
   };
   const deps: ExecutionDependencies = {
@@ -76,6 +76,7 @@ function fixture() {
       return { columns: [{ name: "NAME" }, { name: "MRN" }], rows: [{ NAME: "測試患者甲", MRN: "00000123" },
         { NAME: "測試患者乙", MRN: "00000456" }], rowCount: 2, elapsedMs: 1, truncated: false };
     },
+    getPatientAuditConfig: async () => control.patientConfigured ? { isEnabled: true, patientKeyColumn: "MRN" } : null,
     audit: async input => {
       if (control.failAudit) throw new Error("private audit token");
       control.audits.push(input); control.afterAudit(); return control.missingAudit ? null : control.audits.length;
@@ -157,6 +158,13 @@ test("permissions changed during SQL or audit fail closed; failed executions do 
   f.control.failExecute = true; await assert.rejects(f.service.page(1, "WARD", subject, { page: 1 }));
   f.control.failExecute = false;
   assert.equal((await f.service.page(1, "ROOM", subject, { page: 2, snapshotId: healthy.snapshotId })).snapshotId, healthy.snapshotId);
+});
+test("ordinary Dataset pages succeed without patient-specific audit while keeping Dataset masks", async () => {
+  const f = fixture(); f.control.patientConfigured = false; f.control.missingAudit = true;
+  const result = await f.service.page(1, "WARD", subject, { page: 1 });
+  assert.equal(result.disclosureId, null);
+  assert.equal(result.result.rows[0]?.NAME, "測○○○甲");
+  assert.equal(result.result.rows[0]?.MRN, undefined);
 });
 test("audit is mandatory for nonempty pages and parameters remain classified", async () => {
   const f = fixture(); f.control.missingAudit = true;
