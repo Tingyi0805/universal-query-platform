@@ -1,5 +1,6 @@
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
+import {createDatasetColumnRepository} from "../modules/dataset/column.repository.js";
 import {testF3SourceMetadata} from "./datasetF3SourceAcceptance.js";
 import {readFile,readdir} from "node:fs/promises";
 import {createHash,randomBytes,randomUUID} from "node:crypto";
@@ -249,6 +250,34 @@ async function main(){
     await assert.rejects(()=>store.mutate(auth,datasetId,ownerId,"OWNER",first),{code:"SCOPE_AUDIT_HISTORY_MISSING"});
     stage="F3_SOURCE_METADATA";
     await testF3SourceMetadata(root,master,config,app,login);
+    stage="DATASET_DISPLAY_COLUMN_SYNC";
+    // Reuse this disposable full-schema instance. No trusted snapshot or policy
+    // is created by metadata-option synchronization.
+    await root.request().batch(`SET IDENTITY_INSERT uqp.Dataset ON;
+      INSERT uqp.Dataset(Id,Code,Name,DataSourceId,SqlText) VALUES(77,N'CI_COLUMN_OPTIONS',N'SYNTHETIC',201,N'SELECT synthetic_fixture');
+      SET IDENTITY_INSERT uqp.Dataset OFF;
+      GRANT SELECT,INSERT,DELETE ON OBJECT::uqp.DatasetColumn TO [${login}];
+      GRANT SELECT ON OBJECT::uqp.DatasetSensitiveColumn TO [${login}];`);
+    const columnRepository=createDatasetColumnRepository({getPool:async()=>app!,transaction:p=>new sql.Transaction(p),request:t=>new sql.Request(t)});
+    const versions=async()=> (await root!.request().query(`SELECT LOWER(CONVERT(varchar(16),d.DefinitionRowVersion,2)) D,
+      LOWER(CONVERT(varchar(16),s.ConfigurationRowVersion,2)) S FROM uqp.Dataset d JOIN uqp.DataSource s ON s.Id=d.DataSourceId WHERE d.Id=77`)).recordset[0];
+    const opts=async()=>{const v=await versions();return {dataSourceId:201,definitionVersion:v.D as string,configurationVersion:v.S as string,userId:303,
+      reauthorize:async(t:sql.Transaction)=>{check((await new sql.Request(t).query("SELECT Id FROM uqp.AppUser WHERE Id=303")).recordset.length===1,"COLUMN_ACTOR_MISSING");}};};
+    const fields=[{name:"NAME",dataType:"nvarchar(30)"},{name:"PHONE",dataType:"varchar(20)"},{name:"MRN",dataType:"varchar(20)"},{name:"HIDDEN",dataType:"int"}];
+    await columnRepository.syncDatasetColumns(77,fields,await opts());
+    const displayColumns=async()=> (await root!.request().query("SELECT ColumnName,[Ordinal] FROM uqp.DatasetColumn WHERE DatasetId=77 ORDER BY [Ordinal]")).recordset;
+    check(JSON.stringify((await displayColumns()).map(r=>r.ColumnName))===JSON.stringify(fields.map(f=>f.name)),"COLUMN_SYNC_ORDER");
+    const beforeColumns=JSON.stringify(await displayColumns());
+    await root.request().query(`REVOKE INSERT ON OBJECT::uqp.AuditLog FROM [${login}]`);
+    try {await assert.rejects(()=>opts().then(o=>columnRepository.syncDatasetColumns(77,[{name:"OTHER",dataType:"int"}],o)),{code:"DATASET_COLUMN_SYNC_FAILED"});}
+    finally {await root.request().query(`GRANT INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);}
+    check(JSON.stringify(await displayColumns())===beforeColumns,"COLUMN_AUDIT_FAILURE_ROLLBACK");
+    const oldOptions=await opts();await root.request().query("UPDATE uqp.Dataset SET Description=N'CHANGED' WHERE Id=77");
+    await assert.rejects(()=>columnRepository.syncDatasetColumns(77,fields,oldOptions),{code:"DATASET_COLUMN_SYNC_CONFLICT"});
+    check((await root.request().query(`SELECT (SELECT COUNT(*) FROM uqp.DatasetSensitiveColumn WHERE DatasetId=77) Rules,
+      (SELECT COUNT(*) FROM uqp.DatasetPatientAuditMetadata WHERE DatasetId=77) PatientProof,
+      (SELECT COUNT(*) FROM uqp.DatasetFieldSnapshot WHERE DatasetId=77) NativeProof`)).recordset.every(r=>r.Rules===0&&r.PatientProof===0&&r.NativeProof===0),"COLUMN_OPTIONS_GAINED_AUTHORITY");
+    console.log("DATASET_COLUMN_OPTIONS: RESTRICTED_SQL2019_WRITE_ORDER_AUDIT_ROLLBACK_VERSION_CONFLICT_PASS; NO_POLICY_OR_PATIENT_PROOF_CREATED");
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");

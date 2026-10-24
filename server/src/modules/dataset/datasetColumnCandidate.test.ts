@@ -32,10 +32,10 @@ test("candidate describes only saved zero-parameter SQL and never gains delivery
   assert.deepEqual(result.columns, [{ name: "FIELD_A", dataType: "int", ordinal: 1 }]);
 });
 
-test("missing, inactive, archived or non-SQL Server Dataset never reaches describe", async () => {
+test("missing, inactive, archived or unsupported-source Dataset never reaches describe", async () => {
   for (const key of ["datasetActive", "datasetArchived", "sourceActive", "sourceType"] as const) {
     const f = fixture();
-    (f.s as any)[key] = key === "datasetActive" || key === "sourceActive" ? false : key === "sourceType" ? "ORACLE" : true;
+    (f.s as any)[key] = key === "datasetActive" || key === "sourceActive" ? false : key === "sourceType" ? "MYSQL" : true;
     await assert.rejects(f.service.open(7));
     assert.equal(f.describes, 0);
   }
@@ -61,4 +61,27 @@ test("description returns no raw SQL or rows", async () => {
   const serialized = JSON.stringify(result);
   assert.ok(!serialized.includes("SELECT")); assert.ok(!serialized.includes("rows"));
   assert.deepEqual(Object.keys(result).sort(), ["columns", "evidenceType", "requiresExecutionComparison", "trust"]);
+});
+
+test("Oracle zero-bind metadata uses the existing statement-info contract and remains unbound", async () => {
+  const f = fixture(); f.s.sourceType = "ORACLE";
+  f.deps.config = async () => ({ type: "ORACLE", isActive: true }) as never;
+  f.deps.describe = async () => ({ trust: "UNBOUND_CANDIDATE", requiresExecutionComparison: true,
+    evidenceType: "ORACLE_STATEMENT_INFO", columns: [{ name: "FIELD_A", dataType: "NUMBER", ordinal: 1 }] }) as never;
+  const result = await (await f.service.open(7)).describe();
+  assert.equal(result.evidenceType, "ORACLE_STATEMENT_INFO"); assert.equal(result.trust, "UNBOUND_CANDIDATE");
+  f.s.sqlText = "SELECT {{A}} AS FIELD_A FROM DUAL";
+  await assert.rejects(f.service.open(7), { code: "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" });
+});
+test("duplicate aliases, bad ordinals or oversize names/types fail before field synchronization", async () => {
+  for (const columns of [
+    [{ name: "A", dataType: "int", ordinal: 1 }, { name: "a", dataType: "int", ordinal: 2 }],
+    [{ name: "A", dataType: "int", ordinal: 2 }],
+    [{ name: "A".repeat(257), dataType: "int", ordinal: 1 }],
+    [{ name: "A", dataType: "X".repeat(101), ordinal: 1 }],
+  ]) {
+    const f = fixture(); f.deps.describe = async () => ({ trust: "UNBOUND_CANDIDATE", requiresExecutionComparison: true,
+      evidenceType: "SQLSERVER_DESCRIBE_FIRST_RESULT_SET", columns }) as never;
+    await assert.rejects((await f.service.open(7)).describe(), { code: "DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS" });
+  }
 });

@@ -5,8 +5,8 @@ type CustomMask = { prefix: number; suffix: number; symbol: string; start?: numb
 type Rule = { columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: CustomMask | null };
 
 
-export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChanged }: {
-  datasetId: number; accessToken: string | null; onDirtyChanged?: (dirty: boolean) => void;
+export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChanged, canSyncColumns = false }: {
+  datasetId: number; accessToken: string | null; canSyncColumns?: boolean; onDirtyChanged?: (dirty: boolean) => void;
 }) {
   const scope = useRef(0);
   const [rules, setRules] = useState<Rule[]>([]);
@@ -74,6 +74,22 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     if (dirty && !window.confirm("重新載入將捨棄目前尚未儲存的變更，確定繼續？")) return;
     setReloadKey((current) => current + 1);
   };
+  const syncColumns = async () => {
+    if (!canSyncColumns || busy || dirty || !loaded || conflict) return;
+    const sequence = scope.current;
+    setBusy(true); setMessage("");
+    try {
+      const result = await apiRequest<{ columns: { name: string }[]; trust: string; purpose: string; deliveryAllowed: boolean }>(
+        `/datasets/${datasetId}/columns/sync`, { method: "POST", body: "{}" }, accessToken);
+      if (sequence !== scope.current) return;
+      if (result.trust !== "UNBOUND_CANDIDATE" || result.purpose !== "DISPLAY_COLUMN_OPTIONS_ONLY" || result.deliveryAllowed !== false
+        || !Array.isArray(result.columns)) throw new Error("欄位同步回應不符合安全契約。");
+      setAvailableColumns(result.columns.map(c => c.name));
+      setMessage("欄位清單已同步，請逐欄設定並儲存規則。未設定的欄位不傳送；本操作沒有啟用資料預覽或患者稽核。");
+    } catch (error) {
+      if (sequence === scope.current) setMessage(error instanceof Error ? error.message : "欄位同步失敗，既有規則已保留。");
+    } finally { if (sequence === scope.current) setBusy(false); }
+  };
   const add = () => {
     if (!column) { setMessage("請先選擇查詢欄位。"); return; }
     if (action === "CUSTOM" && !validSettings) {
@@ -122,7 +138,10 @@ export function DatasetSensitivityEditor({ datasetId, accessToken, onDirtyChange
     <h2>Dataset 敏感資料欄位管理</h2>
     <p>此處使用獨立 API 儲存規則；「儲存 Dataset」不會儲存本區變更。移除只修改編輯清單，須按「儲存 Dataset 敏感欄位規則」才生效。啟用中的 Dashboard 安全限制仍適用。</p>
     <p>選擇欄位後設定遮蔽位置及符號，無需選擇英文模式或敏感資料分類。系統不會依 NAME、MRN、PHONE 等欄位名稱推定分類或遮蔽方式；原有使用者儲存的分類與規則會保留。</p>
-    <p role="status">欄位來自已儲存的 DatasetColumn 與既有規則；未設定的欄位不傳送。若清單為空，新增欄位仍為 BLOCKED，須先完成可信欄位初始化；候選描述不會解除預覽或稽核限制。</p>
+    <p role="status">欄位來自已儲存的 DatasetColumn 與既有規則；未設定的欄位不傳送。清單為空時，請先儲存 SQL，再按「取得並同步欄位清單」。這僅同步欄位選項，不建立可信型別或患者稽核證據，不解除資料預覽限制。</p>
+    <button type="button" disabled={!canSyncColumns || !loaded || busy || dirty || conflict} onClick={() => void syncColumns()}>取得並同步欄位清單</button>
+    {!canSyncColumns && <p role="status">同步欄位需先儲存 SQL／來源，並具備 DESIGN_QUERY 與 EXECUTE_QUERY 權限。</p>}
+    {dirty && <p role="status">請先儲存或重新載入規則，再同步欄位，避免遺失草稿。</p>}
     <label>查詢結果欄位 <select value={column} onChange={(event) => editRule(event.target.value)}>
       <option value="">請選擇欄位</option>
       {[...new Map([...availableColumns, ...rules.map(rule => rule.columnName)].map(name => [name.toUpperCase(), name])).values()].map((name) => <option key={name} value={name}>{name}</option>)}

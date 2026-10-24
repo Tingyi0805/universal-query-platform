@@ -1,18 +1,20 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
-import { compileDescription, type CandidateQueryDescription, type DescribeQueryInput } from "../../query/queryDescription.js";
+import { candidateDescription, compileDescription, QueryDescriptionError, type CandidateQueryDescription, type DescribeQueryInput } from "../../query/queryDescription.js";
+import { OracleAdapter } from "../datasource/adapters/oracleAdapter.js";
 import { SqlServerAdapter } from "../datasource/adapters/sqlServerAdapter.js";
 import { getDataSourceConfig } from "../datasource/datasource.repository.js";
 import type { DataSourceConfig } from "../datasource/datasource.types.js";
 import { listDatasetParameters } from "./parameter.repository.js";
 
 /**
- * A metadata-only aid for the Designer, NOT trusted DatasetColumn metadata.
- * Never executes Dataset SQL, writes a policy, or grants preview/data-delivery authority.
+ * A metadata-only aid for the Designer. May be saved as DatasetColumn display
+ * choices, never patient or Native Type evidence. Never executes Dataset SQL,
+ * writes a policy, or grants preview/data-delivery authority.
  * A source DDL fence and source-generation witness are still missing.
  */
 export class DatasetColumnCandidateError extends Error {
-  constructor(readonly code: "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_CONFLICT"
+  constructor(readonly code: "DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS" | "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_CONFLICT"
     | "DATASET_COLUMN_DESCRIPTION_FAILED" | "DATASET_NOT_AVAILABLE" | "DATASOURCE_NOT_AVAILABLE",
     readonly status = 409) { super(code); this.name = "DatasetColumnCandidateError"; }
 }
@@ -46,7 +48,7 @@ export const defaultColumnCandidateDependencies = {
   },
   parameters: listDatasetParameters,
   config: getDataSourceConfig,
-  describe: (config: DataSourceConfig, input: DescribeQueryInput) => new SqlServerAdapter().describeQuery(config, input),
+  describe: (config: DataSourceConfig, input: DescribeQueryInput) => (config.type === "ORACLE" ? new OracleAdapter() : new SqlServerAdapter()).describeQuery(config, input),
 };
 
 export function createDatasetColumnCandidate(deps = defaultColumnCandidateDependencies) {
@@ -66,7 +68,7 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
       || initial.dataSourceId <= 0 || !initial.datasetActive || initial.datasetArchived)
       throw new DatasetColumnCandidateError("DATASET_NOT_AVAILABLE", 409);
     if (!initial.sourceActive) throw new DatasetColumnCandidateError("DATASOURCE_NOT_AVAILABLE", 409);
-    if (initial.sourceType !== "SQLSERVER" || !/^[0-9a-f]{16}$/u.test(initial.definitionVersion)
+    if (!["SQLSERVER", "ORACLE"].includes(initial.sourceType) || !/^[0-9a-f]{16}$/u.test(initial.definitionVersion)
       || !/^[0-9a-f]{16}$/u.test(initial.configurationVersion)
       || initial.sqlText.length === 0 || initial.sqlText.length > 200000)
       throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
@@ -88,7 +90,7 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
 
     // The saved-parameter check and the SQL lexer both fail closed.
     await revalidate();
-    try { compileDescription({ sql: initial.sqlText, parameters: [], timeoutSec: 10 }, "SQLSERVER"); }
+    try { compileDescription({ sql: initial.sqlText, parameters: [], timeoutSec: 10 }, initial.sourceType as "SQLSERVER" | "ORACLE"); }
     catch { throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED"); }
 
     const describe = async (): Promise<CandidateQueryDescription> => {
@@ -96,23 +98,31 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
       try { source = await deps.config(initial.dataSourceId); }
       catch { throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503); }
       if (!source || !source.isActive) throw new DatasetColumnCandidateError("DATASOURCE_NOT_AVAILABLE");
-      if (source.type !== "SQLSERVER") throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
+      if (source.type !== initial.sourceType) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
       await revalidate();
       let candidate: CandidateQueryDescription;
       try {
         candidate = await deps.describe(source, { sql: initial.sqlText, parameters: [], timeoutSec: 10 });
-      } catch {
+      } catch (error) {
+        if (error instanceof QueryDescriptionError && error.code === "DESCRIPTION_METADATA_INVALID")
+          throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS");
+        if (error instanceof QueryDescriptionError && ["DESCRIPTION_UNSUPPORTED", "DESCRIPTION_PARAMETER_UNSUPPORTED"].includes(error.code))
+          throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
         // Never expose driver exceptions, SQL, parameters, credential or row values.
         throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
       }
       if (candidate.trust !== "UNBOUND_CANDIDATE" || candidate.requiresExecutionComparison !== true
-        || candidate.evidenceType !== "SQLSERVER_DESCRIBE_FIRST_RESULT_SET"
+        || candidate.evidenceType !== (initial.sourceType === "ORACLE" ? "ORACLE_STATEMENT_INFO" : "SQLSERVER_DESCRIBE_FIRST_RESULT_SET")
         || !Array.isArray(candidate.columns) || candidate.columns.length < 1 || candidate.columns.length > 4096)
         throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
+      try {
+        candidate = candidateDescription(candidate.evidenceType, candidate.columns);
+        if (candidate.columns.some(c => c.name.length > 256 || /[\x00-\x1f\x7f]/u.test(c.name) || c.dataType.length > 100)) throw new Error();
+      } catch { throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS"); }
       await revalidate();
       return candidate;
     };
-    return { revalidate, describe, definitionVersion: initial.definitionVersion,
+    return { revalidate, describe, dataSourceId: initial.dataSourceId, definitionVersion: initial.definitionVersion,
       configurationVersion: initial.configurationVersion };
   }
   return { open };

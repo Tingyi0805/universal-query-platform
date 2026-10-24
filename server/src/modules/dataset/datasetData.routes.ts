@@ -1,3 +1,4 @@
+import { syncDatasetColumns, DatasetColumnSyncError } from "./column.repository.js";
 import type sql from "mssql";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
@@ -16,7 +17,7 @@ import { datasetColumnCandidate, DatasetColumnCandidateError } from "./datasetCo
 export const defaultDatasetDataRouteDependencies = {
   delivery: createDatasetDataDelivery(), identity: createRuntimeIdentityVerifier(),
   startAudit, completeAuditFailure, finalizeDeliveryAudit,
-  candidate: datasetColumnCandidate,
+  candidate: datasetColumnCandidate, syncColumns: syncDatasetColumns,
 };
 const idSchema = z.coerce.number().int().positive().safe();
 const valuesSchema = { values: z.record(z.unknown()).default({}), maxRows: z.number().int().min(1).max(10000).optional() };
@@ -93,6 +94,47 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
     }
   });
 
+  // Persist metadata solely as field choices for explicit Dataset rules. It
+  // never creates patient metadata, 923 evidence, a policy or delivery authority.
+  router.post("/:id/columns/sync", ...guard, async (req, res, next) => {
+    let auditId: number | null = null;
+    let descriptionAudited = false;
+    const started = Date.now();
+    try {
+      const id = idSchema.parse(req.params.id);
+      z.object({}).strict().parse(req.body);
+      const actor = await deps.identity(req.headers.authorization);
+      const authorize = async (transaction?: sql.Transaction) => {
+        const current = await deps.identity(req.headers.authorization, transaction);
+        if (current.userId !== actor.userId || current.tokenVersion !== actor.tokenVersion
+          || !["DESIGN_QUERY", "EXECUTE_QUERY"].every(p => current.permissions.includes(p)))
+          throw new QueryDeliveryError("FORBIDDEN", 403);
+      };
+      await authorize();
+      const context = await deps.candidate.open(id);
+      auditId = await deps.startAudit({ eventType: "DATASET_COLUMN_CANDIDATE_DESCRIPTION", datasetId: id, userId: actor.userId,
+        parameters: { purpose: "DISPLAY_COLUMN_OPTIONS_ONLY", definitionVersion: context.definitionVersion,
+          configurationVersion: context.configurationVersion }, ipAddress: req.ip, userAgent: req.get("user-agent") ?? null });
+      if (!Number.isSafeInteger(auditId) || auditId <= 0) { auditId = null; throw new DatasetColumnSyncError("DATASET_COLUMN_SYNC_FAILED"); }
+      const description = await context.describe();
+      await context.revalidate();
+      await authorize();
+      await deps.finalizeDeliveryAudit(auditId, { rowCount: 0, durationMs: Date.now() - started }, async () => {
+        await context.revalidate(); await authorize();
+      });
+      descriptionAudited = true;
+      await deps.syncColumns(id, [...description.columns], { dataSourceId: context.dataSourceId,
+        definitionVersion: context.definitionVersion, configurationVersion: context.configurationVersion,
+        userId: actor.userId, reauthorize: authorize });
+      res.json({ columns: description.columns, trust: "UNBOUND_CANDIDATE", purpose: "DISPLAY_COLUMN_OPTIONS_ONLY",
+        deliveryAllowed: false });
+    } catch (error) {
+      if (auditId !== null && !descriptionAudited) await deps.completeAuditFailure(auditId,
+        { errorCode: safeAuditErrorCode(error), durationMs: Date.now() - started }).catch(() => undefined);
+      next(error);
+    }
+  });
+
   router.get("/:id/design-preview/context", ...guard, async (req, res, next) => {
     try {
       const id = idSchema.parse(req.params.id);
@@ -147,8 +189,9 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
   });
 
   router.use(((error, _req, res, next) => {
-    if (error instanceof z.ZodError || error instanceof QueryDeliveryError || error instanceof DatasetDeliveryPolicyError || error instanceof DatasetDeliverySnapshotError || error instanceof DatasetColumnCandidateError) {
+    if (error instanceof z.ZodError || error instanceof QueryDeliveryError || error instanceof DatasetDeliveryPolicyError || error instanceof DatasetDeliverySnapshotError || error instanceof DatasetColumnCandidateError || error instanceof DatasetColumnSyncError) {
       const status = error instanceof z.ZodError ? 400 : error instanceof QueryDeliveryError ? error.status
+        : error instanceof DatasetColumnSyncError ? 409
         : error instanceof DatasetColumnCandidateError ? error.status
         : error instanceof DatasetDeliverySnapshotError && error.code === "DATASET_DELIVERY_SCHEMA_REQUIRED" ? 503 : 409;
       res.status(status).json({ error: { code: error instanceof z.ZodError ? "VALIDATION_ERROR" : error.code,
@@ -163,7 +206,11 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
 // Fixed messages only: never expose candidate SQL, driver errors or policy values.
 export function datasetPreviewGuidance(code: string): string {
   const messages: Record<string, string> = {
-    DATASET_COLUMN_DESCRIPTION_UNSUPPORTED: "僅支援已儲存、無參數的 SQL Server SELECT 欄位候選描述；此結果不能用於敏感規則或資料預覽。",
+    DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS: "結果欄位需有唯一且非空白的別名、連續順序及可支援型別。請用 AS 設定不同欄名（最多 256 字元）後儲存再同步。",
+    DATASET_COLUMN_SYNC_CONFLICT: "Dataset、來源或參數已變更，請重新儲存並取得欄位。",
+    DATASET_SENSITIVITY_COLUMNS_STALE: "同步將移除既有規則的欄位，已停止同步並保留設定，請檢查 SQL 別名。",
+    DATASET_COLUMN_SYNC_FAILED: "欄位同步、授權重驗或稽核失敗；未回報成功，請重新載入確認。",
+    DATASET_COLUMN_DESCRIPTION_UNSUPPORTED: "僅支援已儲存、無參數且可安全描述的 SQL Server／Oracle SELECT；請先儲存 SQL 並檢查驅動支援。欄位清單不代表可預覽資料。",
     DATASET_COLUMN_DESCRIPTION_CONFLICT: "欄位描述期間 Dataset、來源或權限發生變更，請重新載入再試。",
     DATASET_COLUMN_DESCRIPTION_FAILED: "無法取得欄位候選描述，請管理者檢查來源與稽核服務；未執行資料列查詢。",
     DATASET_CANDIDATE_PREVIEW_UNAVAILABLE: "請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。",

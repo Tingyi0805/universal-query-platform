@@ -1,3 +1,4 @@
+import { DatasetColumnSyncError } from "./column.repository.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import express from "express";
@@ -41,7 +42,7 @@ async function setup() {
     sqlText: "SELECT NAME, MRN, CODE, LABEL WHERE CODE={{WARD}}", phase: "", change: () => {},
     auditFailure: false, operationFailure: false, failureWriteFailure: false, missingDisclosure: false,
     operationStatus: "NONE", schemaMissing: false, startAudits: 0, candidateCalls: 0, candidateDrift: false, candidateFailure: false,
-    lookupValue: "A" as unknown,
+    lookupValue: "A" as unknown, syncedColumns: [] as string[], syncFailure: false,
   };
   const deps = {
     ...defaultDatasetDataDependencies,
@@ -69,10 +70,16 @@ async function setup() {
   const app = express(); app.use(express.json()); app.use(createAuthenticateJwt(session));
   app.use("/datasets", createDatasetDataRouter({
     ...defaultDatasetDataRouteDependencies, delivery: createDatasetDataDelivery(deps), identity: createRuntimeIdentityVerifier(session),
+    syncColumns: async (_id, columns, options) => {
+      await options.reauthorize({} as never);
+      if (state.syncFailure) throw new DatasetColumnSyncError("DATASET_COLUMN_SYNC_FAILED");
+      assert.equal(options.dataSourceId, 11); assert.equal(options.definitionVersion, version);
+      state.syncedColumns = columns.map(c => c.name);
+    },
     candidate: { open: async (id: number) => {
       assert.equal(id, 1);
       return {
-        definitionVersion: version, configurationVersion: version,
+        definitionVersion: version, configurationVersion: version, dataSourceId: 11,
         revalidate: async () => {
           if (state.candidateDrift) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_CONFLICT");
         },
@@ -334,3 +341,29 @@ test("column candidate audit writer failure never releases described fields", ()
   assert.equal(f.state.candidateCalls, 1);
   assert.deepEqual(f.state.executions, []);
 }));
+
+
+test("new saved Dataset sync endpoint writes field choices only, with audited metadata and fresh authority", () => fixture(async f => {
+  f.state.snapshots.clear(); // No policy, patient configuration or preview proof needed to list field choices.
+  const response = await f.request("/1/columns/sync", {});
+  assert.equal(response.status, 200);
+  const body = await response.json() as any;
+  assert.deepEqual(body.columns, [{ name: "OPAQUE_A", dataType: "int", ordinal: 1 }]);
+  assert.equal(body.purpose, "DISPLAY_COLUMN_OPTIONS_ONLY"); assert.equal(body.deliveryAllowed, false);
+  assert.equal(body.trust, "UNBOUND_CANDIDATE"); assert.deepEqual(f.state.syncedColumns, ["OPAQUE_A"]);
+  assert.deepEqual(f.state.executions, []); assert.deepEqual(f.state.disclosures, []);
+  assert.equal(f.state.operationStatus, "SUCCESS");
+}));
+for (const kind of ["permission", "token", "audit", "drift", "describe", "sync", "forged-columns"]) {
+  test(`column sync ${kind} refuses without row execution`, () => fixture(async f => {
+    if (kind === "permission") f.state.session.permissions = ["DESIGN_QUERY"];
+    if (kind === "token") f.state.session.tokenVersion++;
+    if (kind === "audit") f.state.operationFailure = true;
+    if (kind === "drift") f.state.candidateDrift = true;
+    if (kind === "describe") f.state.candidateFailure = true;
+    if (kind === "sync") f.state.syncFailure = true;
+    const response = await f.request("/1/columns/sync", kind === "forged-columns" ? { columns: [{ name: "FORGED" }] } : {});
+    assert.ok(response.status >= 400); assert.deepEqual(f.state.syncedColumns, []);
+    assert.deepEqual(f.state.executions, []); assert.deepEqual(f.state.disclosures, []);
+  }));
+}

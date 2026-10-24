@@ -32,13 +32,13 @@
 
 | Gate／程式 | 原因與處理 |
 | --- | --- |
-| `datasetSensitiveColumn.repository.ts:replaceDatasetSensitiveColumns` | 沒有 DatasetColumn 的新 Dataset 仍不能新增規則。最小後續項目是完成現有可信欄位初始化前提；本次不把 DESCRIBED／候選欄位升級。已有欄位可直接編輯。 |
+| `datasetSensitiveColumn.repository.ts:replaceDatasetSensitiveColumns` | 新 Dataset 現可使用 metadata-only 欄位選項同步後設定規則，詳見 [欄位同步](dataset-new-column-options-sync.md)。這不升級為患者／Native 可信證據。 |
 | `datasetDataDelivery.ts:open` 的 RAW_DESIGN | 未設定或未確認患者稽核仍拒絕 Designer 預覽。普通 Dataset 的新初始化途徑本次未解除；不以空政策取代證據，不擴充分類流程。 |
 | `dashboardQuerySourceExecution.ts:page`／`dashboardDevicePage.routes.ts`／`dashboardPreview.routes.ts` | 有資料列但必要揭露稽核未回傳有效紀錄時，仍停止交付；顯示規則不代替稽核設定，普通資料也不以使用者聲明跳過這些既有 Gate。 |
 | `datasetDeliveryPolicy.ts:validatePolicy` 的 patientAuditOnlyColumns | 既有稽核專用鍵仍必須 OMIT；不能藉四模式將它傳到前端。驗收用 MRN 與內部 AUDIT_ID 分欄。若需將同一稽核專用鍵改為 FULL，最小提案須另審原 audit-only 契約，而非本次刪掉檢查。 |
 | `dashboardDeviceMasking.ts:resolveDashboardDisclosureMasks`／`enforceClassifiedDeviceMasks` | 不自動授權未核准來源／欄位、不清除舊分類限制。歷史分類拒絕 raw 或歷史更強保護時，無法保證該欄位立即與 Query 同時顯示。最小方案是既有管理者明確重新核准／審查歷史分類；本次不批次清除。 |
 
-因此可驗收「已有欄位與有效政策、Dashboard 已具 INHERIT 授權、必要稽核已就緒」的 Dataset；不能宣稱全新 Dataset 初始化、患者稽核專用鍵揭露或來源可信發證已解鎖。
+可驗收欄位規則設定及「有效政策、Dashboard 已具 INHERIT 授權、必要稽核已就緒」的交付；新 Dataset 欄位選項已可同步，但患者稽核專用鍵揭露及來源可信發證並未解鎖。
 
 ## 回歸驗證及重測
 

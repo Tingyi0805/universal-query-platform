@@ -727,7 +727,7 @@ export function DatasetDesignerPage() {
 
             <section className="preview-panel" aria-label="SQL 欄位候選預覽">
               <h3>SQL 欄位候選預覽（不讀取資料列）</h3>
-              <p>僅支援已儲存、無參數的 SQL Server SELECT。這是未認證的候選描述，不代表來源未漂移，也不能直接儲存為可信欄位、設定新敏感規則或解除資料預覽限制。</p>
+              <p>僅支援已儲存、無參數且可安全描述的 SQL Server／Oracle SELECT。此處是未認證的候選描述；請在下方欄位規則區按「取得並同步欄位清單」後設定顯示方式，不代表來源未漂移，也不解除資料預覽限制。</p>
               <button type="button" disabled={busy || columnCandidateBusy || !form.id || form.isArchived}
                 onClick={() => void describeColumns()}>{columnCandidateBusy ? "讀取欄位中…" : "取得 SQL 欄位名稱及型別"}</button>
               {columnCandidateError && <p role="alert">{columnCandidateError}</p>}
@@ -745,8 +745,8 @@ export function DatasetDesignerPage() {
             {form.id&&<DatasetFieldSnapshotPanel key={`${form.id}:${sqlSaveRevision}:${accessToken}`} datasetId={form.id} token={accessToken} enabled={hasPermission("CONFIRM_DATASET_CLASSIFICATION")&&!busy&&!form.isArchived&&form.sqlText===savedSql&&form.dataSourceId===savedDataSourceId} />}
             <section aria-label="Dataset 安全初始化狀態">
               <h3>安全初始化：BLOCKED</h3>
-              <p>目前無安全的可信欄位 metadata 初始化入口；不會執行 SQL 取資料列來推測欄位，也不會將候選描述直接當作可信證據。</p>
-              <p>必要條件尚未就緒：來源結構變更驗證、可信欄位發證、資料負責人分類確認。請管理者完成審查後再初始化；測試收集的候選欄位不會加入下方可選清單。</p>
+              <p>下方可同步欄位清單並儲存顯示規則；可信欄位及資料預覽仍受既有安全 Gate 限制。不執行資料列查詢來推測欄位，也不把清單當作患者稽核證據。</p>
+              <p>必要條件尚未就緒：來源結構變更驗證、可信欄位發證、資料負責人分類確認。請管理者完成審查後再初始化；僅查看候選描述不會寫入欄位選項；必須明確按下同步欄位清單。</p>
               <ul>
                 <li>普通 Dataset：先儲存定義、取得可信欄位並確認空政策；空政策或使用者聲明不能證明沒有敏感／患者資料，目前新建預覽仍受阻。</li>
                 <li>非患者敏感 Dataset：可信欄位就緒後，由使用者選擇敏感欄位及遮蔽方式；非患者分類的安全確認流程尚未就緒，不應啟用患者稽核來繞過。</li>
@@ -818,7 +818,7 @@ export function DatasetDesignerPage() {
 
           {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
 
-          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
+          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} canSyncColumns={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY")} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
 
           {preview && (
             <section className="preview-panel">
