@@ -135,6 +135,10 @@ jobs:
           [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
           if ($parseErrors.Count -gt 0) { throw '925_WINDOWS_INSTALLER_SYNTAX_INVALID' }
           Write-Host '925_WINDOWS_POWERSHELL_51_SYNTAX_OK'
+          $file = (Resolve-Path '.\tools\test-uqp-d0-host.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw 'D0_WINDOWS_INSPECTOR_SYNTAX_INVALID' }
+          Write-Host 'D0_WINDOWS_INSPECTOR_SYNTAX_OK'
       - uses: actions/setup-node@v4
         with:
           node-version: 22
