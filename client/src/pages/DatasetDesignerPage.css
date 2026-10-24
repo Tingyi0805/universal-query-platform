@@ -281,3 +281,57 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Sensitivity options: override generic editor label/grid and input width rules. */
+.designer-editor .dataset-mask-options {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.designer-editor .dataset-mask-options .dataset-mask-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: auto;
+  max-width: 100%;
+  font-weight: 600;
+  cursor: pointer;
+}
+.designer-editor .dataset-mask-options .dataset-mask-option input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 18px;
+  accent-color: #2261ba;
+}
+
+
+/* Batch policy selection keeps native checkboxes aligned despite generic form styles. */
+.designer-editor .dataset-batch-fields { min-width: 0; }
+.designer-editor .dataset-batch-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.designer-editor .dataset-batch-fields .dataset-batch-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: auto;
+  min-width: 0;
+  gap: 8px;
+  cursor: pointer;
+}
+.designer-editor .dataset-batch-fields .dataset-batch-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+}

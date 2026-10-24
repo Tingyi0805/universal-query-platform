@@ -1,7 +1,8 @@
+import { dashboardOperationError } from "../dashboard/managementStatus";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
 import { displayFormats, formatDashboardValue } from "../dashboard/displayFormat";
-import { managementError, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
+import { managementError, trustedConfiguration, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -34,7 +35,7 @@ type PreviewResult = {
   };
 };
 
-type SupplementalSource = { sourceKey: string; datasetId?: number; refreshSeconds: number; isEnabled: boolean };
+type SupplementalSource = { sourceKey: string; refreshSeconds: number; isEnabled: boolean; queryDefinitionId: number | null };
 type SupplementalPreview = { result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
 
 type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
@@ -225,7 +226,7 @@ export function DashboardLayoutDesignerPage() {
   const [notice, setNotice] = useState("");
 
   function openPreview() {
-    if (!activeProfile) return;
+    if (!activeProfile || !sourceVersion) return;
 
     const popup = window.open("about:blank", "_blank");
     if (!popup) {
@@ -263,7 +264,7 @@ export function DashboardLayoutDesignerPage() {
     }
 
     popup.location.replace(
-      `/designer/dashboards/${dashboardId}/display?previewKey=${encodeURIComponent(previewKey)}${sourceVersion !== null ? "&queryPreview=1" : ""}`,
+      `/designer/dashboards/${dashboardId}/display?previewKey=${encodeURIComponent(previewKey)}&queryPreview=1`,
     );
   }
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
@@ -271,7 +272,7 @@ export function DashboardLayoutDesignerPage() {
   const [zoomMode, setZoomMode] = useState<"FIT" | "CUSTOM">("FIT");
   const [customScale, setCustomScale] = useState(0.5);
 
-  const [sourceVersion, setSourceVersion] = useState<string | null | undefined>(undefined);
+  const [sourceVersion, setSourceVersion] = useState<string | undefined>(undefined);
   const loadSequence = useRef(0);
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
@@ -283,60 +284,43 @@ export function DashboardLayoutDesignerPage() {
     const failures: string[] = [];
 
     try {
-      // Load the saved layout first; a query failure must not erase design state.
-      const layoutResult = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & {
-        widgets: Omit<LayoutWidget, "clientKey">[] }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken);
-      if (sequence !== loadSequence.current) return;
+      // Bind the saved layout to its version using a bracketed read. Reading a
+      // newer version after an older layout alone could authorize a stale overwrite.
+      setSourceVersion(undefined);
       let configuration: QuerySourceConfiguration | null = null;
-      let legacy = false;
-      try {
-        configuration = await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken);
-        if (sequence !== loadSequence.current) return;
-        setSourceVersion(configuration.editable ? configuration.version : undefined);
-      } catch (error) {
-        if (sequence !== loadSequence.current) return;
-        legacy = (error as { code?: string }).code === "QUERY_SOURCE_MANAGEMENT_DISABLED";
-        setSourceVersion(legacy ? null : undefined);
-        if (!legacy) setError(managementError(error));
-      }
-      const previewResult = !configuration && !legacy ? null : await apiRequest<PreviewResult>(configuration
-        ? `/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page` : `/dashboards/${dashboardId}/preview`,
-        { method: "POST", ...(configuration ? { body: JSON.stringify({ page: 1 }) } : {}) }, accessToken)
-        .then(value => configuration ? { ...value, reportColumns: [], dashboard: {
-          id: dashboardId, name: "Query-only", code: "", parameters: configuration.primary.parameters ?? {},
-          pageSize: configuration.primary.pageSize, pageSeconds: configuration.primary.pageSeconds } } : value)
-        .catch(error => { failures.push(sourcePreviewFailure("PRIMARY", error)); return null; });
-      let supplemental: SupplementalSource[] = [];
-      if (configuration) supplemental = configuration.sources.filter(source => source.isEnabled).map(source => ({
-        sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled) }));
-      else if (legacy) supplemental = await apiRequest<{ sources: SupplementalSource[] }>(
-        `/dashboards/${dashboardId}/data-sources`, {}, accessToken).then(value => value.sources).catch(error => {
-          setError(managementError(error)); return [];
-        });
+      try { configuration = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken)); }
+      catch (error) { failures.push(dashboardOperationError(error)); }
+      const layoutResult = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & { widgets: Omit<LayoutWidget, "clientKey">[] }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken);
       if (sequence !== loadSequence.current) return;
-      setSupplementalSources(supplemental.filter(source => source.isEnabled));
-      const sourceResults = await Promise.allSettled(supplemental.filter(source => source.isEnabled).map(async source => ({
+      const loadedProfiles = layoutResult.profiles.map(withClientKeys);
+      setProfiles(loadedProfiles);
+      setActiveProfileKey(loadedProfiles.find(profile => profile.isDefault)?.clientKey ?? loadedProfiles[0]?.clientKey ?? "");
+      if (configuration) {
+        const after = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken));
+        if (sequence !== loadSequence.current) return;
+        if (after.version !== configuration.version) throw Object.assign(new Error(), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
+        setSourceVersion(configuration.editable && !configuration.primary.requiresConversion && configuration.sources.every(source => source.queryDefinitionId !== null) ? configuration.version : undefined);
+        if (!configuration.editable) failures.push("此 Dashboard 仍啟用或版本不可寫；僅供查看，須安全停用後重新載入。");
+      }
+      const supplemental: SupplementalSource[] = configuration?.sources.map(source => ({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled), queryDefinitionId: source.queryDefinitionId })) ?? [];
+      setSupplementalSources(supplemental);
+      const previewResult = !configuration ? null : await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page`,
+        { method: "POST", body: JSON.stringify({ page: 1 }) }, accessToken)
+        .then(value => ({ ...value, reportColumns: [], dashboard: { id: dashboardId, name: configuration!.presentation?.name ?? "Query-only 設計預覽", code: "", parameters: configuration!.primary.parameters ?? {}, pageSize: configuration!.primary.pageSize, pageSeconds: configuration!.primary.pageSeconds } }))
+        .catch(error => { failures.push(sourcePreviewFailure("PRIMARY", error)); return null; });
+      const previewSources = supplemental.filter(source => source.isEnabled && source.queryDefinitionId !== null);
+      const sourceResults = await Promise.allSettled(previewSources.map(async source => ({
         key: source.sourceKey,
-        preview: await apiRequest<SupplementalPreview>(configuration
-          ? `/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/page`
-          : `/dashboards/${dashboardId}/data-sources/${encodeURIComponent(source.sourceKey)}/preview`,
-          { method: "POST", ...(configuration ? { body: JSON.stringify({ page: 1 }) } : {}) }, accessToken),
+        preview: await apiRequest<SupplementalPreview>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/page`, { method: "POST", body: JSON.stringify({ page: 1 }) }, accessToken),
       })));
       if (sequence !== loadSequence.current) return;
       sourceResults.forEach((result, index) => {
-        if (result.status === "rejected") failures.push(sourcePreviewFailure(supplemental.filter(source => source.isEnabled)[index]!.sourceKey, result.reason));
+        if (result.status === "rejected") failures.push(sourcePreviewFailure(previewSources[index]!.sourceKey, result.reason));
       });
       if (failures.length) setError(failures.join("\n"));
       setSupplementalPreviews(Object.fromEntries(sourceResults.filter(
         (item): item is PromiseFulfilledResult<{ key: string; preview: SupplementalPreview }> => item.status === "fulfilled",
       ).map(item => [item.value.key, item.value.preview])));
-      const loadedProfiles = layoutResult.profiles.map(withClientKeys);
-      setProfiles(loadedProfiles);
-      setActiveProfileKey(
-        loadedProfiles.find((profile) => profile.isDefault)?.clientKey
-          ?? loadedProfiles[0]?.clientKey
-          ?? "",
-      );
       setPreview(previewResult);
     } catch (e) {
       if (sequence === loadSequence.current) setError(managementError(e));
@@ -345,7 +329,14 @@ export function DashboardLayoutDesignerPage() {
     }
   }, [accessToken, dashboardId]);
 
-  useEffect(() => { void load(); return () => { loadSequence.current++; }; }, [load]);
+  useEffect(() => { setProfiles([]); setActiveProfileKey(""); setSelectedWidgetKey(""); void load(); return () => { loadSequence.current++; }; }, [load]);
+  useEffect(() => {
+    const changed = (event: Event) => { const detail = (event as CustomEvent).detail;
+      if (detail?.dashboardId === dashboardId && detail.origin !== "layout") { setSourceVersion(undefined); setError("設定已變更；版型草稿保留，請先另行保存，再重新載入版型與版本。禁止自動覆寫。"); }
+    };
+    window.addEventListener("uqp.dashboard.configuration.changed", changed);
+    return () => window.removeEventListener("uqp.dashboard.configuration.changed", changed);
+  }, [dashboardId]);
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.clientKey === activeProfileKey) ?? null,
@@ -686,7 +677,14 @@ export function DashboardLayoutDesignerPage() {
     );
   }
 
+  const unavailableReferences = [...new Set(profiles.flatMap(profile => profile.widgets
+    .filter(widget => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
+    .map(widget => String(widget.config.dataSourceKey ?? "PRIMARY")))
+    .filter(key => key !== "PRIMARY" && !supplementalSources.some(source => source.sourceKey === key && source.isEnabled && source.queryDefinitionId !== null)))];
+
   async function saveLayout() {
+    if (saving) return;
+    if (unavailableReferences.length) { setError(`Widget 引用來源不可用：${unavailableReferences.join("、")}。請先修正引用或來源，既有版型保留。`); return; }
     if (sourceVersion === undefined) { setError("來源版本不可用或看板仍啟用，禁止儲存。請先安全停用並重新載入。"); return; }
     setSaving(true);
     setError("");
@@ -699,28 +697,14 @@ export function DashboardLayoutDesignerPage() {
         })),
       };
 
-      if (sourceVersion !== null) {
-        const result = await apiRequest<{ version: string }>(`/dashboards/${dashboardId}/query-sources/v1/layout`,
-          { method: "PUT", body: JSON.stringify({ ...payload, expectedVersion: sourceVersion }) }, accessToken);
-        setSourceVersion(result.version); setNotice("Dashboard 版面已儲存。"); return;
-      }
-      const result = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & {
-        widgets: Omit<LayoutWidget, "clientKey">[];
-      }> }>(
-        `/dashboards/${dashboardId}/layout`,
-        { method: "PUT", body: JSON.stringify(payload) },
-        accessToken,
-      );
-
-      const saved = result.profiles.map(withClientKeys);
-      setProfiles(saved);
-      setActiveProfileKey(
-        saved.find((profile) => profile.isDefault)?.clientKey ?? saved[0]?.clientKey ?? "",
-      );
-      setSelectedWidgetKey("");
-      setNotice("Dashboard 版面已儲存。");
+      const sequence = loadSequence.current;
+      const result = await apiRequest<{ version: string }>(`/dashboards/${dashboardId}/query-sources/v1/layout`, { method: "PUT", body: JSON.stringify({ ...payload, expectedVersion: sourceVersion }) }, accessToken);
+      if (sequence !== loadSequence.current) return;
+      if (!/^[a-f0-9]{64}$/.test(result.version)) throw new Error("RESPONSE_INVALID");
+      setSourceVersion(result.version); setNotice("Dashboard 版面已儲存。");
+      window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "layout" } }));
     } catch (e) {
-      setError(managementError(e));
+      setSourceVersion(undefined); setError(managementError(e));
     } finally {
       setSaving(false);
     }
@@ -746,12 +730,13 @@ export function DashboardLayoutDesignerPage() {
               type="button"
               onClick={openPreview}
               disabled={sourceVersion === undefined}
-              title={sourceVersion !== null ? "預覽尚無有效來源版本，請先重新載入。" : undefined}
+              title={!sourceVersion ? "預覽尚無有效來源版本，請先重新載入。" : undefined}
             >
               預覽此版型
             </button>
           )}
-          <button className="primary-button" type="button" disabled={saving || sourceVersion === undefined} onClick={() => void saveLayout()}>
+          <button type="button" disabled={saving} onClick={() => { if (window.confirm("重新載入會取代未儲存的版型草稿；請先另行保存。確定重新載入？")) void load(); }}>重新載入版型與版本</button>
+          <button className="primary-button" type="button" disabled={saving || sourceVersion === undefined || unavailableReferences.length > 0} onClick={() => void saveLayout()}>
             {saving ? "儲存中…" : "儲存版面"}
           </button>
         </div>
@@ -760,6 +745,9 @@ export function DashboardLayoutDesignerPage() {
       {error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
       {notice && <section className="notice">{notice}</section>}
 
+      {unavailableReferences.length > 0 && <p role="alert">Widget 引用來源不可用：{unavailableReferences.join("、")}。既有引用保留，請修正來源或明確變更 Widget；禁止儲存。</p>}
+      <p>版型僅透過新版版本化 API 儲存；載入與預覽不會儲存。停用或 pending 來源不能新增引用，既有引用會保留並由後端拒絕不安全儲存。</p>
+      {supplementalSources.filter(source => !source.isEnabled || source.queryDefinitionId === null).map(source => <p role="status" key={source.sourceKey}>來源 {source.sourceKey}：{!source.isEnabled ? "已停用" : "pending，尚未選 Query"}；請先處理來源，再確認 Widget 引用。</p>)}
       <div className="dashboard-layout-workspace">
         <aside className="layout-sidebar">
           <h2>螢幕版型</h2>
@@ -973,9 +961,10 @@ export function DashboardLayoutDesignerPage() {
                       sourceKey: selectedWidget.widgetType === "FIELD" ? null : selectedWidget.sourceKey,
                       config: { ...selectedWidget.config, dataSourceKey: e.target.value },
                     })}>
-                    <option value="PRIMARY">主要 SQL（原 Dashboard）</option>
+                    <option value="PRIMARY">PRIMARY 主來源</option>
+                    {String(selectedWidget.config?.dataSourceKey ?? "PRIMARY") !== "PRIMARY" && !supplementalSources.some(source => source.sourceKey === selectedWidget.config.dataSourceKey) && <option value={String(selectedWidget.config.dataSourceKey)} disabled>既有未知來源 {String(selectedWidget.config.dataSourceKey)}（保留，待審查）</option>}
                     {supplementalSources.map((source) => (
-                      <option key={source.sourceKey} value={source.sourceKey}>{source.sourceKey}（每 {source.refreshSeconds} 秒）</option>
+                      <option key={source.sourceKey} value={source.sourceKey} disabled={!source.isEnabled || source.queryDefinitionId === null}>{source.sourceKey}（{!source.isEnabled ? "停用，不可引用" : source.queryDefinitionId === null ? "pending，須先轉換" : `每 ${source.refreshSeconds} 秒`}）</option>
                     ))}
                   </select>
                 </label>

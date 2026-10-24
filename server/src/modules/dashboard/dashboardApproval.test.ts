@@ -66,7 +66,7 @@ for (const sourceKey of ["PRIMARY", "EXTRA"]) test(`${sourceKey}: incremental ad
   view = await f.service.patch(1, actor, patch(view.version, sourceKey));
   const masks = resolveDashboardDisclosureMasks(f.control.state.parameters, sourceKey, before.sources[0]!.policy.columns);
   assert.deepEqual(maskDeviceRows([{ 姓名: "合成患者", 病歷號: "synthetic-1", ROOM: "TEST" }], masks, before.sources[0]!.policy.columns), [{ 姓名: "合***" }]);
-  view = await f.service.patch(1, actor, patch(view.version, sourceKey, { 姓名: "FULL" }));
+  await assert.rejects(f.service.patch(1, actor, patch(view.version, sourceKey, { 姓名: "FULL" })), { code: "DASHBOARD_APPROVAL_MASK_INVALID" });
   await f.service.patch(1, actor, patch(view.version, sourceKey, {}, ["姓名"]));
   assert.deepEqual(f.control.state.parameters.deviceColumnTypes, before.parameters.deviceColumnTypes);
   assert.deepEqual(f.control.state.sources, before.sources);
@@ -78,7 +78,7 @@ for (const sourceKey of ["PRIMARY", "EXTRA"]) test(`${sourceKey}: incremental ad
 test("CUSTOM cannot become incomparable partial/raw; Dataset OMIT never discloses", async () => {
   const f = fixture();
   for (const mode of ["NAME", "MRN", "NONE", "PHONE", "GENERIC"] as const) await assert.rejects(f.service.patch(1, actor, patch(approvalVersion(f.control.state), "PRIMARY", { 姓名: mode })), { code: "DASHBOARD_APPROVAL_MASK_INVALID" });
-  for (const mode of ["INHERIT", "CUSTOM", "FULL", "OMIT"] as const) await f.service.patch(1, actor, patch(approvalVersion(f.control.state), "PRIMARY", { 姓名: mode }));
+  for (const mode of ["INHERIT", "OMIT"] as const) await f.service.patch(1, actor, patch(approvalVersion(f.control.state), "PRIMARY", { 姓名: mode }));
   await assert.rejects(f.service.patch(1, actor, patch(approvalVersion(f.control.state), "PRIMARY", { 病歷號: "FULL" })));
   await f.service.patch(1, actor, patch(approvalVersion(f.control.state), "PRIMARY", { 病歷號: "INHERIT" }));
   assert.deepEqual(maskDeviceRows([{ 病歷號: "synthetic-1" }], resolveDashboardDisclosureMasks(f.control.state.parameters, "PRIMARY", f.control.state.sources[0]!.policy.columns)), [{}]);

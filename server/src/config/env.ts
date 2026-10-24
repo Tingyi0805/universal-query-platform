@@ -31,6 +31,10 @@ const envSchema = z.object({
   DASHBOARD_QUERY_SOURCE_MANAGEMENT: envBoolean(false),
   DASHBOARD_QUERY_SOURCE_EXECUTION: envBoolean(false),
   DASHBOARD_QUERY_DEVICE_PLAYBACK: envBoolean(false),
+  DATASET_SECURITY_SCOPE_MANAGEMENT: envBoolean(false),
+  DATASET_PUBLIC_DISPLAY_MANAGEMENT: envBoolean(false),
+  DATASET_MASK_TEMPLATE_MANAGEMENT: envBoolean(false),
+  DATASET_SECURITY_PLATFORM_INCARNATION: optionalString,
 
   PLATFORM_DB_SERVER: optionalString,
   PLATFORM_DB_PORT: z.coerce.number().int().min(1).max(65535).default(1433),

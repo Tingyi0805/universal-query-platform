@@ -1,4 +1,8 @@
+import { getDatasetPublicDisplay } from "../dataset/datasetPublicDisplay.repository.js";
+import { resolveDatasetPublicDisplayMasks } from "../dataset/datasetPublicDisplayPolicy.js";
+import { readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
 import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
+import { getDatasetPatientAuditConfig } from "../dataset/patientAuditConfig.repository.js";
 import { Router, type Request } from "express";
 import { z } from "zod";
 import { createHash } from "node:crypto";
@@ -8,6 +12,8 @@ import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboard
 import { dashboardQueryExecutor } from "./dashboardQueryExecutor.js";
 
 export type DevicePageDependencies = {
+  getPublicDisplay?: typeof getDatasetPublicDisplay;
+  getMode?: typeof readDashboardQueryMode;
   getApprovalEvidence: (id: number) => Promise<string>;
   legacySourceIsQueryBound?: (id: number, key: string) => Promise<boolean>;
   getQueryAccessRevision: typeof import("../queryDefinition/queryAccess.repository.js").getQueryAccessRevision;
@@ -20,6 +26,7 @@ export type DevicePageDependencies = {
   listDashboardDataSources: typeof import("./dashboardDataSource.repository.js").listDashboardDataSources;
   executeSavedDataset: typeof import("../dataset/dataset.service.js").executeSavedDataset;
   auditPatientListIfConfigured: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
+  getPatientAuditConfig?: typeof getDatasetPatientAuditConfig;
   listReportColumns: typeof import("../queryDefinition/reportColumn.repository.js").listReportColumns;
   listDatasetParameters: typeof import("../dataset/parameter.repository.js").listDatasetParameters;
   getDataSourcePlaybackState: typeof import("../datasource/datasource.repository.js").getDataSourcePlaybackState;
@@ -36,6 +43,8 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
     if (!token) throw new DeliveryError(401, "DASHBOARD_DEVICE_UNAUTHORIZED");
     const verification = await checkDashboardDisplayDevice(dashboardId, token, ip);
     if (verification.status !== "VALID") throw new DeliveryError(401, "DASHBOARD_DEVICE_UNAUTHORIZED");
+    const mode = await (deps.getMode ?? readDashboardQueryMode)(dashboardId);
+    if(mode.mode!=="QUERY_ONLY") throw new DeliveryError(409,"QUERY_SOURCE_MODE_NOT_ACTIVATED");
     const dashboard = await getDashboard(dashboardId);
     if (!dashboard?.isActive) throw new DeliveryError(409, "DASHBOARD_NOT_AVAILABLE");
     if (await deps.legacySourceIsQueryBound?.(dashboardId, sourceKey ?? "PRIMARY"))
@@ -56,15 +65,17 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
     const approvalEvidence = await deps.getApprovalEvidence(dashboardId);
     const sensitivity = await getDatasetSensitivitySnapshot(dataset.id);
     assertDatasetSensitivityPolicy(sensitivity);
+    const publicDisplay=await (deps.getPublicDisplay ?? getDatasetPublicDisplay)(dataset.id);
+    if(publicDisplay.status!=="CONFIRMED"||!publicDisplay.policy?.confirmed||publicDisplay.sensitivityVersion!==sensitivity.version)throw new DeliveryError(403,"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED");
     const definitions = await listDatasetParameters(dataset.id);
     const reportColumns = source ? [] : await listReportColumns(query.id);
     const accessRevision = await getQueryAccessRevision(query.id);
     // LastUsedAt changes on every check; it is deliberately not a configuration revision.
     const { lastUsedAtUtc: _lastUsed, ...device } = verification.device;
     const fingerprint = createHash("sha256").update(JSON.stringify({ approvalEvidence, dashboard, query, layout, source,
-      dataset, dataSource, sensitivity, definitions, reportColumns, accessRevision, device,
+      dataset, dataSource, sensitivity, publicDisplay, mode, definitions, reportColumns, accessRevision, device,
       tokenHash: createHash("sha256").update(token).digest("hex") })).digest("hex");
-    return { fingerprint, verification, dashboard, query, layout, source, dataset, sensitivity, reportColumns };
+    return { fingerprint, verification, dashboard, query, layout, source, dataset, sensitivity, publicDisplay, reportColumns };
   };
   const stillCurrent = async (initial: Awaited<ReturnType<typeof readState>>, dashboardId: number, token: string, ip: string, sourceKey?: string) => {
     const current = await readState(dashboardId, token, ip, sourceKey);
@@ -129,7 +140,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
       }
       assertDashboardResultColumns(snapshot.columns);
       const rawRows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
-      const masks = resolveDashboardDisclosureMasks(dashboard.parameters, "PRIMARY", sensitivity.columns);
+      const masks = resolveDatasetPublicDisplayMasks(sensitivity,state.publicDisplay.policy,snapshot.columns.map(c=>c.name));
       const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
       const masked = snapshot.columns.some((column) => resolveDeviceColumnMask(column.name, masks) !== "NONE");
       const disclosureId = await auditPatientListIfConfigured({
@@ -143,7 +154,11 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         masked,
         rows: rawRows,
       });
-      if (rawRows.length > 0 && disclosureId === null) throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
+      // A disabled/absent patient-audit configuration must not block ordinary
+      // Dataset rows; a configured patient disclosure still requires a receipt.
+      if (rawRows.length > 0 && disclosureId === null &&
+        (await (deps.getPatientAuditConfig ?? getDatasetPatientAuditConfig)(dataset.id))?.isEnabled)
+        throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
       if (!getDashboardPageSnapshot(snapshot.id, verification.device.id, id.data)) throw new DeliveryError(409, "DASHBOARD_SNAPSHOT_EXPIRED");
       res.setHeader("Cache-Control", "no-store");
       const reportColumns = state.reportColumns.filter((column) => resolveDeviceColumnMask(column.columnName, masks) !== "OMIT");
@@ -174,7 +189,6 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
       const state = await readState(id.data, token, getRequestSourceIp(req), key.data);
       const { verification, dataset, sensitivity: policy } = state;
       const source = state.source!;
-      const masks = resolveDashboardDisclosureMasks(state.dashboard.parameters, source.sourceKey, policy.columns);
       const sourceScope = `datasource:${dataset.dataSourceId}:dashboard-source:${source.sourceKey}`;
       let snapshot = input.data.snapshotId
         ? getDashboardPageSnapshot(input.data.snapshotId, verification.device.id, id.data) : null;
@@ -198,6 +212,7 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         });
       }
       assertDashboardResultColumns(snapshot.columns);
+      const masks = resolveDatasetPublicDisplayMasks(policy,state.publicDisplay.policy,snapshot.columns.map(c=>c.name));
       const columns = snapshot.columns.filter(column => resolveDeviceColumnMask(column.name, masks) !== "OMIT");
       const pageSize = source.pageSize;
       const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / pageSize));
@@ -211,7 +226,11 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
         sourceScope, deliveryType: "PAGE",
         pageNumber: input.data.page, masked: true, rows: rawRows,
       });
-      if (rawRows.length > 0 && disclosureId === null) throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
+      // A disabled/absent patient-audit configuration must not block ordinary
+      // Dataset rows; a configured patient disclosure still requires a receipt.
+      if (rawRows.length > 0 && disclosureId === null &&
+        (await (deps.getPatientAuditConfig ?? getDatasetPatientAuditConfig)(dataset.id))?.isEnabled)
+        throw new DeliveryError(503, "PATIENT_AUDIT_NOT_CONFIGURED");
       if (!getDashboardPageSnapshot(snapshot.id, verification.device.id, id.data)) throw new DeliveryError(409, "DASHBOARD_SNAPSHOT_EXPIRED");
       res.setHeader("Cache-Control", "no-store");
       await stillCurrent(state, id.data, token, getRequestSourceIp(req), key.data);

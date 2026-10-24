@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 async function setup(page: Page, canManage = true) {
-  const state = { version: "0", column: "", status: "NOT_CONFIGURED", schema: true, conflict: false, reads: 0, writes: [] as any[] };
+  const state = { version: "0", column: "", status: "NOT_CONFIGURED", schema: true, metadata: true, conflict: false, reads: 0, writes: [] as any[] };
   await page.addInitScript(manage => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic-token", user: { id: 1, username: "synthetic", displayName: "測試管理者", permissions: manage ? ["DESIGN_QUERY"] : ["VIEW_QUERY"] } })), canManage);
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const path = new URL(route.request().url()).pathname;
@@ -14,7 +14,7 @@ async function setup(page: Page, canManage = true) {
         state.column = body.patientKeyColumn; state.version = String(BigInt(state.version) + 1n); state.status = "CONFIRMED";
       }
       await route.fulfill({ json: { config: state.column ? { isEnabled: true, patientKeyColumn: state.column, version: state.version } : null,
-        version: state.version, status: state.status, metadataStatus: "CONFIRMED", columns: ["NAME", "PHONE", "MRN"], sql: "SELECT private", key: "synthetic-private-key" } }); return;
+        version: state.version, status: state.status, metadataStatus: state.metadata ? "CONFIRMED" : "METADATA_UNCONFIRMED", columns: state.metadata ? ["NAME", "PHONE", "MRN"] : [], sql: "SELECT private", key: "synthetic-private-key" } }); return;
     }
     if (path === "/api/datasets") { await route.fulfill({ json: { datasets: [{ id: 2, code: "SYNTHETIC", name: "合成 Dataset", sqlText: "SELECT MRN FROM synthetic", dataSourceId: 4, maxRows: 100, isActive: true, isArchived: false }], total: 1, totalPages: 1 } }); return; }
     if (path.endsWith("/datasource-options")) { await route.fulfill({ json: { dataSources: [{ id: 4, name: "合成來源", type: "SQLSERVER" }] } }); return; }
@@ -65,4 +65,14 @@ test("unavailable HMAC key disables setting writes", async ({ page }) => {
 test("view-only users cannot open the audit management page or fetch its settings", async ({ page }) => {
   const { state, panel } = await setup(page, false);
   await expect(panel).toHaveCount(0); await expect(page).not.toHaveURL(/designer\/datasets/); expect(state.reads).toBe(0);
+});
+
+test("missing trusted metadata cannot be replaced by an identifier assertion or candidate aliases", async ({ page }) => {
+  const { state, panel } = await setup(page); state.metadata = false;
+  await panel.getByRole("button", { name: "重新載入稽核版本" }).click();
+  await expect(panel.getByText(/不可用候選描述或停用稽核替代/)).toBeVisible();
+  await expect(panel.getByRole("combobox", { name: "患者識別欄位", exact: true })).toBeDisabled();
+  await expect(panel.getByRole("combobox", { name: "患者識別欄位", exact: true }).getByRole("option")).toHaveCount(1);
+  await expect(panel.getByRole("button", { name: "確認並儲存患者稽核設定" })).toBeDisabled();
+  expect(state.writes).toEqual([]);
 });

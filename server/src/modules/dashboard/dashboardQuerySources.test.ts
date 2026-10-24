@@ -17,6 +17,7 @@ function fixture() {
       maxRows: null, refreshSeconds: 30, pageSize: 10, pageSeconds: 15 },
     sources: [{ id: 10, sourceKey: "WARD", datasetId: 3, queryDefinitionId: null, queryBindingRevision: 0,
       maxRows: null, parameters: { WARD: "SYNTHETIC_PRIVATE_VALUE" }, refreshSeconds: 30, pageSize: 10, pageSeconds: 15, isEnabled: true }],
+    presentation: { name: "Test", description: null, displayMode: "BIG_SCREEN", displayTitle: "Test", showClock: true, showPageNumber: true, showCountdown: true },
     references: ["WARD"],
   };
   const control = { enabled: true, schema: true, transactions: 0, rollback: 0, writes: 0, auditFailure: false,
@@ -45,6 +46,7 @@ function fixture() {
           if (source.id === null) staged.sources.push({ ...structuredClone(source), id: Math.max(0, ...staged.sources.map(s => s.id)) + 1 });
           else staged.sources[staged.sources.findIndex(s => s.id === source.id)] = structuredClone(source) as SourceState["sources"][number];
         },
+        updatePresentation: async (_id, input) => { control.writes++; staged.presentation = structuredClone(input); staged.dashboard.updatedAtUtc = "2026-10-13T00:00:03Z"; },
         updatePrimary: async (_id, input) => { control.writes++; Object.assign(staged.dashboard, input); staged.dashboard.updatedAtUtc = "2026-10-13T00:00:02Z"; },
         writeLayout: async (_id, profiles) => { control.writes++; staged.references = profiles.flatMap(p => p.widgets.filter(w => w.widgetType === "FIELD" || w.widgetType === "TABLE").map(w => String(w.config.dataSourceKey ?? "PRIMARY"))); },
         remove: async (_dashboardId, id) => { control.writes++; staged.sources = staged.sources.filter(s => s.id !== id); },
@@ -70,6 +72,88 @@ test("strict Query-only contract rejects Dataset, SQL, PRIMARY, duplicate keys a
   for (const field of ["datasetId", "sql", "sqlText"]) assert.equal(querySourcePatchSchema.safeParse({ ...p, upserts: [{ ...p.upserts[0], [field]: 3 }] }).success, false);
   assert.equal(querySourcePatchSchema.safeParse({ ...p, upserts: [{ ...p.upserts[0], sourceKey: "PRIMARY" }] }).success, false);
   assert.equal(querySourcePatchSchema.safeParse({ ...p, removals: [{ id: 10, sourceKey: "ward" }] }).success, false);
+});
+test("PRIMARY conversion state is explicit before and after first managed update", async () => {
+  const f = fixture();
+  const before = await f.service.configuration(1, 1);
+  assert.equal(before.primary.requiresConversion, true);
+  assert.equal(before.primary.maxRows, 1000); // Display default must not imply converted.
+  assert.equal(before.editable, true);
+  await f.service.primary(1, 1, {
+    expectedVersion: before.version, queryDefinitionId: 20, parameters: {},
+    refreshSeconds: 30, pageSize: 10, pageSeconds: 15, maxRows: 1000,
+  });
+  const after = await f.service.configuration(1, 1);
+  assert.equal(after.primary.requiresConversion, false);
+  assert.equal(after.primary.maxRows, 1000);
+  assert.notEqual(after.version, before.version);
+});
+test("presentation-only update preserves PRIMARY, approvals and source bindings", async () => {
+  const f = fixture();
+  const before = structuredClone(f.state());
+  const config = await f.service.configuration(1, 1);
+  assert.deepEqual(config.presentation, before.presentation);
+  const payload = { ...before.presentation!, name: "Changed", expectedVersion: config.version };
+  await f.service.presentation(1, 1, payload);
+  const after = f.state();
+  assert.equal(after.presentation?.name, "Changed");
+  assert.deepEqual(after.dashboard.parameters, before.dashboard.parameters);
+  assert.equal(after.dashboard.queryDefinitionId, before.dashboard.queryDefinitionId);
+  assert.equal(after.dashboard.maxRows, before.dashboard.maxRows);
+  assert.deepEqual(after.sources, before.sources);
+  assert.deepEqual(after.references, before.references);
+  await assert.rejects(f.service.presentation(1, 1, payload), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
+});
+test("presentation audit failure rolls back display changes and preserves version", async () => {
+  const f = fixture();
+  const before = structuredClone(f.state());
+  const version = sourceVersion(before);
+  f.control.auditFailure = true;
+  await assert.rejects(f.service.presentation(1, 1, {
+    ...before.presentation!, name: "Not committed", expectedVersion: version,
+  }));
+  assert.deepEqual(f.state(), before);
+  assert.equal(sourceVersion(f.state()), version);
+  assert.equal(f.control.rollback, 1);
+});
+test("presentation update is fail-closed when active, Query-only, or capability off", async () => {
+  const f = fixture();
+  const payload = { ...f.state().presentation!, expectedVersion: sourceVersion(f.state()), name: "Safe" };
+  const before = structuredClone(f.state());
+  f.state().dashboard.isActive = true;
+  await assert.rejects(f.service.presentation(1, 1, { ...payload, expectedVersion: sourceVersion(f.state()) }), {
+    code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE",
+  });
+  f.state().dashboard.isActive = false;
+  f.state().dashboard.mode = "QUERY_ONLY";
+  await assert.rejects(f.service.presentation(1, 1, { ...payload, expectedVersion: sourceVersion(f.state()) }), {
+    code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE",
+  });
+  f.state().dashboard.mode = "LEGACY";
+  f.control.enabled = false;
+  await assert.rejects(f.service.presentation(1, 1, payload), { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" });
+  assert.equal(f.control.writes, 0);
+  assert.deepEqual(f.state().presentation, before.presentation);
+});
+test("new inactive Dashboard flow can save presentation before PRIMARY conversion without changing approvals", async () => {
+  const f = fixture();
+  const original = structuredClone(f.state());
+  const version = sourceVersion(f.state());
+  await f.service.presentation(1, 1, { ...original.presentation!, name: "New Dashboard", expectedVersion: version });
+  let config = await f.service.configuration(1, 1);
+  assert.equal(config.primary.requiresConversion, true);
+  assert.equal(config.isActive, false);
+  assert.equal(config.presentation?.name, "New Dashboard");
+  assert.deepEqual(f.state().dashboard.parameters, original.dashboard.parameters);
+  await f.service.primary(1, 1, {
+    expectedVersion: config.version, queryDefinitionId: original.dashboard.queryDefinitionId,
+    parameters: {}, refreshSeconds: 15, pageSize: 5, pageSeconds: 20, maxRows: 1000,
+  });
+  config = await f.service.configuration(1, 1);
+  assert.equal(config.primary.requiresConversion, false);
+  assert.equal(config.presentation?.name, "New Dashboard");
+  assert.deepEqual(f.state().dashboard.parameters, original.dashboard.parameters);
+  assert.deepEqual(f.state().sources, original.sources);
 });
 test("default-off capability and missing 917 reject without writes or legacy fallback", async () => {
   const f = fixture(); f.control.enabled = false;
@@ -407,4 +491,12 @@ test("Query binding routes cannot carry Legacy approvals to another primary or s
   f.state().references = [];
   await assert.rejects(f.service.patch(1, 1, { expectedVersion: sourceVersion(f.state()), upserts: [], removals: [{ id: 10, sourceKey: "WARD" }] }), { code: "DASHBOARD_APPROVAL_BINDING_CHANGED" });
   assert.equal(f.control.writes, 0);
+});
+
+test("disclosure API rejects a new independent Dashboard mask instead of overriding Dataset policy", async () => {
+  const f = fixture(); await f.service.patch(1, 7, f.patch());
+  const before = structuredClone(f.state());
+  await assert.rejects(f.service.disclosure(1, 7, { expectedVersion: sourceVersion(f.state()), sourceKey: "WARD", masks: { MRN: "FULL" } }),
+    { code: "DASHBOARD_APPROVAL_MASK_INVALID", status: 400 });
+  assert.deepEqual(f.state(), before);
 });

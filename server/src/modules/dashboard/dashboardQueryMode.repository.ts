@@ -1,3 +1,4 @@
+import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { getTokenSessionState } from "../auth/auth.repository.js";
@@ -20,21 +21,22 @@ export async function readDashboardQueryMode(id: number) {
   if (!["LEGACY", "QUERY_ONLY", "QUERY_ONLY_DISABLED"].includes(String(row.QueryMode))) throw new QuerySourceError("QUERY_MODE_INVALID", 503);
   return { mode: String(row.QueryMode), version: Number(row.QueryModeVersion) };
 }
+export async function queryModeSchemaReady(request: sql.Request): Promise<boolean> {
+  const result = await request.query(`SELECT CASE WHEN COL_LENGTH('uqp.Dashboard','QueryMode') IS NOT NULL
+    AND COL_LENGTH('uqp.Dashboard','QueryModeVersion') IS NOT NULL AND EXISTS
+    (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.Dashboard') AND name='CK_Dashboard_QueryMode' AND is_disabled=0 AND is_not_trusted=0)
+    AND COL_LENGTH('uqp.DashboardDisplayDevice','DelegatorTokenVersion') IS NOT NULL
+    AND COL_LENGTH('uqp.DashboardDisplayDevice','QueryModeGrantVersion') IS NOT NULL
+    AND EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.DashboardDisplayDevice') AND name='CK_DashboardDevice_QueryModeGrant' AND is_disabled=0 AND is_not_trusted=0)
+    THEN 1 ELSE 0 END AS Ready`);
+  return Boolean(result.recordset[0]?.Ready);
+}
 export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDependencies,
   extend(transaction, base) {
     const request = () => new sql.Request(transaction);
     const scoped = (id: number) => request().input("id", sql.BigInt, id);
     return Object.assign(base, {
-      async modeReady() {
-        const result = await request().query(`SELECT CASE WHEN COL_LENGTH('uqp.Dashboard','QueryMode') IS NOT NULL
-          AND COL_LENGTH('uqp.Dashboard','QueryModeVersion') IS NOT NULL AND EXISTS
-          (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.Dashboard') AND name='CK_Dashboard_QueryMode' AND is_disabled=0 AND is_not_trusted=0)
-          AND COL_LENGTH('uqp.DashboardDisplayDevice','DelegatorTokenVersion') IS NOT NULL
-          AND COL_LENGTH('uqp.DashboardDisplayDevice','QueryModeGrantVersion') IS NOT NULL
-          AND EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID('uqp.DashboardDisplayDevice') AND name='CK_DashboardDevice_QueryModeGrant' AND is_disabled=0 AND is_not_trusted=0)
-          THEN 1 ELSE 0 END AS Ready`);
-        return Boolean(result.recordset[0]?.Ready);
-      },
+      modeReady: () => queryModeSchemaReady(request()),
       async actor(userId, tokenVersion) {
         const session = await getTokenSessionState(userId, transaction);
         if (!session?.isActive || session.tokenVersion !== tokenVersion) throw new QuerySourceError("TOKEN_REVOKED", 401);
@@ -68,9 +70,13 @@ export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDepe
         const recordsets = result.recordsets as unknown as Record<string, unknown>[][];
         if (!recordsets[0]?.length || Number(recordsets[0][0]!.VersionNumber) < 1 || !recordsets[1]?.length)
           throw new QuerySourceError("QUERY_SOURCE_SENSITIVITY_NOT_READY");
-        if (!recordsets[2]?.[0]?.IsEnabled || !recordsets[2][0].PatientKeyColumn) throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
+        const display=await datasetPublicDisplayRepository.getInTransaction(transaction,datasetId);
+        if(display.status!=="CONFIRMED"||!display.policy?.confirmed)throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
+        if (recordsets[2]?.[0]?.IsEnabled) {
+        if(!recordsets[2][0].PatientKeyColumn)throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED",503);
         try { parsePatientAuditKeyring(process.env.PATIENT_AUDIT_ACTIVE_KEY_VERSION, process.env.PATIENT_AUDIT_HMAC_KEYRING_JSON); }
         catch { throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503); }
+        }
       },
       async switchMode(id, enabled) {
         await scoped(id).input("mode", sql.VarChar(24), enabled ? "QUERY_ONLY" : "QUERY_ONLY_DISABLED").input("active", sql.Bit, enabled).query(`

@@ -3,14 +3,28 @@ export type DashboardMaskMode = DeviceMaskMode | "INHERIT";
 export const dashboardMaskModes = ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM", "INHERIT"] as const;
 const dashboardModes = new Set<string>(dashboardMaskModes);
 const allowedModes = new Set<DeviceMaskMode>(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM"]);
-export type CustomMaskConfig = { prefix: number; suffix: number; symbol: string };
+export type CustomMaskConfig = { prefix: number; suffix: number; symbol: string; start?: number; end?: number };
+export function validCustomMask(config: unknown): config is CustomMaskConfig {
+  if (!config || typeof config !== "object" || Array.isArray(config)) return false;
+  const c = config as CustomMaskConfig;
+  if (Object.keys(c).some(key => !["prefix", "suffix", "symbol", "start", "end"].includes(key))) return false;
+  return Number.isInteger(c.prefix) && Number.isInteger(c.suffix)
+    && c.prefix >= 0 && c.suffix >= 0 && c.prefix <= 100 && c.suffix <= 100
+    && typeof c.symbol === "string" && Array.from(c.symbol).length === 1 && !/[\r\n\t]/u.test(c.symbol)
+    && (c.start === undefined && c.end === undefined || c.prefix === 0 && c.suffix === 0
+      && Number.isInteger(c.start) && Number.isInteger(c.end) && c.start! >= 1 && c.end! >= c.start! && c.end! <= 10000);
+}
 /** Invalid/overlapping custom settings fail closed rather than returning original text. */
 export function maskCustomValue(value: unknown, config: CustomMaskConfig | null | undefined): string {
-  if (!config || !Number.isInteger(config.prefix) || !Number.isInteger(config.suffix)
-    || config.prefix < 0 || config.suffix < 0 || config.prefix > 100 || config.suffix > 100
-    || Array.from(config.symbol ?? "").length !== 1 || /[\r\n\t]/u.test(config.symbol)) return "○○○○";
+  if (!validCustomMask(config)) return "○○○○";
   const chars = Array.from(typeof value === "object" ? JSON.stringify(value) : String(value));
   if (chars.length === 0) return "";
+  if (config.start !== undefined) {
+    // Positions count Unicode code points, inclusive and one based. Out of
+    // bounds starts mask everything, never silently return an unchanged value.
+    if (config.start > chars.length) return config.symbol.repeat(chars.length);
+    return chars.map((char, index) => index + 1 >= config.start! && index + 1 <= config.end! ? config.symbol : char).join("");
+  }
   if (config.prefix + config.suffix >= chars.length) return config.symbol.repeat(chars.length);
   return chars.slice(0, config.prefix).join("")
     + config.symbol.repeat(chars.length - config.prefix - config.suffix)
@@ -147,6 +161,13 @@ export function resolveDashboardDisclosureMasks(parameters: Record<string, unkno
   for (const column of Object.keys(effective)) {
     if (rules.filter(rule => rule.columnName.toUpperCase() === column.toUpperCase()).length !== 1) effective[column] = "OMIT";
   }
+  // Preserve the existing per-source disclosure allowlist. Legacy independent
+  // masks may never yield a different value or silently become weaker: retain
+  // only grants compatible with the current Dataset rule, otherwise omit.
+  for (const column of Object.keys(effective)) {
+    const rule = rules.find(rule => rule.columnName.toUpperCase() === column.toUpperCase());
+    if (rule && effective[column] !== rule.deviceMaskMode) effective[column] = "OMIT";
+  }
   return enforceClassifiedDeviceMasks(effective, types);
 }
 
@@ -155,6 +176,16 @@ export function validDashboardColumnMasks(value: unknown): boolean {
   const entries = Object.entries(value);
   return entries.length <= 300 && new Set(entries.map(([key]) => key.toUpperCase())).size === entries.length
     && entries.every(([key, mode]) => key.trim().length > 0 && key.length <= 256 && typeof mode === "string" && dashboardModes.has(mode));
+}
+/** New grants inherit Dataset behavior. Legacy entries can be retained or
+ * removed, but cannot be changed into another independent masking policy. */
+export function validInheritedDashboardApprovalUpdate(previous: unknown, next: unknown): boolean {
+  if (!validDashboardColumnMasks(next)) return false;
+  const old = previous && typeof previous === "object" && !Array.isArray(previous) ? Object.entries(previous) : [];
+  return Object.entries(next as Record<string, unknown>).every(([key, mode]) => {
+    const matches = old.filter(([name]) => name.toUpperCase() === key.toUpperCase());
+    return mode === "INHERIT" || mode === "OMIT" || matches.length === 1 && matches[0]![0] === key && matches[0]![1] === mode;
+  });
 }
 export function validSourceColumnMasks(value: unknown): boolean {
   if (value === undefined) return true;
@@ -190,10 +221,9 @@ export function assertDatasetSensitivityPolicy(policy: { version: number; column
       || typeof rule.sensitivityType !== "string" || !/^[A-Z0-9_]{1,64}$/.test(rule.sensitivityType)
       || names.has(rule.columnName.toUpperCase()) || (rule.sensitivityType !== "OTHER" && rule.deviceMaskMode === "NONE")) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
     names.add(rule.columnName.toUpperCase());
+    if (rule.deviceMaskMode !== "CUSTOM" && rule.customMask != null) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
     if (rule.deviceMaskMode === "CUSTOM") {
-      const config = rule.customMask;
-      if (!config || !Number.isInteger(config.prefix) || !Number.isInteger(config.suffix) || config.prefix < 0 || config.suffix < 0 || config.prefix > 100 || config.suffix > 100
-        || typeof config.symbol !== "string" || Array.from(config.symbol).length !== 1 || /[\r\n\t]/u.test(config.symbol)) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
+      if (!validCustomMask(rule.customMask)) throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");
     }
   }
 }

@@ -1,9 +1,9 @@
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
-import { querySourceSchemaReady } from "./dashboardQuerySources.repository.js";
-import { QuerySourceError } from "./dashboardQuerySources.service.js";
+import { querySourceSchemaReady, querySourceStore } from "./dashboardQuerySources.repository.js";
+import { QuerySourceError, sourceVersion, type SourceStore } from "./dashboardQuerySources.service.js";
 import type { ExecutionBinding } from "./dashboardQuerySourceExecution.js";
-import { readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
+import { readDashboardQueryMode, queryModeSchemaReady } from "./dashboardQueryMode.repository.js";
 import { dashboardQueryParameters } from "./dashboardDeviceMasking.js";
 import { getDashboardLayout } from "./dashboardLayout.repository.js";
 
@@ -61,4 +61,32 @@ export async function legacySourceIsQueryBound(id: number, key: string) {
     .query(`SELECT Id FROM uqp.Dashboard WHERE Id=@id AND (QuerySourceMaxRows IS NOT NULL OR
       EXISTS (SELECT 1 FROM uqp.DashboardDataSource WHERE DashboardId=@id AND SourceKey=@key AND QueryDefinitionId IS NOT NULL))`);
   return result.recordset.length > 0;
+}
+
+/** Reuse the existing locked configuration reader; never execute historical Dataset bindings. */
+export function createUserPlaybackSourcesReader(store: SourceStore = querySourceStore) {
+ return async (id: number) => store.transaction(async tx => {
+    if (!await tx.schemaReady()) throw new QuerySourceError("QUERY_SOURCE_SCHEMA_REQUIRED", 503);
+    const state = await tx.readState(id);
+    if (!state.dashboard.isActive || state.dashboard.mode !== "QUERY_ONLY" || !state.dashboard.modeVersion || state.dashboard.maxRows === null)
+      throw new QuerySourceError("QUERY_SOURCE_MODE_NOT_ACTIVATED");
+    if (state.sources.length > 7 || state.sources.some(s => s.queryDefinitionId === null || s.maxRows === null || s.queryBindingRevision < 1))
+      throw new QuerySourceError("QUERY_SOURCE_PENDING_CONVERSION");
+    const keys = ["PRIMARY", ...state.sources.filter(s => s.isEnabled).map(s => s.sourceKey)];
+    if (new Set(keys.map(k => k.toUpperCase())).size !== keys.length || keys.some(k => !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(k)) ||
+      state.references.some(k => !keys.includes(k))) throw new QuerySourceError("QUERY_SOURCE_REFERENCE_INVALID");
+    return { keys, references: state.references, version: sourceVersion(state) };
+  });
+}
+const readUserSources = createUserPlaybackSourcesReader();
+export async function loadUserPlaybackSources(id: number) {
+  // Also enforce 918 for direct page POSTs; UI metadata validation is not authority.
+  if ((await readUserPlaybackMode(id)).mode !== "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_MODE_NOT_ACTIVATED");
+  return readUserSources(id);
+}
+
+export async function readUserPlaybackMode(id: number) {
+  const pool = await getPlatformDbPool();
+  if (!pool || !await queryModeSchemaReady(pool.request())) throw new QuerySourceError("QUERY_MODE_SCHEMA_REQUIRED", 503);
+  return readDashboardQueryMode(id);
 }

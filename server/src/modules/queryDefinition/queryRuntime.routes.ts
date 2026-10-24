@@ -1,20 +1,17 @@
+import { finalizeDeliveryAudit } from "../audit/deliveryAudit.repository.js";
 import { safeAuditErrorCode, withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
 import { Router } from "express";
-import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
-import { getDataset } from "../dataset/dataset.repository.js";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
-import { executeSavedDataset, getParameterOptions } from "../dataset/dataset.service.js";
+import { getParameterOptions } from "../dataset/dataset.service.js";
 import { runtimeParameterDefinitions } from "../dataset/parameterSync.js";
 import { listDatasetParameters } from "../dataset/parameter.repository.js";
 import { resolveDateForRuntimeInput } from "../dataset/dateParameter.js";
 import {
-  getEffectiveQueryAccess,
   listAccessibleQueries,
 } from "./queryDefinition.repository.js";
 import {
   completeAuditFailure,
-  completeAuditSuccess,
   startAudit,
 } from "../audit/audit.repository.js";
 import {
@@ -25,15 +22,22 @@ import {
   buildCsvFilename,
   createQueryCsv,
 } from "../export/csvExport.service.js";
-import { listReportColumns } from "./reportColumn.repository.js";
+import { createQueryDelivery, createRuntimeIdentityVerifier, deliveryReportColumns, QueryDeliveryError } from "./queryDelivery.js";
+import { DatasetDeliveryPolicyError } from "../dataset/datasetDeliveryPolicy.js";
+import { DatasetDeliverySnapshotError } from "../dataset/datasetDeliveryPolicy.repository.js";
 import { setQueryFavorite } from "./queryFavorite.repository.js";
 
-const idSchema = z.coerce.number().int().positive();
+const idSchema = z.coerce.number().int().positive().safe();
 const executeBodySchema = z.object({
   values: z.record(z.unknown()).default({}),
 });
 
 function sendRuntimeError(res: any, error: unknown): boolean {
+  if (error instanceof QueryDeliveryError || error instanceof DatasetDeliveryPolicyError || error instanceof DatasetDeliverySnapshotError) {
+    res.status(error instanceof QueryDeliveryError ? error.status : error instanceof DatasetDeliverySnapshotError && error.code === "DATASET_DELIVERY_SCHEMA_REQUIRED" ? 503 : 409)
+      .json({ error: { code: error.code, message: "資料交付安全檢查未通過，請確認政策、版本及授權。", requestId: res.req?.id } });
+    return true;
+  }
   if (!(error instanceof Error)) return false;
   if (["PARAMETER_DEFINITION_MISMATCH", "PARAMETER_PARSE_FAILED", "MISSING_QUERY_PARAMETER"].includes(error.message.split(":")[0]!)) {
     res.status(409).json({ error: { code: error.message.split(":")[0], message: "查詢參數設定不完整，請通知報表設計者檢視參數差異。", requestId: res.req?.id } });
@@ -97,310 +101,158 @@ function sendRuntimeError(res: any, error: unknown): boolean {
   return false;
 }
 
-export const queryRuntimeRouter = Router();
-queryRuntimeRouter.use(authenticateJwt);
+export const defaultQueryRuntimeDependencies = {
+  authenticate: authenticateJwt, identity: createRuntimeIdentityVerifier(), delivery: createQueryDelivery(),
+  listAccessibleQueries, setQueryFavorite, listDatasetParameters, getParameterOptions,
+  startAudit, finalizeDeliveryAudit, completeAuditFailure, createQueryCsv, createQueryExcel,
+};
+export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies) {
+  const queryRuntimeRouter = Router();
+  queryRuntimeRouter.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
+  queryRuntimeRouter.use(deps.authenticate);
 
-queryRuntimeRouter.get("/", requirePermission("VIEW_QUERY"), async (req, res, next) => {
-  try {
-    res.json({ queries: await listAccessibleQueries(req.authUser!.id) });
-  } catch (error) { next(error); }
-});
+  queryRuntimeRouter.get("/", requirePermission("VIEW_QUERY"), async (req, res, next) => {
+    try {
+      res.json({ queries: await deps.listAccessibleQueries(req.authUser!.id) });
+    } catch (error) { next(error); }
+  });
 
-queryRuntimeRouter.put("/:id/favorite", requirePermission("VIEW_QUERY"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const body = z.object({ isFavorite: z.boolean() }).safeParse(req.body);
-    if (!id.success || !body.success) {
-      res.status(400).json({
-        error: {
-          code: "VALIDATION_ERROR",
-          message: "我的最愛設定格式不正確。",
-        },
+  queryRuntimeRouter.put("/:id/favorite", requirePermission("VIEW_QUERY"), async (req, res, next) => {
+    try {
+      const id = idSchema.safeParse(req.params.id);
+      const body = z.object({ isFavorite: z.boolean() }).safeParse(req.body);
+      if (!id.success || !body.success) {
+        res.status(400).json({
+          error: {
+            code: "VALIDATION_ERROR",
+            message: "我的最愛設定格式不正確。",
+          },
+        });
+        return;
+      }
+
+      await deps.setQueryFavorite(req.authUser!.id, id.data, body.data.isFavorite);
+      res.json({ status: "OK", isFavorite: body.data.isFavorite });
+    } catch (error) {
+      if (error instanceof Error && error.message === "QUERY_NOT_FOUND") {
+        res.status(404).json({
+          error: {
+            code: error.message,
+            message: "找不到可加入我的最愛的查詢。",
+          },
+        });
+        return;
+      }
+      next(error);
+    }
+  });
+
+  queryRuntimeRouter.get("/:id", requirePermission("VIEW_QUERY"), async (req, res, next) => {
+    try {
+      const id = idSchema.safeParse(req.params.id);
+      if (!id.success) {
+        res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
+        return;
+      }
+
+      const context = await deps.delivery.open(id.data, "VIEW", transaction => deps.identity(req.headers.authorization, transaction));
+      const query = context.query, dataset = context.dataset;
+      const savedParameters = await withErrorModule("dataset.parameters.load", () => deps.listDatasetParameters(query.datasetId));
+      const parameters = await withErrorModule("dataset.parameters.validate", async () => runtimeParameterDefinitions(dataset.sqlText, savedParameters));
+      const reportColumns = deliveryReportColumns(context.snapshot.policy, context.reports);
+      await context.revalidate();
+      res.json({
+        query,
+        reportColumns,
+        parameters: parameters.map((parameter) => ({
+          name: parameter.name,
+          label: parameter.label,
+          dataType: parameter.dataType,
+          controlType: parameter.controlType,
+          isRequired: parameter.isRequired,
+          defaultValue: parameter.defaultValue,
+          runtimeDefaultValue: ["DATE","DATETIME"].includes(parameter.dataType)
+            ? resolveDateForRuntimeInput(
+                parameter.defaultValue,
+                parameter.dataType as "DATE" | "DATETIME",
+              )
+            : parameter.defaultValue,
+          dateOutputMode: parameter.dateOutputMode,
+          dateCalendar: parameter.dateCalendar,
+          dateFormat: parameter.dateFormat,
+          displayOrder: parameter.displayOrder,
+          placeholder: parameter.placeholder,
+          helpText: parameter.helpText,
+          optionMode: parameter.optionMode,
+        })),
       });
-      return;
-    }
+    } catch (error) { if (sendRuntimeError(res, error)) return; next(error); }
+  });
 
-    await setQueryFavorite(req.authUser!.id, id.data, body.data.isFavorite);
-    res.json({ status: "OK", isFavorite: body.data.isFavorite });
-  } catch (error) {
-    if (error instanceof Error && error.message === "QUERY_NOT_FOUND") {
-      res.status(404).json({
-        error: {
-          code: error.message,
-          message: "找不到可加入我的最愛的查詢。",
-        },
-      });
-      return;
-    }
-    next(error);
+  queryRuntimeRouter.get("/:id/parameters/:name/options", requirePermission("VIEW_QUERY"), async (req, res, next) => {
+    try {
+      const id = idSchema.safeParse(req.params.id);
+      const name = z.string().regex(/^[A-Z][A-Z0-9_]*$/).safeParse(req.params.name);
+      if (!id.success || !name.success) {
+        res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "參數識別資料不正確。" } });
+        return;
+      }
+
+      const context = await deps.delivery.open(id.data, "VIEW", transaction => deps.identity(req.headers.authorization, transaction));
+      const parameters = await deps.listDatasetParameters(context.query.datasetId);
+      const parameter = parameters.find(p => p.name === name.data);
+      if (!parameter) throw new QueryDeliveryError("PARAMETER_NOT_FOUND", 404);
+      // Lookup Dataset delivery needs its own policy, auditing and provenance contract.
+      if (!["NONE", "FIXED"].includes(parameter.optionMode)) throw new QueryDeliveryError("QUERY_LOOKUP_DELIVERY_NOT_READY", 503);
+      const options = await deps.getParameterOptions(context.query.datasetId, name.data);
+      await context.revalidate();
+      res.json({ options });
+    } catch (error) { if (sendRuntimeError(res, error)) return; next(error); }
+  });
+
+  for (const format of ["json", "csv", "excel"] as const) {
+    const path = format === "json" ? "/:id/execute" : `/:id/export/${format}`;
+    queryRuntimeRouter.post(path, requirePermission("VIEW_QUERY"), requirePermission("EXECUTE_QUERY"),
+      ...(format === "json" ? [] : [requirePermission("EXPORT_QUERY")]), async (req, res, next) => {
+      let auditId: number | null = null;
+      const started = Date.now();
+      try {
+        const id = idSchema.safeParse(req.params.id), body = executeBodySchema.safeParse(req.body);
+        if (!id.success || !body.success) throw new QueryDeliveryError("VALIDATION_ERROR", 400);
+        const context = await deps.delivery.open(id.data, format === "json" ? "EXECUTE" : "EXPORT", transaction => deps.identity(req.headers.authorization, transaction));
+        const query = context.query;
+        auditId = await deps.startAudit({
+          eventType: format === "json" ? "QUERY_EXECUTE" : format === "csv" ? "QUERY_EXPORT_CSV" : "QUERY_EXPORT_EXCEL",
+          userId: context.actor.userId, queryDefinitionId: query.id, datasetId: query.datasetId,
+          // Bind values can contain patient identifiers; standard usage audit stores no raw binds.
+          parameters: null, ipAddress: req.ip, userAgent: req.get("user-agent") ?? null,
+        });
+        if (!Number.isSafeInteger(auditId) || Number(auditId) <= 0) throw new QueryDeliveryError("QUERY_AUDIT_REQUIRED", 503);
+        await context.revalidate();
+        const delivery = await deps.delivery.execute(context, body.data.values);
+        // Exporters only receive the policy-processed result and metadata.
+        const payload = format === "csv" ? deps.createQueryCsv(delivery.result, delivery.reportColumns)
+          : format === "excel" ? await deps.createQueryExcel(query.name, delivery.result, delivery.reportColumns)
+          : JSON.stringify({ result: delivery.result, disclosureId: delivery.disclosureId });
+        await context.revalidate();
+        await deps.finalizeDeliveryAudit(auditId, { rowCount: delivery.result.rowCount, durationMs: Date.now() - started }, context.revalidate);
+        if (format === "json") {
+          res.type("json").send(payload);
+        } else {
+          const filename = format === "csv" ? buildCsvFilename(query.code) : buildExcelFilename(query.code);
+          res.setHeader("Content-Type", format === "csv" ? "text/csv; charset=utf-8" : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+          res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+          res.send(payload);
+        }
+      } catch (error) {
+        if (auditId) await deps.completeAuditFailure(auditId, {
+          errorCode: safeAuditErrorCode(error), durationMs: Date.now() - started,
+        }).catch(() => undefined);
+        if (sendRuntimeError(res, error)) return;
+        next(error);
+      }
+    });
   }
-});
-
-queryRuntimeRouter.get("/:id", requirePermission("VIEW_QUERY"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
-      return;
-    }
-
-    const query = await getEffectiveQueryAccess(req.authUser!.id, id.data);
-    if (!query?.canView) {
-      res.status(404).json({ error: { code: "QUERY_NOT_FOUND", message: "找不到可使用的查詢。" } });
-      return;
-    }
-
-    const dataset = await withErrorModule("dataset.load", () => getDataset(query.datasetId));
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    const savedParameters = await withErrorModule("dataset.parameters.load", () => listDatasetParameters(query.datasetId));
-    const parameters = await withErrorModule("dataset.parameters.validate", async () => runtimeParameterDefinitions(dataset.sqlText, savedParameters));
-    const reportColumns = await listReportColumns(query.id);
-    res.json({
-      query,
-      reportColumns,
-      parameters: parameters.map((parameter) => ({
-        name: parameter.name,
-        label: parameter.label,
-        dataType: parameter.dataType,
-        controlType: parameter.controlType,
-        isRequired: parameter.isRequired,
-        defaultValue: parameter.defaultValue,
-        runtimeDefaultValue: ["DATE","DATETIME"].includes(parameter.dataType)
-          ? resolveDateForRuntimeInput(
-              parameter.defaultValue,
-              parameter.dataType as "DATE" | "DATETIME",
-            )
-          : parameter.defaultValue,
-        dateOutputMode: parameter.dateOutputMode,
-        dateCalendar: parameter.dateCalendar,
-        dateFormat: parameter.dateFormat,
-        displayOrder: parameter.displayOrder,
-        placeholder: parameter.placeholder,
-        helpText: parameter.helpText,
-        optionMode: parameter.optionMode,
-      })),
-    });
-  } catch (error) { if (sendRuntimeError(res, error)) return; next(error); }
-});
-
-queryRuntimeRouter.get("/:id/parameters/:name/options", requirePermission("VIEW_QUERY"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const name = z.string().regex(/^[A-Z][A-Z0-9_]*$/).safeParse(req.params.name);
-    if (!id.success || !name.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "參數識別資料不正確。" } });
-      return;
-    }
-
-    const query = await getEffectiveQueryAccess(req.authUser!.id, id.data);
-    if (!query?.canView) {
-      res.status(404).json({ error: { code: "QUERY_NOT_FOUND", message: "找不到可使用的查詢。" } });
-      return;
-    }
-
-    res.json({ options: await getParameterOptions(query.datasetId, name.data) });
-  } catch (error) { next(error); }
-});
-
-queryRuntimeRouter.post("/:id/execute", requirePermission("EXECUTE_QUERY"), async (req, res, next) => {
-  let auditId: number | null = null;
-  let started = Date.now();
-
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const body = executeBodySchema.safeParse(req.body);
-
-    if (!id.success || !body.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "查詢參數格式不正確。" } });
-      return;
-    }
-
-    const query = await getEffectiveQueryAccess(req.authUser!.id, id.data);
-    if (!query?.canExecute) {
-      res.status(403).json({ error: { code: "QUERY_EXECUTE_FORBIDDEN", message: "沒有執行此查詢的權限。" } });
-      return;
-    }
-
-    started = Date.now();
-    auditId = await startAudit({
-      eventType: "QUERY_EXECUTE",
-      userId: req.authUser!.id,
-      queryDefinitionId: query.id,
-      datasetId: query.datasetId,
-      parameters: body.data.values,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-
-    const result = await executeSavedDataset(query.datasetId, body.data.values);
-
-    // Persist patient disclosure before delivering any rows; failure blocks the response.
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    const disclosureId = await withErrorModule("query.patient.disclosure", () => auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: req.authUser!.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "MANUAL",
-      masked: false,
-      rows: result.rows,
-    }));
-
-    await completeAuditSuccess(auditId, {
-      rowCount: result.rowCount,
-      durationMs: Date.now() - started,
-    }).catch(() => undefined);
-
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ result, disclosureId });
-  } catch (error) {
-    if (auditId) {
-      await completeAuditFailure(auditId, {
-        errorCode: safeAuditErrorCode(error),
-        durationMs: Date.now() - started,
-      }).catch(() => undefined);
-    }
-
-    if (sendRuntimeError(res, error)) return;
-    next(error);
-  }
-});
-
-queryRuntimeRouter.post("/:id/export/csv", requirePermission("EXPORT_QUERY"), async (req, res, next) => {
-  let auditId: number | null = null;
-  let started = Date.now();
-
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const body = executeBodySchema.safeParse(req.body);
-
-    if (!id.success || !body.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "匯出參數格式不正確。" } });
-      return;
-    }
-
-    const query = await getEffectiveQueryAccess(req.authUser!.id, id.data);
-    if (!query?.canExport) {
-      res.status(403).json({ error: { code: "QUERY_EXPORT_FORBIDDEN", message: "沒有匯出此查詢的權限。" } });
-      return;
-    }
-
-    started = Date.now();
-    auditId = await startAudit({
-      eventType: "QUERY_EXPORT_CSV",
-      userId: req.authUser!.id,
-      queryDefinitionId: query.id,
-      datasetId: query.datasetId,
-      parameters: body.data.values,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-
-    const result = await executeSavedDataset(query.datasetId, body.data.values);
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    // Fail closed: persist the exact exported patient rows before creating a downloadable file.
-    await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: req.authUser!.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "MANUAL",
-      masked: false,
-      rows: result.rows,
-    });
-    const reportColumns = await listReportColumns(query.id);
-    const buffer = createQueryCsv(result, reportColumns);
-    const filename = buildCsvFilename(query.code);
-
-    await completeAuditSuccess(auditId, {
-      rowCount: result.rowCount,
-      durationMs: Date.now() - started,
-    }).catch(() => undefined);
-
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.send(buffer);
-  } catch (error) {
-    if (auditId) {
-      await completeAuditFailure(auditId, {
-        errorCode: safeAuditErrorCode(error),
-        durationMs: Date.now() - started,
-      }).catch(() => undefined);
-    }
-
-    if (sendRuntimeError(res, error)) return;
-    next(error);
-  }
-});
-
-queryRuntimeRouter.post("/:id/export/excel", requirePermission("EXPORT_QUERY"), async (req, res, next) => {
-  let auditId: number | null = null;
-  let started = Date.now();
-
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const body = executeBodySchema.safeParse(req.body);
-
-    if (!id.success || !body.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "匯出參數格式不正確。" } });
-      return;
-    }
-
-    const query = await getEffectiveQueryAccess(req.authUser!.id, id.data);
-    if (!query?.canExport) {
-      res.status(403).json({ error: { code: "QUERY_EXPORT_FORBIDDEN", message: "沒有匯出此查詢的權限。" } });
-      return;
-    }
-
-    started = Date.now();
-    auditId = await startAudit({
-      eventType: "QUERY_EXPORT_EXCEL",
-      userId: req.authUser!.id,
-      queryDefinitionId: query.id,
-      datasetId: query.datasetId,
-      parameters: body.data.values,
-      ipAddress: req.ip,
-      userAgent: req.get("user-agent") ?? null,
-    });
-
-    const result = await executeSavedDataset(query.datasetId, body.data.values);
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    // Fail closed: persist the exact exported patient rows before creating a downloadable file.
-    await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: req.authUser!.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "MANUAL",
-      masked: false,
-      rows: result.rows,
-    });
-    const reportColumns = await listReportColumns(query.id);
-    const buffer = await createQueryExcel(query.name, result, reportColumns);
-    const filename = buildExcelFilename(query.code);
-
-    await completeAuditSuccess(auditId, {
-      rowCount: result.rowCount,
-      durationMs: Date.now() - started,
-    }).catch(() => undefined);
-
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-    res.send(buffer);
-  } catch (error) {
-    if (auditId) {
-      await completeAuditFailure(auditId, {
-        errorCode: safeAuditErrorCode(error),
-        durationMs: Date.now() - started,
-      }).catch(() => undefined);
-    }
-
-    if (sendRuntimeError(res, error)) return;
-    next(error);
-  }
-});
+  return queryRuntimeRouter;
+}
+export const queryRuntimeRouter = createQueryRuntimeRouter();

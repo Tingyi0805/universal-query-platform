@@ -1,4 +1,12 @@
+import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
+import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
+import { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
+import { deviceManagementStore } from "./dashboardDeviceManagement.repository.js";
 import { createDashboardApprovalRouter } from "./dashboardApproval.routes.js";
+import { createDashboardTransitionRouter } from "./dashboardTransition.routes.js";
+import { createDashboardTransitionService } from "./dashboardTransition.service.js";
+import { dashboardTransitionStore } from "./dashboardTransition.repository.js";
+import { canCreateDashboardInMode } from "./dashboardManagedCreation.js";
 import { dashboardApprovalService, getDashboardApprovalEvidence } from "./dashboardApproval.repository.js";
 import { layoutSchema } from "./dashboardLayout.schema.js";
 import { createQueryModeRouter } from "./dashboardQueryMode.routes.js";
@@ -7,7 +15,7 @@ import { queryModeStore, readDashboardQueryMode } from "./dashboardQueryMode.rep
 import { createQueryDeviceRouter } from "./dashboardQueryDevice.routes.js";
 import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
-import { loadQueryExecutionBinding, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
+import { loadQueryExecutionBinding, loadUserPlaybackSources, readUserPlaybackMode, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
 import { getTokenSessionState } from "../auth/auth.repository.js";
 import { env } from "../../config/env.js";
 import { QuerySourceError, createQuerySourceManagement } from "./dashboardQuerySources.service.js";
@@ -38,7 +46,6 @@ import { getEffectiveQueryAccess, getQueryDefinition } from "../queryDefinition/
 import { listReportColumns } from "../queryDefinition/reportColumn.repository.js";
 import {
   createDashboard,
-  deleteDashboard,
   getDashboard,
   listAccessibleDashboards,
   listDashboards,
@@ -274,11 +281,12 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
   }
 });
 
-const queryExecution = createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
+const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPlaybackSources, loadBinding: loadQueryExecutionBinding,
+  getApprovalEvidence: getDashboardApprovalEvidence,
   getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
   getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
-  execute: executeSavedDataset, audit: auditDashboardPatientList }, device => device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
+  execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 dashboardRouter.use(createQueryDeviceRouter(queryExecution, { mode: readDashboardQueryMode, checkDevice: checkDashboardDisplayDevice, dashboard: getDashboard, reportColumns: listReportColumns }));
 
 dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
@@ -286,8 +294,11 @@ dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, ch
   auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
+dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));
+dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
@@ -309,6 +320,8 @@ dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (
     next(error);
   }
 });
+
+dashboardRouter.use("/:id/devices", requirePermission("DESIGN_QUERY"), legacyDeviceWriteGuard(() => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT, readDashboardQueryMode));
 
 dashboardRouter.get("/:id/devices", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
@@ -587,7 +600,9 @@ dashboardRouter.get("/available", requirePermission("VIEW_QUERY"), async (req, r
       res.status(401).json({ error: { code: "UNAUTHORIZED", message: "需要登入。" } });
       return;
     }
-    res.json({ dashboards: await listAccessibleDashboards(req.authUser.id) });
+    res.setHeader("Cache-Control", "no-store");
+    const dashboards = await listAccessibleDashboards(req.authUser.id);
+    res.json({ dashboards: dashboards.map(({ parameters: _private, ...dashboard }) => dashboard) });
   } catch (error) {
     next(error);
   }
@@ -635,6 +650,15 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
       return;
     }
 
+    // Managed-source Dashboards must be created inactive. Explicit conversion,
+    // sensitivity approval, and playback preflight happen after creation.
+    if (!canCreateDashboardInMode(env.DASHBOARD_QUERY_SOURCE_MANAGEMENT, parsed.data.isActive)) {
+      res.status(409).json({ error: {
+        code: "QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE",
+        message: "新版資料來源管理模式下，請先建立停用的 Dashboard，完成 PRIMARY 轉換及安全核准後再啟用。",
+      } });
+      return;
+    }
     const id = await createDashboard(parsed.data, req.authUser.id);
     await ensureDefaultDashboardLayout(id, parsed.data.displayTitle ?? parsed.data.name);
     await tryWriteAuditEvent({
@@ -740,43 +764,6 @@ dashboardRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req, res, 
       });
       return;
     }
-    next(error);
-  }
-});
-
-dashboardRouter.delete("/:id", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success || !req.authUser) {
-      res.status(400).json({
-        error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" },
-      });
-      return;
-    }
-
-    const current = await getDashboard(id.data);
-    if (!current) {
-      res.status(404).json({
-        error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" },
-      });
-      return;
-    }
-
-    await deleteDashboard(id.data);
-    await tryWriteAuditEvent({
-      eventType: "DASHBOARD_DELETED",
-      userId: req.authUser.id,
-      queryDefinitionId: current.queryDefinitionId,
-      parameters: {
-        dashboardId: current.id,
-        code: current.code,
-        name: current.name,
-      },
-      ...auditRequestContext(req),
-    });
-
-    res.json({ status: "OK" });
-  } catch (error) {
     next(error);
   }
 });

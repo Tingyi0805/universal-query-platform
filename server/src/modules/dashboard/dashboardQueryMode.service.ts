@@ -34,6 +34,7 @@ export function createQueryModeService(store: SourceStore, enabled: () => boolea
       const checks = [
         { name: "inactive", ok: !state.dashboard.isActive && state.dashboard.mode !== "QUERY_ONLY", code: "QUERY_MODE_TRANSITION_CONFLICT" },
         { name: "capacity", ok: state.sources.length + 1 <= 8, code: "QUERY_SOURCE_LIMIT" },
+        { name: "primaryConversion", ok: state.dashboard.maxRows !== null, code: "QUERY_SOURCE_CONVERSION_REQUIRED" },
         { name: "bindings", ok: new Set(keys).size === keys.length && !keys.includes("PRIMARY") && state.sources.every(s =>
           /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(s.sourceKey) && s.queryDefinitionId !== null && s.maxRows !== null && s.queryBindingRevision >= 1), code: "QUERY_SOURCE_PENDING_CONVERSION" },
         { name: "references", ok: state.references.every(key => key === "PRIMARY" || state.sources.some(s => s.sourceKey === key && s.isEnabled)), code: "QUERY_SOURCE_REFERENCE_INVALID" },
@@ -100,6 +101,7 @@ export function createQueryModeService(store: SourceStore, enabled: () => boolea
       if (activate) {
         if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_MODE_TRANSITION_CONFLICT");
         if (state.sources.length + 1 > 8) throw new QuerySourceError("QUERY_SOURCE_LIMIT", 400);
+        if (state.dashboard.maxRows === null) throw new QuerySourceError("QUERY_SOURCE_CONVERSION_REQUIRED");
         const keys = state.sources.map(s => s.sourceKey.toUpperCase());
         if (new Set(keys).size !== keys.length || keys.includes("PRIMARY") || state.sources.some(s => !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(s.sourceKey)))
           throw new QuerySourceError("QUERY_SOURCE_LEGACY_KEY_CONFLICT");

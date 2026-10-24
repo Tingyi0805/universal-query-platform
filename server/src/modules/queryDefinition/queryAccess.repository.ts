@@ -75,6 +75,8 @@ export async function replaceQueryAccess(
       .query("SELECT Id FROM uqp.QueryDefinition WHERE Id=@queryId");
     if (!query.recordset[0]) throw new Error("QUERY_DEFINITION_NOT_FOUND");
 
+    // Follow management writers' Dashboard -> ACL lock order; evidence and ACL commit together.
+    await advanceDashboardAccessEvidence(new sql.Request(tx), queryId);
     await new sql.Request(tx)
       .input("queryId", sql.BigInt, queryId)
       .query("DELETE FROM uqp.RoleQueryAccess WHERE QueryDefinitionId=@queryId; DELETE FROM uqp.UserQueryAccess WHERE QueryDefinitionId=@queryId;");
@@ -149,9 +151,9 @@ export async function searchQueryAccessUsers(searchText: string, limit = 20) {
 }
 
 /** Deterministic ACL revision without user names or credentials in playback payloads. */
-export async function getQueryAccessRevision(queryId: number): Promise<string> {
-  const pool = await requirePool();
-  const result = await pool.request().input("queryId", sql.BigInt, queryId).query(`
+export async function getQueryAccessRevision(queryId: number, transaction?: sql.Transaction): Promise<string> {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
+  const result = await request.input("queryId", sql.BigInt, queryId).query(`
     SELECT 'ROLE' AS Kind, a.RoleId AS PrincipalId, a.CanView, a.CanExecute, a.CanExport, r.IsActive
     FROM uqp.RoleQueryAccess a INNER JOIN uqp.Role r ON r.Id=a.RoleId
     WHERE a.QueryDefinitionId=@queryId
@@ -162,4 +164,20 @@ export async function getQueryAccessRevision(queryId: number): Promise<string> {
     ORDER BY Kind, PrincipalId
   `);
   return createHash("sha256").update(JSON.stringify(result.recordset)).digest("hex");
+}
+
+/** ACL content hashes alone allow A→B→A. Advance existing 919 evidence in the ACL transaction.
+ * Pre-919 installations retain their existing Query ACL writer; Query-only user playback requires 919. */
+export async function advanceDashboardAccessEvidence(request: sql.Request, queryId: number) {
+  const row = (await request.query(`SELECT
+    COL_LENGTH('uqp.Dashboard','ApprovalRowVersion') AS VersionLength,
+    CASE WHEN EXISTS (SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID('uqp.Dashboard') AND name='ApprovalRowVersion'
+      AND system_type_id=189 AND user_type_id=189 AND is_nullable=0 AND is_computed=0) THEN 1 ELSE 0 END AS TrustedVersion,
+    COL_LENGTH('uqp.DashboardDataSource','QueryDefinitionId') AS SourceBinding`)).recordset[0];
+  if (!row) throw new Error("SECURITY_SCHEMA_REQUIRED");
+  if (row.VersionLength == null) return;
+  if (row.VersionLength !== 8 || !row.TrustedVersion) throw new Error("SECURITY_SCHEMA_REQUIRED");
+  await request.input("dashboardAccessQueryId", sql.BigInt, queryId).query(`UPDATE d SET UpdatedAtUtc=SYSUTCDATETIME()
+    FROM uqp.Dashboard d WHERE d.QueryDefinitionId=@dashboardAccessQueryId${row.SourceBinding == null ? "" :
+    " OR EXISTS (SELECT 1 FROM uqp.DashboardDataSource s WHERE s.DashboardId=d.Id AND s.QueryDefinitionId=@dashboardAccessQueryId)"}`);
 }

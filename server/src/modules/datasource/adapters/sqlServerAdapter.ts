@@ -2,6 +2,8 @@ import sql from "mssql";
 import type { DataSourceAdapter, ExecuteQueryInput } from "./datasourceAdapter.js";
 import type { ConnectionTestResult, DataSourceConfig } from "../datasource.types.js";
 import type { QueryResult } from "../../../query/query.types.js";
+import { candidateDescription, compileDescription, compileUnboundDescription, isUnboundDescription, inferredDescriptionDeclarations, descriptionError, QueryDescriptionError,
+  type ColumnDescribeInput } from "../../../query/queryDescription.js";
 
 function createPool(config: DataSourceConfig, requestTimeoutSec?: number) {
   return new sql.ConnectionPool({
@@ -21,6 +23,42 @@ function createPool(config: DataSourceConfig, requestTimeoutSec?: number) {
 }
 
 export class SqlServerAdapter implements DataSourceAdapter {
+  async describeQuery(config: DataSourceConfig, input: ColumnDescribeInput) {
+    const unbound = isUnboundDescription(input);
+    const compiled = unbound ? compileUnboundDescription(input, "SQLSERVER") : compileDescription(input, "SQLSERVER");
+    let pool: sql.ConnectionPool | undefined;
+    try {
+      pool = createPool({ ...config, connectionTimeoutSec: input.timeoutSec }, input.timeoutSec);
+      await pool.connect();
+      let declaration = "parameterDeclaration" in compiled ? compiled.parameterDeclaration : null;
+      if ("parameterNames" in compiled && compiled.parameterNames.length) {
+        const inference = pool.request();
+        inference.input("tsql", sql.NVarChar(sql.MAX), compiled.sql);
+        const types = await inference.execute("sys.sp_describe_undeclared_parameters");
+        declaration = inferredDescriptionDeclarations(types.recordset, compiled.parameterNames);
+      }
+      const request = pool.request();
+      request.input("tsql", sql.NVarChar(sql.MAX), compiled.sql);
+      request.input("params", sql.NVarChar(sql.MAX), declaration);
+      request.input("browse_information_mode", sql.TinyInt, 0);
+      const result = await request.execute("sys.sp_describe_first_result_set");
+      if (!Array.isArray(result.recordset)) throw new QueryDescriptionError("DESCRIPTION_METADATA_INVALID");
+      const columns = result.recordset.map((column: any) => {
+        if (!column || (column.error_number != null && column.error_number !== 0)
+          || (column.is_hidden !== false && column.is_hidden !== 0)) {
+          throw new QueryDescriptionError("DESCRIPTION_METADATA_INVALID");
+        }
+        return { name: column.name, dataType: column.system_type_name, ordinal: column.column_ordinal };
+      });
+      return candidateDescription("SQLSERVER_DESCRIBE_FIRST_RESULT_SET", columns);
+    } catch (error) { throw descriptionError(error); }
+    finally {
+      if (pool) {
+        try { await pool.close(); } catch { throw new QueryDescriptionError("DESCRIPTION_CLEANUP_FAILED"); }
+      }
+    }
+  }
+
   async testConnection(config: DataSourceConfig): Promise<ConnectionTestResult> {
     const pool = createPool(config);
 

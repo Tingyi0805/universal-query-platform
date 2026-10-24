@@ -12,6 +12,7 @@ export function rawParameter(p: DatasetParameterRecord): Record<string, unknown>
 }
 export function parameterFixture(sqlText = "SELECT {{WARD}}, {{NEW}}", rows = [rawParameter(syntheticParameter)]) {
   const state = { sqlText, rows: structuredClone(rows), staged: structuredClone(rows), archived: false,
+    definitionVersion: 1, stagedDefinitionVersion: 1,
     queries: [] as string[], transactions: 0, commits: 0, rollbacks: 0, snapshots: 0, failOn: "", failRollback: false };
   function request(transaction = false) {
     const values: Record<string, unknown> = {};
@@ -33,6 +34,7 @@ export function parameterFixture(sqlText = "SELECT {{WARD}}, {{NEW}}", rows = [r
           const row = data.find(row => row.Name === values.name)!;
           for (const [key, value] of Object.entries(values)) if (!["datasetId", "name"].includes(key)) row[key[0]!.toUpperCase() + key.slice(1)] = value;
         }
+        if (text.includes("UPDATE uqp.Dataset SET UpdatedAtUtc=UpdatedAtUtc")) state.stagedDefinitionVersion++;
         return { recordset: [] };
       },
     };
@@ -41,10 +43,10 @@ export function parameterFixture(sqlText = "SELECT {{WARD}}, {{NEW}}", rows = [r
   const tx = {
     begin: async (level: number) => {
       if (level !== sql.ISOLATION_LEVEL.SERIALIZABLE) throw new Error("UNSAFE_ISOLATION");
-      state.transactions++; state.staged = structuredClone(state.rows);
+      state.transactions++; state.staged = structuredClone(state.rows); state.stagedDefinitionVersion = state.definitionVersion;
     },
-    commit: async () => { state.commits++; state.rows = structuredClone(state.staged); },
-    rollback: async () => { state.rollbacks++; if (state.failRollback) throw new Error("rollback failed"); state.staged = structuredClone(state.rows); },
+    commit: async () => { state.commits++; state.rows = structuredClone(state.staged); state.definitionVersion = state.stagedDefinitionVersion; },
+    rollback: async () => { state.rollbacks++; if (state.failRollback) throw new Error("rollback failed"); state.staged = structuredClone(state.rows); state.stagedDefinitionVersion = state.definitionVersion; },
   } as unknown as sql.Transaction;
   const repository = createParameterRepository({ getPool: async () => ({ request: () => request() }) as unknown as sql.ConnectionPool,
     createTransaction: () => tx, createRequest: () => request(true), snapshotVersion: async () => { state.snapshots++; return 1; } });

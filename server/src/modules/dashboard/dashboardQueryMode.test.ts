@@ -83,6 +83,19 @@ for (const fault of ["pending", "parameters", "owner", "station", "policy", "dev
     await assert.rejects(f.service.change(1, 1, 1, fault === "version" ? "0".repeat(64) : sourceVersion(f.state()), true));
     assert.deepEqual(f.state(), before); assert.equal(f.credentials(), "old-hash");
   });
+test("PRIMARY must be converted before Query-only preflight or activation", async () => {
+  const f = fixture();
+  f.state().dashboard.maxRows = null;
+  const before = structuredClone(f.state());
+  const checked = await f.service.preflight(1, 1, 1);
+  assert.equal(checked.ready, false);
+  assert.ok(checked.checks.some(c => c.name === "primaryConversion" && !c.ok && c.code === "QUERY_SOURCE_CONVERSION_REQUIRED"));
+  await assert.rejects(f.service.change(1, 1, 1, sourceVersion(f.state()), true), {
+    code: "QUERY_SOURCE_CONVERSION_REQUIRED",
+  });
+  assert.deepEqual(f.state(), before);
+  assert.equal(f.credentials(), "old-hash");
+});
 test("mandatory audit failure rolls back mode and credential invalidation", async () => {
   const f = fixture(), before = structuredClone(f.state()); f.control.auditFailure = true;
   await assert.rejects(f.service.change(1, 1, 1, sourceVersion(f.state()), true));
@@ -97,6 +110,22 @@ test("credential issuance independently checks the delegator and commits only af
   f.control.auditFailure = false;
   const issued = await f.service.issue(1, 7, 1, 1, sourceVersion(f.state()));
   assert.match(issued.token, /^[A-Za-z0-9_-]{43}$/); assert.notEqual(f.credentials(), issued.token);
+});
+test("disable invalidates issued device credential and never returns another token", async () => {
+  const f = fixture();
+  const enabled = await f.service.change(1, 1, 1, sourceVersion(f.state()), true);
+  assert.equal(enabled.deviceCredentialsInvalidated, true);
+  const issued = await f.service.issue(1, 7, 1, 1, sourceVersion(f.state()));
+  const priorHash = f.credentials();
+  assert.notEqual(priorHash, issued.token);
+  const stopped = await f.service.change(1, 1, 1, sourceVersion(f.state()), false);
+  assert.equal(stopped.mode, "QUERY_ONLY_DISABLED");
+  assert.equal(stopped.deviceCredentialsInvalidated, true);
+  assert.notEqual(f.credentials(), priorHash);
+  assert.equal("token" in stopped, false);
+  await assert.rejects(f.service.issue(1, 7, 1, 1, sourceVersion(f.state())), {
+    code: "QUERY_SOURCE_MODE_NOT_ACTIVATED",
+  });
 });
 test("capability remains off and IsActive alone is never a valid mode", async () => {
   const f = fixture(); f.control.enabled = false;

@@ -41,6 +41,23 @@ export function createQuerySourceRouter(service: ReturnType<typeof createQuerySo
       res.json(await service.disclosure(parsed.data, req.authUser!.id, input.data));
     } catch (error) { failure(error, res, req.id); }
   });
+  router.patch("/:id/query-sources/v1/presentation", async (req, res) => {
+    try {
+      const parsed = id.safeParse(req.params.id);
+      const input = z.object({
+        expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),
+        name: z.string().trim().min(1).max(200),
+        description: z.string().trim().max(1000).nullable(),
+        displayMode: z.enum(["TABLE", "BIG_SCREEN"]),
+        displayTitle: z.string().trim().max(200).nullable(),
+        showClock: z.boolean(),
+        showPageNumber: z.boolean(),
+        showCountdown: z.boolean(),
+      }).strict().safeParse(req.body);
+      if (!parsed.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
+      res.json(await service.presentation(parsed.data, req.authUser!.id, input.data));
+    } catch (error) { failure(error, res, req.id); }
+  });
   router.patch("/:id/query-sources/v1/primary", async (req, res) => {
     try {
       const parsed = id.safeParse(req.params.id);

@@ -1,19 +1,18 @@
-import type { previewDataset } from "./dataset.service.js";
-import type { syncDatasetColumns } from "./column.repository.js";
-import type { createPatientAuditService } from "./patientAuditConfig.service.js";
-import { withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
+import type sql from "mssql";
+import type { createDatasetDataDelivery } from "./datasetDataDelivery.js";
+import { QueryDeliveryError, type RuntimeIdentity } from "../queryDefinition/queryDelivery.js";
 
-export function createPatientAuditPreview(deps: { execute: typeof previewDataset; sync: typeof syncDatasetColumns;
-  record: ReturnType<typeof createPatientAuditService>["recordPreview"] }) {
-  return async (input: Parameters<typeof previewDataset>[0], userId: number,
-    context: { ipAddress?: string | null; userAgent?: string | null }) => {
-    // Only this successful executor result can establish aliases. No request-supplied metadata.
-    const result = await deps.execute(input);
-    if (input.datasetId) {
-      await withErrorModule("dataset.columns.sync", () => deps.sync(input.datasetId!, result.columns));
-      await deps.record(input.datasetId, { sqlText: input.sqlText, dataSourceId: input.dataSourceId },
-        result.columns.map(column => column.name), userId, context);
-    }
-    return result;
+/** Admission only: candidates never execute and never sync columns or establish proof.
+ * Successful admission returns the exact saved-definition context, not candidate SQL.
+ */
+export function createPatientAuditPreview(delivery: Pick<ReturnType<typeof createDatasetDataDelivery>, "open">) {
+  return async (input: { datasetId?: number; dataSourceId: number; sqlText: string; expectedDefinitionVersion?: string },
+    identity: (transaction?: sql.Transaction) => Promise<RuntimeIdentity>) => {
+    if (!input.datasetId) throw new QueryDeliveryError("DATASET_CANDIDATE_PREVIEW_UNAVAILABLE");
+    const context = await delivery.open(input.datasetId, identity, "RAW_DESIGN", input.expectedDefinitionVersion);
+    if (input.sqlText !== context.dataset.sqlText || input.dataSourceId !== context.dataset.dataSourceId)
+      throw new QueryDeliveryError("DATASET_CANDIDATE_PREVIEW_UNAVAILABLE");
+    await context.revalidate();
+    return context;
   };
 }

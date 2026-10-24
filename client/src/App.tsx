@@ -1,3 +1,4 @@
+import { MaskTemplatesPage } from "./pages/MaskTemplatesPage";
 import { BarChart3, ClipboardList, Database, FileCheck2, FileSpreadsheet, LayoutDashboard, LogOut, PanelsTopLeft, Settings, ShieldCheck } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes } from "react-router-dom";
@@ -5,6 +6,7 @@ import { ProtectedRoute } from "./auth/ProtectedRoute";
 import { useAuth } from "./auth/AuthContext";
 import { apiRequest } from "./api/client";
 import { AdminUsersPage } from "./pages/AdminUsersPage";
+import { DatasetSecurityScopesPage } from "./pages/DatasetSecurityScopesPage";
 import { AuditLogPage } from "./pages/AuditLogPage";
 import { ChangePasswordPage } from "./pages/ChangePasswordPage";
 import { DataSourcesPage } from "./pages/DataSourcesPage";
@@ -33,6 +35,7 @@ type DashboardDeviceAlert = {
 };
 
 const modules = [
+  { title: "Dataset 負責人指派", description: "逐 Dataset 指派或撤銷 Owner 與 Reviewer。", icon: ShieldCheck, permission: "MANAGE_DATASET_SECURITY_SCOPE", path: "/admin/dataset-security" },
   { title: "查詢功能", description: "使用已發布且已授權的查詢與報表。", icon: BarChart3, permission: "VIEW_QUERY", path: "/queries" },
   { title: "儀表板", description: "播放目前帳號可使用的即時 Dashboard。", icon: LayoutDashboard, permission: "VIEW_QUERY", path: "/dashboards" },
   { title: "查詢設計", description: "建立 Dataset、SQL 與安全查詢參數。", icon: PanelsTopLeft, permission: "DESIGN_QUERY", path: "/designer/datasets" },
@@ -43,6 +46,7 @@ const modules = [
   { title: "共用工作站管理", description: "登記及停用護理站共用平板。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/shared-workstations" },
   { title: "權限管理", description: "使用角色與使用者權限控制功能。", icon: ShieldCheck, permission: "MANAGE_USERS", path: "/admin/users" },
   { title: "稽核紀錄", description: "查看查詢與匯出的稽核紀錄。", icon: ClipboardList, permission: "VIEW_AUDIT", path: "/admin/audit" },
+  { title: "敏感欄位範本", description: "維護可手動套用的 Dataset 遮蔽建議。", icon: Settings, permission: "MANAGE_SETTINGS", path: "/admin/mask-templates" },
   { title: "系統設定", description: "設定機構名稱與平台顯示文字。", icon: Settings, permission: "MANAGE_SETTINGS", path: "/admin/settings" },
 ];
 
@@ -175,6 +179,8 @@ export default function App() {
       <Route path="/setup" element={<SetupPage />} />
       <Route path="/display/dashboards/:id" element={<DashboardDisplayPage />} />
       <Route element={<ProtectedRoute />}>
+        <Route path="/admin/mask-templates" element={<PermissionRoute permission="MANAGE_SETTINGS"><MaskTemplatesPage /></PermissionRoute>} />
+        <Route path="/admin/dataset-security" element={<PermissionRoute permission="MANAGE_DATASET_SECURITY_SCOPE"><DatasetSecurityScopesPage /></PermissionRoute>} />
         <Route path="/" element={<HomePage />} />
         <Route path="/account/password" element={<ChangePasswordPage />} />
         <Route path="/admin/shared-workstations" element={<PermissionRoute permission="MANAGE_USERS"><SharedWorkstationsPage /></PermissionRoute>} />

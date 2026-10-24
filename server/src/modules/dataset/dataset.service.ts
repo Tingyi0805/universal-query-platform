@@ -7,8 +7,24 @@ import { compileQuery } from "../../query/queryCompiler.js";
 import { detectParameterNames, runtimeParameterDefinitions } from "./parameterSync.js";
 import type { QueryResult } from "../../query/query.types.js";
 import { getDataset } from "./dataset.repository.js";
-import { listDatasetParameters } from "./parameter.repository.js";
+import { listDatasetParameters, type DatasetParameterRecord } from "./parameter.repository.js";
 import { coerceRuntimeParameters } from "./parameter.service.js";
+
+/** Pure fixed-option projection; never follows a Dataset binding. */
+export function fixedParameterOptions(parameter: DatasetParameterRecord): Array<{ value: unknown; label: string }> {
+  if (parameter.optionMode === "NONE") return [];
+  if (parameter.optionMode !== "FIXED") throw new Error("PARAMETER_LOOKUP_REQUIRES_AUTHORIZED_DELIVERY");
+  let parsed: unknown;
+  try { parsed = JSON.parse(parameter.fixedOptionsJson ?? "[]"); }
+  catch { throw new Error("PARAMETER_OPTIONS_INVALID"); }
+  if (!Array.isArray(parsed)) throw new Error("PARAMETER_OPTIONS_INVALID");
+  return parsed.map(item => {
+    if (item && typeof item === "object" && "value" in item) {
+      return { value: item.value, label: item.label == null ? String(item.value) : String(item.label) };
+    }
+    return { value: item, label: String(item) };
+  });
+}
 
 export type DatasetServiceDependencies = {
   getDataset: typeof getDataset;
@@ -90,44 +106,9 @@ export function createDatasetService(deps: DatasetServiceDependencies) {
     const parameter = definitions.find((item) => item.name === parameterName);
     if (!parameter) throw new Error("PARAMETER_NOT_FOUND");
 
-    if (parameter.optionMode === "NONE") return [];
-
-    if (parameter.optionMode === "FIXED") {
-      const parsed = JSON.parse(parameter.fixedOptionsJson ?? "[]");
-      if (!Array.isArray(parsed)) throw new Error("PARAMETER_OPTIONS_INVALID");
-
-      return parsed.map((item) => {
-        if (item && typeof item === "object" && "value" in item) {
-          const objectItem = item as { value: unknown; label?: unknown };
-          return {
-            value: objectItem.value,
-            label: objectItem.label == null ? String(objectItem.value) : String(objectItem.label),
-          };
-        }
-        return { value: item, label: String(item) };
-      });
-    }
-
-    if (!parameter.lookupDatasetId || !parameter.lookupValueField || !parameter.lookupLabelField) {
-      throw new Error("PARAMETER_LOOKUP_NOT_CONFIGURED");
-    }
-
-    const lookupDataset = await withErrorModule("dataset.load", () => deps.getDataset(parameter.lookupDatasetId!));
-    if (!lookupDataset) throw new Error("DATASET_NOT_FOUND");
-    const lookupSaved = await withErrorModule("dataset.parameters.load", () => deps.listDatasetParameters(parameter.lookupDatasetId!));
-    const lookupDefinitions = await withErrorModule("dataset.parameters.validate", async () => runtimeParameterDefinitions(lookupDataset.sqlText, lookupSaved));
-    if (lookupDefinitions.some((item) => item.isRequired && item.defaultValue == null)) {
-      throw new Error("PARAMETER_LOOKUP_REQUIRES_INPUT");
-    }
-
-    const result = await executeSavedDataset(parameter.lookupDatasetId, {}, 500);
-
-    return result.rows.map((row) => ({
-      value: row[parameter.lookupValueField!],
-      label: row[parameter.lookupLabelField!] == null
-        ? String(row[parameter.lookupValueField!] ?? "")
-        : String(row[parameter.lookupLabelField!]),
-    }));
+    // No identity/source policy is available in this low-level resolver.
+    // Dataset-backed options must use the authorized delivery coordinator.
+    return fixedParameterOptions(parameter);
   }
 
   return { previewDataset, executeSavedDataset, getParameterOptions };

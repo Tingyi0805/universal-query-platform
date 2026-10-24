@@ -27,7 +27,7 @@ export function createQueryCsv(
     .filter((column) => column.isVisible && resultNames.has(column.columnName))
     .sort((a, b) => a.displayOrder - b.displayOrder);
 
-  const columns = configured.length > 0
+  const columns = reportColumns !== undefined
     ? configured.map((column) => ({
         columnName: column.columnName,
         displayLabel: column.displayLabel,

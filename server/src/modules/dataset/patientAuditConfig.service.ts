@@ -1,3 +1,4 @@
+import type sql from "mssql";
 import { createHash } from "node:crypto";
 import { nextConfigurationVersion, parseConfigurationVersion } from "../securityContract/securityContract.js";
 import type { PatientAuditKeyring } from "../audit/patientAuditKeyring.js";
@@ -17,7 +18,7 @@ export interface PatientAuditTransaction {
   metadata(id: number, value: PatientMetadata | null): Promise<void>;
   audit(id: number, userId: number, config: PatientConfig, context: { ipAddress?: string | null; userAgent?: string | null }): Promise<void>;
 }
-export interface PatientAuditStore { transaction<T>(run: (tx: PatientAuditTransaction) => Promise<T>): Promise<T> }
+export interface PatientAuditStore { transaction<T>(run: (tx: PatientAuditTransaction) => Promise<T>, transaction?: sql.Transaction): Promise<T> }
 export const definitionHash = (definition: AuditDefinition) => createHash("sha256")
   .update(JSON.stringify([definition.dataSourceId, definition.sqlText])).digest("hex");
 
@@ -74,11 +75,11 @@ export function createPatientAuditService(store: PatientAuditStore, keyring: () 
       }
       await tx.metadata(id, metadata);
     }),
-    dashboardState: (id: number) => store.transaction(async tx => {
+    dashboardState: (id: number, transaction?: sql.Transaction) => store.transaction(async tx => {
       const state = await tx.read(id); const keys = keyStatus();
       const view = describePatientState(state, keys.available);
       return { ...view, fingerprint: createHash("sha256").update(JSON.stringify([state.config, state.metadata, definitionHash(state.definition), state.nameColumns, keys])).digest("hex") };
-    }),
+    }, transaction),
     requireDisclosure: (id: number) => store.transaction(async tx => {
       const state = await tx.read(id);
       const view = describePatientState(state, keyStatus().available);

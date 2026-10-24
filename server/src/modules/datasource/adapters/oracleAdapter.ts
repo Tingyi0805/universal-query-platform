@@ -3,6 +3,8 @@ import type { DataSourceAdapter, ExecuteQueryInput } from "./datasourceAdapter.j
 import type { ConnectionTestResult, DataSourceConfig } from "../datasource.types.js";
 import type { QueryResult } from "../../../query/query.types.js";
 import { ensureOracleClientInitialized, getOracleRuntimeDiagnostics } from "./oracleClient.js";
+import { acquireDescriptionConnection, candidateDescription, compileDescription, compileUnboundDescription, isUnboundDescription, descriptionDeadline,
+  descriptionError, QueryDescriptionError, type ColumnDescribeInput } from "../../../query/queryDescription.js";
 
 function buildConnectString(config: DataSourceConfig): string {
   const target = config.oracleServiceName?.trim();
@@ -24,7 +26,52 @@ async function openConnection(config: DataSourceConfig) {
   });
 }
 
+/** Thin metadata requires 12.1+, while Thick metadata supports 11.2+ when
+ * the installed Oracle Client and server combination is compatible.
+ * This checks version only; connection/getStatementInfo capability checks remain mandatory. */
+export function supportsOracleDescriptionServer(thin: boolean, serverVersion: number): boolean {
+  return Number.isFinite(serverVersion) &&
+    serverVersion >= (thin ? 1201000000 : 1102000000);
+}
+
 export class OracleAdapter implements DataSourceAdapter {
+  async describeQuery(config: DataSourceConfig, input: ColumnDescribeInput) {
+    const compiled = isUnboundDescription(input) ? compileUnboundDescription(input, "ORACLE") : compileDescription(input, "ORACLE");
+    const expectedNames = "parameterNames" in compiled ? compiled.parameterNames : [];
+    let connection: any;
+    try {
+      ensureOracleClientInitialized();
+      // This capability is gated to the supported 6.x driver contract. New major
+      // versions require review; no assumption based on a method name alone.
+      const version = /^6\.(\d+)\.\d+$/.exec(oracledb.versionString);
+      if (!version || Number(version[1]) < 8 || typeof oracledb.thin !== "boolean"
+        || (!oracledb.thin && !(oracledb.oracleClientVersion >= 1801000000))) {
+        throw new QueryDescriptionError("DESCRIPTION_UNSUPPORTED");
+      }
+      connection = await acquireDescriptionConnection(() => openConnection(config), c => c.close(), input.timeoutSec * 1000);
+      if (typeof connection.getStatementInfo !== "function" || typeof connection.break !== "function"
+        || connection.thin !== oracledb.thin || !supportsOracleDescriptionServer(connection.thin, connection.oracleServerVersion)) {
+        throw new QueryDescriptionError("DESCRIPTION_UNSUPPORTED");
+      }
+      connection.callTimeout = input.timeoutSec * 1000;
+      const info = await descriptionDeadline<any>(connection.getStatementInfo(compiled.sql), input.timeoutSec * 1000,
+        () => connection.break());
+      if (!info || info.statementType !== oracledb.STMT_TYPE_SELECT || !Array.isArray(info.bindNames)
+        || info.bindNames.length > 10000 || new Set(info.bindNames).size !== expectedNames.length
+        || info.bindNames.some((name: unknown) => typeof name !== "string" || !expectedNames.includes(name)) || !Array.isArray(info.metaData)) {
+        throw new QueryDescriptionError("DESCRIPTION_METADATA_INVALID");
+      }
+      return candidateDescription("ORACLE_STATEMENT_INFO", info.metaData.map((column: any, index: number) => ({
+        name: column?.name, dataType: column?.dbTypeName, ordinal: index + 1,
+      })));
+    } catch (error) { throw descriptionError(error); }
+    finally {
+      if (connection) {
+        try { await connection.close(); } catch { throw new QueryDescriptionError("DESCRIPTION_CLEANUP_FAILED"); }
+      }
+    }
+  }
+
   async testConnection(config: DataSourceConfig): Promise<ConnectionTestResult> {
     const connection = await openConnection(config);
 

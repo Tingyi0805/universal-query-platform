@@ -9,11 +9,11 @@ import { createPatientAuditService, PatientAuditError, type PatientAuditStore } 
 type Dependencies = { getPool: typeof getPlatformDbPool; createTransaction: (pool: sql.ConnectionPool) => sql.Transaction;
   createRequest: (tx: sql.Transaction) => sql.Request; audit: typeof writeAuditEvent };
 export function createPatientAuditStore(deps: Dependencies): PatientAuditStore {
-  return { async transaction(run) {
-    const pool = await deps.getPool();
-    if (!pool) throw new PatientAuditError("SECURITY_SCHEMA_REQUIRED", 503);
-    const tx = deps.createTransaction(pool);
-    await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  return { async transaction(run, existingTransaction) {
+    const pool = existingTransaction ? null : await deps.getPool();
+    if (!existingTransaction && !pool) throw new PatientAuditError("SECURITY_SCHEMA_REQUIRED", 503);
+    const tx = existingTransaction ?? deps.createTransaction(pool!);
+    if (!existingTransaction) await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     const request = () => deps.createRequest(tx);
     try {
       await request().query("SET XACT_ABORT ON");
@@ -62,8 +62,8 @@ export function createPatientAuditStore(deps: Dependencies): PatientAuditStore {
             parameters: { version: config.version, patientKeyColumn: config.patientKeyColumn, isEnabled: config.isEnabled }, ...context }, tx);
         },
       });
-      await tx.commit(); return result;
-    } catch (error) { try { await tx.rollback(); } catch { /* preserve original error; never return success */ } throw error; }
+      if (!existingTransaction) await tx.commit(); return result;
+    } catch (error) { try { if (!existingTransaction) await tx.rollback(); } catch { /* preserve original error; never return success */ } throw error; }
   } };
 }
 export const patientAuditService = createPatientAuditService(createPatientAuditStore({ getPool: getPlatformDbPool,
