@@ -68,6 +68,12 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
   const created=await templates.save(actor,null,input),template=created.templates.find(t=>t.id===created.id)!;
   const use=new sql.Transaction(app);await use.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);await recordTemplateApplications(use,79,next.sensitivityVersion,303,[{columnName:"NAME",templateId:template.id,templateRevision:template.revision}],[{columnName:"NAME",deviceMaskMode:"FULL"}]);await use.commit();
   await templates.save(actor,template.id,{...input,expectedVersion:template.version,isActive:false});
+  await assert.rejects(templates.save(actor,template.id,{...input,expectedVersion:template.version}),{code:"MASK_TEMPLATE_VERSION_CONFLICT"});
+  const inactive=(await templates.list(actor)).find(t=>t.id===template.id)!;
+  await root.request().query(`DENY INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);
+  try{await assert.rejects(templates.save(actor,template.id,{...input,expectedVersion:inactive.version,isActive:true}));}
+  finally{await root.request().query(`GRANT INSERT ON OBJECT::uqp.AuditLog TO [${login}]`);}
+  const rolledBack=(await templates.list(actor)).find(t=>t.id===template.id)!;assert.equal(rolledBack.version,inactive.version);assert.equal(rolledBack.revision,inactive.revision);assert.equal(rolledBack.isActive,false);
   assert.equal((await store.get(79,actor)).version,published.version);assert.equal((await templates.list(actor)).find(t=>t.id===created.id)!.uses[0]!.State,"NEEDS_RECONFIRMATION");
   const again=new sql.Transaction(app);await again.begin();await assert.rejects(recordTemplateApplications(again,79,next.sensitivityVersion,303,[{columnName:"NAME",templateId:template.id,templateRevision:template.revision}],[{columnName:"NAME",deviceMaskMode:"FULL"}]));await again.rollback();
   const deny=async(tx:sql.Transaction)=>({...await actor(tx),permissions:["DESIGN_QUERY"]});await assert.rejects(store.save(79,deny,command(await store.get(79))));await assert.rejects(templates.save(deny,null,input));

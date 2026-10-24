@@ -688,3 +688,16 @@ test("confirmed all-deny public policy cannot reveal row counts or run SQL",asyn
  const f=userFixture();f.deps.getPublicDisplay=async()=>({status:"CONFIRMED",sensitivityVersion:1,policy:{confirmed:true,sensitivityVersion:1,grants:[]}}) as never;
  await assert.rejects(f.service.page(1,"PRIMARY",userSubject(),{page:1}),{code:"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED"});assert.equal(f.control.executions.length,0);
 });
+
+test("two Dashboards sharing one Dataset require re-confirmation together and use the same updated mask",async()=>{
+ const f=userFixture(),original=f.deps.loadBinding;let confirmedVersion=1,epoch=1,symbol="#";
+ f.deps.loadBinding=async(id,key)=>({...await original(id,key),dashboardId:id});
+ f.deps.getSensitivity=async()=>({version:f.control.policyVersion,columns:[{columnName:"NAME",sensitivityType:"OTHER",deviceMaskMode:"CUSTOM",customMask:{prefix:1,suffix:1,symbol}},{columnName:"MRN",sensitivityType:"OTHER",deviceMaskMode:"OMIT"}]});
+ f.deps.getPublicDisplay=async()=>({status:confirmedVersion===f.control.policyVersion?"CONFIRMED":"STALE",version:String(epoch),sensitivityVersion:confirmedVersion,policy:{confirmed:true,sensitivityVersion:confirmedVersion,grants:[{columnName:"NAME",permitted:true}]}}) as never;
+ const a=await f.service.page(1,"PRIMARY",userSubject(),{page:1}),b=await f.service.page(2,"PRIMARY",userSubject(),{page:1});assert.deepEqual(a.result.rows,b.result.rows);assert.equal(a.result.rows[0]!.NAME,"測###甲");
+ symbol="*";f.control.policyVersion++;
+ for(const id of [1,2])await assert.rejects(f.service.page(id,"PRIMARY",userSubject(),{page:1}),{code:"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED"});
+ // Only this synthetic provider's explicit re-confirmation advances its policy.
+ confirmedVersion=f.control.policyVersion;epoch++;
+ for(const [id,old] of [[1,a],[2,b]] as const){await assert.rejects(f.service.page(id,"PRIMARY",userSubject(),{page:1,snapshotId:old.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});assert.equal((await f.service.page(id,"PRIMARY",userSubject(),{page:1})).result.rows[0]!.NAME,"測***甲");}
+});
