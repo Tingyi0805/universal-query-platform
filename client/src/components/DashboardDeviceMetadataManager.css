@@ -1,0 +1,17 @@
+.uqp-device-manager { min-width: 0; }
+.uqp-device-manager > p { line-height: 1.7; overflow-wrap: anywhere; }
+.uqp-device-manager > button { margin: 0 10px 12px 0; }
+.uqp-device-manager > ul { padding-left: 22px; }
+.uqp-device-manager > ul li { line-height: 1.8; padding-bottom: 8px; overflow-wrap: anywhere; }
+.uqp-device-manager > ul button { margin: 4px 8px 4px 0; }
+.uqp-device-fieldset { min-width: 0; width: 100%; padding: clamp(14px,2vw,24px); border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; }
+.uqp-device-fieldset legend { font-weight: 700; padding: 0 8px; }
+.uqp-device-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,240px),1fr)); gap: 18px 20px; align-items: start; }
+.uqp-device-fields > label:not(.uqp-device-checkbox) { display: flex; flex-direction: column; gap: 7px; min-width: 0; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.uqp-device-fields > label:not(.uqp-device-checkbox) > input,
+.uqp-device-fields > label:not(.uqp-device-checkbox) > select { width: 100%; min-width: 0; min-height: 42px; padding: 8px 10px; border: 1px solid #aeb8c7; border-radius: 6px; box-sizing: border-box; font: inherit; }
+.uqp-device-fields > label.uqp-device-checkbox { display: flex; align-items: center; gap: 9px; min-width: 0; min-height: 42px; align-self: end; overflow-wrap: anywhere; }
+.uqp-device-checkbox input[type=checkbox] { flex: 0 0 auto; width: 17px; height: 17px; }
+.uqp-device-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
+.uqp-device-actions button { min-height: 42px; padding: 8px 18px; max-width: 100%; white-space: normal; }
+@media (max-width: 600px) { .uqp-device-fields { grid-template-columns: minmax(0,1fr); } .uqp-device-actions button { width: 100%; } }

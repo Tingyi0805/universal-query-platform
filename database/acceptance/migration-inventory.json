@@ -387,5 +387,30 @@
       910,
       913
     ]
+  },
+  {
+    "id": 920,
+    "file": "920_dataset_definition_rowversion.sql",
+    "sha256": "f8d6b9d50881c12407d453f1d3ccf4e7054efd931c2f19f8cb1f7316b791880b",
+    "requires": [
+      3,
+      907,
+      910,
+      919
+    ]
+  },
+  {
+    "id": 921,
+    "file": "921_datasource_native_parameter_versions.sql",
+    "sha256": "db373cf73186869d814d848fb1e8444fd03e8cf7729b327d21f66d87e8fe3f2e",
+    "requires": [
+      2,
+      3,
+      4,
+      9,
+      10,
+      13,
+      920
+    ]
   }
 ]

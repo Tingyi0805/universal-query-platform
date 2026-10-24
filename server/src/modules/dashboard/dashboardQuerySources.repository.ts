@@ -77,6 +77,9 @@ return {
             parameters: parameters(dashboard.ParametersJson), updatedAtUtc: new Date(dashboard.UpdatedAtUtc).toISOString(),
             maxRows: dashboard.QuerySourceMaxRows == null ? null : Number(dashboard.QuerySourceMaxRows),
             refreshSeconds: Number(dashboard.RefreshSeconds), pageSize: Number(dashboard.PageSize), pageSeconds: Number(dashboard.PageSeconds) },
+          presentation: { name: String(dashboard.Name), description: dashboard.Description == null ? null : String(dashboard.Description),
+            displayMode: String(dashboard.DisplayMode) as "TABLE" | "BIG_SCREEN", displayTitle: dashboard.DisplayTitle == null ? null : String(dashboard.DisplayTitle),
+            showClock: Boolean(dashboard.ShowClock), showPageNumber: Boolean(dashboard.ShowPageNumber), showCountdown: Boolean(dashboard.ShowCountdown) },
           sources: sources.map(s => ({ id: Number(s.Id), sourceKey: String(s.SourceKey), datasetId: Number(s.DatasetId),
             queryDefinitionId: s.QueryDefinitionId == null ? null : Number(s.QueryDefinitionId), queryBindingRevision: Number(s.QueryBindingRevision),
             parameters: parameters(s.ParametersJson), refreshSeconds: Number(s.RefreshSeconds), pageSize: Number(s.PageSize),
@@ -118,6 +121,20 @@ return {
           WHERE Id=@id AND DashboardId=@dashboardId AND SourceKey=@sourceKey`);
       },
       writeLayout: (id, profiles) => writeDashboardLayout(transaction, id, profiles, deps.createRequest),
+      async updatePresentation(id, presentation) {
+        await scoped(id)
+          .input("name", sql.NVarChar(200), presentation.name)
+          .input("description", sql.NVarChar(1000), presentation.description)
+          .input("displayMode", sql.NVarChar(20), presentation.displayMode)
+          .input("displayTitle", sql.NVarChar(200), presentation.displayTitle)
+          .input("showClock", sql.Bit, presentation.showClock)
+          .input("showPageNumber", sql.Bit, presentation.showPageNumber)
+          .input("showCountdown", sql.Bit, presentation.showCountdown)
+          .query(`UPDATE uqp.Dashboard SET Name=@name,Description=@description,DisplayMode=@displayMode,
+            DisplayTitle=@displayTitle,ShowClock=@showClock,ShowPageNumber=@showPageNumber,
+            ShowCountdown=@showCountdown,UpdatedAtUtc=SYSUTCDATETIME()
+            WHERE Id=@dashboardId AND IsActive=0 AND QueryMode <> 'QUERY_ONLY'`);
+      },
       async updatePrimary(id, source) {
         await scoped(id).input("queryId", sql.BigInt, source.queryDefinitionId)
           .input("parameters", sql.NVarChar(sql.MAX), JSON.stringify(source.parameters))

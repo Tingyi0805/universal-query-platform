@@ -9,7 +9,7 @@ import { QuerySourceError } from "./dashboardQuerySources.service.js";
 const rawName = "合成患者甲", rawMrn = "SYNTHETIC987654";
 async function fixture(run: (f: { state: any; request: (path: string) => Promise<{ status: number; body: any; cache: string | null }> }) => Promise<void>) {
   const state = { schemaMissing: false, approvalEpoch: "rowversion-1", session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] }, allowed: true, published: true,
-    mrnMode: undefined as string | undefined, failSupplemental: false, managed: false, sqlFailure: false, policyFailure: false, auditFailure: false, missingAudit: false, calls: 0, afterExecute: () => {}, afterAudit: () => {}, audits: [] as any[],
+    mrnMode: undefined as string | undefined, failSupplemental: false, managed: false, sqlFailure: false, policyFailure: false, auditFailure: false, missingAudit: false, patientConfigured: true, calls: 0, afterExecute: () => {}, afterAudit: () => {}, audits: [] as any[],
     policy: { version: 1, columns: [
       { columnName: "NAME", sensitivityType: "NAME", deviceMaskMode: "FULL" },
       { columnName: "MRN", sensitivityType: "MRN", deviceMaskMode: "CUSTOM", customMask: { prefix: 0, suffix: 2, symbol: "*" } },
@@ -31,6 +31,7 @@ async function fixture(run: (f: { state: any; request: (path: string) => Promise
       state.calls++; if (state.sqlFailure || (state.failSupplemental && parameters.WARD)) throw new Error("synthetic SQL Bind password"); state.afterExecute();
       return { columns: ["NAME", "MRN", "SECRET", "ROOM", "UNAPPROVED"].map(name => ({ name })), rows: [{ NAME: rawName, MRN: rawMrn, SECRET: "synthetic-diagnosis", ROOM: "OR01", UNAPPROVED: "private-note" }], rowCount: 1, elapsedMs: 1, truncated: false };
     },
+    getPatientAuditConfig: async () => state.patientConfigured ? { isEnabled: true, patientKeyColumn: "MRN" } : null,
     audit: async input => { if (state.auditFailure) throw new Error("synthetic SQL Bind password"); state.audits.push(input); state.afterAudit(); return state.missingAudit ? null : 1; },
   };
   const app = express(); app.use(express.json());
@@ -63,6 +64,15 @@ for (const path of ["/1/preview", "/1/data-sources/WARD/preview"]) {
     f.state[stage] = () => { f.state.allowed = false; }; assert.equal((await f.request(path)).status, 403);
   }));
 }
+test("ordinary Dashboard preview with no patient audit returns masked data", () => fixture(async f => {
+  f.state.patientConfigured = false; f.state.missingAudit = true;
+  for (const path of ["/1/preview", "/1/data-sources/WARD/preview"]) {
+    const response = await f.request(path);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.disclosureId, null);
+    assert.equal(response.body.result.rows[0].NAME, "○○○○");
+  }
+}));
 test("conflicting policy blocks before SQL despite Dashboard raw approval", () => fixture(async f => {
   f.state.policy.columns.push({ columnName: "name", sensitivityType: "OTHER", deviceMaskMode: "NONE" }); const result = await f.request("/1/preview");
   assert.equal(result.status, 503); assert.equal(result.body.error.code, "DASHBOARD_SENSITIVITY_POLICY_INVALID"); assert.equal(f.state.calls, 0);
@@ -88,8 +98,8 @@ for (const path of ["/1/preview", "/1/data-sources/WARD/preview"]) test(`${path}
   // State drives the real route policy, not a pre-masked response.
   f.state.mrnMode = "INHERIT";
   let r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, "*************54");
-  f.state.mrnMode = "FULL"; r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, "○○○○");
-  f.state.mrnMode = "OMIT"; r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, undefined);
+  f.state.mrnMode = "FULL"; r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, "*************54");
+  f.state.mrnMode = "OMIT"; r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, "*************54");
   f.state.mrnMode = "INHERIT"; f.state.policy.columns = f.state.policy.columns.filter((c: any) => c.columnName !== "MRN"); f.state.policy.version++;
   r = await f.request(path); assert.equal(r.body.result.rows[0].MRN, undefined);
   assert.ok(!JSON.stringify(r.body).includes(rawMrn));

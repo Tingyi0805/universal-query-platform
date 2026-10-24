@@ -281,3 +281,93 @@
     grid-template-columns: 1fr;
   }
 }
+
+
+/* Sensitivity options: override generic editor label/grid and input width rules. */
+.designer-editor .dataset-mask-options {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+.designer-editor .dataset-mask-options .dataset-mask-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  width: auto;
+  max-width: 100%;
+  font-weight: 600;
+  cursor: pointer;
+}
+.designer-editor .dataset-mask-options .dataset-mask-option input[type="radio"] {
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 18px;
+  accent-color: #2261ba;
+}
+
+
+/* Batch policy selection keeps native checkboxes aligned despite generic form styles. */
+.designer-editor .dataset-batch-fields { min-width: 0; }
+.designer-editor .dataset-batch-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+.designer-editor .dataset-batch-fields .dataset-batch-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  width: auto;
+  min-width: 0;
+  gap: 8px;
+  cursor: pointer;
+}
+.designer-editor .dataset-batch-fields .dataset-batch-option input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  margin: 0;
+  padding: 0;
+}
+
+/* Dataset public display: table checkbox and acknowledgement checkbox must not
+   inherit the 100%-width text-input and grid-label rules from .designer-editor. */
+.designer-editor .dataset-public-display-policy { min-width: 0; }
+.designer-editor .dataset-public-policy-table-wrap { width: 100%; min-width: 0; overflow-x: auto; margin: 14px 0; }
+.designer-editor .dataset-public-policy-table { width: 100%; border-collapse: collapse; table-layout: auto; }
+.designer-editor .dataset-public-policy-table th,
+.designer-editor .dataset-public-policy-table td { padding: 10px 14px; border-bottom: 1px solid #dfe5ee; text-align: left; vertical-align: middle; overflow-wrap: anywhere; }
+.designer-editor .dataset-public-policy-table .dataset-public-policy-check-column,
+.designer-editor .dataset-public-policy-table .dataset-public-policy-check-cell { width: 160px; text-align: center; }
+.designer-editor .dataset-public-policy-table .dataset-public-policy-check-cell input[type="checkbox"],
+.designer-editor .dataset-public-policy-confirm input[type="checkbox"] {
+  appearance: auto;
+  width: 18px;
+  height: 18px;
+  min-width: 18px;
+  margin: 0;
+  padding: 0;
+  flex: 0 0 18px;
+  vertical-align: middle;
+}
+.designer-editor .dataset-public-policy-confirm {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  max-width: 100%;
+  margin: 14px 0;
+  font-weight: 600;
+  line-height: 1.6;
+  cursor: pointer;
+}
+@media (max-width: 600px) {
+  .designer-editor .dataset-public-policy-table .dataset-public-policy-check-column,
+  .designer-editor .dataset-public-policy-table .dataset-public-policy-check-cell { width: 128px; }
+}

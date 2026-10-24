@@ -2,10 +2,17 @@ import { securityGuidance } from "../security/securityContracts";
 export type QuerySourceSettings = {
   id?: number; sourceKey: string; queryDefinitionId: number | null; parameters?: Record<string, unknown>;
   refreshSeconds: number; pageSize: number; pageSeconds: number; maxRows: number | null;
-  isEnabled?: boolean; bindingState?: string; errorCode?: string | null;
+  isEnabled?: boolean; bindingState?: string; errorCode?: string | null; requiresConversion?: boolean;
 };
-export type QuerySourceConfiguration = { version: string; dashboardMode?: string; isActive?: boolean; editable: boolean; overCapacity: boolean;
+export type DashboardPresentation = { name: string; description: string | null; displayMode: "TABLE" | "BIG_SCREEN"; displayTitle: string | null; showClock: boolean; showPageNumber: boolean; showCountdown: boolean };
+export type QuerySourceConfiguration = { presentation?: DashboardPresentation; version: string; dashboardMode?: string; isActive?: boolean; editable: boolean; overCapacity: boolean;
   primary: QuerySourceSettings; sources: QuerySourceSettings[] };
+export function trustedConfiguration(value: QuerySourceConfiguration): QuerySourceConfiguration {
+  if (!value || !/^[a-f0-9]{64}$/.test(value.version) || typeof value.editable !== "boolean"
+    || value.primary?.sourceKey !== "PRIMARY" || !Array.isArray(value.sources)
+    || value.sources.some(source => !source || typeof source.sourceKey !== "string" || !Number.isSafeInteger(source.id) || Number(source.id) < 1)) throw new Error("CONFIGURATION_INVALID");
+  return value;
+}
 export function managementError(error: unknown) {
   const code = (error as { code?: unknown })?.code;
   const safe = securityGuidance(error);

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import oracledb from "oracledb";
-import { OracleAdapter, validateOracleBinds } from "./oracleAdapter.js";
+import { OracleAdapter, supportsOracleDescriptionServer, validateOracleBinds } from "./oracleAdapter.js";
 import type { DataSourceConfig } from "../datasource.types.js";
 const config = { oracleServiceName: "SYNTHETIC", queryTimeoutSec: 10 } as DataSourceConfig;
 test("Oracle preserves scalar, native date, null and buffer binds without coercion", () => {
@@ -25,4 +25,12 @@ test("Oracle execution passes typed binds and closes connection after driver fai
   }, close: async () => { closed++; } }));
   await assert.rejects(new OracleAdapter().executeQuery(config, { sql: "SELECT :P FROM DUAL", binds, bindValues: [], maxRows: 1, timeoutSec: 1 }), e => e === failure);
   assert.equal(closed, 1);
+});
+
+test("Oracle metadata version gate admits 11.2 only in Thick mode", () => {
+  assert.equal(supportsOracleDescriptionServer(false, 1102000000), true);
+  assert.equal(supportsOracleDescriptionServer(false, 1101000000), false);
+  assert.equal(supportsOracleDescriptionServer(true, 1102000000), false);
+  assert.equal(supportsOracleDescriptionServer(true, 1201000000), true);
+  assert.equal(supportsOracleDescriptionServer(false, NaN), false);
 });

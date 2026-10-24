@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 const version="a".repeat(64);
 const primary={sourceKey:"PRIMARY",queryDefinitionId:20,parameters:{},refreshSeconds:30,pageSeconds:15,pageSize:10,maxRows:1000};
 async function setup(page:Page) {
-  const state={fail:false,writes:[] as {path:string;body:any}[],config:{version,editable:true,overCapacity:false,primary,sources:[{...primary,id:10,sourceKey:"WARD",queryDefinitionId:null,bindingState:"PENDING_CONVERSION",isEnabled:true}]}};
+  const state={fail:false,writes:[] as {path:string;body:any}[],config:{version,editable:true,isActive:false,dashboardMode:"LEGACY",presentation:{name:"合成看板",description:null,displayMode:"TABLE",displayTitle:"保留標題",showClock:false,showPageNumber:true,showCountdown:false},overCapacity:false,primary,sources:[{...primary,id:10,sourceKey:"WARD",queryDefinitionId:null,bindingState:"PENDING_CONVERSION",isEnabled:true}]}};
   await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic",user:{id:1,username:"synthetic",displayName:"測試",permissions:["DESIGN_QUERY","VIEW_QUERY","EXECUTE_QUERY"]}})));
   await page.route(url=>url.pathname.startsWith("/api/"),async route=>{
     const path=new URL(route.request().url()).pathname;
@@ -20,7 +20,7 @@ async function setup(page:Page) {
   });return state;
 }
 test("source conversion and PRIMARY preserve stable key and conflict draft",async({page})=>{
-  const state=await setup(page);await page.goto("/designer/dashboards");
+  const state=await setup(page);page.on("dialog", dialog => void dialog.accept());await page.goto("/designer/dashboards");
   await page.getByRole("button",{name:"編輯",exact:true}).first().click();
   await page.getByRole("button",{name:"編輯 WARD",exact:true}).click();
   await expect(page.getByLabel("來源代碼",{exact:true})).toBeDisabled();
@@ -32,7 +32,8 @@ test("source conversion and PRIMARY preserve stable key and conflict draft",asyn
   expect(state.writes[0]!.body.upserts[0]).toMatchObject({id:10,sourceKey:"WARD",queryDefinitionId:21});
   expect(state.writes[0]!.body.removals).toEqual([]);
   await expect(page.getByText("SQL SECRET",{exact:true})).toHaveCount(0);
-  await page.getByRole("button",{name:"編輯 PRIMARY",exact:true}).click();state.fail=false;
+  state.fail=false;await page.getByRole("button",{name:"重新載入來源版本",exact:true}).click();
+  await page.getByRole("button",{name:"編輯 PRIMARY",exact:true}).click();
   await page.getByRole("button",{name:"儲存目前來源",exact:true}).click();
   await expect.poll(()=>state.writes.length).toBe(2);expect(state.writes[1]!.path).toMatch(/\/primary$/);
 });

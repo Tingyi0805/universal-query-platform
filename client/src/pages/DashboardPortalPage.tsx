@@ -1,6 +1,6 @@
 import { LayoutDashboard, Maximize2, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./DashboardPortalPage.css";
@@ -19,6 +19,7 @@ type DashboardItem = {
 };
 
 export function DashboardPortalPage() {
+  const navigate = useNavigate();
   const { accessToken } = useAuth();
   const [dashboards, setDashboards] = useState<DashboardItem[]>([]);
   const [searchText, setSearchText] = useState("");
@@ -59,22 +60,8 @@ export function DashboardPortalPage() {
   }, [dashboards, searchText]);
 
   function openPlayback(dashboardId: number) {
-    const popup = window.open("about:blank", "_blank");
-    if (!popup) {
-      setError("瀏覽器封鎖了播放視窗，請允許此網站開啟新視窗後再試一次。");
-      return;
-    }
-
-    const storedAuth = sessionStorage.getItem("uqp.auth");
-    if (storedAuth) {
-      try {
-        popup.sessionStorage.setItem("uqp.auth", storedAuth);
-      } catch {
-        // Login page will return to the requested playback path if handoff fails.
-      }
-    }
-
-    popup.location.replace(`/dashboards/${dashboardId}/display`);
+    // Stay in the authenticated tab. Do not copy JWT/sessionStorage into a popup.
+    navigate(`/dashboards/${dashboardId}/display`);
   }
 
   return (

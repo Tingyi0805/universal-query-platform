@@ -29,11 +29,17 @@ export function datasetApprovalAllowed(mode: string, rule?: { sensitivityType: s
     minimum === "FULL" ? ["INHERIT", "FULL", "OMIT"] : minimum === "NONE" ? ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "INHERIT"] : ["INHERIT", minimum, "FULL", "OMIT"];
   return allowed.includes(mode) && (rule.sensitivityType === "OTHER" || mode !== "NONE");
 }
-export function inheritedMaskSample(rule?: { deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string } | null }): string {
+export function inheritedMaskSample(rule?: { deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string; start?: number; end?: number } | null }): string {
   if (rule?.deviceMaskMode === "OMIT" || !rule) return "欄位不傳送";
   if (rule.deviceMaskMode === "CUSTOM") {
     const value = "0000123456", config = rule.customMask;
     if (!config || !Number.isInteger(config.prefix) || !Number.isInteger(config.suffix) || config.prefix < 0 || config.suffix < 0 || config.prefix > 100 || config.suffix > 100 || Array.from(config.symbol).length !== 1 || /[\r\n\t]/.test(config.symbol)) return "○○○○";
+    if (config.start !== undefined || config.end !== undefined) {
+      if (config.prefix !== 0 || config.suffix !== 0 || !Number.isInteger(config.start) || !Number.isInteger(config.end)
+        || config.start! < 1 || config.end! < config.start! || config.end! > 10000) return "○○○○";
+      if (config.start! > value.length) return config.symbol.repeat(value.length);
+      return Array.from(value).map((char, index) => index + 1 >= config.start! && index + 1 <= config.end! ? config.symbol : char).join("");
+    }
     if (config.prefix + config.suffix >= value.length) return config.symbol.repeat(value.length);
     return value.slice(0, config.prefix) + config.symbol.repeat(value.length - config.prefix - config.suffix) + (config.suffix ? value.slice(-config.suffix) : "");
   }

@@ -1,0 +1,44 @@
+import {useEffect,useState} from "react";
+import {Link} from "react-router-dom";
+import {useAuth} from "../auth/AuthContext";
+import {apiRequest} from "../api/client";
+import {templatePreview,type MaskTemplate} from "../dashboard/maskTemplates";
+const systemModes=[["NONE","不遮蔽","完整顯示；仍須另行核准公開"],["CUSTOM","自訂遮蔽","保留前後碼、遮蔽符號或指定位置"],["FULL","全部遮蔽","欄位值全部遮蔽"],["OMIT","不傳送欄位","欄位不交付前端"]] as const;
+const seededDefaults=[["患者姓名","前後各留 1 碼"],["病歷號","保留後 4 碼"],["電話","前後各留 3 碼"],["身分證字號","不傳送"],["生日","不傳送"],["地址","不傳送"],["住院床號","全部遮蔽"],["診斷資訊","不傳送"]] as const;
+const panelStyle={background:"white",border:"1px solid #d7dfe8",borderRadius:10,padding:22,margin:"18px 0"} as const;
+const labelStyle={display:"grid",gap:7,minWidth:0} as const;
+const inputStyle={width:"100%",boxSizing:"border-box",minHeight:40,padding:"8px 10px",border:"1px solid #aeb8c7",borderRadius:6} as const;
+const initial={name:"",aliases:"",mode:"CUSTOM" as MaskTemplate["mode"],prefix:1,suffix:1,symbol:"○",start:1,end:1,range:false,isActive:true,suggestedPublicAllowed:false};
+export function MaskTemplatesPage(){
+ const {accessToken}=useAuth();const [rows,setRows]=useState<MaskTemplate[]>([]),[form,setForm]=useState(initial),[editing,setEditing]=useState<MaskTemplate|null>(null),[search,setSearch]=useState(""),[filter,setFilter]=useState("ALL"),[busy,setBusy]=useState(false),[message,setMessage]=useState(""),[conflict,setConflict]=useState(false);
+ const read=async()=>{setBusy(true);try{const r=await apiRequest<{templates:MaskTemplate[]}>("/dataset-mask-templates",{},accessToken);setRows(r.templates);setConflict(false);setMessage("");}catch(e){setMessage(e instanceof Error?e.message:"範本不可用");}finally{setBusy(false);}};
+ useEffect(()=>{void read();},[accessToken]);
+ const edit=(t:MaskTemplate)=>{setEditing(t);setConflict(false);setForm({name:t.name,aliases:t.aliases.join("\n"),mode:t.mode,prefix:t.customMask?.prefix??0,suffix:t.customMask?.suffix??0,symbol:t.customMask?.symbol??"○",start:t.customMask?.start??1,end:t.customMask?.end??1,range:t.customMask?.start!==undefined,isActive:t.isActive,suggestedPublicAllowed:t.suggestedPublicAllowed});};
+ const custom=form.mode==="CUSTOM"?form.range?{prefix:0,suffix:0,symbol:form.symbol,start:form.start,end:form.end}:{prefix:form.prefix,suffix:form.suffix,symbol:form.symbol}:null;
+ const save=async()=>{setBusy(true);try{const r=await apiRequest<{templates:MaskTemplate[]}>(`/dataset-mask-templates${editing?`/${editing.id}`:""}`,{method:editing?"PUT":"POST",body:JSON.stringify({name:form.name,aliases:form.aliases.split("\n").map(s=>s.trim()).filter(Boolean),mode:form.mode,customMask:custom,isActive:form.isActive,suggestedPublicAllowed:form.mode==="OMIT"?false:form.suggestedPublicAllowed,expectedVersion:editing?.version??null})},accessToken);setRows(r.templates);setEditing(null);setForm(initial);setMessage("範本已儲存並稽核；已發布 Dataset 的規則及公共政策未變更。");}catch(e){setMessage(e instanceof Error?e.message:"儲存失敗");if((e as {code?:string}).code==="MASK_TEMPLATE_VERSION_CONFLICT")setConflict(true);}finally{setBusy(false);}};
+ return <main className="page-shell" style={{maxWidth:1200,margin:"0 auto",padding:"20px 24px"}}><header className="page-toolbar" style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:20,flexWrap:"wrap",marginBottom:24}}><div style={{minWidth:0,flex:"1 1 460px"}}><h1>敏感欄位範本管理</h1><p className="subtitle" style={{maxWidth:"none"}}>範本只提供建議；Dataset 必須明確套用並儲存。停用不刪除歷史，更新不改動使用中的 Dataset 或自動核准公開。</p></div><Link className="secondary-button link-button" to="/" style={{flex:"0 0 auto"}}>返回首頁</Link></header>
+ <section style={panelStyle} aria-label="系統內建遮蔽模式"><h2>系統內建遮蔽模式</h2><p>這些是系統固定模式，不是已套用的 Dataset 規則，也不能在本頁修改。</p><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:12}}>{systemModes.map(([mode,name,description])=><div key={mode} style={{border:"1px solid #d7dfe8",borderRadius:8,padding:12}}><strong>{name}（{mode}）</strong><p>{description}</p></div>)}</div></section>
+ <section style={panelStyle} aria-label="925 預設範本參考"><h2>925 預設建議範本</h2><p>下列是建置時的預設內容，可能已被修改或停用；實際有效設定以資料庫範本清單為準。</p><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(210px,1fr))",gap:10}}>{seededDefaults.map(([name,rule])=><div key={name} style={{border:"1px solid #d7dfe8",borderRadius:8,padding:12}}><strong>{name}</strong><div>{rule}</div></div>)}</div></section>
+ <section style={panelStyle} aria-label="資料庫範本"><h2>資料庫範本清單</h2><div style={{display:"flex",flexWrap:"wrap",alignItems:"end",gap:16,marginBottom:18}}>
+ <label style={{...labelStyle,flex:"2 1 230px"}}>搜尋範本<input style={inputStyle} value={search} onChange={e=>setSearch(e.target.value)}/></label><label style={{...labelStyle,flex:"1 1 180px"}}>範本狀態<select style={inputStyle} value={filter} onChange={e=>setFilter(e.target.value)}><option value="ALL">全部</option><option value="ACTIVE">啟用</option><option value="INACTIVE">停用</option></select></label>
+ <button type="button" disabled={busy} onClick={()=>{setEditing(null);setForm(initial);setConflict(false);}}>新增範本</button>
+ </div><div style={{overflowX:"auto"}}><table style={{width:"100%",minWidth:780,borderCollapse:"collapse"}}><thead><tr><th>範本／別名</th><th>模式／版本</th><th>狀態</th><th>使用中的 Dataset／衝突</th><th>修改人／時間</th><th>操作</th></tr></thead><tbody>{rows.filter(t=>(filter==="ALL"||t.isActive===(filter==="ACTIVE"))&&[t.name,...t.aliases].some(a=>a.toUpperCase().includes(search.toUpperCase()))).map(t=><tr key={t.id}><td>{t.name}<br/>{t.aliases.join("、")}</td><td>{t.mode}／{t.revision}</td><td>{t.isActive?"啟用":"停用"}</td><td>{t.uses?.map((u,i)=><div key={i}>{u.Code??u.DatasetId}／{u.ColumnName}：{u.State}</div>)}</td><td>{t.updatedBy??"初始範本"}／{t.updatedAtUtc}</td><td><button type="button" disabled={busy} onClick={()=>edit(t)}>編輯 {t.name}</button></td></tr>)}</tbody></table></div>{rows.length===0&&<p role="status">目前沒有載入的資料庫範本；上方建議範本不代表已成功載入資料庫。請檢查權限及載入錯誤。</p>}</section>
+ <section style={panelStyle} aria-label="範本編輯"><h2>{editing?"編輯範本":"新增範本"}</h2><div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:18,alignItems:"start"}}><label style={labelStyle}>範本名稱<input style={inputStyle} value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/></label><label style={{...labelStyle,gridColumn:"1/-1"}}>欄位別名（每行一個）<textarea style={{...inputStyle,minHeight:90}} value={form.aliases} onChange={e=>setForm({...form,aliases:e.target.value})}/></label>
+ <label style={labelStyle}>範本遮蔽模式<select style={inputStyle} value={form.mode} onChange={e=>setForm({...form,mode:e.target.value as MaskTemplate["mode"],suggestedPublicAllowed:e.target.value==="OMIT"?false:form.suggestedPublicAllowed})}>{["NONE","CUSTOM","FULL","OMIT"].map(m=><option key={m}>{m}</option>)}</select></label>
+ </div>{form.mode==="CUSTOM"&&<div style={{display:"grid",gap:16,marginTop:20}}>
+  <label style={{display:"inline-flex",alignItems:"center",gap:10,justifySelf:"start",fontWeight:600}}>
+   <input type="checkbox" style={{width:18,height:18,margin:0,flex:"0 0 auto"}} checked={form.range} onChange={e=>setForm({...form,range:e.target.checked})}/>
+   <span>指定遮蔽位置</span>
+  </label>
+  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(min(100%,200px),1fr))",gap:"16px 20px"}}>
+   {(form.range?["start","end"]:["prefix","suffix"]).map(k=><label style={labelStyle} key={k}>
+    <span>{({start:"開始位置",end:"結束位置",prefix:"保留前碼",suffix:"保留後碼"} as Record<string,string>)[k]}</span>
+    <input style={inputStyle} type="number" min={form.range?1:0} value={form[k as "prefix"]} onChange={e=>setForm({...form,[k]:Number(e.target.value)})}/>
+   </label>)}
+   <label style={labelStyle}><span>遮蔽符號</span><input style={inputStyle} value={form.symbol} onChange={e=>setForm({...form,symbol:e.target.value})}/></label>
+  </div>
+ </div>}
+ <p style={{background:"#f1f5f9",padding:14,borderRadius:8}}>合成範例：{templatePreview(form.mode,custom)}（不使用真實患者資料）</p><label><input type="checkbox" checked={form.isActive} onChange={e=>setForm({...form,isActive:e.target.checked})}/>範本啟用</label><label><input type="checkbox" disabled={form.mode==="OMIT"} checked={form.suggestedPublicAllowed} onChange={e=>setForm({...form,suggestedPublicAllowed:e.target.checked})}/>建議適合公共顯示（不自動核准）</label>
+ <button type="button" style={{marginLeft:12}} disabled={busy||conflict} onClick={()=>void save()}>儲存範本</button>{conflict&&<p role="alert">版本衝突，草稿保留；重新載入並重新選擇最新範本後再修改。</p>}<button type="button" disabled={busy} onClick={()=>void read()}>重新載入範本清單</button>
+ </section>{message&&<p role="status">{message}</p>}</main>;
+}

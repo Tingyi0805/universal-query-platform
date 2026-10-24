@@ -23,14 +23,14 @@ async function requirePool() {
   return pool;
 }
 
-export async function listReportColumns(queryId: number): Promise<ReportColumnRecord[]> {
-  const query = await getQueryDefinition(queryId);
+export async function listReportColumns(queryId: number, transaction?: sql.Transaction): Promise<ReportColumnRecord[]> {
+  const query = await getQueryDefinition(queryId, transaction, false);
   if (!query) throw new Error("QUERY_DEFINITION_NOT_FOUND");
 
-  const datasetColumns = await listDatasetColumns(query.datasetId);
-  const pool = await requirePool();
+  const datasetColumns = await listDatasetColumns(query.datasetId, transaction);
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
 
-  const configured = await pool.request()
+  const configured = await request
     .input("queryId", sql.BigInt, queryId)
     .query(`
       SELECT ColumnName, DisplayLabel, DisplayOrder, IsVisible, Width,

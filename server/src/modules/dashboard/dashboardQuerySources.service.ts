@@ -1,5 +1,5 @@
-import { dashboardQueryParameters, dashboardReservedParameters, validDashboardColumnMasks, validSourceColumnMasks } from "./dashboardDeviceMasking.js";
-import { hasPrimaryApprovals, sourceApprovals, DashboardApprovalError } from "./dashboardApproval.service.js";
+import { dashboardQueryParameters, dashboardReservedParameters, validDashboardColumnMasks, validInheritedDashboardApprovalUpdate, validSourceColumnMasks } from "./dashboardDeviceMasking.js";
+import { sourceApprovals, DashboardApprovalError } from "./dashboardApproval.service.js";
 import type { DashboardProfileInput } from "./dashboardLayout.repository.js";
 import { createHash } from "node:crypto";
 import type { QuerySourcePatch } from "./dashboardQuerySources.schema.js";
@@ -12,11 +12,13 @@ export type QuerySource = {
   queryBindingRevision: number; maxRows: number | null; parameters: Record<string, unknown>;
   refreshSeconds: number; pageSize: number; pageSeconds: number; isEnabled: boolean;
 };
+export type DashboardPresentation = { name: string; description: string | null; displayMode: "TABLE" | "BIG_SCREEN"; displayTitle: string | null; showClock: boolean; showPageNumber: boolean; showCountdown: boolean };
 export type SourceState = {
   dashboard: { id: number; queryDefinitionId: number; isActive: boolean; parameters: Record<string, unknown>;
     mode?: string; modeVersion?: number;
     updatedAtUtc: string; maxRows: number | null; refreshSeconds: number; pageSize: number; pageSeconds: number };
   sources: QuerySource[];
+  presentation?: DashboardPresentation;
   references: string[];
   layoutFingerprint?: string;
 };
@@ -29,6 +31,7 @@ export interface SourceTransaction {
   markManaged(dashboardId: number): Promise<void>;
   writeLayout?(id: number, profiles: DashboardProfileInput[]): Promise<void>;
   updatePrimary?(id: number, input: PrimarySettings): Promise<void>;
+  updatePresentation?(id: number, input: DashboardPresentation): Promise<void>;
   audit(userId: number, dashboardId: number, changes: { sourceKey: string; queryDefinitionId?: number; action: string }[]): Promise<void>;
 }
 export type PrimarySettings = { queryDefinitionId: number; parameters: Record<string, unknown>; refreshSeconds: number; pageSize: number; pageSeconds: number; maxRows: number };
@@ -41,7 +44,7 @@ function projection(state: SourceState) {
   return { version: sourceVersion(state), mode: "MANAGEMENT_ONLY", playbackEnabled: false,
     overCapacity: sources.length + 1 > 8,
     primary: { sourceKey: "PRIMARY", queryDefinitionId: dashboard.queryDefinitionId,
-      maxRows: dashboard.maxRows ?? 1000, refreshSeconds: dashboard.refreshSeconds,
+      maxRows: dashboard.maxRows ?? 1000, requiresConversion: dashboard.maxRows === null, refreshSeconds: dashboard.refreshSeconds,
       pageSize: dashboard.pageSize, pageSeconds: dashboard.pageSeconds, readOnly: true },
     sources: sources.map(({ parameters: _parameters, datasetId: _history, ...source }) => ({
       ...source, bindingState: source.queryDefinitionId === null ? "PENDING_CONVERSION" : "QUERY_BOUND",
@@ -62,6 +65,16 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
     await tx.validateQuery(userId, state.dashboard.queryDefinitionId, parameters);
   };
   return {
+    presentation: (id: number, userId: number, input: DashboardPresentation & { expectedVersion: string }) => run(id, async (tx, state) => {
+      if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
+      if (sourceVersion(state) !== input.expectedVersion) throw new QuerySourceError("QUERY_SOURCE_VERSION_CONFLICT");
+      if (!tx.updatePresentation || !state.presentation) throw new QuerySourceError("QUERY_SOURCE_STORAGE_UNAVAILABLE", 503);
+      const { expectedVersion: _expectedVersion, ...presentation } = input;
+      await validatePrimary(tx, state, userId);
+      await tx.updatePresentation(id, presentation);
+      await tx.audit(userId, id, [{ sourceKey: "PRIMARY", action: "PRESENTATION_UPDATE" }]);
+      return projection(await tx.readState(id));
+    }),
     configuration: (id: number, userId: number) => run(id, async (tx, state) => {
       // A failed validation is local to its source. Never return unauthorized parameter values.
       const inspect = async (queryId: number | null, values: Record<string, unknown>) => {
@@ -78,7 +91,7 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       const sources = [];
       for (const source of view.sources) sources.push({ ...source,
         ...await inspect(source.queryDefinitionId, state.sources.find(s => s.id === source.id)!.parameters) });
-      return { ...view, dashboardMode: state.dashboard.mode ?? "LEGACY", isActive: state.dashboard.isActive, editable: !state.dashboard.isActive && state.dashboard.mode !== "QUERY_ONLY",
+      return { ...view, presentation: state.presentation, dashboardMode: state.dashboard.mode ?? "LEGACY", isActive: state.dashboard.isActive, editable: !state.dashboard.isActive && state.dashboard.mode !== "QUERY_ONLY",
         primary: { ...view.primary, readOnly: false, ...await inspect(state.dashboard.queryDefinitionId, primaryParameters) },
         sources };
     }),
@@ -116,6 +129,9 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       const source = input.sourceKey === "PRIMARY" ? undefined : state.sources.find(source => source.sourceKey === input.sourceKey);
       if (input.sourceKey !== "PRIMARY" && !source) throw new QuerySourceError("DASHBOARD_SOURCE_NOT_FOUND", 404);
       if (source?.queryDefinitionId === null) throw new QuerySourceError("PENDING_CONVERSION", 409);
+      const existingGrants = input.sourceKey === "PRIMARY" ? state.dashboard.parameters.deviceColumnMasks
+        : sourceApprovals(state.dashboard.parameters, input.sourceKey);
+      if (!validInheritedDashboardApprovalUpdate(existingGrants, input.masks)) throw new QuerySourceError("DASHBOARD_APPROVAL_MASK_INVALID", 400);
       const queryId = source?.queryDefinitionId ?? state.dashboard.queryDefinitionId;
       await tx.validateQuery(userId, queryId, source?.parameters ?? dashboardQueryParameters(state.dashboard.parameters));
       const parameters = { ...state.dashboard.parameters };
@@ -137,8 +153,6 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       if (state.dashboard.isActive || state.dashboard.mode === "QUERY_ONLY") throw new QuerySourceError("QUERY_SOURCE_DASHBOARD_MUST_BE_INACTIVE");
       if (sourceVersion(state) !== input.expectedVersion) throw new QuerySourceError("QUERY_SOURCE_VERSION_CONFLICT");
       if (!tx.updatePrimary) throw new QuerySourceError("QUERY_SOURCE_STORAGE_UNAVAILABLE", 503);
-      if (input.queryDefinitionId !== state.dashboard.queryDefinitionId && hasPrimaryApprovals(state.dashboard.parameters))
-        throw new DashboardApprovalError("DASHBOARD_APPROVAL_BINDING_CHANGED");
       if (state.sources.length + 1 > 8) throw new QuerySourceError("QUERY_SOURCE_LIMIT", 400);
       if (dashboardReservedParameters.some(key => key in input.parameters))
         throw new QuerySourceError("VALIDATION_ERROR", 400);
@@ -168,8 +182,6 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
       for (const item of input.removals) {
         const saved = state.sources.find(s => s.sourceKey === item.sourceKey && s.id === item.id);
         if (!saved) throw new QuerySourceError("QUERY_SOURCE_IDENTITY_CONFLICT");
-        if (Object.keys(sourceApprovals(state.dashboard.parameters, item.sourceKey)).length)
-          throw new DashboardApprovalError("DASHBOARD_APPROVAL_BINDING_CHANGED");
         if (state.references.some(ref => canonical(ref) === canonical(item.sourceKey)))
           throw new QuerySourceError("QUERY_SOURCE_IN_USE");
         removed.add(saved.id);
@@ -182,9 +194,9 @@ export function createQuerySourceManagement(store: SourceStore, enabled: () => b
         if ((saved && (saved.id !== item.id || saved.sourceKey !== item.sourceKey)) || (!saved && item.id !== null))
           throw new QuerySourceError("QUERY_SOURCE_IDENTITY_CONFLICT");
         const datasetId = await tx.validateQuery(userId, item.queryDefinitionId, item.parameters);
-        if ((!saved || saved.queryDefinitionId !== item.queryDefinitionId || saved.datasetId !== datasetId) &&
-          Object.keys(sourceApprovals(state.dashboard.parameters, item.sourceKey)).length)
-          throw new DashboardApprovalError("DASHBOARD_APPROVAL_BINDING_CHANGED");
+        if (saved?.queryDefinitionId != null && saved.queryDefinitionId !== item.queryDefinitionId &&
+          state.references.some(ref => canonical(ref) === canonical(item.sourceKey)))
+          throw new QuerySourceError("QUERY_SOURCE_IN_USE");
         if (saved?.queryDefinitionId === null && saved.datasetId !== datasetId)
           throw new QuerySourceError("QUERY_SOURCE_CONVERSION_DATASET_MISMATCH");
         const write = { ...item, datasetId: saved?.datasetId ?? datasetId, queryBindingRevision: (saved?.queryBindingRevision ?? 0) + 1 };

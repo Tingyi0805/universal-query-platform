@@ -48,6 +48,34 @@ test("production snapshot evidence reads parent/source rowversions together and 
   schema = false; await assert.rejects(read(1), { code: "SECURITY_SCHEMA_REQUIRED" });
 });
 
+for (const side of ["parent", "source"] as const) {
+  for (const invalid of [null, "0000000000000001", Buffer.alloc(7), Buffer.alloc(9), new Uint8Array(8)]) {
+    test(`approval evidence rejects ${side} rowversion with ${invalid === null ? "missing value" : typeof invalid === "string" ? "string value" : `${invalid.constructor.name}/${invalid.length} bytes`}`, async () => {
+      const events: string[] = [];
+      const tx = {
+        begin: async (level: number) => { assert.equal(level, sql.ISOLATION_LEVEL.SERIALIZABLE); events.push("begin"); },
+        commit: async () => { events.push("commit"); }, rollback: async () => { events.push("rollback"); },
+      } as unknown as sql.Transaction;
+      const read = createDashboardApprovalEvidenceReader({
+        getPool: async () => ({}) as sql.ConnectionPool, createTransaction: () => tx,
+        schema: async () => { events.push("schema"); },
+        createRequest: actual => {
+          assert.equal(actual, tx);
+          return { input() { return this; }, async query(statement: string) {
+            assert.equal(events[1], "schema");
+            assert.match(statement, /HOLDLOCK/); assert.doesNotMatch(statement, /INSERT|UPDATE|DELETE/i);
+            if (statement.includes("DashboardDataSource")) return { recordset: [{ Id: 5, SourceKey: "EXTRA", DatasetId: 4,
+              ApprovalRowVersion: side === "source" ? invalid : Buffer.alloc(8, 1) }] };
+            return { recordset: [{ QueryDefinitionId: 2, ApprovalRowVersion: side === "parent" ? invalid : Buffer.alloc(8, 1) }] };
+          } } as unknown as sql.Request;
+        },
+      });
+      await assert.rejects(read(1), { code: "SECURITY_SCHEMA_REQUIRED", status: 503 });
+      assert.deepEqual(events, ["begin", "schema", "rollback"]);
+    });
+  }
+}
+
 test("legacy Dataset→Dashboard→source locks are sorted and binding drift aborts", async () => {
   const parent = { Id: 1, QueryDefinitionId: 2, PrimaryDatasetId: 8 };
   const sources = [{ Id: 5, SourceKey: "EXTRA", DatasetId: 4 }];

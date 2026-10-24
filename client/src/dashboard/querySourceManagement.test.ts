@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { managementError, previewAuthorizationFailed, sourceSettings, type QuerySourceSettings } from "./querySourceManagement";
+import { trustedConfiguration, managementError, previewAuthorizationFailed, sourceSettings, type QuerySourceSettings } from "./querySourceManagement";
 const source: QuerySourceSettings = { sourceKey:"A",queryDefinitionId:2,refreshSeconds:30,pageSeconds:15,pageSize:10,maxRows:100 };
 test("payload retains parameters but excludes identity and error metadata",()=>{
   const result=sourceSettings({...source,id:3,errorCode:"SYNTHETIC"},'{"FILTER":"SYNTHETIC"}');
@@ -20,4 +20,13 @@ test("global preview authorization differs from per-Query ACL and parameter fail
   assert.equal(previewAuthorizationFailed({status:403,code:"FORBIDDEN"}),true);
   assert.equal(previewAuthorizationFailed({status:403,code:"QUERY_SOURCE_PERMISSION_REVOKED"}),true);
   for(const error of [{status:403,code:"QUERY_SOURCE_QUERY_FORBIDDEN"},{status:400,code:"PARAMETER_REQUIRED"},{status:503},null])assert.equal(previewAuthorizationFailed(error),false);
+});
+
+test("managed configuration requires a trusted version and stable source identities", () => {
+  const config = { version: "a".repeat(64), editable: false, overCapacity: false, primary: { ...source, sourceKey: "PRIMARY" }, sources: [{ ...source, id: 10 }] };
+  const copy = structuredClone(config);
+  assert.equal(trustedConfiguration(config), config); assert.deepEqual(config, copy);
+  for (const patch of [{version: ""}, {version: undefined}, {editable: undefined}, {primary: source}, {sources: [{...source,id:undefined}]}, {sources: null}]) {
+    assert.throws(() => trustedConfiguration({ ...config, ...patch } as any));
+  }
 });

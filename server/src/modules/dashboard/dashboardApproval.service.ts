@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { parseApprovalVersion } from "../securityContract/securityContract.js";
 import { assertDatasetSensitivityPolicy, dashboardMaskModes, resolveDashboardDisclosureMasks,
-  validDashboardColumnMasks, type DashboardMaskMode } from "./dashboardDeviceMasking.js";
+  validDashboardColumnMasks, validInheritedDashboardApprovalUpdate, type DashboardMaskMode } from "./dashboardDeviceMasking.js";
 import type { DatasetSensitiveColumn } from "../dataset/datasetSensitiveColumn.repository.js";
 
 export class DashboardApprovalError extends Error {
@@ -18,7 +18,9 @@ const canonical = (value: unknown): string => JSON.stringify(value && typeof val
 export function hasPrimaryApprovals(parameters: Record<string, unknown>) { return Object.keys(approvalObject(parameters.deviceColumnMasks)).length > 0; }
 export function sourceApprovals(parameters: Record<string, unknown>, key: string) {
   const sources = approvalObject(parameters.deviceSourceColumnMasks);
-  return approvalObject(Object.hasOwn(sources, key) ? sources[key] : undefined);
+  // Binding guards must also see historical case-equivalent approval keys.
+  return Object.fromEntries(Object.entries(sources).filter(([name]) => name.toUpperCase() === key.toUpperCase())
+    .flatMap(([, masks]) => Object.entries(approvalObject(masks))));
 }
 export function assertEmptyApprovalCreation(parameters: Record<string, unknown>) {
   if (hasPrimaryApprovals(parameters) || Object.keys(approvalObject(parameters.deviceColumnTypes)).length ||
@@ -98,6 +100,7 @@ export function applyApprovalPatch(state: ApprovalState, patch: ApprovalPatch) {
     next.set(key, mode);
   }
   const masks = Object.fromEntries(next);
+  if (!validInheritedDashboardApprovalUpdate(old, masks)) throw new DashboardApprovalError("DASHBOARD_APPROVAL_MASK_INVALID", 400);
   if (!validDashboardColumnMasks(masks)) throw new DashboardApprovalError("DASHBOARD_APPROVAL_CONFIG_INVALID");
   const parameters = { ...state.parameters, ...(patch.sourceKey === "PRIMARY" ? { deviceColumnMasks: masks } : {
     deviceSourceColumnMasks: { ...approvalObject(state.parameters.deviceSourceColumnMasks), [patch.sourceKey]: masks } }) };

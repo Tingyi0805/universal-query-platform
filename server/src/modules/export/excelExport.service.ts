@@ -70,7 +70,7 @@ export async function createQueryExcel(
     .filter((column) => column.isVisible && resultNames.has(column.columnName))
     .sort((a, b) => a.displayOrder - b.displayOrder);
 
-  const columns = configured.length > 0
+  const columns = reportColumns !== undefined
     ? configured
     : result.columns.map((column, index) => ({
         columnName: column.name,

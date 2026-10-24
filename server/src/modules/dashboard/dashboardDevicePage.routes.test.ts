@@ -17,7 +17,7 @@ async function fixture(run: (f: Awaited<ReturnType<typeof openFixture>>) => Prom
 }
 async function openFixture() {
   const state = { schemaMissing: false, approvalEpoch: "rowversion-1",
-    valid: true, queryManaged: false, accessRevision: "acl-v1", sqlCalls: 0, audits: [] as Parameters<DevicePageDependencies["auditPatientListIfConfigured"]>[0][],
+    publicDenied:false,mode:"QUERY_ONLY",valid: true, queryManaged: false, accessRevision: "acl-v1", sqlCalls: 0, audits: [] as Parameters<DevicePageDependencies["auditPatientListIfConfigured"]>[0][],
     dashboard: { id: 1, queryDefinitionId: 2, isActive: true, pageSize: 1, pageSeconds: 5, refreshSeconds: 10,
       parameters: { deviceColumnMasks: { NAME: "NAME", MRN: "CUSTOM", ROOM: "NONE" }, deviceSourceColumnMasks: { ORACLE: { NAME: "INHERIT", MRN: "INHERIT" } } } } as unknown as Dashboard,
     dataset: { id: 3, dataSourceId: 4, sqlText: "SELECT NAME, MRN, ROOM FROM synthetic", isActive: true, isArchived: false } as Dataset,
@@ -31,9 +31,11 @@ async function openFixture() {
       { columnName: "SECRET", sensitivityType: "HEALTH", deviceMaskMode: "OMIT" as const },
     ] },
     sources: [{ id: 10, dashboardId: 1, sourceKey: "ORACLE", datasetId: 3, refreshSeconds: 10, pageSize: 1, pageSeconds: 5, parameters: { WARD: "TEST" }, isEnabled: true }],
-    afterSql: () => {}, afterAudit: () => {}, sqlFailure: false, auditFailure: false, auditEnabled: true,
+    afterSql: () => {}, afterAudit: () => {}, sqlFailure: false, auditFailure: false, auditEnabled: true, patientConfigured: true,
   };
   const deps: DevicePageDependencies = {
+    getMode:async()=>({mode:state.mode,version:1}),
+    getPublicDisplay:async()=>({status:"CONFIRMED",sensitivityVersion:state.policy.version,policy:{confirmed:true,sensitivityVersion:state.policy.version,grants:state.policy.columns.map(r=>({columnName:r.columnName,permitted:r.deviceMaskMode!=="OMIT"&&!state.publicDenied}))}}) as never,
     getApprovalEvidence: async () => { if (state.schemaMissing) throw new SecurityContractError("SECURITY_SCHEMA_REQUIRED"); return state.approvalEpoch; },
     legacySourceIsQueryBound: async () => state.queryManaged,
     getQueryAccessRevision: async () => state.accessRevision,
@@ -56,6 +58,7 @@ async function openFixture() {
         rows: [{ NAME: "測試患者甲", MRN: "00000123", SECRET: "synthetic diagnosis", ROOM: "TEST" },
           { NAME: "測試患者乙", MRN: "00000456", SECRET: "synthetic diagnosis", ROOM: "TEST2" }], rowCount: 2, elapsedMs: 1, truncated: false };
     },
+    getPatientAuditConfig: async () => state.patientConfigured ? { isEnabled: true, patientKeyColumn: "MRN" } : null,
     auditPatientListIfConfigured: async input => {
       if (!state.auditEnabled) return null;
       if (state.auditFailure) throw new Error("synthetic audit unavailable");
@@ -148,6 +151,13 @@ for (const path of [primary, supplemental]) {
     assert.equal((await f.request(path, { page: 1 })).body.result, undefined);
   }));
 }
+for (const path of [primary, supplemental]) test(`${path}: ordinary Dataset without patient audit can display its masked page`, () => fixture(async f => {
+  f.state.patientConfigured = false; f.state.auditEnabled = false;
+  const response = await f.request(path, { page: 1 });
+  assert.equal(response.status, 200);
+  assert.equal(response.body.disclosureId, null);
+  assert.ok(!JSON.stringify(response.body).includes("00000123"));
+}));
 test("supplemental parameter, page settings and source replacement invalidate snapshots", () => fixture(async f => {
   for (const change of [() => { f.state.sources[0]!.parameters.WARD = "OTHER"; },
     () => { f.state.sources[0]!.pageSize = 2; }, () => { f.state.sources[0]!.id++; }]) {
@@ -167,12 +177,12 @@ for (const path of [primary, supplemental]) test(`${path}: a never-reviewed empt
   const r = await f.request(path, { page: 1 }); assert.equal(r.status, 503); assert.equal(r.body.error.code, "DASHBOARD_SENSITIVITY_POLICY_REQUIRED");
   assert.equal(f.state.sqlCalls, 0);
 }));
-for (const path of [primary, supplemental]) test(`${path}: explicit CUSTOM inheritance, FULL, OMIT and policy rename invalidate old grants`, () => fixture(async f => {
+for (const path of [primary, supplemental]) test(`${path}: legacy mask JSON cannot replace Dataset public policy; policy rename invalidates cached result`, () => fixture(async f => {
   for (const mode of ["INHERIT", "FULL", "OMIT"]) {
     if (path === primary) f.state.dashboard.parameters.deviceColumnMasks = { NAME: "INHERIT", MRN: mode, SECRET: "FULL" };
     else f.state.dashboard.parameters.deviceSourceColumnMasks = { ORACLE: { NAME: "INHERIT", MRN: mode, SECRET: "FULL" } };
     const r = await f.request(path, { page: 1 }); assert.equal(r.status, 200);
-    assert.equal(r.body.result.rows[0].MRN, mode === "INHERIT" ? "******23" : mode === "FULL" ? "○○○○" : undefined);
+    assert.equal(r.body.result.rows[0].MRN, "******23");
     assert.equal(r.body.result.rows[0].SECRET, undefined);
     for (const value of ["00000123", "測試患者甲"]) assert.ok(!JSON.stringify(r.body).includes(value));
   }
@@ -181,12 +191,14 @@ for (const path of [primary, supplemental]) test(`${path}: explicit CUSTOM inher
   const first = await f.request(path, { page: 1 }); assert.equal(first.status, 200);
   const rule = f.state.policy.columns.find(c => c.columnName === "MRN")!; rule.columnName = "RENAMED"; f.state.policy.version++;
   assert.equal((await f.request(path, { page: 1, snapshotId: first.body.snapshotId })).status, 409);
-  const current = await f.request(path, { page: 1 }); assert.equal(current.status, 200); assert.deepEqual(current.body.result.columns, []);
+  const current = await f.request(path, { page: 1 }); assert.equal(current.status, 200); assert.ok(current.body.result.columns.every((c:{name:string})=>c.name!=="MRN"));
 }));
-test("Legacy extra sources never inherit PRIMARY's approvals or Dataset grants alone", () => fixture(async f => {
-  delete f.state.dashboard.parameters.deviceSourceColumnMasks;
-  const r = await f.request(supplemental, { page: 1 }); assert.equal(r.status, 200); assert.deepEqual(r.body.result.columns, []); assert.deepEqual(r.body.result.rows, [{}]);
+test("Dataset explicit public denial overrides any Legacy PRIMARY or extra-source JSON", () => fixture(async f => {
+  f.state.publicDenied=true;
+  for(const path of [primary,supplemental]){const result=await f.request(path,{page:1});assert.equal(result.status,403);assert.equal(result.body.result,undefined);assert.equal(f.state.sqlCalls,0);}
 }));
+test("legacy mode cannot use public device page even with valid token and old JSON",()=>fixture(async f=>{f.state.mode="LEGACY";const r=await f.request(primary,{page:1});assert.equal(r.status,409);assert.equal(f.state.sqlCalls,0);}));
+
 
 for (const path of [primary, supplemental]) test(`${path}: patient config or metadata proof invalidates cached pages`, () => fixture(async f => {
   const first = await f.request(path, { page: 1 });

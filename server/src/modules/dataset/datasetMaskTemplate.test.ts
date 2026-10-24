@@ -1,0 +1,7 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+import {maskTemplateInput} from "./datasetMaskTemplate.repository.js";
+const value={name:"合成範本",aliases:["SYNTHETIC"],mode:"CUSTOM",customMask:{prefix:1,suffix:1,symbol:"*"},suggestedPublicAllowed:false,isActive:true,expectedVersion:null};
+for(const scenario of ["valid","duplicateAlias","CUSTOM","unknownField","OMIT-public","range","unsafeSymbol"])test(`mask template strict contract ${scenario}`,()=>{const v:any=structuredClone(value);if(scenario==="duplicateAlias")v.aliases=["name","NAME"];if(scenario==="CUSTOM")v.customMask=null;if(scenario==="unknownField")v.sql="PRIVATE";if(scenario==="OMIT-public"){v.mode="OMIT";v.customMask=null;v.suggestedPublicAllowed=true;}if(scenario==="range")v.customMask={prefix:0,suffix:0,symbol:"○",start:2,end:3};if(scenario==="unsafeSymbol")v.customMask.symbol="\n";assert.equal(maskTemplateInput.safeParse(v).success,["valid","range"].includes(scenario));});
+test("template editor SQL never mutates published Dataset rules or public approvals",async()=>{const source=await readFile(new URL("./datasetMaskTemplate.repository.ts",import.meta.url),"utf8");assert.doesNotMatch(source,/UPDATE uqp\.(DatasetSensitiveColumn|DatasetPublicDisplayPolicy)|DELETE FROM uqp\.DatasetMaskTemplate/);assert.match(source,/INSERT uqp\.AuditLog/);assert.match(source,/ISOLATION_LEVEL.SERIALIZABLE/);});

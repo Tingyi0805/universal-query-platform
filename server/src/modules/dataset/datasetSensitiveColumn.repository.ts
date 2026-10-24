@@ -1,3 +1,5 @@
+import {assertDatasetAuditOnlyPolicy} from "./datasetAuditOnlyPolicy.js";
+import { recordTemplateApplications, type TemplateApplication } from "./datasetMaskTemplate.repository.js";
 import { patientAuditService } from "./patientAuditContract.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
@@ -45,7 +47,7 @@ export async function getDatasetSensitivityVersion(datasetId: number): Promise<n
   return result.recordset.length ? Number(result.recordset[0].VersionNumber) : 0;
 }
 
-export async function replaceDatasetSensitiveColumns(datasetId: number, rules: DatasetSensitiveColumn[], userId: number, auditContext: { ipAddress?: string | null; userAgent?: string | null }, expectedVersion: number): Promise<number> {
+export async function replaceDatasetSensitiveColumns(datasetId: number, rules: DatasetSensitiveColumn[], userId: number, auditContext: { ipAddress?: string | null; userAgent?: string | null }, expectedVersion: number, templateApplications: TemplateApplication[] = []): Promise<number> {
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("PLATFORM_DB_NOT_CONFIGURED");
   const transaction = new sql.Transaction(pool);
@@ -95,7 +97,8 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
         .input("userId", sql.BigInt, userId)
         .query("INSERT INTO uqp.DatasetSensitiveColumn (DatasetId, ColumnName, SensitivityType, DeviceMaskMode, CustomMaskJson, UpdatedByUserId) VALUES (@datasetId,@columnName,@sensitivityType,@deviceMaskMode,@customMaskJson,@userId)");
     }
-    const details = JSON.stringify({ before: before.recordset, after: rules });
+    await recordTemplateApplications(transaction,datasetId,currentVersion+1,userId,templateApplications,rules);
+    const details = JSON.stringify({ before: before.recordset, after: rules, templateApplications });
     if (details.length > 20000) throw new Error("SENSITIVITY_AUDIT_TOO_LARGE");
     await new sql.Request(transaction)
       .input("userId", sql.BigInt, userId)
@@ -118,5 +121,6 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
 export async function getDashboardSensitivitySnapshot(datasetId: number) {
   const sensitivity = await getDatasetSensitivitySnapshot(datasetId);
   const patientAudit = await patientAuditService.dashboardState(datasetId);
+  try{assertDatasetAuditOnlyPolicy(sensitivity,patientAudit.config?.patientKeyColumn??null);}catch{throw new Error("DASHBOARD_SENSITIVITY_POLICY_INVALID");}
   return { ...sensitivity, patientAudit };
 }

@@ -37,3 +37,273 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+
+  sql-923-ephemeral:
+    # Experimental acceptance only, scoped to the existing Draft PR.
+    # No access to user databases or production connection secrets.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Launch disposable SQL Server 2019
+        shell: bash
+        working-directory: .
+        run: |
+          set -euo pipefail
+          pw="S9a!$(openssl rand -hex 20)Z"
+          echo "::add-mask::$pw"
+          echo "UQP_923_CI_PASSWORD=$pw" >> "$GITHUB_ENV"
+          docker run -d --rm --name uqp-923-ephemeral --hostname uqp-923-ephemeral \
+            -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$pw" \
+            -p 127.0.0.1:14333:1433 \
+            mcr.microsoft.com/mssql/server:2019-latest >/dev/null
+      - name: SQL Server 2019 synthetic 923 DDL / Catalog acceptance
+        env:
+          UQP_923_CI_EPHEMERAL: "1"
+          UQP_923_CI_HOST: "127.0.0.1"
+          UQP_923_CI_PORT: "14333"
+        run: npx tsx src/scripts/dataset923EphemeralSqlAcceptance.ts
+      - name: Destroy disposable SQL Server
+        if: always()
+        shell: bash
+        working-directory: .
+        run: docker rm -f uqp-923-ephemeral >/dev/null 2>&1 || true
+
+  sql-924-full-schema:
+    # All 48 real 001-921 migration sources + dedicated 923/924 installers. No user DB secrets.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+      - name: Launch independent full-schema SQL Server 2019
+        shell: bash
+        run: |
+          set -euo pipefail
+          pw="F2a!$(openssl rand -hex 20)Z"
+          echo "::add-mask::$pw"
+          echo "UQP_924_CI_PASSWORD=$pw" >> "$GITHUB_ENV"
+          docker run -d --rm --name uqp-924-full-schema --hostname uqp-924-full-schema \
+            -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$pw" \
+            -p 127.0.0.1:14334:1433 \
+            mcr.microsoft.com/mssql/server:2019-latest >/dev/null
+      - name: Full UQP Schema and 924 restricted-owner acceptance
+        env:
+          UQP_924_CI_EPHEMERAL: "1"
+        run: npx tsx src/scripts/dataset924FullSchemaAcceptance.ts
+      - name: Destroy full-schema SQL Server
+        if: always()
+        shell: bash
+        run: docker rm -f uqp-924-full-schema >/dev/null 2>&1 || true
+
+  windows-923-installer:
+    # Syntax-only; no credentials and no SQL connection.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify PowerShell 5.1 installer syntax
+        shell: powershell
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          $file = (Resolve-Path '.\tools\install-uqp-923.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw '923_WINDOWS_INSTALLER_SYNTAX_INVALID' }
+          Write-Host '923_WINDOWS_POWERSHELL_51_SYNTAX_OK'
+          $file = (Resolve-Path '.\tools\install-uqp-924.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw '924_WINDOWS_INSTALLER_SYNTAX_INVALID' }
+          Write-Host '924_WINDOWS_POWERSHELL_51_SYNTAX_OK'
+          $file = (Resolve-Path '.\tools\install-uqp-925.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw '925_WINDOWS_INSTALLER_SYNTAX_INVALID' }
+          Write-Host '925_WINDOWS_POWERSHELL_51_SYNTAX_OK'
+          $file = (Resolve-Path '.\tools\test-uqp-d0-host.ps1').Path
+          [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$tokens, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) { throw 'D0_WINDOWS_INSPECTOR_SYNTAX_INVALID' }
+          Write-Host 'D0_WINDOWS_INSPECTOR_SYNTAX_OK'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: 924 Windows offline CLI guard tests (no database)
+        working-directory: server
+        run: |
+          npm install
+          node --import tsx --test src/scripts/installDataset924.test.ts src/scripts/installDataset925.test.ts
+
+  d0-source-bundle:
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Package tracked sources with SHA-256
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          mkdir -p dist
+          file="UQP-PR66-${sha:0:8}-source.zip"
+          git archive --format=zip --output="dist/$file" HEAD
+          (cd dist && sha256sum "$file" > SHA256SUMS.txt)
+          test -s "dist/$file"
+          unzip -l "dist/$file" | grep -q 'tools/install-uqp-925.ps1'
+          unzip -l "dist/$file" | grep -q 'docs/windows-dataset-display-925-rollout.md'
+          if unzip -Z1 "dist/$file" | grep -Ei '(^|/)(\.env($|\.)|node_modules/|\.git/|[^/]+\.(pem|pfx|key)$)' | grep -Ev '(^|/)\.env\.example$'; then
+            echo 'BUNDLE_CONTAINS_FORBIDDEN_FILE'
+            exit 1
+          fi
+          echo 'D0_SOURCE_BUNDLE_ONLY_NOT_DEPLOYABLE'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr66-d0-source
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  windows-release-candidate:
+    if: github.event.pull_request.number == 66
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build server
+        shell: pwsh
+        run: |
+          Set-Location server
+          npm install
+          if($LASTEXITCODE -ne 0){throw 'SERVER_NPM_CI_FAILED'}
+          npm run typecheck
+          if($LASTEXITCODE -ne 0){throw 'SERVER_TYPECHECK_FAILED'}
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'SERVER_BUILD_FAILED'}
+      - name: Build client
+        shell: pwsh
+        run: |
+          Set-Location client
+          npm install
+          if($LASTEXITCODE -ne 0){throw 'CLIENT_NPM_CI_FAILED'}
+          npm run typecheck
+          if($LASTEXITCODE -ne 0){throw 'CLIENT_TYPECHECK_FAILED'}
+          npm run build
+          if($LASTEXITCODE -ne 0){throw 'CLIENT_BUILD_FAILED'}
+      - name: Package isolated Windows runtime
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          New-Item -ItemType Directory -Path release/payload/server,release/payload/client,release/payload/tools,release/payload/docs -Force | Out-Null
+          Copy-Item server/dist release/payload/server/dist -Recurse
+          Copy-Item server/package.json release/payload/server/
+          Copy-Item server/src release/payload/server/src -Recurse
+          Copy-Item server/tsconfig.json release/payload/server/
+          Copy-Item client/dist release/payload/client/dist -Recurse
+          Copy-Item client/package.json,client/index.html,client/vite.config.ts,client/tsconfig.json,client/tsconfig.app.json,client/tsconfig.node.json,client/tsconfig.e2e.json release/payload/client/
+          Copy-Item client/src release/payload/client/src -Recurse
+          if(Test-Path client/package-lock.json){Copy-Item client/package-lock.json release/payload/client/}
+          if(Test-Path client/.env.example){Copy-Item client/.env.example release/payload/client/}
+          Copy-Item tools/install-uqp-925.ps1,tools/test-uqp-d0-host.ps1 release/payload/tools/
+          New-Item -ItemType Directory -Path release/payload/tools/sqlserver-acceptance/drafts/925 -Force | Out-Null
+          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/tools/sqlserver-acceptance/drafts/925/
+          New-Item -ItemType Directory -Path release/payload/database -Force | Out-Null
+          Copy-Item tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql release/payload/database/925_dataset_display_policy.sql
+          Copy-Item tools/install-uqp-pr66-offline.ps1,tools/prepare-uqp-pr66-steps1-4.ps1 release/
+          Copy-Item docs/windows-dataset-display-925-rollout.md,docs/d0-or001-windows-isolated-acceptance.md,docs/windows-pr66-overwrite-package.md release/payload/docs/
+          Copy-Item tools/install-uqp-pr66-offline.ps1 release/
+          Set-Location release/payload/server
+          npm install --ignore-scripts=false
+          if($LASTEXITCODE -ne 0){throw 'WINDOWS_RUNTIME_DEPENDENCIES_FAILED'}
+          Set-Location ../../..
+          $root=(Resolve-Path release).Path
+          $files=Get-ChildItem release/payload -Recurse -File
+          $lines=foreach($f in $files){$rel=$f.FullName.Substring($root.Length+1).Replace('\','/');"$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $rel"}
+          $lines | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
+          if($files.Count -lt 20){throw 'WINDOWS_RELEASE_INCOMPLETE'}
+      - name: Check packaged client can install, build and launch with UQP API proxy
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $client='release/payload/client'
+          foreach($file in @('package.json','index.html','vite.config.ts','tsconfig.json','src/main.tsx')){
+            if(-not (Test-Path (Join-Path $client $file))){throw "UQP_CLIENT_SOURCE_MISSING: $file"}
+          }
+          if(-not ((Get-Content (Join-Path $client 'vite.config.ts') -Raw) -match 'http://localhost:3200')){throw 'UQP_CLIENT_PROXY_NOT_3200'}
+          Push-Location $client
+          try {
+            npm install --ignore-scripts
+            if($LASTEXITCODE -ne 0){throw 'UQP_CLIENT_INSTALL_FAILED'}
+            npm run build
+            if($LASTEXITCODE -ne 0){throw 'UQP_CLIENT_REBUILD_FAILED'}
+          } finally { Pop-Location }
+          # Do not ship installed development dependencies: install from package.json after extraction.
+          Remove-Item (Join-Path $client 'node_modules') -Recurse -Force
+          # Rebuild the checksum manifest after packaging validation, since npm install/build
+          # may generate package-lock.json and tsbuildinfo inside payload/client.
+          $root=(Resolve-Path release).Path
+          $files=Get-ChildItem release/payload -Recurse -File
+          $lines=foreach($f in $files){$rel=$f.FullName.Substring($root.Length+1).Replace('\','/');"$((Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $rel"}
+          $lines | Set-Content -LiteralPath release/SHA256SUMS.txt -Encoding ascii
+          Write-Host 'UQP_CLIENT_SOURCE_INSTALL_REBUILD_PASS'
+
+      - name: Test installer preflight and simulated rollback guard
+        shell: powershell
+        run: |
+          $ErrorActionPreference='Stop'
+          $tokens=$null;$errors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'release/install-uqp-pr66-offline.ps1'),[ref]$tokens,[ref]$errors)|Out-Null
+          if($errors.Count){throw 'WINDOWS_INSTALLER_SYNTAX_INVALID'}
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'release/prepare-uqp-pr66-steps1-4.ps1'),[ref]$tokens,[ref]$errors)|Out-Null
+          if($errors.Count){throw 'WINDOWS_PREPARE_1_TO_4_SYNTAX_INVALID'}
+          $testRoot=Join-Path $env:RUNNER_TEMP 'UQP_RC_Test'
+          New-Item -ItemType Directory -Path $testRoot -Force|Out-Null
+          $target=Join-Path $testRoot 'UQP'
+          New-Item -ItemType Directory -Path $target|Out-Null
+          'original'|Set-Content (Join-Path $target 'marker.txt')
+          & .\release\install-uqp-pr66-offline.ps1 -Target $target -PreflightOnly
+          $failed=$false
+          try { & .\release\install-uqp-pr66-offline.ps1 -Target $target -Schema925Verified -ServiceStopped -AcceptMaintenance -SimulateFailure } catch {$failed=$true}
+          if(-not $failed){throw 'FAILURE_INJECTION_NOT_TRIGGERED'}
+          if((Get-Content (Join-Path $target 'marker.txt')) -ne 'original'){throw 'ROLLBACK_GUARD_FAILED'}
+          Write-Host 'OFFLINE_FAILURE_GUARD_PASS'
+      - name: Compress release candidate and hash
+        shell: pwsh
+        run: |
+          $sha='${{ github.event.pull_request.head.sha }}'
+          $name="UQP-PR66-$($sha.Substring(0,8))-Windows-RC.zip"
+          Compress-Archive -Path release/* -DestinationPath $name -CompressionLevel Optimal
+          (Get-FileHash -Algorithm SHA256 $name).Hash.ToLowerInvariant()+"  "+$name | Set-Content SHA256SUMS-WINDOWS-RC.txt -Encoding ascii
+          New-Item -ItemType Directory -Path output|Out-Null
+          Move-Item $name output/
+          Move-Item SHA256SUMS-WINDOWS-RC.txt output/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr66-windows-release-candidate
+          path: output/
+          retention-days: 7
+          if-no-files-found: error

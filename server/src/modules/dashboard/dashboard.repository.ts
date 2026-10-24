@@ -1,6 +1,7 @@
 import { assertEmptyApprovalCreation, assertBasicApprovalWrite, preserveApprovalSettings } from "./dashboardApproval.service.js";
 import { prepareLegacyLocks, lockLegacyBindings } from "./dashboardLegacyLocks.js";
 import { parseApprovalParameters } from "./dashboardApproval.repository.js";
+import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -253,18 +254,10 @@ export async function updateDashboard(id: number, input: DashboardInput, userId:
   }
 }
 
-export async function deleteDashboard(id: number): Promise<void> {
-  const pool = await requirePool();
-  const result = await pool.request()
-    .input("id", sql.BigInt, id)
-    .query(`
-      DELETE FROM uqp.Dashboard WHERE Id=@id;
-      SELECT @@ROWCOUNT AS Affected;
-    `);
-
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
-    throw new Error("DASHBOARD_NOT_FOUND");
-  }
+export async function deleteDashboard(_id: number): Promise<never> {
+  // Retain the API, but never invoke cascading deletion as a retirement operation.
+  // This is independent of process flags and persisted mode, including Legacy.
+  throw new QuerySourceError("DASHBOARD_HARD_DELETE_DISABLED");
 }
 
 export async function listDashboardsPaged(input: {
