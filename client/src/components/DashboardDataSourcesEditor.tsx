@@ -128,7 +128,7 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
         {([['refreshSeconds','更新秒數',5,3600],['pageSize','每頁筆數',1,100],['pageSeconds','換頁秒數',5,3600],['maxRows','資料量上限',1,10000]] as const).map(([key,label,min,max]) =>
           <label key={key}>{label}<input type="number" min={min} max={max} value={draft[key] ?? ""} onChange={event => setDraft({ ...draft, [key]: Number(event.target.value) })}/></label>)}
         <label>查詢參數 JSON<textarea rows={4} value={parametersJson} onChange={event => setParametersJson(event.target.value)}/></label>
-        {draft.sourceKey !== "PRIMARY" && <label><input type="checkbox" checked={draft.isEnabled ?? true} onChange={event => setDraft({ ...draft, isEnabled: event.target.checked })}/>啟用來源</label>}
+        {draft.sourceKey !== "PRIMARY" && <label className="dashboard-source-enabled"><input type="checkbox" checked={draft.isEnabled ?? true} onChange={event => setDraft({ ...draft, isEnabled: event.target.checked })}/><span>啟用來源</span></label>}
         <button type="button" disabled={draftVersion !== configuration.version} onClick={() => void save()}>儲存目前來源</button>
         <button type="button" onClick={() => { setDraft(initial); setDraftVersion(configuration.version); setParametersJson("{}"); }}>新增來源／取消編輯</button>
       </fieldset>
