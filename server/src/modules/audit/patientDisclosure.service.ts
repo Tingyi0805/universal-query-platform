@@ -24,9 +24,14 @@ export async function auditPatientListIfConfigured(input: DisclosureContext): Pr
 }
 
 /** Dashboard-only contract. General query and Excel keep auditPatientListIfConfigured. */
-export function createDashboardPatientAudit(requireDisclosure = patientAuditService.requireDisclosure, persist = persistPatientListDisclosure) {
+export function createDashboardPatientAudit(requireDisclosure = patientAuditService.requireDisclosure, persist = persistPatientListDisclosure,
+  readConfiguration = getDatasetPatientAuditConfig) {
   return async (input: DisclosureContext): Promise<number | null> => {
     if (!input.rows.length) return null;
+    // Non-patient Datasets do not require patient-only disclosure confirmation.
+    // Explicitly enabled contracts still require the full validated metadata and durable receipt.
+    const configured = await readConfiguration(input.datasetId);
+    if (!configured?.isEnabled) return null;
     const { config, keyring } = await requireDisclosure(input.datasetId);
     for (const row of input.rows) {
       const names = Object.keys(row);
