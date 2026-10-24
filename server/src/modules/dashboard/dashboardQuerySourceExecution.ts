@@ -1,4 +1,5 @@
 import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
+import { getDatasetPatientAuditConfig } from "../dataset/patientAuditConfig.repository.js";
 import { createHash } from "node:crypto";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { safeParameterFailure } from "./dashboardQuerySources.repository.js";
@@ -31,6 +32,7 @@ export type ExecutionDependencies = {
   getSensitivity: typeof import("../dataset/datasetSensitiveColumn.repository.js").getDatasetSensitivitySnapshot;
   execute: typeof import("../dataset/dataset.service.js").executeSavedDataset;
   audit: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
+  getPatientAuditConfig?: typeof getDatasetPatientAuditConfig;
 };
 export function createQuerySourceExecution(deps: ExecutionDependencies, enabled: (device?: boolean, context?: ExecutionSubject["context"]) => boolean) {
   const approvalEvidence = async (id: number) => {
@@ -168,7 +170,11 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
           sourceScope: snapshot.sourceScope, deliveryType: "PAGE", pageNumber: input.page,
           masked: true, rows: rawRows });
       } catch (error) { const safe = dashboardSecurityFailure(error); throw new QuerySourceError(safe?.code ?? "PATIENT_AUDIT_FAILED", safe?.status ?? 503); }
-      if (rawRows.length && disclosureId === null) throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
+      // Null receipt is expected when the Dataset has no enabled patient audit.
+      // Only an enabled patient-audit contract requires a durable disclosure ID.
+      if (rawRows.length && disclosureId === null &&
+        (await (deps.getPatientAuditConfig ?? getDatasetPatientAuditConfig)(dataset.id))?.isEnabled)
+        throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       await current();
       if (!getDashboardPageSnapshot(snapshot.id, ownerId, id)) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
       return { sourceKey: key, modeVersion, query: { id: query.id, code: query.code, name: query.name }, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
