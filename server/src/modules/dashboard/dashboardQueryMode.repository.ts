@@ -1,3 +1,4 @@
+import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { getTokenSessionState } from "../auth/auth.repository.js";
@@ -69,9 +70,13 @@ export const queryModeStore = createQuerySourceStore({ ...defaultQuerySourceDepe
         const recordsets = result.recordsets as unknown as Record<string, unknown>[][];
         if (!recordsets[0]?.length || Number(recordsets[0][0]!.VersionNumber) < 1 || !recordsets[1]?.length)
           throw new QuerySourceError("QUERY_SOURCE_SENSITIVITY_NOT_READY");
-        if (!recordsets[2]?.[0]?.IsEnabled || !recordsets[2][0].PatientKeyColumn) throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
+        const display=await datasetPublicDisplayRepository.getInTransaction(transaction,datasetId);
+        if(display.status!=="CONFIRMED"||!display.policy?.confirmed)throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
+        if (recordsets[2]?.[0]?.IsEnabled) {
+        if(!recordsets[2][0].PatientKeyColumn)throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED",503);
         try { parsePatientAuditKeyring(process.env.PATIENT_AUDIT_ACTIVE_KEY_VERSION, process.env.PATIENT_AUDIT_HMAC_KEYRING_JSON); }
         catch { throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503); }
+        }
       },
       async switchMode(id, enabled) {
         await scoped(id).input("mode", sql.VarChar(24), enabled ? "QUERY_ONLY" : "QUERY_ONLY_DISABLED").input("active", sql.Bit, enabled).query(`

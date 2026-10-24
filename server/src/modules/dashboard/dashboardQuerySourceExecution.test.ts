@@ -24,7 +24,7 @@ function fixture() {
     deviceMasks: { NAME: "INHERIT", MRN: "INHERIT" }, sourceMasks: { WARD: { NAME: "INHERIT", MRN: "INHERIT" }, ROOM: { NAME: "INHERIT", MRN: "INHERIT" } },
     parameters: { WARD: "SYNTHETIC" }, refreshSeconds: 30, pageSeconds: 5, pageSize: 1, maxRows: 10 });
   const control = {
-    enabled: true, schema: true, session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] },
+    publicAllowed:true,publicEpoch:1,enabled: true, schema: true, session: { isActive: true, tokenVersion: 1, permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"] },
     bindings: { WARD: binding("WARD", 21), ROOM: binding("ROOM", 22) } as Record<string, ExecutionBinding>,
     queries: new Map([[21, { id: 21, datasetId: 99, isActive: true, isPublished: true, isArchived: false }],
       [22, { id: 22, datasetId: 100, isActive: true, isPublished: true, isArchived: false }]]),
@@ -35,6 +35,7 @@ function fixture() {
     afterExecute: () => {}, afterAudit: () => {},
   };
   const deps: ExecutionDependencies = {
+    getPublicDisplay:async()=>({status:control.publicAllowed?"CONFIRMED":"STALE",version:String(control.publicEpoch),sensitivityVersion:control.policyVersion,policy:{confirmed:control.publicAllowed,sensitivityVersion:control.policyVersion,grants:[{columnName:"NAME",permitted:true},{columnName:"MRN",permitted:false}]}}) as never,
     // Use the production evidence reader with a synthetic SQL driver, not a JSON-only version stub.
     getApprovalEvidence: createDashboardApprovalEvidenceReader({
       getPool: async () => ({}) as sql.ConnectionPool,
@@ -267,10 +268,10 @@ test("Query-only malformed/conflicting policy cannot disclose cached data or poi
   f.deps.getSensitivity = async () => null as any;
   await assert.rejects(f.service.page(1, "ROOM", subject, { page: 1 }), { code: "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", status: 503 });
 });
-test("Query-only PRIMARY omits incompatible legacy masks without granting unapproved fields or affecting extra sources", async () => {
+test("Query-only PRIMARY uses Dataset masks regardless of Legacy JSON and still rejects unconfigured fields", async () => {
   const f = fixture(); f.control.bindings.PRIMARY = { ...f.control.bindings.WARD!, sourceKey: "PRIMARY", sourceId: 1, deviceMasks: { NAME: "FULL", MRN: "NONE", UNAPPROVED: "NONE" } };
   const page = await f.service.page(1, "PRIMARY", subject, { page: 1 });
-  assert.deepEqual(page.result.rows[0], {});
+  assert.deepEqual(page.result.rows[0], {NAME:"測○○○甲"});
   const extra = await f.service.page(1, "WARD", subject, { page: 1 }); assert.equal(extra.result.rows[0]!.NAME, "測○○○甲");
   f.control.bindings.PRIMARY.deviceMasks = { NAME: "NONE" };
   await assert.rejects(f.service.page(1, "PRIMARY", subject, { page: 1, snapshotId: page.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
@@ -292,15 +293,15 @@ for (const key of ["PRIMARY", "WARD"]) test(`Query-only ${key}: CUSTOM inheritan
     else binding.sourceMasks = { WARD: { NAME: mode, MRN: "FULL" } };
   };
   select("INHERIT"); const first = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(first.result.rows, [{ NAME: "測###甲" }]);
-  select("FULL"); const full = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(full.result.rows, [{}]);
-  select("OMIT"); assert.deepEqual((await f.service.page(1, key, subject, { page: 1 })).result.columns, []);
+  select("FULL"); const full = await f.service.page(1, key, subject, { page: 1 }); assert.deepEqual(full.result.rows, [{NAME:"測###甲"}]);
+  select("OMIT"); assert.deepEqual((await f.service.page(1, key, subject, { page: 1 })).result.columns, [{name:"NAME"}]);
   select("INHERIT"); f.control.policyVersion++; await assert.rejects(f.service.page(1, key, subject, { page: 1, snapshotId: first.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
   f.deps.getSensitivity = async () => ({ version: f.control.policyVersion, columns: [{ columnName: "RENAMED", sensitivityType: "NAME", deviceMaskMode: "FULL" }] });
   assert.deepEqual((await f.service.page(1, key, subject, { page: 1 })).result.columns, []);
 });
-test("Query-only Dataset policy alone and PRIMARY approvals never authorize additional sources", async () => {
+test("Query-only uses the additional source Dataset policy without duplicate PRIMARY approvals", async () => {
   const f = fixture(); delete f.control.bindings.WARD!.sourceMasks;
-  assert.deepEqual((await f.service.page(1, "WARD", subject, { page: 1 })).result.rows, [{}]);
+  assert.deepEqual((await f.service.page(1, "WARD", subject, { page: 1 })).result.rows, [{NAME:"測○○○甲"}]);
 });
 
 for (const changed of ["patientVersion", "metadataProof"] as const) test(`Query-only ${changed} invalidates cached pages`, async () => {
@@ -345,13 +346,13 @@ for (const key of ["PRIMARY", "WARD"]) {
     assert.deepEqual(fresh.result.rows, first.result.rows);
   });
 
-  test(`${key} approval revocation omits the field and never returns the old page`, async () => {
+  test(`${key} old JSON revocation expires cache but cannot replace Dataset mask policy`, async () => {
     const f = approvalFixture(), first = await f.service.page(1, key, subject, { page: 1 });
     changeApproval(f, key, null);
     await assert.rejects(f.service.page(1, key, subject, { page: 1, snapshotId: first.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
     const fresh = await f.service.page(1, key, subject, { page: 1 });
-    assert.deepEqual(fresh.result.columns, []);
-    assert.deepEqual(fresh.result.rows, [{}]);
+    assert.deepEqual(fresh.result.columns, [{name:"NAME"}]);
+    assert.ok(fresh.result.rows.every(r=>r.NAME!=="測試患者甲"));
     assert.equal(f.control.audits.length, 2); // Revocation does not disable page disclosure auditing.
   });
 
@@ -559,7 +560,7 @@ for (const reason of ["view", "execute", "token", "expired", "inactive", "legacy
   if (reason === "legacy") f.control.bindings.PRIMARY!.mode = "LEGACY";
   if (reason === "unmanaged") f.control.bindings.PRIMARY!.managed = false;
   if (reason === "pending") f.control.bindings.ROOM!.queryDefinitionId = null;
-  if (reason === "approval") f.control.bindings.ROOM!.sourceMasks = {};
+  if (reason === "approval") f.control.publicAllowed=false;
   if (reason === "sibling-acl") f.control.denied.add(22);
   if (reason === "policy") f.deps.getSensitivity = async () => ({ version: 0, columns: [] });
   if (reason === "flag") f.control.enabled = false;
@@ -658,4 +659,14 @@ for(const reason of ["valid","inactive","disabled-mode","pending-disabled-source
   const reader=createUserPlaybackSourcesReader({transaction:async work=>work({schemaReady:async()=>reason!=="schema",readState:async (id:number)=>{assert.equal(id,1);return saved;}} as any)});
   if(reason==="valid"){const view=await reader(1);assert.deepEqual(view.keys,["PRIMARY","WARD"]);assert.match(view.version,/^[a-f0-9]{64}$/);}
   else await assert.rejects(reader(1));
+});
+
+for(const ctx of ["designer","user","device"] as const)test(`Dataset public policy applies to ${ctx}, Legacy JSON never supplies missing grants`,async()=>{
+ const f=userFixture();for(const b of Object.values(f.control.bindings)){b.deviceMasks={};b.sourceMasks={};}
+ const subjectFor=ctx==="designer"?{...subject,context:ctx}:{...userSubject(),context:ctx,...(ctx==="device"?{deviceId:7,verifyDevice:async()=>({deviceId:7,userId:1,tokenVersion:1,fingerprint:"device"})}:{})};
+ if(ctx!=="user")f.control.session.permissions=["DESIGN_QUERY","EXECUTE_QUERY"];
+ if(ctx==="designer")for(const b of Object.values(f.control.bindings))b.dashboardActive=false;
+ f.control.publicAllowed=false;
+ if(ctx==="designer"){assert.equal((await f.service.page(1,"PRIMARY",subjectFor,{page:1})).result.rows.length,1);}
+ else {await assert.rejects(f.service.page(1,"PRIMARY",subjectFor,{page:1}),{code:"QUERY_SOURCE_PUBLIC_POLICY_REQUIRED"});assert.equal(f.control.executions.length,0);f.control.publicAllowed=true;const r=await f.service.page(1,"PRIMARY",subjectFor,{page:1});assert.equal(r.result.rows[0]!.NAME,"測○○○甲");f.control.publicEpoch+=2;await assert.rejects(f.service.page(1,"PRIMARY",subjectFor,{page:1,snapshotId:r.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});}
 });

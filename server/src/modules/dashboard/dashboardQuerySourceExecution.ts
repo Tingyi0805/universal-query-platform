@@ -1,3 +1,5 @@
+import { getDatasetPublicDisplay } from "../dataset/datasetPublicDisplay.repository.js";
+import { resolveDatasetPublicDisplayMasks } from "../dataset/datasetPublicDisplayPolicy.js";
 import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
 import { getDatasetPatientAuditConfig } from "../dataset/patientAuditConfig.repository.js";
 import { createHash } from "node:crypto";
@@ -29,6 +31,7 @@ export type ExecutionDependencies = {
   getDataset: typeof import("../dataset/dataset.repository.js").getDataset;
   getParameters: typeof import("../dataset/parameter.repository.js").listDatasetParameters;
   getDataSource: typeof import("../datasource/datasource.repository.js").getDataSourcePlaybackState;
+  getPublicDisplay?: typeof getDatasetPublicDisplay;
   getSensitivity: typeof import("../dataset/datasetSensitiveColumn.repository.js").getDatasetSensitivitySnapshot;
   execute: typeof import("../dataset/dataset.service.js").executeSavedDataset;
   audit: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
@@ -71,10 +74,6 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
         !Number.isInteger(binding.refreshSeconds) || binding.refreshSeconds < 5 || binding.refreshSeconds > 3600 ||
         !Number.isInteger(binding.pageSeconds) || binding.pageSeconds < 5 || binding.pageSeconds > 3600)
       throw new QuerySourceError("QUERY_SOURCE_BINDING_INVALID");
-    if (context === "user") {
-      const configured = key === "PRIMARY" ? binding.deviceMasks : (binding.sourceMasks as Record<string, unknown> | undefined)?.[key];
-      if (!validDashboardColumnMasks(configured) || !Object.keys(configured as object).length) throw new QuerySourceError("QUERY_SOURCE_APPROVAL_REQUIRED", 403);
-    }
     const query = await deps.getQuery(binding.queryDefinitionId);
     if (!query?.isActive || !query.isPublished || query.isArchived || query.id !== binding.queryDefinitionId) throw new QuerySourceError("QUERY_SOURCE_QUERY_NOT_AVAILABLE");
     const access = await deps.getAccess(subject.userId, query.id);
@@ -89,14 +88,17 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     const sensitivity = await deps.getSensitivity(dataset.id);
     try { assertDatasetSensitivityPolicy(sensitivity); } catch (error) { throw new QuerySourceError(error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"
       ? "QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED" : "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", 503); }
+    const publicDisplay = context === "designer" ? null : await (deps.getPublicDisplay ?? getDatasetPublicDisplay)(dataset.id);
+    if (publicDisplay && (publicDisplay.status !== "CONFIRMED" || !publicDisplay.policy?.confirmed || publicDisplay.sensitivityVersion !== sensitivity.version))
+      throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
     const accessRevision = await deps.getAccessRevision(query.id);
     // Binding/masks and policy are read independently. Bracket those reads so a
     // concurrent write (including A→B→A) cannot produce an apparently current mix.
     if (await approvalEvidence(id) !== approvals) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
     const modeVersion = context === "device" ? `QUERY_ONLY_DEVICE_V1:${binding.modeRevision}` : context === "user" ? `QUERY_ONLY_USER_V1:${binding.modeRevision}` : "QUERY_ONLY_PREVIEW_V1";
     const fingerprint = createHash("sha256").update(JSON.stringify({ approvals, context, modeVersion, proof, subject, binding, query,
-      session, access, accessRevision, dataset, source, definitions, sensitivity })).digest("hex");
-    return { fingerprint, approvals, binding, query, dataset, sensitivity, accessRevision, modeVersion };
+      session, access, accessRevision, dataset, source, definitions, sensitivity, publicDisplay })).digest("hex");
+    return { fingerprint, approvals, binding, query, dataset, sensitivity, publicDisplay, accessRevision, modeVersion };
   };
   const readState = async (id: number, key: string, subject: ExecutionSubject) => {
     if (subject.context !== "user") return readSingleState(id, key, subject);
@@ -155,9 +157,10 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / binding.pageSize));
       if (input.page > totalPages) throw new QuerySourceError("DASHBOARD_PAGE_OUT_OF_RANGE", 400);
       const rawRows = snapshot.rows.slice((input.page - 1) * binding.pageSize, input.page * binding.pageSize);
-      const masks = resolveDashboardDisclosureMasks({ deviceColumnMasks: binding.deviceMasks,
-        deviceColumnTypes: binding.deviceTypes, deviceSourceColumnMasks: binding.sourceMasks }, key, sensitivity.columns);
       assertDashboardResultColumns(snapshot.columns);
+      const masks = initial.publicDisplay
+        ? resolveDatasetPublicDisplayMasks(sensitivity, initial.publicDisplay.policy, snapshot.columns.map(c=>c.name))
+        : Object.fromEntries(sensitivity.columns.map(r=>[r.columnName,r.deviceMaskMode]));
       const columns = snapshot.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
       const rows = maskDeviceRows(rawRows, masks, sensitivity.columns);
       // Cached and fresh pages must still match immediately before disclosure audit,

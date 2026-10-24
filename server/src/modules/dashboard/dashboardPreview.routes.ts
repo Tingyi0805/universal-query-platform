@@ -69,7 +69,7 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
       const raw = await deps.execute(dataset.id, source?.parameters ?? parameters, source ? 100 : undefined);
       if ((await readState(req, id, key)).fingerprint !== initial.fingerprint) throw new PreviewFailure("DASHBOARD_PREVIEW_STATE_CHANGED", 409);
       assertDashboardResultColumns(raw.columns);
-      const masks = resolveDashboardDisclosureMasks(dashboard.parameters, key ?? "PRIMARY", policy.columns);
+      const masks = Object.fromEntries(policy.columns.map(r=>[r.columnName,r.deviceMaskMode]));
       const columns = raw.columns.filter(c => resolveDeviceColumnMask(c.name, masks) !== "OMIT");
       const rows = maskDeviceRows(raw.rows, masks, policy.columns);
       let disclosureId: number | null;
