@@ -263,21 +263,23 @@ async function main(){
       request.query=function(...args:unknown[]){
         const statement=String(args[0]);
         const object=["DatasetSensitiveColumn","DatasetParameter","DatasetColumn","AuditLog","Dataset"].find(name=>statement.includes("uqp."+name))??"SESSION";
-        console.log("COLUMN_SYNC_STEP="+object);
         return Reflect.apply(query,request,args).catch((error:unknown)=>{
           const number=(error as {number?:unknown})?.number;
-          const statement=String(args[0]);
-          const object=["DatasetSensitiveColumn","DatasetParameter","DatasetColumn","AuditLog","Dataset"].find(name=>statement.includes("uqp."+name))??"SESSION";
           console.error("COLUMN_SYNC_SQL_FAILURE object="+object+";number="+(Number.isSafeInteger(number)?number:0));
           throw error;
         });
       } as typeof request.query;
       return request;
     }});
-    const versions=async()=> (await root!.request().query(`SELECT LOWER(CONVERT(varchar(16),d.DefinitionRowVersion,2)) D,
-      LOWER(CONVERT(varchar(16),s.ConfigurationRowVersion,2)) S FROM uqp.Dataset d JOIN uqp.DataSource s ON s.Id=d.DataSourceId WHERE d.Id=77`)).recordset[0];
-    const opts=async()=>{const v=await versions();return {dataSourceId:201,definitionVersion:v.D as string,configurationVersion:v.S as string,userId:303,
-      reauthorize:async(t:sql.Transaction)=>{console.log("COLUMN_SYNC_AUTH_RECHECK");check((await new sql.Request(t).query("SELECT Id FROM uqp.AppUser WHERE Id=303")).recordset.length===1,"COLUMN_ACTOR_MISSING");}};};
+    const versions=async()=>{
+      const row=(await root!.request().query(`SELECT d.DefinitionRowVersion AS DefinitionVersion,
+        s.ConfigurationRowVersion AS ConfigurationVersion FROM uqp.Dataset d JOIN uqp.DataSource s ON s.Id=d.DataSourceId WHERE d.Id=77`)).recordset[0];
+      check(Buffer.isBuffer(row?.DefinitionVersion)&&row.DefinitionVersion.length===8,"COLUMN_DEFINITION_BINARY8");
+      check(Buffer.isBuffer(row?.ConfigurationVersion)&&row.ConfigurationVersion.length===8,"COLUMN_SOURCE_BINARY8");
+      return {definitionVersion:row.DefinitionVersion.toString("hex"),configurationVersion:row.ConfigurationVersion.toString("hex")};
+    };
+    const opts=async()=>({...await versions(),dataSourceId:201,userId:303,
+      reauthorize:async(t:sql.Transaction)=>{check((await new sql.Request(t).query("SELECT Id FROM uqp.AppUser WHERE Id=303")).recordset.length===1,"COLUMN_ACTOR_MISSING");}});
     const fields=[{name:"NAME",dataType:"nvarchar(30)"},{name:"PHONE",dataType:"varchar(20)"},{name:"MRN",dataType:"varchar(20)"},{name:"HIDDEN",dataType:"int"}];
     const firstColumnOptions=await opts();
     check(typeof firstColumnOptions.definitionVersion==="string"&&/^[0-9a-f]{16}$/.test(firstColumnOptions.definitionVersion),"COLUMN_DEFINITION_FORMAT");
