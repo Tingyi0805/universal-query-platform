@@ -34,14 +34,16 @@ export function createDatasetColumnRepository(deps = {
       await request().query("SET XACT_ABORT ON");
       const check = async () => {
         const result = await request().input("datasetId", sql.BigInt, datasetId).input("sourceId", sql.BigInt, options.dataSourceId).query(`
-          SELECT CONVERT(VARCHAR(16),d.DefinitionRowVersion,2) AS DefinitionVersion,
-            CONVERT(VARCHAR(16),s.ConfigurationRowVersion,2) AS ConfigurationVersion
+          SELECT d.DefinitionRowVersion AS DefinitionVersion,
+            s.ConfigurationRowVersion AS ConfigurationVersion
           FROM uqp.Dataset d WITH (UPDLOCK,HOLDLOCK)
           INNER JOIN uqp.DataSource s WITH (HOLDLOCK) ON s.Id=d.DataSourceId
           WHERE d.Id=@datasetId AND s.Id=@sourceId AND d.IsActive=1 AND d.IsArchived=0 AND s.IsActive=1`);
         const row = result.recordset[0];
-        if (result.recordset.length !== 1 || String(row.DefinitionVersion).toLowerCase() !== options.definitionVersion
-          || String(row.ConfigurationVersion).toLowerCase() !== options.configurationVersion)
+        if (result.recordset.length !== 1 || !Buffer.isBuffer(row.DefinitionVersion) || row.DefinitionVersion.length !== 8
+          || !Buffer.isBuffer(row.ConfigurationVersion) || row.ConfigurationVersion.length !== 8
+          || row.DefinitionVersion.toString("hex") !== options.definitionVersion
+          || row.ConfigurationVersion.toString("hex") !== options.configurationVersion)
           throw new DatasetColumnSyncError("DATASET_COLUMN_SYNC_CONFLICT");
         const parameters = await request().input("datasetId", sql.BigInt, datasetId)
           .query("SELECT TOP (1) Id FROM uqp.DatasetParameter WITH (HOLDLOCK) WHERE DatasetId=@datasetId");

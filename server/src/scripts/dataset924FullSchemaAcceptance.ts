@@ -263,7 +263,10 @@ async function main(){
       request.query=function(...args:unknown[]){
         const statement=String(args[0]);
         const object=["DatasetSensitiveColumn","DatasetParameter","DatasetColumn","AuditLog","Dataset"].find(name=>statement.includes("uqp."+name))??"SESSION";
-        return Reflect.apply(query,request,args).catch((error:unknown)=>{
+        return Reflect.apply(query,request,args).then((result:sql.IResult<unknown>)=>{
+          if(object==="Dataset") console.log("COLUMN_SYNC_PLATFORM_SNAPSHOT rows="+result.recordset.length);
+          return result;
+        }).catch((error:unknown)=>{
           const number=(error as {number?:unknown})?.number;
           console.error("COLUMN_SYNC_SQL_FAILURE object="+object+";number="+(Number.isSafeInteger(number)?number:0));
           throw error;
@@ -273,7 +276,8 @@ async function main(){
     }});
     const versions=async()=>{
       const row=(await root!.request().query(`SELECT d.DefinitionRowVersion AS DefinitionVersion,
-        s.ConfigurationRowVersion AS ConfigurationVersion FROM uqp.Dataset d JOIN uqp.DataSource s ON s.Id=d.DataSourceId WHERE d.Id=77`)).recordset[0];
+        s.ConfigurationRowVersion AS ConfigurationVersion,d.IsActive AS DatasetActive,d.IsArchived,s.IsActive AS SourceActive FROM uqp.Dataset d JOIN uqp.DataSource s ON s.Id=d.DataSourceId WHERE d.Id=77`)).recordset[0];
+      check(row?.DatasetActive===true&&row.IsArchived===false&&row.SourceActive===true,"COLUMN_FIXTURE_ACTIVE_STATE");
       check(Buffer.isBuffer(row?.DefinitionVersion)&&row.DefinitionVersion.length===8,"COLUMN_DEFINITION_BINARY8");
       check(Buffer.isBuffer(row?.ConfigurationVersion)&&row.ConfigurationVersion.length===8,"COLUMN_SOURCE_BINARY8");
       return {definitionVersion:row.DefinitionVersion.toString("hex"),configurationVersion:row.ConfigurationVersion.toString("hex")};

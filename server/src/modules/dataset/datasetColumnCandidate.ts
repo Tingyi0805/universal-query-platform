@@ -32,16 +32,16 @@ export const defaultColumnCandidateDependencies = {
       SELECT d.Id AS DatasetId, d.DataSourceId, d.SqlText,
         d.IsActive AS DatasetActive, d.IsArchived AS DatasetArchived,
         s.IsActive AS SourceActive, s.Type AS SourceType,
-        CONVERT(VARCHAR(16), d.DefinitionRowVersion, 2) AS DefinitionVersion,
-        CONVERT(VARCHAR(16), s.ConfigurationRowVersion, 2) AS ConfigurationVersion
+        d.DefinitionRowVersion AS DefinitionVersion,
+        s.ConfigurationRowVersion AS ConfigurationVersion
       FROM uqp.Dataset d
       INNER JOIN uqp.DataSource s ON s.Id=d.DataSourceId
       WHERE d.Id=@id`);
     const row = result.recordset[0];
     return row ? {
       datasetId: Number(row.DatasetId), dataSourceId: Number(row.DataSourceId),
-      sqlText: String(row.SqlText), definitionVersion: String(row.DefinitionVersion).toLowerCase(),
-      configurationVersion: String(row.ConfigurationVersion).toLowerCase(),
+      sqlText: String(row.SqlText), definitionVersion: Buffer.isBuffer(row.DefinitionVersion) && row.DefinitionVersion.length === 8 ? row.DefinitionVersion.toString("hex") : "",
+      configurationVersion: Buffer.isBuffer(row.ConfigurationVersion) && row.ConfigurationVersion.length === 8 ? row.ConfigurationVersion.toString("hex") : "",
       datasetActive: Boolean(row.DatasetActive), datasetArchived: Boolean(row.DatasetArchived),
       sourceActive: Boolean(row.SourceActive), sourceType: String(row.SourceType),
     } : null;
