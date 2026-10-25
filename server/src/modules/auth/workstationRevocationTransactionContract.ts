@@ -19,6 +19,11 @@ export type RevocationMutation = Readonly<{
   locks: readonly string[];
   legacyMutationAffected: number;
   sessionInvalidationAffected: number;
+  /** Locked target count must be established within the same transaction. */
+  lockedActiveSessionsBefore: number;
+  /** Every session in scope must be invalidated; unknown totals fail closed. */
+  remainingActiveSessionsAfter: number;
+  decisionAffected: number;
   auditAffected: number;
   auditLogId: string;
   commitOutcome: "COMMITTED" | "ROLLED_BACK" | "UNKNOWN";
@@ -44,7 +49,11 @@ export function assessRevocationTransaction(value: RevocationMutation): Readonly
     !value.locks.every((x, i) => x === workstationRevocationLockOrder[i])) failures.push("LOCK_ORDER_INVALID");
   if (value.legacyMutationAffected !== 1 || !Number.isSafeInteger(value.sessionInvalidationAffected) ||
     value.sessionInvalidationAffected < 0) failures.push("MUTATION_NOT_PROVEN");
+  if (!Number.isSafeInteger(value.lockedActiveSessionsBefore) || value.lockedActiveSessionsBefore < 0 ||
+    !Number.isSafeInteger(value.remainingActiveSessionsAfter) || value.remainingActiveSessionsAfter !== 0 ||
+    value.sessionInvalidationAffected !== value.lockedActiveSessionsBefore) failures.push("REVOCATION_SCOPE_NOT_PROVEN");
   if (value.auditAffected !== 1 || !bigint(value.auditLogId)) failures.push("AUDIT_NOT_PROVEN");
+  if (value.decisionAffected !== 1) failures.push("DECISION_NOT_PROVEN");
   if (value.commitOutcome !== "COMMITTED") failures.push("COMMIT_NOT_PROVEN");
   if (!value.sqlServer2019Accepted) failures.push("SQL_ACCEPTANCE_MISSING");
   return Object.freeze({
