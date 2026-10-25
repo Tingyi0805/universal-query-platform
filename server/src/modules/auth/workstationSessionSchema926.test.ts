@@ -237,3 +237,12 @@ test("unknown fields, getters, proxies, and unsafe identifiers are rejected with
   }
   assert.equal(calls, 0);
 });
+
+test("926 permits committed rejected PIN failures only with a changed PIN_ATTEMPT revision", () => {
+  const revisionConstraint = ddl.slice(ddl.indexOf("CONSTRAINT CK_WorkstationSessionDecision_Revision"), ddl.indexOf("CONSTRAINT CK_WorkstationSessionDecision_Generation"));
+  assert.match(revisionConstraint, /DecisionStatus=N'REJECTED' AND OperationCode=N'PIN_FAILURE'/u);
+  assert.match(revisionConstraint, /RevisionDomain=N'PIN_ATTEMPT' AND NextRevision IS NOT NULL/u);
+  assert.match(revisionConstraint, /PreviousRevision IS NOT NULL AND NextRevision<>PreviousRevision/u);
+  assert.match(revisionConstraint, /DecisionStatus=N'REJECTED' AND NextRevision IS NULL/u);
+  assert.doesNotMatch(revisionConstraint, /DecisionStatus=N'REJECTED' AND NextRevision IS NOT NULL\s*\)/u);
+});
