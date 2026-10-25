@@ -115,3 +115,22 @@ all revocation writers, 1205/1222, rollback and commit-unknown behavior.
 The schema contract is ready for H0-5B isolated validation, conditional on the
 dedicated environment and exact validator/installer work above. Production
 Session/PIN enablement remains **BLOCKED**.
+
+## H0-5B correction (isolated, no SQL execution)
+
+A rejected PIN verification may durably advance the PIN failure/lockout row.
+The immutable Decision record therefore permits a non-null next revision for
+`REJECTED + PIN_FAILURE + PIN_ATTEMPT` only when a previous revision exists
+and differs from the next revision. Other rejected decisions must not claim a
+new revision. This avoids treating a committed lockout counter update as a
+failed transaction, while preserving a single audit/decision transaction
+requirement. This is a draft DDL constraint change, **not** SQL Server evidence.
+
+H0-2 device renewal has no caller-supplied RequestId. A future SQL adapter must
+generate a cryptographically random, unique internal RequestId **inside its owned
+transaction**, bind it to the attempt digest and immutable Decision/Audit
+correlation, and never interpret it as a client-provided idempotency key.
+Renewal replay prevention remains on ROWVERSION and BIGINT renewal counter
+CAS, not on the internally generated RequestId alone. Any caller-visible
+response must not claim operator authorization. Adapter, live SQL transaction,
+fault injection and cross-node checks remain **NOT_RUN / BLOCKED**.
