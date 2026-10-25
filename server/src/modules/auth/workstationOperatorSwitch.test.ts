@@ -36,7 +36,7 @@ const nextIncarnations = [
   "00000000-0000-4000-8000-000000000501",
   "00000000-0000-4000-8000-000000000502",
 ];
-const policyRevision = "0000000000000021";
+const policyRevision = "21";
 const deviceRevision = "0000000000000041";
 const operatorRevision = "0000000000000011";
 const correctPin = "804297";
@@ -345,7 +345,7 @@ test("wrong PIN increments persistent attempts and never records the PIN", async
 test("revoked PIN, changed policy, disabled user, and TokenVersion mismatch fail before comparison", async () => {
   const cases: [(store: SyntheticOperatorStore) => void, string][] = [
     [store => { store.state.users.get(13)!.pinEnabled = false; }, "PIN_REVOKED"],
-    [store => { store.state.policyRevision = "0000000000000022"; }, "PIN_POLICY_CHANGED"],
+    [store => { store.state.policyRevision = "22"; }, "PIN_POLICY_CHANGED"],
     [store => { store.state.policyLength = 8; }, "PIN_POLICY_CHANGED"],
     [store => { store.state.users.get(13)!.active = false; }, "USER_DISABLED"],
     [store => { store.state.users.get(13)!.tokenVersion = 6; }, "TOKEN_VERSION_MISMATCH"],

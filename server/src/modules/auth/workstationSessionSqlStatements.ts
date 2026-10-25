@@ -45,3 +45,98 @@ export const renewalCasRequiredBindings = Object.freeze([
   "sessionId", "workstationId", "credentialId", "expectedRevision",
   "expectedCounter", "nextCounter", "lastActivityUtc", "idleExpiresUtc",
 ] as const);
+
+export const workstationSessionRepositorySql = Object.freeze({
+  acquireGate: `
+SET XACT_ABORT ON;
+SET LOCK_TIMEOUT 5000;
+DECLARE @result INT;
+EXEC @result = sys.sp_getapplock
+  @Resource = N'UQP:WORKSTATION_SESSION_SECURITY:V1',
+  @LockMode = N'Exclusive', @LockOwner = N'Transaction', @LockTimeout = 5000;
+SELECT @result AS GateResult;`,
+  discoverDevice: `
+SELECT CONVERT(VARCHAR(20), WorkstationId) AS WorkstationId,
+       CONVERT(VARCHAR(36), CredentialId) AS CredentialId
+FROM uqp.SharedWorkstationDeviceSession
+WHERE Id = @sessionId;`,
+  lockWorkstation: `
+SELECT CONVERT(VARCHAR(20), Id) AS WorkstationId, IsActive, CredentialVersion, RetiredAtUtc
+FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK)
+WHERE Id = CONVERT(BIGINT, @workstationId);`,
+  lockCredential: `
+SELECT CONVERT(VARCHAR(36), Id) AS CredentialId,
+       CONVERT(VARCHAR(20), WorkstationId) AS WorkstationId,
+       IsRevoked, CredentialVersion, RevokedAtUtc
+FROM uqp.SharedWorkstationCredential WITH (UPDLOCK, HOLDLOCK)
+WHERE Id = @credentialId;`,
+  lockDevice: `
+SELECT CONVERT(VARCHAR(36), Id) AS SessionId,
+       CONVERT(VARCHAR(20), WorkstationId) AS WorkstationId,
+       CONVERT(VARCHAR(36), CredentialId) AS CredentialId,
+       BoundCredentialVersion, SessionProofHash, CreatedAtUtc, LastActivityAtUtc,
+       IdleExpiresAtUtc, AbsoluteExpiresAtUtc, RevokedAtUtc,
+       CONVERT(VARCHAR(20), RenewalCounter) AS RenewalCounter,
+       LOWER(CONVERT(VARCHAR(16), RowVersion, 2)) AS RowVersion
+FROM uqp.SharedWorkstationDeviceSession WITH (UPDLOCK, HOLDLOCK)
+WHERE Id = @sessionId;`,
+  readRequest: `
+SELECT LOWER(CONVERT(VARCHAR(64), RequestDigest, 2)) AS RequestDigest,
+       OperationCode, CONVERT(VARCHAR(20), WorkstationId) AS WorkstationId,
+       CONVERT(VARCHAR(36), DeviceSessionId) AS DeviceSessionId
+FROM uqp.SharedWorkstationSessionRequest WITH (UPDLOCK, HOLDLOCK)
+WHERE RequestId = @requestId;`,
+  insertRequest: `
+INSERT uqp.SharedWorkstationSessionRequest
+  (RequestId, WorkstationId, DeviceSessionId, OperationCode, RequestDigest, TargetUserId, ReplayExpiresAtUtc)
+OUTPUT CONVERT(VARCHAR(36), INSERTED.RequestId) AS RequestId
+VALUES
+  (@requestId, CONVERT(BIGINT, @workstationId), @deviceSessionId, @operation,
+   CONVERT(BINARY(32), @requestDigest, 2), NULL, DATEADD(DAY, 1, SYSUTCDATETIME()));`,
+  insertAudit: `
+INSERT uqp.AuditLog(EventType, UserId, Status, ParametersJson, CreatedAtUtc, CompletedAtUtc)
+OUTPUT CONVERT(VARCHAR(20), INSERTED.Id) AS AuditLogId
+VALUES(@eventType, NULL, @status, @parameters, SYSUTCDATETIME(), SYSUTCDATETIME());`,
+  insertDecision: `
+INSERT uqp.SharedWorkstationSessionDecision
+  (RequestId, WorkstationId, DeviceSessionId, OperationCode, DecisionStatus, ReasonCode,
+   ActorUserId, TargetUserId, RevisionDomain, PreviousRevision, NextRevision,
+   PreviousGeneration, NextGeneration, PreviousIncarnation, NextIncarnation,
+   AuditLogId, AuditEventType, TransactionCorrelationId)
+OUTPUT CONVERT(VARCHAR(36), INSERTED.RequestId) AS RequestId
+VALUES
+  (@requestId, CONVERT(BIGINT, @workstationId), @deviceSessionId, @operation,
+   @decisionStatus, @reason, NULL, NULL, N'DEVICE_SESSION',
+   CONVERT(BINARY(8), @previousRevision, 2),
+   CASE WHEN @nextRevision IS NULL THEN NULL ELSE CONVERT(BINARY(8), @nextRevision, 2) END,
+   NULL, NULL, NULL, NULL, CONVERT(BIGINT, @auditLogId), @eventType, @correlationId);`,
+  revokeDevice: `
+UPDATE uqp.SharedWorkstationDeviceSession
+SET RevokedAtUtc = SYSUTCDATETIME(), RevocationReason = @reason
+OUTPUT LOWER(CONVERT(VARCHAR(16), INSERTED.RowVersion, 2)) AS NewRevision
+WHERE Id = @sessionId
+  AND WorkstationId = CONVERT(BIGINT, @workstationId)
+  AND CredentialId = @credentialId
+  AND RowVersion = CONVERT(BINARY(8), @expectedRevision, 2)
+  AND RevokedAtUtc IS NULL;`,
+  revokeDependents: `
+UPDATE uqp.SharedWorkstationSession
+SET RevokedAtUtc = COALESCE(RevokedAtUtc, SYSUTCDATETIME())
+WHERE WorkstationId = CONVERT(BIGINT, @workstationId) AND RevokedAtUtc IS NULL;
+UPDATE uqp.SharedWorkstationOperatorState
+SET StateCode = N'DEVICE_REVOKED', Generation = Generation + CONVERT(BIGINT, 1),
+    OperatorSessionId = NULL, OperatorUserId = NULL, TokenVersion = NULL,
+    PinVersion = NULL, AuthMethod = NULL, LastMutationAtUtc = SYSUTCDATETIME()
+WHERE WorkstationId = CONVERT(BIGINT, @workstationId) AND DeviceSessionId = @sessionId;`,
+  revokeCredentialSessions: `
+UPDATE uqp.SharedWorkstationDeviceSession
+SET RevokedAtUtc = COALESCE(RevokedAtUtc, SYSUTCDATETIME()),
+    RevocationReason = COALESCE(RevocationReason, N'CREDENTIAL_REVOKED')
+WHERE WorkstationId = CONVERT(BIGINT, @workstationId)
+  AND CredentialId = @credentialId AND RevokedAtUtc IS NULL;`,
+  revokeWorkstationSessions: `
+UPDATE uqp.SharedWorkstationDeviceSession
+SET RevokedAtUtc = COALESCE(RevokedAtUtc, SYSUTCDATETIME()),
+    RevocationReason = COALESCE(RevocationReason, N'WORKSTATION_REVOKED')
+WHERE WorkstationId = CONVERT(BIGINT, @workstationId) AND RevokedAtUtc IS NULL;`,
+} as const);

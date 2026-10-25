@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { deviceRenewalCasSql, renewalCasRequiredBindings } from "./workstationSessionSqlStatements.js";
+import {
+  deviceRenewalCasSql,
+  renewalCasRequiredBindings,
+  workstationSessionRepositorySql,
+} from "./workstationSessionSqlStatements.js";
 
 test("926 device renewal CAS is guarded by revision, counter, expiry and device revocation", () => {
   for (const expression of [
@@ -27,4 +31,19 @@ test("statement does not interpolate caller data, issue authorization, or open i
   const required = new Set<string>(renewalCasRequiredBindings);
   for (const name of required) assert.ok(used.has(name), name);
   assert.equal(required.size, renewalCasRequiredBindings.length);
+});
+
+test("repository statements use a cooperative transaction gate and exact OUTPUT receipts", () => {
+  assert.match(workstationSessionRepositorySql.acquireGate, /SET XACT_ABORT ON/u);
+  assert.match(workstationSessionRepositorySql.acquireGate, /sp_getapplock/u);
+  for (const statement of [
+    workstationSessionRepositorySql.lockWorkstation,
+    workstationSessionRepositorySql.lockCredential,
+    workstationSessionRepositorySql.lockDevice,
+    workstationSessionRepositorySql.readRequest,
+  ]) assert.match(statement, /UPDLOCK, HOLDLOCK/u);
+  assert.match(workstationSessionRepositorySql.insertRequest, /OUTPUT CONVERT\(VARCHAR\(36\), INSERTED\.RequestId\)/u);
+  assert.match(workstationSessionRepositorySql.insertAudit, /OUTPUT CONVERT\(VARCHAR\(20\), INSERTED\.Id\)/u);
+  assert.match(workstationSessionRepositorySql.insertDecision, /OUTPUT CONVERT\(VARCHAR\(36\), INSERTED\.RequestId\)/u);
+  assert.doesNotMatch(Object.values(workstationSessionRepositorySql).join("\n"), /\$\{/u);
 });

@@ -269,12 +269,12 @@ function isOperatorSwitchSnapshot(value: unknown): value is OperatorSwitchSnapsh
     isSafePositive(user.id) && typeof user.active === "boolean" && isSafePositive(user.tokenVersion) &&
     validPermissions(user.permissions) && typeof pin.enabled === "boolean" &&
     isSafePositive(pin.version) && isSafePositive(pin.boundTokenVersion) &&
-    isRevision(pin.boundPolicyRevision) && isRevision(pin.revision) &&
+    isCanonicalBigInt(pin.boundPolicyRevision) && isRevision(pin.revision) &&
     isSafeNonnegative(pin.failedAttempts) &&
     (pin.attemptWindowStartedAtMs === null || isTimestamp(pin.attemptWindowStartedAtMs)) &&
     (pin.lockedUntilMs === null || isTimestamp(pin.lockedUntilMs)) &&
     isSafePositive(pinPolicy.length) && pinPolicy.length >= 4 && pinPolicy.length <= 12 &&
-    isRevision(pinPolicy.revision) &&
+    isCanonicalBigInt(pinPolicy.revision) &&
     ((pin.failedAttempts === 0 && pin.attemptWindowStartedAtMs === null) ||
       (pin.failedAttempts > 0 && pin.attemptWindowStartedAtMs !== null));
 }
