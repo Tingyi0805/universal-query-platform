@@ -13,6 +13,9 @@ const valid = (): RevocationMutation => ({
   locks: [...workstationRevocationLockOrder],
   legacyMutationAffected: 1,
   sessionInvalidationAffected: 0,
+  lockedActiveSessionsBefore: 0,
+  remainingActiveSessionsAfter: 0,
+  decisionAffected: 1,
   auditAffected: 1,
   auditLogId: "9007199254740993",
   commitOutcome: "COMMITTED",
@@ -38,6 +41,8 @@ test("missing gate, invalid lock order, absent audit, unknown commit and absent 
     { auditAffected: 0 }, { auditLogId: "01" }, { commitOutcome: "UNKNOWN" },
     { commitOutcome: "ROLLED_BACK" }, { sqlServer2019Accepted: false },
     { legacyMutationAffected: 0 }, { sessionInvalidationAffected: -1 },
+    { decisionAffected: 0 }, { lockedActiveSessionsBefore: 1 },
+    { remainingActiveSessionsAfter: 1 },
   ];
   for (const change of cases) {
     const result = assessRevocationTransaction({ ...valid(), ...change });
@@ -50,4 +55,11 @@ test("writer revocation and device/operator transactions use the identical canon
   assert.strictEqual(workstationRevocationLockOrder, sessionLockOrder);
   assert.equal(workstationRevocationLockOrder[0], "SESSION_SECURITY_GATE");
   assert.equal(workstationRevocationLockOrder.at(-1), "DECISION");
+});
+
+test("a 0-row revocation only passes when a locked scope proves no active sessions", () => {
+  assert.equal(assessRevocationTransaction(valid()).consistent, true);
+  const invalid = assessRevocationTransaction({ ...valid(), lockedActiveSessionsBefore: 2, sessionInvalidationAffected: 1 });
+  assert.equal(invalid.consistent, false);
+  assert.ok(invalid.failures.includes("REVOCATION_SCOPE_NOT_PROVEN"));
 });
