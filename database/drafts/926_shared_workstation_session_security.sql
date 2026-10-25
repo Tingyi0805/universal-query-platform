@@ -285,6 +285,9 @@ BEGIN TRY
     CONSTRAINT CK_WorkstationSessionDecision_Revision CHECK
       (CASE WHEN (DecisionStatus=N'SUCCESS' AND NextRevision IS NOT NULL)
         OR (DecisionStatus=N'REJECTED' AND NextRevision IS NULL)
+        OR (DecisionStatus=N'REJECTED' AND OperationCode=N'PIN_FAILURE'
+            AND RevisionDomain=N'PIN_ATTEMPT' AND NextRevision IS NOT NULL
+            AND PreviousRevision IS NOT NULL AND NextRevision<>PreviousRevision)
         THEN 1 ELSE 0 END=1),
     CONSTRAINT CK_WorkstationSessionDecision_Generation CHECK
       ((PreviousGeneration IS NULL OR PreviousGeneration>=0)
