@@ -9,7 +9,7 @@ test("legacy writer transaction port is not registered or enabled", () => {
   });
 });
 
-test("port names all seven known legacy mutation groups without granting query authority", () => {
+test("port names all seven known legacy mutation groups without granting query authority", async () => {
   const kinds: RevocationWriterKind[] = [
     "PIN_ENROLL_REVOKE", "PIN_POLICY", "PASSWORD_TOKEN_VERSION",
     "USER_ROLE_PERMISSION", "WORKSTATION_CREDENTIAL", "WORKSTATION_STATE",
@@ -19,7 +19,7 @@ test("port names all seven known legacy mutation groups without granting query a
   const synthetic: AtomicRevocationWriterPort = {
     execute: async () => ({ outcome: "REJECTED", authority: "NONE" }),
   };
-  return Promise.all(kinds.map(async kind => {
+  await Promise.all(kinds.map(async kind => {
     const result = await synthetic.execute(kind, "9007199254740993");
     assert.equal(result.outcome, "REJECTED");
     assert.equal(result.authority, "NONE");
