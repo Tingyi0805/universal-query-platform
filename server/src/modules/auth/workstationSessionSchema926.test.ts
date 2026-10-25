@@ -238,11 +238,18 @@ test("unknown fields, getters, proxies, and unsafe identifiers are rejected with
   assert.equal(calls, 0);
 });
 
-test("926 permits committed rejected PIN failures only with a changed PIN_ATTEMPT revision", () => {
+test("926 permits audited PIN attempt mutations for the switch request with a changed revision", () => {
   const revisionConstraint = ddl.slice(ddl.indexOf("CONSTRAINT CK_WorkstationSessionDecision_Revision"), ddl.indexOf("CONSTRAINT CK_WorkstationSessionDecision_Generation"));
-  assert.match(revisionConstraint, /DecisionStatus=N'REJECTED' AND OperationCode=N'PIN_FAILURE'/u);
+  assert.match(revisionConstraint, /OperationCode\+N'#' IN \(N'PIN_FAILURE#',N'OPERATOR_SWITCH#'\)/u);
   assert.match(revisionConstraint, /RevisionDomain=N'PIN_ATTEMPT' AND NextRevision IS NOT NULL/u);
   assert.match(revisionConstraint, /PreviousRevision IS NOT NULL AND NextRevision<>PreviousRevision/u);
   assert.match(revisionConstraint, /DecisionStatus=N'REJECTED' AND NextRevision IS NULL/u);
   assert.doesNotMatch(revisionConstraint, /DecisionStatus=N'REJECTED' AND NextRevision IS NOT NULL\s*\)/u);
+});
+
+test("926 may persist a PIN-verified candidate without issuing a legacy operator session", () => {
+  const activeConstraint = ddl.slice(ddl.indexOf("CONSTRAINT CK_WorkstationOperatorState_Active"), ddl.indexOf("CREATE UNIQUE INDEX UX_WorkstationOperatorState_OperatorSession"));
+  assert.match(activeConstraint, /StateCode=N'OPERATOR_ACTIVE'[\s\S]*OperatorUserId IS NOT NULL/u);
+  assert.doesNotMatch(activeConstraint, /StateCode=N'OPERATOR_ACTIVE'[\s\S]*OperatorSessionId IS NOT NULL/u);
+  assert.match(activeConstraint, /StateCode<>N'OPERATOR_ACTIVE'[\s\S]*OperatorSessionId IS NULL/u);
 });

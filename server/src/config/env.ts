@@ -34,6 +34,7 @@ const envSchema = z.object({
   DATASET_SECURITY_SCOPE_MANAGEMENT: envBoolean(false),
   DATASET_PUBLIC_DISPLAY_MANAGEMENT: envBoolean(false),
   DATASET_MASK_TEMPLATE_MANAGEMENT: envBoolean(false),
+  WORKSTATION_SESSION_API_ENABLED: envBoolean(false),
   DATASET_SECURITY_PLATFORM_INCARNATION: optionalString,
 
   PLATFORM_DB_SERVER: optionalString,

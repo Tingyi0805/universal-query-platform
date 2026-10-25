@@ -182,7 +182,7 @@ BEGIN TRY
       (StateCode+N'#' IN (N'DEVICE_READY#',N'OPERATOR_ACTIVE#',N'OPERATOR_LOCKED#',N'DEVICE_REVOKED#')),
     CONSTRAINT CK_WorkstationOperatorState_Active CHECK
       (CASE WHEN ((StateCode=N'OPERATOR_ACTIVE'
-          AND OperatorSessionId IS NOT NULL AND OperatorUserId IS NOT NULL
+          AND OperatorUserId IS NOT NULL
           AND TokenVersion>0 AND AuthMethod IS NOT NULL
           AND AuthMethod+N'#' IN (N'PASSWORD#',N'PIN#',N'STEP_UP#')
           AND ((AuthMethod=N'PIN' AND PinVersion>0) OR (AuthMethod<>N'PIN' AND PinVersion IS NULL)))
@@ -285,7 +285,7 @@ BEGIN TRY
     CONSTRAINT CK_WorkstationSessionDecision_Revision CHECK
       (CASE WHEN (DecisionStatus=N'SUCCESS' AND NextRevision IS NOT NULL)
         OR (DecisionStatus=N'REJECTED' AND NextRevision IS NULL)
-        OR (DecisionStatus=N'REJECTED' AND OperationCode=N'PIN_FAILURE'
+        OR (DecisionStatus=N'REJECTED' AND OperationCode+N'#' IN (N'PIN_FAILURE#',N'OPERATOR_SWITCH#')
             AND RevisionDomain=N'PIN_ATTEMPT' AND NextRevision IS NOT NULL
             AND PreviousRevision IS NOT NULL AND NextRevision<>PreviousRevision)
         THEN 1 ELSE 0 END=1),

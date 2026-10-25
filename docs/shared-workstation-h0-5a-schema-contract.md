@@ -120,7 +120,7 @@ Session/PIN enablement remains **BLOCKED**.
 
 A rejected PIN verification may durably advance the PIN failure/lockout row.
 The immutable Decision record therefore permits a non-null next revision for
-`REJECTED + PIN_FAILURE + PIN_ATTEMPT` only when a previous revision exists
+`REJECTED + (PIN_FAILURE or OPERATOR_SWITCH) + PIN_ATTEMPT` only when a previous revision exists
 and differs from the next revision. Other rejected decisions must not claim a
 new revision. This avoids treating a committed lockout counter update as a
 failed transaction, while preserving a single audit/decision transaction
