@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assessRevocationTransaction, workstationRevocationLockOrder, type RevocationMutation } from "./workstationRevocationTransactionContract.js";
+import { sessionLockOrder } from "./workstationSessionSchema926.js";
 
 const valid = (): RevocationMutation => ({
   scope: "USER",
@@ -43,4 +44,10 @@ test("missing gate, invalid lock order, absent audit, unknown commit and absent 
     assert.equal(result.consistent, false, JSON.stringify(change));
     assert.equal(result.runtimeEnabled, false);
   }
+});
+
+test("writer revocation and device/operator transactions use the identical canonical lock order", () => {
+  assert.strictEqual(workstationRevocationLockOrder, sessionLockOrder);
+  assert.equal(workstationRevocationLockOrder[0], "SESSION_SECURITY_GATE");
+  assert.equal(workstationRevocationLockOrder.at(-1), "DECISION");
 });
