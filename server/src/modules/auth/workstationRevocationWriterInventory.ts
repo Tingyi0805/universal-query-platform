@@ -27,7 +27,7 @@ export function assessWorkstationRevocationCoverage(evidence: readonly Revocatio
   const missing = workstationRevocationWriterInventory
     .filter(writer => {
       const proof = evidence.find(item => item.writerId === writer.id);
-      return !proof || !proof.transactionOwnerProven || !proof.sharedGateProven ||
+      return writer.state === "UNKNOWN" || !proof || !proof.transactionOwnerProven || !proof.sharedGateProven ||
         !proof.invalidationAtomicityProven || !proof.auditAtomicityProven || !proof.sql2019Accepted;
     })
     .map(writer => writer.id);
