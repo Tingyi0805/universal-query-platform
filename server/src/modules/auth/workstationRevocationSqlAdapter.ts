@@ -1,5 +1,4 @@
 import sql from "mssql";
-import { randomUUID } from "node:crypto";
 import { getPlatformDbPool } from "../../config/database.js";
 import type { WorkstationSqlRequest, WorkstationSqlTransaction } from "./workstationSessionSql.repository.js";
 import type { RevocationOwnedSqlDriver, RevocationOwnedSqlTransaction } from "./workstationRevocationOwnedWriter.js";
