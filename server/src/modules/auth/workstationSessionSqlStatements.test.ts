@@ -23,7 +23,7 @@ test("renewal counter advances exactly once without SQL BIGINT overflow", () => 
 test("statement does not interpolate caller data, issue authorization, or open its own connection", () => {
   assert.doesNotMatch(deviceRenewalCasSql, /\$\{|EXEC\s*\(|GRANT\s|JWT|AuditLog|QueryExecution/iu);
   const used = new Set([...deviceRenewalCasSql.matchAll(/@(\w+)/gu)].map(match => match[1])
-    .filter(name => !["changed"].includes(name)));
+    .filter((name): name is string => typeof name === "string" && name !== "changed"));
   const required = new Set<string>(renewalCasRequiredBindings);
   for (const name of required) assert.ok(used.has(name), name);
   assert.equal(required.size, renewalCasRequiredBindings.length);
