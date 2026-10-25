@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.e2e.json",
-    "test": "node --import tsx --test src/dashboard/*.test.ts src/security/*.test.ts",
+    "test": "node --import tsx --test src/dashboard/*.test.ts src/security/*.test.ts src/security/*.test.tsx",
     "test:e2e": "playwright test"
   },
   "dependencies": {
