@@ -1,23 +1,11 @@
+import { sessionLockOrder } from "./workstationSessionSchema926.js";
+
 /**
  * H0-5C-2A — isolated, fail-closed revocation transaction contract.
  * No legacy writer imports this yet. No database connection or privilege.
  */
-export const workstationRevocationLockOrder = Object.freeze([
-  "SESSION_SECURITY_GATE",
-  "QUICK_PIN_POLICY",
-  "APP_USER",
-  "WORKSTATION",
-  "CREDENTIAL",
-  "DEVICE_SESSION",
-  "USER_QUICK_PIN",
-  "PIN_BINDING",
-  "PIN_ATTEMPT",
-  "OPERATOR_SESSION",
-  "OPERATOR_STATE",
-  "REQUEST_RESERVATION",
-  "AUDIT_LOG",
-  "DECISION",
-] as const);
+/** Shared canonical lock order; avoid divergence from H0-5A/5B. */
+export const workstationRevocationLockOrder = sessionLockOrder;
 
 export type RevocationScope = "USER" | "WORKSTATION" | "CREDENTIAL" | "PIN_POLICY" | "ROLE";
 export type RevocationMutation = Readonly<{
