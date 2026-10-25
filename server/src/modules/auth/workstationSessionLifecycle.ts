@@ -109,6 +109,10 @@ type RenewalEvaluation =
   | Readonly<{ ok: true; mutation: DeviceSessionRenewalMutation }>
   | Readonly<{ ok: false; reason: DeviceSessionRenewalReason }>;
 
+export type DeviceSessionEntryEvaluation =
+  | Readonly<{ ok: true; status: "DEVICE_ENTRY_VALID" }>
+  | Readonly<{ ok: false; reason: DeviceSessionRenewalReason }>;
+
 export type DeviceSessionRenewalResult =
   | Readonly<{
     ok: true;
@@ -228,25 +232,15 @@ function rejected(reason: DeviceSessionRenewalReason): DeviceSessionRenewalResul
   return Object.freeze({ ok: false, status: "REJECTED", reason, productionReady: false, ...restrictions });
 }
 
-export function evaluateDeviceSessionRenewal(
+/** Validate current device-entry state without renewing or granting operator authority. */
+export function evaluateDeviceSessionEntry(
   snapshot: unknown,
-  request: unknown,
   policy: DeviceSessionLifecyclePolicy,
   nowMs: number,
-): RenewalEvaluation {
-  if (
-    !isDeviceSessionRenewalSnapshot(snapshot) ||
-    !isDeviceSessionRenewalRequest(request) ||
-    !isPolicy(policy) ||
-    !isTimestamp(nowMs)
-  ) {
+): DeviceSessionEntryEvaluation {
+  if (!isDeviceSessionRenewalSnapshot(snapshot) || !isPolicy(policy) || !isTimestamp(nowMs)) {
     return Object.freeze({ ok: false, reason: "FORMAT_INVALID" });
   }
-  if (
-    snapshot.sessionId !== request.sessionId ||
-    snapshot.workstationId !== request.workstationId ||
-    snapshot.credentialId !== request.credentialId
-  ) return Object.freeze({ ok: false, reason: "IDENTITY_MISMATCH" });
   if (snapshot.sessionState !== "ACTIVE") return Object.freeze({ ok: false, reason: "SESSION_REVOKED" });
   if (!snapshot.workstationActive) return Object.freeze({ ok: false, reason: "WORKSTATION_DISABLED" });
   if (snapshot.workstationRetired) return Object.freeze({ ok: false, reason: "WORKSTATION_RETIRED" });
@@ -274,6 +268,30 @@ export function evaluateDeviceSessionRenewal(
   if (nowMs >= snapshot.idleExpiresAtMs) {
     return Object.freeze({ ok: false, reason: "SESSION_IDLE_EXPIRED" });
   }
+  return Object.freeze({ ok: true, status: "DEVICE_ENTRY_VALID" });
+}
+
+export function evaluateDeviceSessionRenewal(
+  snapshot: unknown,
+  request: unknown,
+  policy: DeviceSessionLifecyclePolicy,
+  nowMs: number,
+): RenewalEvaluation {
+  if (
+    !isDeviceSessionRenewalSnapshot(snapshot) ||
+    !isDeviceSessionRenewalRequest(request) ||
+    !isPolicy(policy) ||
+    !isTimestamp(nowMs)
+  ) {
+    return Object.freeze({ ok: false, reason: "FORMAT_INVALID" });
+  }
+  if (
+    snapshot.sessionId !== request.sessionId ||
+    snapshot.workstationId !== request.workstationId ||
+    snapshot.credentialId !== request.credentialId
+  ) return Object.freeze({ ok: false, reason: "IDENTITY_MISMATCH" });
+  const entry = evaluateDeviceSessionEntry(snapshot, policy, nowMs);
+  if (!entry.ok) return entry;
   if (snapshot.renewalCounter !== request.renewalCounter) {
     return Object.freeze({ ok: false, reason: "RENEWAL_REPLAY" });
   }

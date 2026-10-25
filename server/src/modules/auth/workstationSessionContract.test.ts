@@ -24,6 +24,15 @@ test("device registration is separate from operator authorization", () => {
   assert.equal(captureOperatorRequest(session), null);
 });
 
+test("operator selection starts from a locked state without granting identity", () => {
+  const device = ready();
+  const selecting = next(device, { type: "OPERATOR_SELECTION_STARTED" });
+  assert.equal(selecting.state, "OPERATOR_LOCKED");
+  assert.equal(selecting.operatorUserId, null);
+  assert.equal(captureOperatorRequest(selecting), null);
+  assert.equal(requiresOperatorDataPurge(device, selecting), true);
+});
+
 test("accepted transitions increment generation and produce immutable sessions", () => {
   const device = ready();
   const operator = next(device, { type: "OPERATOR_VERIFIED", userId: 12 });
@@ -98,6 +107,7 @@ test("device rejection and revocation are terminal and idempotent", () => {
   const attempts: WorkstationEvent[] = [
     { type: "DEVICE_VERIFIED" },
     { type: "OPERATOR_VERIFIED", userId: 2 },
+    { type: "OPERATOR_SELECTION_STARTED" },
     { type: "OPERATOR_LOCKED" },
     { type: "OPERATOR_AUTHORIZATION_EXPIRED" },
     { type: "OPERATOR_AUTHORIZATION_REVOKED" },
@@ -147,6 +157,7 @@ test("illegal transition matrix is identity-preserving", () => {
   const illegal: Record<WorkstationState, WorkstationEvent[]> = {
     UNREGISTERED: [
       { type: "OPERATOR_VERIFIED", userId: 1 },
+      { type: "OPERATOR_SELECTION_STARTED" },
       { type: "OPERATOR_LOCKED" },
       { type: "OPERATOR_AUTHORIZATION_EXPIRED" },
       { type: "OPERATOR_AUTHORIZATION_REVOKED" },
@@ -159,14 +170,16 @@ test("illegal transition matrix is identity-preserving", () => {
       { type: "OPERATOR_AUTHORIZATION_REVOKED" },
       { type: "OPERATOR_SIGNED_OUT" },
     ],
-    OPERATOR_ACTIVE: [{ type: "DEVICE_VERIFIED" }],
+    OPERATOR_ACTIVE: [{ type: "DEVICE_VERIFIED" }, { type: "OPERATOR_SELECTION_STARTED" }],
     OPERATOR_LOCKED: [
       { type: "DEVICE_VERIFIED" },
+      { type: "OPERATOR_SELECTION_STARTED" },
       { type: "OPERATOR_LOCKED" },
       { type: "OPERATOR_AUTHORIZATION_EXPIRED" },
     ],
     DEVICE_REVOKED: [
       { type: "DEVICE_VERIFIED" },
+      { type: "OPERATOR_SELECTION_STARTED" },
       { type: "OPERATOR_VERIFIED", userId: 1 },
       { type: "OPERATOR_SIGNED_OUT" },
       { type: "DEVICE_REVOKED" },

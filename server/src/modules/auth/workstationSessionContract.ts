@@ -16,6 +16,7 @@ export type WorkstationState =
 export type WorkstationEvent =
   | { type: "DEVICE_VERIFIED" }
   | { type: "DEVICE_REJECTED" }
+  | { type: "OPERATOR_SELECTION_STARTED" }
   | { type: "OPERATOR_VERIFIED"; userId: number }
   | { type: "OPERATOR_LOCKED" }
   | { type: "OPERATOR_AUTHORIZATION_EXPIRED" }
@@ -111,6 +112,9 @@ export function transitionWorkstationSession(
   }
   if (event.type === "DEVICE_VERIFIED" && session.state === "UNREGISTERED") {
     return withNextGeneration(session, "DEVICE_READY");
+  }
+  if (event.type === "OPERATOR_SELECTION_STARTED" && session.state === "DEVICE_READY") {
+    return withNextGeneration(session, "OPERATOR_LOCKED");
   }
   if (
     event.type === "OPERATOR_VERIFIED" &&
