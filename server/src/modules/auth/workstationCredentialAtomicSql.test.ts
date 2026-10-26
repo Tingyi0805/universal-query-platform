@@ -44,3 +44,17 @@ test("legacy read scope is linked to credential through operator and device, not
   }
   assert.equal(s.revokeLegacy, null);
 });
+
+test("revocation request/audit/decision match 926 constrained operation and exact receipt", () => {
+  assert.match(s.reserveRequest, /N'AUTHORIZATION_REVOKE'/u);
+  assert.match(s.reserveRequest, /OUTPUT CONVERT\(VARCHAR\(36\),INSERTED.RequestId\)/u);
+  assert.match(s.insertAudit, /OUTPUT CONVERT\(VARCHAR\(20\),INSERTED.Id\) AS AuditLogId/u);
+  assert.match(s.insertDecision, /N'OPERATOR_STATE'/u);
+  assert.match(s.insertDecision, /@nextOperatorRevision/u);
+  assert.match(s.insertDecision, /@nextGeneration/u);
+  assert.match(s.insertDecision, /CONVERT\(BIGINT,@auditLogId\)/u);
+  for (const statement of [s.reserveRequest, s.insertAudit, s.insertDecision]) {
+    assert.doesNotMatch(statement, /\bBEGIN\s+TRAN|\bCOMMIT\b|\bROLLBACK\b/iu);
+  }
+  assert.equal(s.auditDecisionIntegrated, false);
+});
