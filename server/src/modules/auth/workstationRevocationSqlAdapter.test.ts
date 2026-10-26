@@ -98,7 +98,9 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
           statements.push(statement);
           return { recordset: statement.includes("sp_getapplock")
             ? [{ GateResult: 0 }]
-            : [{ UnmappedActiveLegacySessions: "0" }], rowsAffected: [] };
+            : [statement.includes("SharedWorkstationCredential")
+              ? { CredentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad" }
+              : { UnmappedActiveLegacySessions: "0" }], rowsAffected: [] };
         },
       };
       return req;
@@ -108,9 +110,9 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
     workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 2);
+  assert.equal(statements.length, 3);
   assert.match(statements[1]!, /UnmappedActiveLegacySessions/u);
-  assert.deepEqual(bindings, ["workstationId", "credentialId"]);
+  assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "credentialId"]);
 });
 
 test("nonzero or missing COUNT_BIG evidence refuses mutation and commits nothing", async () => {
