@@ -328,3 +328,39 @@ test("multiple linked legacy session rows prevent writer admission and force rol
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
   assert.equal(rollbacks, 1);
 });
+
+test("scope lacking device binding stays blocked before mutation even with zero legacy rows", async () => {
+  let commits = 0;
+  let rollbacks = 0;
+  const credentialId = "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad";
+  const deps = {
+    async getPool() { return {}; },
+    transaction(): WorkstationSqlTransaction {
+      return { async begin() {}, async commit() { commits++; },
+        async rollback() { rollbacks++; } };
+    },
+    request(): WorkstationSqlRequest {
+      const req: WorkstationSqlRequest = {
+        input() { return req; },
+        async query(statement: string) {
+          const rows = statement.includes("sp_getapplock") ? [{ GateResult: 0 }]
+            : statement.includes("os.OperatorSessionId=ls.Id") ? []
+            : statement.includes("UnmappedActiveLegacySessions") ? [{ UnmappedActiveLegacySessions: "0" }]
+            : statement.includes("ActiveLegacySessions") ? [{ ActiveLegacySessions: "0" }]
+            : statement.includes("AS WorkstationId") ? [{ WorkstationId: "1", IsActive: true, RetiredAtUtc: null }]
+            : [{ CredentialId: credentialId }];
+          return { recordset: rows, rowsAffected: [] };
+        },
+      };
+      return req;
+    },
+  };
+  const tx = await createIsolatedRevocationSqlDriver(deps, {
+    workstationId: "1", credentialId,
+  }).beginSerializable();
+  assert.equal(await tx.acquireSecurityGate(), true);
+  await assert.rejects(tx.lockAndRevalidateScope(), /DEVICE_BINDING_REQUIRED/u);
+  await tx.rollback();
+  assert.equal(commits, 0);
+  assert.equal(rollbacks, 1);
+});
