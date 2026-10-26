@@ -138,7 +138,7 @@ WHERE WorkstationId = CONVERT(BIGINT, @workstationId)
   revokeWorkstationSessions: `
 UPDATE uqp.SharedWorkstationDeviceSession
 SET RevokedAtUtc = COALESCE(RevokedAtUtc, SYSUTCDATETIME()),
-    RevocationReason = COALESCE(RevocationReason, N'WORKSTATION_REVOKED')
+    RevocationReason = COALESCE(RevocationReason, N'WORKSTATION_DISABLED')
 WHERE WorkstationId = CONVERT(BIGINT, @workstationId) AND RevokedAtUtc IS NULL;`,
 } as const);
 
