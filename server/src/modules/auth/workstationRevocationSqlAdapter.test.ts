@@ -114,7 +114,7 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
   assert.equal(statements.length, 5);
   assert.match(statements[1]!, /UnmappedActiveLegacySessions/u);
-  assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "workstationId", "credentialId"]);
+  assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "workstationId", "credentialId", "workstationId", "credentialId"]);
 });
 
 test("nonzero or missing COUNT_BIG evidence refuses mutation and commits nothing", async () => {
