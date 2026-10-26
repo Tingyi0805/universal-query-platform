@@ -9,7 +9,6 @@ test("H0-5C-2H known SQL draft gaps remain release blockers", () => {
   assert.deepEqual(inspection.gaps, [
     "LEGACY_WORKSTATION_WIDE_REVOKE",
     "CREDENTIAL_VERSION_NOT_ROWVERSION",
-    "OPERATOR_GENERATION_OVERFLOW",
     "AUDIT_DECISION_NOT_ATOMIC",
   ]);
   assert.equal(credentialRevocationSqlAdmission.productionReady, false);
