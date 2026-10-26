@@ -58,6 +58,10 @@ JOIN uqp.SharedWorkstationOperatorState os
 JOIN uqp.SharedWorkstationDeviceSession ds
   ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
 WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND os.DeviceSessionId=@deviceSessionId
+  AND os.RowVersion=CONVERT(BINARY(8),@expectedOperatorRevision,2)
+  AND os.Generation=CONVERT(BIGINT,@expectedGeneration)
+  AND os.Incarnation=@expectedIncarnation
   AND ds.CredentialId=@credentialId
   AND ls.RevokedAtUtc IS NULL
   AND NOT EXISTS (
