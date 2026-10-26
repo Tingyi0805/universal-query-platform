@@ -82,6 +82,10 @@ test("linked legacy mutation targets only one credential-bound active operator a
   assert.match(s.revokeLinkedLegacy, /UPDATE ls SET RevokedAtUtc=/u);
   assert.match(s.revokeLinkedLegacy, /os.OperatorSessionId=ls.Id/u);
   assert.match(s.revokeLinkedLegacy, /ds.CredentialId=@credentialId/u);
+  assert.match(s.revokeLinkedLegacy, /os.DeviceSessionId=@deviceSessionId/u);
+  assert.match(s.revokeLinkedLegacy, /os.RowVersion=CONVERT\\(BINARY\\(8\\),@expectedOperatorRevision,2\\)/u);
+  assert.match(s.revokeLinkedLegacy, /os.Generation=CONVERT\\(BIGINT,@expectedGeneration\\)/u);
+  assert.match(s.revokeLinkedLegacy, /os.Incarnation=@expectedIncarnation/u);
   assert.match(s.revokeLinkedLegacy, /remaining.Id<>ls.Id/u);
   assert.match(s.revokeLinkedLegacy, /remaining.RevokedAtUtc IS NULL/u);
   assert.match(s.revokeLinkedLegacy, /OUTPUT CONVERT\(VARCHAR\(36\),INSERTED.Id\)/u);
