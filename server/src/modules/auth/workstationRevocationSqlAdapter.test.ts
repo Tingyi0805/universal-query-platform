@@ -143,3 +143,34 @@ test("nonzero or missing COUNT_BIG evidence refuses mutation and commits nothing
     assert.equal(rolledBack, 1);
   }
 });
+
+test("scope validation cannot be replayed after initial rejection", async () => {
+  let scopeQueries = 0;
+  const deps = {
+    async getPool() { return {}; },
+    transaction(): WorkstationSqlTransaction {
+      return { async begin() {}, async commit() { throw Error("COMMIT_NOT_ALLOWED"); }, async rollback() {} };
+    },
+    request(): WorkstationSqlRequest {
+      const req: WorkstationSqlRequest = {
+        input() { return req; },
+        async query(statement: string) {
+          if (statement.includes("sp_getapplock")) {
+            return { recordset: [{ GateResult: 0 }], rowsAffected: [] };
+          }
+          scopeQueries++;
+          return { recordset: [{ UnmappedActiveLegacySessions: "1" }], rowsAffected: [] };
+        },
+      };
+      return req;
+    },
+  };
+  const tx = await createIsolatedRevocationSqlDriver(deps, {
+    workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
+  }).beginSerializable();
+  assert.equal(await tx.acquireSecurityGate(), true);
+  await assert.rejects(tx.lockAndRevalidateScope(), /UNMAPPED_LEGACY_SESSIONS/u);
+  await assert.rejects(tx.lockAndRevalidateScope(), /SCOPE_ALREADY_ATTEMPTED/u);
+  assert.equal(scopeQueries, 1);
+  await tx.rollback();
+});
