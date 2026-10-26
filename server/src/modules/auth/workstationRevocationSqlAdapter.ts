@@ -136,6 +136,21 @@ WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
                 !devices.recordset.some(row => row.SessionId.toLowerCase() === scope.deviceSessionId!.toLowerCase()))
               throw new Error("DEVICE_SET_UNPROVEN");
           }
+          // Obtain operator CAS provenance while the same transaction still
+          // owns the device and credential locks. A missing or moved operator
+          // cannot be mutated using a previously observed revision.
+          if (scope.deviceSessionId !== undefined) {
+            const operator = await deps.request(tx)
+              .input("workstationId", sql.NVarChar(20), scope.workstationId)
+              .query(isolatedCredentialAtomicSql.lockOperator);
+            if (operator.recordset.length !== 1 ||
+                typeof operator.recordset[0]?.DeviceSessionId !== "string" ||
+                operator.recordset[0].DeviceSessionId.toLowerCase() !== scope.deviceSessionId.toLowerCase() ||
+                !/^[0-9a-f]{16}$/.test(operator.recordset[0]?.Revision) ||
+                !/^[1-9][0-9]*$/.test(operator.recordset[0]?.Generation) ||
+                typeof operator.recordset[0]?.Incarnation !== "string")
+              throw new Error("OPERATOR_STATE_UNPROVEN");
+          }
           // Capture the legacy set BEFORE operator CAS removes its session link.
           // The unmapped-count fence above ensures no other active legacy row
           // can be silently excluded from this credential-scoped read.
