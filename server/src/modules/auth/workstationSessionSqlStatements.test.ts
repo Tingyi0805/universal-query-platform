@@ -47,3 +47,9 @@ test("repository statements use a cooperative transaction gate and exact OUTPUT 
   assert.match(workstationSessionRepositorySql.insertDecision, /OUTPUT CONVERT\(VARCHAR\(36\), INSERTED\.RequestId\)/u);
   assert.doesNotMatch(Object.values(workstationSessionRepositorySql).join("\n"), /\$\{/u);
 });
+
+
+test("workstation revoke reason is accepted by Migration 926", () => {
+  assert.match(workstationSessionRepositorySql.revokeWorkstationSessions, /N'WORKSTATION_DISABLED'/u);
+  assert.doesNotMatch(workstationSessionRepositorySql.revokeWorkstationSessions, /N'WORKSTATION_REVOKED'/u);
+});
