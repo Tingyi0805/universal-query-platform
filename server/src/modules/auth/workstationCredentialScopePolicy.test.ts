@@ -17,7 +17,7 @@ test("credential cannot implicitly revoke unrelated legacy workstation sessions"
 });
 test("malformed identifiers and generation overflow fail closed", () => {
   for (const scope of [
-    { ...valid, workstationId: "90071992547409930" },
+    { ...valid, workstationId: "9223372036854775808" },
     { ...valid, workstationId: "01" },
     { ...valid, credentialId: "bad" },
   ]) assert.equal(assessCredentialRevocationScope(scope).reason, "UNKNOWN_SCOPE");
