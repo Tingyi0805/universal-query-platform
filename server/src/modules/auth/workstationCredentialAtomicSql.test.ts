@@ -69,3 +69,11 @@ test("pre-CAS unlinked legacy scope cannot be hidden when operator link is clear
   assert.match(s.countUnmappedLegacy, /ds.CredentialId=@credentialId/u);
   assert.equal(s.revokeLegacy, null);
 });
+
+test("total pre-CAS legacy count does not rely on mutable operator links", () => {
+  assert.match(s.countActiveLegacyBeforeCas, /COUNT_BIG\(\*\) AS ActiveLegacySessions/u);
+  assert.match(s.countActiveLegacyBeforeCas, /WorkstationId=CONVERT\(BIGINT,@workstationId\)/u);
+  assert.doesNotMatch(s.countActiveLegacyBeforeCas, /OperatorSessionId|CredentialId|JOIN/iu);
+  assert.match(s.countUnmappedLegacy, /NOT EXISTS/u);
+  assert.equal(s.revokeLegacy, null);
+});
