@@ -2,6 +2,8 @@
 
 Runtime registration and feature flags remain OFF. Migration 926 remains a draft outside the migration runner. No existing database was contacted.
 
+The adapter's default pool provider rejects with ISOLATED_DATABASE_POOL_REQUIRED. It does not import or fall back to the platform database configuration. Only an acceptance harness explicitly injecting its approved isolated pool can use the SQL writer.
+
 ## Implemented transaction
 
 `createIsolatedRevocationSqlDriver` owns one mssql SERIALIZABLE transaction. Its transaction-owned security gate sets XACT_ABORT and a bounded lock timeout. It validates workstation status, credential/version, exact device binding, the complete credential device set, operator ROWVERSION/generation/incarnation, and active legacy coverage before any DML.
@@ -43,7 +45,7 @@ Legacy password/PIN/session, credential rotation, workstation administration, us
 
 Mock tests cover zero/one legacy, complete devices, unlinked/foreign scope rejection, CAS/version drift, exact BIGINT receipts, duplicate RequestId, SQL 1205/1222 injection, staged rollback, audit/decision faults, commit unknown, failed rollback, phase reentry, competing gate and unsafe input. They do not prove SQL Server rollback, absent unobserved DML, key-range protection or durability.
 
-Local validation: Server full suite 1,948 passed / 0 failed; H0 workstation suite 190 passed / 0 failed (included in full suite); Client unit suite 12 passed / 0 failed; Server/Client typecheck and build passed. The initial sandboxed full run could not bind localhost (EPERM); the complete suite was rerun with local-network permission and passed without changing tests. Browser results are supplied by the commit's GitHub Client job. SQL Server integration remains NOT_RUN.
+Local validation: Server full suite 1,949 passed / 0 failed; H0 workstation suite 191 passed / 0 failed (included in full suite); Client unit suite 12 passed / 0 failed; Server/Client typecheck and build passed. The initial sandboxed full run could not bind localhost (EPERM); the complete suite was rerun with local-network permission and passed without changing tests. Browser results are supplied by the commit's GitHub Client job. SQL Server integration remains NOT_RUN.
 
 ## Next isolated SQL acceptance
 

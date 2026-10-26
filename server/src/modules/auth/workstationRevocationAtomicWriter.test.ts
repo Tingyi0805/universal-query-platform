@@ -14,6 +14,10 @@ const requestId = "d37f0484-f079-4689-bd36-28d3b16c1b03";
 const command = { workstationId: "9007199254740993", credentialId, deviceSessionId: deviceId,
   expectedCredentialVersion: 2, requestId, nextIncarnation,
   transactionCorrelationId: "d37f0484-f079-4689-bd36-28d3b16c1b04" };
+
+test("default adapter cannot open the platform/shared database", async () => {
+  assert.equal((await runIsolatedRevocationWriter(createIsolatedRevocationSqlDriver(undefined, command))).status, "REJECTED");
+});
 type Options = { legacy?: boolean; devices?: number; fail?: string; override?: Record<string, readonly Record<string, unknown>[]>;
   commitUnknown?: boolean; rollbackFails?: boolean; replay?: boolean; lease?: { held: boolean } };
 

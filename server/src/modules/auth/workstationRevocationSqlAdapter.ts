@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import sql from "mssql";
 import { types } from "node:util";
-import { getPlatformDbPool } from "../../config/database.js";
 import type { WorkstationSqlRequest, WorkstationSqlTransaction } from "./workstationSessionSql.repository.js";
 import type { RevocationOwnedSqlDriver, RevocationOwnedSqlTransaction } from "./workstationRevocationOwnedWriter.js";
 import { workstationSessionRepositorySql } from "./workstationSessionSqlStatements.js";
@@ -23,7 +22,9 @@ type Dependencies = Readonly<{
   request: (tx: WorkstationSqlTransaction) => WorkstationSqlRequest;
 }>;
 const defaults: Dependencies = {
-  getPool: getPlatformDbPool as () => Promise<unknown | null>,
+  // Never fall back to the platform/shared database now that this adapter can
+  // mutate rows. An isolated acceptance harness must explicitly supply its pool.
+  getPool: async () => { throw new Error("ISOLATED_DATABASE_POOL_REQUIRED"); },
   transaction: pool => new sql.Transaction(pool as sql.ConnectionPool) as unknown as WorkstationSqlTransaction,
   request: tx => new sql.Request(tx as unknown as sql.Transaction) as unknown as WorkstationSqlRequest,
 };
