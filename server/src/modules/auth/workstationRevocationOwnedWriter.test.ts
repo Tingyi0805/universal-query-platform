@@ -69,3 +69,26 @@ test("commit uncertainty is not retried, rollback uncertainty stays distinct", a
   };
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "ROLLBACK_UNKNOWN");
 });
+
+test("inconsistent mutation evidence is rejected before append-only audit writes", async () => {
+  const events: string[] = [];
+  const driver: RevocationOwnedSqlDriver = {
+    async beginSerializable() {
+      return {
+        async acquireSecurityGate() { return true; },
+        async lockAndRevalidateScope() {},
+        async revokeCredentialAndSessions() {
+          return { ...evidence(), deviceSessionsRemaining: 1 };
+        },
+        async insertRequestAuditAndDecision() {
+          events.push("AUDIT_INSERT_MUST_NOT_RUN");
+          throw Error("AUDIT_CALLED");
+        },
+        async commit() { events.push("COMMIT"); },
+        async rollback() { events.push("ROLLBACK"); },
+      };
+    },
+  };
+  assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
+  assert.deepEqual(events, ["ROLLBACK"]);
+});
