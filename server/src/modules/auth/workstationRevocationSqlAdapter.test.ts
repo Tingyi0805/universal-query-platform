@@ -112,3 +112,34 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
   assert.match(statements[1]!, /UnmappedActiveLegacySessions/u);
   assert.deepEqual(bindings, ["workstationId", "credentialId"]);
 });
+
+test("nonzero or missing COUNT_BIG evidence refuses mutation and commits nothing", async () => {
+  for (const count of ["1", 1n, 1, null, undefined, "0.0"]) {
+    let rolledBack = 0;
+    let queried = 0;
+    const deps = {
+      async getPool() { return {}; },
+      transaction(): WorkstationSqlTransaction {
+        return { async begin() {}, async commit() { throw Error("COMMIT_NOT_ALLOWED"); },
+          async rollback() { rolledBack++; } };
+      },
+      request(): WorkstationSqlRequest {
+        const request: WorkstationSqlRequest = {
+          input() { return request; },
+          async query(statement: string) {
+            queried++;
+            return { recordset: [statement.includes("sp_getapplock")
+              ? { GateResult: 0 } : { UnmappedActiveLegacySessions: count }], rowsAffected: [] };
+          },
+        };
+        return request;
+      },
+    };
+    const driver = createIsolatedRevocationSqlDriver(deps, {
+      workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
+    });
+    assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
+    assert.equal(queried, 2);
+    assert.equal(rolledBack, 1);
+  }
+});
