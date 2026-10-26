@@ -136,6 +136,17 @@ WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
                 !devices.recordset.some(row => row.SessionId.toLowerCase() === scope.deviceSessionId!.toLowerCase()))
               throw new Error("DEVICE_SET_UNPROVEN");
           }
+          // Capture the legacy set BEFORE operator CAS removes its session link.
+          // The unmapped-count fence above ensures no other active legacy row
+          // can be silently excluded from this credential-scoped read.
+          const legacy = await deps.request(tx)
+            .input("workstationId", sql.NVarChar(20), scope.workstationId)
+            .input("credentialId", sql.UniqueIdentifier, scope.credentialId)
+            .query(isolatedCredentialAtomicSql.lockLegacySessions);
+          if (!Array.isArray(legacy.recordset) ||
+              legacy.recordset.length > 1 ||
+              legacy.recordset.some(row => typeof row.SessionId !== "string"))
+            throw new Error("LEGACY_SET_UNPROVEN");
           // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
         },
