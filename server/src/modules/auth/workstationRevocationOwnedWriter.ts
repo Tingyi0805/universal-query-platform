@@ -37,9 +37,13 @@ export async function runIsolatedRevocationWriter(driver: RevocationOwnedSqlDriv
     if (await tx.acquireSecurityGate() !== true) throw Error("GATE_DENIED");
     await tx.lockAndRevalidateScope();
     const mutation = await tx.revokeCredentialAndSessions();
-    const receipt = await tx.insertRequestAuditAndDecision();
-    // No caller-declared committed outcome accepted: all evidence is pre-commit.
+    // Reject invalid mutation evidence BEFORE writing append-only request/audit/decision.
     if (mutation.commitOutcome !== "UNKNOWN") throw Error("PREMATURE_COMMIT_PROOF");
+    const preAudit = assessCredentialRevocation({ ...mutation,
+      requestReservationAffected: 1, auditAffected: 1, decisionAffected: 1,
+      auditLogId: "1", commitOutcome: "COMMITTED" });
+    if (!preAudit.admissible) throw Error(preAudit.reason);
+    const receipt = await tx.insertRequestAuditAndDecision();
     const verdict = assessCredentialRevocation({ ...mutation, ...receipt, commitOutcome: "COMMITTED" });
     if (!verdict.admissible) throw Error(verdict.reason);
     attemptedCommit = true;
