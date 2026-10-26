@@ -124,6 +124,17 @@ WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
                 device.recordset[0].DeviceSessionId.toLowerCase() !== scope.deviceSessionId.toLowerCase() ||
                 device.recordset[0].BoundCredentialVersion !== scope.expectedCredentialVersion)
               throw new Error("DEVICE_SCOPE_UNPROVEN");
+            // Lock every active session of this credential, not just the current
+            // device. The eventual revoke must prove the same count was changed.
+            const devices = await deps.request(tx)
+              .input("workstationId", sql.NVarChar(20), scope.workstationId)
+              .input("credentialId", sql.UniqueIdentifier, scope.credentialId)
+              .query(isolatedCredentialAtomicSql.lockDevices);
+            if (!Array.isArray(devices.recordset) ||
+                devices.recordset.length === 0 ||
+                devices.recordset.some(row => typeof row.SessionId !== "string") ||
+                !devices.recordset.some(row => row.SessionId.toLowerCase() === scope.deviceSessionId!.toLowerCase()))
+              throw new Error("DEVICE_SET_UNPROVEN");
           }
           // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
