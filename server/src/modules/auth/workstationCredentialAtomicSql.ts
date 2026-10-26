@@ -23,7 +23,8 @@ JOIN uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
 WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
   AND ds.CredentialId=@credentialId AND ls.RevokedAtUtc IS NULL;`,
   lockOperator: `
-SELECT CONVERT(VARCHAR(20), Generation) AS Generation,
+SELECT CONVERT(VARCHAR(36), DeviceSessionId) AS DeviceSessionId,
+       CONVERT(VARCHAR(20), Generation) AS Generation,
        CONVERT(VARCHAR(36), Incarnation) AS Incarnation,
        LOWER(CONVERT(VARCHAR(16), RowVersion,2)) AS Revision
 FROM uqp.SharedWorkstationOperatorState WITH (UPDLOCK, HOLDLOCK)
