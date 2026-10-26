@@ -28,6 +28,17 @@ SELECT CONVERT(VARCHAR(20), Generation) AS Generation,
        LOWER(CONVERT(VARCHAR(16), RowVersion,2)) AS Revision
 FROM uqp.SharedWorkstationOperatorState WITH (UPDLOCK, HOLDLOCK)
 WHERE WorkstationId=CONVERT(BIGINT,@workstationId);`,
+  // Read and lock the particular active device binding BEFORE any credential
+  // CAS or session revocation. A workstation-level credential alone is not
+  // sufficient evidence that this device still belongs to that version.
+  lockCredentialDevice: `
+SELECT CONVERT(VARCHAR(36),Id) AS DeviceSessionId,
+       BoundCredentialVersion
+FROM uqp.SharedWorkstationDeviceSession WITH (UPDLOCK,HOLDLOCK)
+WHERE Id=@deviceSessionId AND WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND CredentialId=@credentialId
+  AND BoundCredentialVersion=@expectedCredentialVersion
+  AND RevokedAtUtc IS NULL;`,
   credentialCas: `
 SET NOCOUNT ON;
 UPDATE uqp.SharedWorkstationCredential
