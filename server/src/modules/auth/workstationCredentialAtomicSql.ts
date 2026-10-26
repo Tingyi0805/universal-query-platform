@@ -11,11 +11,17 @@ FROM uqp.SharedWorkstationDeviceSession WITH (UPDLOCK, HOLDLOCK)
 WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
   AND CredentialId=@credentialId AND RevokedAtUtc IS NULL
 ORDER BY Id;`,
+  // Only the current operator explicitly linked through this credential is in scope.
+  // Unlinked historical sessions remain an admission blocker, not an implicit match.
   lockLegacySessions: `
-SELECT CONVERT(VARCHAR(36), Id) AS SessionId
-FROM uqp.SharedWorkstationSession WITH (UPDLOCK, HOLDLOCK)
-WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
-  AND RevokedAtUtc IS NULL ORDER BY Id;`,
+SELECT CONVERT(VARCHAR(36), ls.Id) AS SessionId
+FROM uqp.SharedWorkstationSession ls WITH (UPDLOCK,HOLDLOCK)
+JOIN uqp.SharedWorkstationOperatorState os WITH (UPDLOCK,HOLDLOCK)
+  ON os.OperatorSessionId=ls.Id AND os.WorkstationId=ls.WorkstationId
+JOIN uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
+  ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
+WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND ds.CredentialId=@credentialId AND ls.RevokedAtUtc IS NULL;`,
   lockOperator: `
 SELECT CONVERT(VARCHAR(20), Generation) AS Generation,
        CONVERT(VARCHAR(36), Incarnation) AS Incarnation,
@@ -61,8 +67,13 @@ WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
   AND CredentialId=@credentialId AND RevokedAtUtc IS NULL;`,
   remainingLegacy: `
 SELECT COUNT_BIG(*) AS Remaining
-FROM uqp.SharedWorkstationSession WITH (UPDLOCK,HOLDLOCK)
-WHERE WorkstationId=CONVERT(BIGINT,@workstationId) AND RevokedAtUtc IS NULL;`,
+FROM uqp.SharedWorkstationSession ls WITH (UPDLOCK,HOLDLOCK)
+JOIN uqp.SharedWorkstationOperatorState os WITH (UPDLOCK,HOLDLOCK)
+  ON os.OperatorSessionId=ls.Id AND os.WorkstationId=ls.WorkstationId
+JOIN uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
+  ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
+WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND ds.CredentialId=@credentialId AND ls.RevokedAtUtc IS NULL;`,
   productionReady: false as const,
   transactionsImplemented: false as const,
   auditDecisionIntegrated: false as const,
