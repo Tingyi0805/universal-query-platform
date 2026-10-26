@@ -36,12 +36,9 @@ SET RevokedAtUtc=SYSUTCDATETIME(), RevocationReason=N'CREDENTIAL_REVOKED'
 WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
   AND CredentialId=@credentialId AND RevokedAtUtc IS NULL;
 SELECT @@ROWCOUNT AS DeviceSessionsRevoked;`,
-  revokeLegacy: `
-SET NOCOUNT ON;
-UPDATE uqp.SharedWorkstationSession
-SET RevokedAtUtc=SYSUTCDATETIME()
-WHERE WorkstationId=CONVERT(BIGINT,@workstationId) AND RevokedAtUtc IS NULL;
-SELECT @@ROWCOUNT AS LegacySessionsRevoked;`,
+  // Legacy sessions lack an authoritative credential relationship in 926.
+  // No legacy mutation statement may be issued until schema lineage is reviewed.
+  revokeLegacy: null as null,
   revokeOperatorCas: `
 SET NOCOUNT ON;
 UPDATE uqp.SharedWorkstationOperatorState
