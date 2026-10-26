@@ -74,6 +74,34 @@ JOIN uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
   ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
 WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
   AND ds.CredentialId=@credentialId AND ls.RevokedAtUtc IS NULL;`,
+  // Request reservation and exact audit receipt must run in the SAME owned
+  // transaction after the scope locks; never issue these standalone.
+  reserveRequest: `
+INSERT uqp.SharedWorkstationSessionRequest
+(RequestId,WorkstationId,DeviceSessionId,OperationCode,RequestDigest,TargetUserId,ReplayExpiresAtUtc)
+OUTPUT CONVERT(VARCHAR(36),INSERTED.RequestId) AS RequestId
+VALUES (@requestId,CONVERT(BIGINT,@workstationId),@deviceSessionId,
+N'AUTHORIZATION_REVOKE',CONVERT(BINARY(32),@requestDigest,2),NULL,
+DATEADD(DAY,1,SYSUTCDATETIME()));`,
+  insertAudit: `
+INSERT uqp.AuditLog(EventType,UserId,Status,ParametersJson,CreatedAtUtc,CompletedAtUtc)
+OUTPUT CONVERT(VARCHAR(20),INSERTED.Id) AS AuditLogId
+VALUES(N'WORKSTATION_CREDENTIAL_REVOKED',NULL,N'SUCCESS',
+@parametersJson,SYSUTCDATETIME(),SYSUTCDATETIME());`,
+  insertDecision: `
+INSERT uqp.SharedWorkstationSessionDecision
+(RequestId,WorkstationId,DeviceSessionId,OperationCode,DecisionStatus,ReasonCode,
+ActorUserId,TargetUserId,RevisionDomain,PreviousRevision,NextRevision,
+PreviousGeneration,NextGeneration,PreviousIncarnation,NextIncarnation,
+AuditLogId,AuditEventType,TransactionCorrelationId)
+OUTPUT CONVERT(VARCHAR(36),INSERTED.RequestId) AS RequestId
+VALUES (@requestId,CONVERT(BIGINT,@workstationId),@deviceSessionId,
+N'AUTHORIZATION_REVOKE',N'SUCCESS',NULL,NULL,NULL,N'OPERATOR_STATE',
+CONVERT(BINARY(8),@previousOperatorRevision,2),
+CONVERT(BINARY(8),@nextOperatorRevision,2),
+CONVERT(BIGINT,@previousGeneration),CONVERT(BIGINT,@nextGeneration),
+@previousIncarnation,@nextIncarnation,CONVERT(BIGINT,@auditLogId),
+N'WORKSTATION_CREDENTIAL_REVOKED',@correlationId);`,
   productionReady: false as const,
   transactionsImplemented: false as const,
   auditDecisionIntegrated: false as const,
