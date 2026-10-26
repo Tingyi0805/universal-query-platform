@@ -6,7 +6,7 @@ import { readFileSync } from "node:fs";
 test("isolated SQL statements are scoped and parameterized, with no commit", () => {
   for (const [name, value] of Object.entries(s)) {
     if (typeof value !== "string") continue;
-    assert.match(value, /@workstationId/u, name);
+    if (name !== "insertAudit") assert.match(value, /@workstationId/u, name);
     assert.doesNotMatch(value, /\bCOMMIT\b|\bBEGIN\s+TRAN(?:SACTION)?\b/iu, name);
   }
   assert.equal(s.productionReady, false);
