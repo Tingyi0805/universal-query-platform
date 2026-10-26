@@ -78,6 +78,16 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults,
           if (result.recordset.length !== 1 ||
               !(count === "0" || count === 0n || count === 0))
             throw new Error("UNMAPPED_LEGACY_SESSIONS");
+          // Workstation status is authoritative: a revoked credential must not
+          // be admitted against a retired or disabled workstation.
+          const workstation = await deps.request(tx)
+            .input("workstationId", sql.NVarChar(20), scope.workstationId)
+            .query(workstationSessionRepositorySql.lockWorkstation);
+          if (workstation.recordset.length !== 1 ||
+              workstation.recordset[0]?.WorkstationId !== scope.workstationId ||
+              workstation.recordset[0]?.IsActive !== true && workstation.recordset[0]?.IsActive !== 1 ||
+              workstation.recordset[0]?.RetiredAtUtc != null)
+            throw new Error("WORKSTATION_INACTIVE");
           // Lock and verify the credential itself in the same transaction. A
           // zero unmapped count alone is insufficient: it may refer to a
           // nonexistent, revoked, or cross-workstation credential.
