@@ -69,8 +69,11 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults,
           const result = await req.input("workstationId", sql.NVarChar(20), scope.workstationId)
             .input("credentialId", sql.UniqueIdentifier, scope.credentialId)
             .query(isolatedCredentialAtomicSql.countUnmappedLegacy);
+          // COUNT_BIG can be returned as a string, bigint or safe integer.
+          // Never coerce a rounded JS number into authoritative SQL evidence.
+          const count = result.recordset[0]?.UnmappedActiveLegacySessions;
           if (result.recordset.length !== 1 ||
-              String(result.recordset[0]?.UnmappedActiveLegacySessions) !== "0")
+              !(count === "0" || count === 0n || count === 0))
             throw new Error("UNMAPPED_LEGACY_SESSIONS");
           // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
