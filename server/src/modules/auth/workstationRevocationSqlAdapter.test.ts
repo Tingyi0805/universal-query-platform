@@ -246,3 +246,39 @@ test("version-bound device is queried in the owned transaction but writes remain
   assert.match(statements[4]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
   assert.equal(rollbacks, 1);
 });
+
+test("credential version drift rejects before the device lock or any mutation", async () => {
+  const statements: string[] = [];
+  let rollbacks = 0;
+  const credentialId = "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad";
+  const deps = {
+    async getPool() { return {}; },
+    transaction(): WorkstationSqlTransaction {
+      return { async begin() {}, async commit() { throw Error("UNEXPECTED_COMMIT"); },
+        async rollback() { rollbacks++; } };
+    },
+    request(): WorkstationSqlRequest {
+      const req: WorkstationSqlRequest = {
+        input() { return req; },
+        async query(stmt: string) {
+          statements.push(stmt);
+          return { recordset: [stmt.includes("sp_getapplock")
+            ? { GateResult: 0 }
+            : stmt.includes("UnmappedActiveLegacySessions")
+              ? { UnmappedActiveLegacySessions: "0" }
+            : stmt.includes("AS WorkstationId")
+              ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
+            : { CredentialId: credentialId, CredentialVersion: 3 }], rowsAffected: [] };
+        },
+      };
+      return req;
+    },
+  };
+  const result = await runIsolatedRevocationWriter(createIsolatedRevocationSqlDriver(deps, {
+    workstationId: "1", credentialId,
+    deviceSessionId: "0de670b0-6b21-4e51-b013-1c84c4d21d02", expectedCredentialVersion: 2,
+  }));
+  assert.equal(result.status, "REJECTED");
+  assert.equal(statements.length, 4);
+  assert.equal(rollbacks, 1);
+});
