@@ -159,6 +159,10 @@ WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
                 active === BigInt(legacy.recordset.length) ||
                 active === String(legacy.recordset.length)))
             throw new Error("LEGACY_LINEAGE_UNPROVEN");
+          // No update may be attempted until an explicit device/version proof
+          // was supplied. Prior read-only compatibility calls do not qualify.
+          if (scope.deviceSessionId === undefined || scope.expectedCredentialVersion === undefined)
+            throw new Error("DEVICE_BINDING_REQUIRED");
           // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
         },
