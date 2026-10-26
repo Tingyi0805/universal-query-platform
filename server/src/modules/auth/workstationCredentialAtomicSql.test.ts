@@ -39,7 +39,7 @@ test("926 device revoke reason is constrained; legacy workstation string is an i
 });
 
 test("legacy read scope is linked to credential through operator and device, not workstation alone", () => {
-  for (const statement of [s.lockLegacySessions, s.remainingLegacy]) {
+  for (const statement of [s.lockLegacySessions]) {
     assert.match(statement, /os.OperatorSessionId=ls.Id/u);
     assert.match(statement, /ds.Id=os.DeviceSessionId/u);
     assert.match(statement, /ds.CredentialId=@credentialId/u);
@@ -91,4 +91,11 @@ test("linked legacy mutation targets only one credential-bound active operator a
   assert.match(s.revokeLinkedLegacy, /OUTPUT CONVERT\(VARCHAR\(36\),INSERTED.Id\)/u);
   assert.equal(s.revokeLegacy, null);
   assert.equal(s.productionReady, false);
+});
+
+test("post-CAS legacy receipt counts all still-active sessions despite cleared operator link", () => {
+  assert.match(s.remainingLegacy, /COUNT_BIG\(\*\) AS Remaining/u);
+  assert.match(s.remainingLegacy, /WorkstationId=CONVERT\(BIGINT,@workstationId\)/u);
+  assert.match(s.remainingLegacy, /RevokedAtUtc IS NULL/u);
+  assert.doesNotMatch(s.remainingLegacy, /OperatorSessionId|CredentialId|JOIN/iu);
 });
