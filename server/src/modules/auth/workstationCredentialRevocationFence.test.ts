@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assessCredentialRevocation, credentialRevocationRuntimeGate, type CredentialRevocationEvidence } from "./workstationCredentialRevocationFence.js";
+import { assessCredentialRevocation, assessCredentialRevocationMutation, credentialRevocationRuntimeGate, type CredentialRevocationEvidence } from "./workstationCredentialRevocationFence.js";
 
 const complete = (): CredentialRevocationEvidence => ({
   credentialMutationAffected: 1,
@@ -60,4 +60,12 @@ test("zero active sessions still requires operator generation fence and receipt"
   });
   assert.equal(output.admissible, true);
   assert.equal(output.authority, "NONE");
+});
+
+test("pre-audit evidence uses unknown commit and requires no fabricated audit receipt", () => {
+  const valid = { ...complete(), commitOutcome: "UNKNOWN" as const,
+    requestReservationAffected: 0, auditAffected: 0, decisionAffected: 0, auditLogId: null };
+  assert.equal(assessCredentialRevocationMutation(valid).admissible, true);
+  assert.equal(assessCredentialRevocationMutation({ ...valid, deviceSessionsRemaining: 1 }).admissible, false);
+  assert.equal(assessCredentialRevocationMutation({ ...valid, commitOutcome: "COMMITTED" }).admissible, false);
 });
