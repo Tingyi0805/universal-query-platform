@@ -99,3 +99,11 @@ test("post-CAS legacy receipt counts all still-active sessions despite cleared o
   assert.match(s.remainingLegacy, /RevokedAtUtc IS NULL/u);
   assert.doesNotMatch(s.remainingLegacy, /OperatorSessionId|CredentialId|JOIN/iu);
 });
+
+test("credential CAS is coupled to active device session and expected credential version", () => {
+  assert.match(s.credentialCas, /ds.Id=@deviceSessionId/u);
+  assert.match(s.credentialCas, /ds.CredentialId=@credentialId/u);
+  assert.match(s.credentialCas, /ds.BoundCredentialVersion=@expectedCredentialVersion/u);
+  assert.match(s.credentialCas, /ds.RevokedAtUtc IS NULL/u);
+  assert.match(s.credentialCas, /@@ROWCOUNT AS CredentialAffected/u);
+});
