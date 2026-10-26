@@ -34,3 +34,13 @@ test("926 device revoke reason is constrained; legacy workstation string is an i
   assert.doesNotMatch(schema,/N'WORKSTATION_REVOKED#'/u);
   assert.match(s.revokeDevices,/RevocationReason=N'CREDENTIAL_REVOKED'/u);
 });
+
+test("legacy read scope is linked to credential through operator and device, not workstation alone", () => {
+  for (const statement of [s.lockLegacySessions, s.remainingLegacy]) {
+    assert.match(statement, /os.OperatorSessionId=ls.Id/u);
+    assert.match(statement, /ds.Id=os.DeviceSessionId/u);
+    assert.match(statement, /ds.CredentialId=@credentialId/u);
+    assert.match(statement, /ls.RevokedAtUtc IS NULL/u);
+  }
+  assert.equal(s.revokeLegacy, null);
+});
