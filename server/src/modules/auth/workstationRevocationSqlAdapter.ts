@@ -23,7 +23,7 @@ const defaults: Dependencies = {
 };
 const gateStatement = workstationSessionRepositorySql.acquireGate;
 const WRITE_BLOCKED = "H0_5C_2G_REVOCATION_WRITES_NOT_REVIEWED";
-export type IsolatedRevocationScope = Readonly<{ workstationId: string; credentialId: string }>;
+export type IsolatedRevocationScope = Readonly<{ workstationId: string; credentialId: string; deviceSessionId?: string; expectedCredentialVersion?: number }>;
 const safeScope = (scope: IsolatedRevocationScope | undefined): scope is IsolatedRevocationScope =>
   !!scope && /^[1-9][0-9]{0,18}$/.test(scope.workstationId) &&
   BigInt(scope.workstationId) <= 9223372036854775807n &&
@@ -92,6 +92,26 @@ WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
               typeof credential.recordset[0]?.CredentialId !== "string" ||
               credential.recordset[0].CredentialId.toLowerCase() !== scope.credentialId.toLowerCase())
             throw new Error("CREDENTIAL_SCOPE_UNPROVEN");
+          // Device-bound admission is optional only for legacy read-only tests:
+          // missing device proof always blocks the writer.
+          if (scope.deviceSessionId !== undefined || scope.expectedCredentialVersion !== undefined) {
+            if (typeof scope.deviceSessionId !== "string" ||
+                !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(scope.deviceSessionId) ||
+                !Number.isSafeInteger(scope.expectedCredentialVersion) ||
+                scope.expectedCredentialVersion! <= 0 || scope.expectedCredentialVersion! > 2147483647)
+              throw new Error("DEVICE_SCOPE_INVALID");
+            const device = await deps.request(tx)
+              .input("workstationId", sql.NVarChar(20), scope.workstationId)
+              .input("credentialId", sql.UniqueIdentifier, scope.credentialId)
+              .input("deviceSessionId", sql.UniqueIdentifier, scope.deviceSessionId)
+              .input("expectedCredentialVersion", sql.Int, scope.expectedCredentialVersion)
+              .query(isolatedCredentialAtomicSql.lockCredentialDevice);
+            if (device.recordset.length !== 1 ||
+                typeof device.recordset[0]?.DeviceSessionId !== "string" ||
+                device.recordset[0].DeviceSessionId.toLowerCase() !== scope.deviceSessionId.toLowerCase() ||
+                device.recordset[0].BoundCredentialVersion !== scope.expectedCredentialVersion)
+              throw new Error("DEVICE_SCOPE_UNPROVEN");
+          }
           // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
         },
