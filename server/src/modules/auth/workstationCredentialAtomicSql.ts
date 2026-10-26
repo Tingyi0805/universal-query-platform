@@ -97,15 +97,14 @@ SELECT COUNT_BIG(*) AS Remaining
 FROM uqp.SharedWorkstationDeviceSession WITH (UPDLOCK,HOLDLOCK)
 WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
   AND CredentialId=@credentialId AND RevokedAtUtc IS NULL;`,
+  // Post-CAS remaining check MUST NOT depend on OperatorSessionId: the CAS
+  // clears it. Require zero active legacy sessions for this workstation.
+  // This is a conservative release fence, never permission to mass-revoke.
   remainingLegacy: `
 SELECT COUNT_BIG(*) AS Remaining
-FROM uqp.SharedWorkstationSession ls WITH (UPDLOCK,HOLDLOCK)
-JOIN uqp.SharedWorkstationOperatorState os WITH (UPDLOCK,HOLDLOCK)
-  ON os.OperatorSessionId=ls.Id AND os.WorkstationId=ls.WorkstationId
-JOIN uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
-  ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
-WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
-  AND ds.CredentialId=@credentialId AND ls.RevokedAtUtc IS NULL;`,
+FROM uqp.SharedWorkstationSession WITH (UPDLOCK,HOLDLOCK)
+WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND RevokedAtUtc IS NULL;`,
   // Must be checked BEFORE clearing OperatorSessionId: once the operator CAS
   // clears that link, a join-only remainingLegacy count could falsely read 0.
   // All active legacy sessions outside the one linked to this credential block
