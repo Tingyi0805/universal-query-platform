@@ -54,12 +54,19 @@ SET StateCode=N'DEVICE_REVOKED',
     OperatorSessionId=NULL, OperatorUserId=NULL,
     TokenVersion=NULL, PinVersion=NULL, AuthMethod=NULL,
     LastMutationAtUtc=SYSUTCDATETIME()
+OUTPUT LOWER(CONVERT(VARCHAR(16),INSERTED.RowVersion,2)) AS NextOperatorRevision,
+       CONVERT(VARCHAR(20),INSERTED.Generation) AS NextGeneration,
+       CONVERT(VARCHAR(36),INSERTED.Incarnation) AS NextIncarnation
 WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND DeviceSessionId=@deviceSessionId
+  AND EXISTS (SELECT 1 FROM uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
+              WHERE ds.Id=@deviceSessionId AND ds.WorkstationId=CONVERT(BIGINT,@workstationId)
+                AND ds.CredentialId=@credentialId)
   AND RowVersion=CONVERT(BINARY(8),@expectedOperatorRevision,2)
   AND Generation=CONVERT(BIGINT,@expectedGeneration)
   AND Incarnation=@expectedIncarnation
   AND Generation < CONVERT(BIGINT, '9223372036854775807');
-SELECT @@ROWCOUNT AS OperatorAffected;`,
+`,
   remainingDevices: `
 SELECT COUNT_BIG(*) AS Remaining
 FROM uqp.SharedWorkstationDeviceSession WITH (UPDLOCK,HOLDLOCK)
