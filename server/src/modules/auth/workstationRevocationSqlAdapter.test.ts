@@ -238,6 +238,7 @@ test("version-bound device is queried in the owned transaction but writes remain
             : statement.includes("ActiveLegacySessions") ? { ActiveLegacySessions: "0" }
             : statement.includes("AS WorkstationId") ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
             : statement.includes("AS CredentialId") ? { CredentialId: credentialId, CredentialVersion: 2 }
+            : statement.includes("AS Revision") ? { DeviceSessionId: deviceId, Revision: "0000000000000001", Generation: "1", Incarnation: "d37f0484-f079-4689-bd36-28d3b16c1b01" }
             : statement.includes("os.OperatorSessionId=ls.Id") ? null
             : statement.includes("AS SessionId") ? { SessionId: deviceId }
             : { DeviceSessionId: deviceId, BoundCredentialVersion: 2 };
@@ -251,11 +252,12 @@ test("version-bound device is queried in the owned transaction but writes remain
     workstationId: "1", credentialId, deviceSessionId: deviceId, expectedCredentialVersion: 2,
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 8);
+  assert.equal(statements.length, 9);
   assert.match(statements[4]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
   assert.match(statements[5]!, /ORDER BY Id/u);
-  assert.match(statements[6]!, /os.OperatorSessionId=ls.Id/u);
-  assert.match(statements[7]!, /ActiveLegacySessions/u);
+  assert.match(statements[6]!, /AS Revision/u);
+  assert.match(statements[7]!, /os.OperatorSessionId=ls.Id/u);
+  assert.match(statements[8]!, /ActiveLegacySessions/u);
   assert.equal(rollbacks, 1);
 });
 
