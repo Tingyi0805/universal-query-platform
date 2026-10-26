@@ -98,7 +98,9 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
           statements.push(statement);
           return { recordset: statement.includes("sp_getapplock")
             ? [{ GateResult: 0 }]
-            : [statement.includes("SharedWorkstationCredential")
+            : [statement.includes("AS WorkstationId")
+              ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
+              : statement.includes("SharedWorkstationCredential")
               ? { CredentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad" }
               : { UnmappedActiveLegacySessions: "0" }], rowsAffected: [] };
         },
@@ -110,9 +112,9 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
     workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 3);
+  assert.equal(statements.length, 4);
   assert.match(statements[1]!, /UnmappedActiveLegacySessions/u);
-  assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "credentialId"]);
+  assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "workstationId", "credentialId"]);
 });
 
 test("nonzero or missing COUNT_BIG evidence refuses mutation and commits nothing", async () => {
@@ -191,7 +193,9 @@ test("credential evidence rejects absent or non-string SQL credential values", a
           input() { return req; },
           async query(stmt: string) {
             return { recordset: [stmt.includes("sp_getapplock")
-              ? { GateResult: 0 } : stmt.includes("SharedWorkstationCredential")
+              ? { GateResult: 0 } : stmt.includes("AS WorkstationId")
+                ? { WorkstationId: "1", IsActive: 1, RetiredAtUtc: null }
+                : stmt.includes("SharedWorkstationCredential")
                 ? { CredentialId: credentialId } : { UnmappedActiveLegacySessions: "0" }],
               rowsAffected: [] };
           },
@@ -225,6 +229,7 @@ test("version-bound device is queried in the owned transaction but writes remain
           statements.push(statement);
           const row = statement.includes("sp_getapplock") ? { GateResult: 0 }
             : statement.includes("UnmappedActiveLegacySessions") ? { UnmappedActiveLegacySessions: "0" }
+            : statement.includes("AS WorkstationId") ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
             : statement.includes("AS CredentialId") ? { CredentialId: credentialId }
             : { DeviceSessionId: deviceId, BoundCredentialVersion: 2 };
           return { recordset: [row], rowsAffected: [] };
@@ -237,7 +242,7 @@ test("version-bound device is queried in the owned transaction but writes remain
     workstationId: "1", credentialId, deviceSessionId: deviceId, expectedCredentialVersion: 2,
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 4);
-  assert.match(statements[3]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
+  assert.equal(statements.length, 5);
+  assert.match(statements[4]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
   assert.equal(rollbacks, 1);
 });
