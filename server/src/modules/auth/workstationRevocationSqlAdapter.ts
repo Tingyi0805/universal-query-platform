@@ -45,6 +45,7 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults,
       }
       let gateAcquired = false;
       let gateAttempted = false;
+      let scopeAttempted = false;
       let completed = false;
       const assertActive = () => {
         if (completed) throw new Error("TRANSACTION_CLOSED");
@@ -63,6 +64,8 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults,
         async lockAndRevalidateScope() {
           assertActive();
           if (!gateAcquired) throw new Error("GATE_NOT_HELD");
+          if (scopeAttempted) throw new Error("SCOPE_ALREADY_ATTEMPTED");
+          scopeAttempted = true;
           // Preliminary read-only scope validation; no writer authority granted.
           if (!safeScope(scope)) throw new Error("SCOPE_REQUIRED");
           const req = deps.request(tx);
