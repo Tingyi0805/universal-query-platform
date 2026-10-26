@@ -97,6 +97,14 @@ WHERE ls.WorkstationId=CONVERT(BIGINT,@workstationId)
     WHERE os.WorkstationId=ls.WorkstationId
       AND os.OperatorSessionId=ls.Id AND ds.CredentialId=@credentialId
   );`,
+  // The total count is deliberately independent of the mutable operator link.
+  // Validate coverage BEFORE the CAS clears OperatorSessionId; a linked-only
+  // remaining count after CAS cannot prove that all sessions were revoked.
+  countActiveLegacyBeforeCas: `
+SELECT COUNT_BIG(*) AS ActiveLegacySessions
+FROM uqp.SharedWorkstationSession WITH (UPDLOCK,HOLDLOCK)
+WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND RevokedAtUtc IS NULL;`,
   // Request reservation and exact audit receipt must run in the SAME owned
   // transaction after the scope locks; never issue these standalone.
   reserveRequest: `
