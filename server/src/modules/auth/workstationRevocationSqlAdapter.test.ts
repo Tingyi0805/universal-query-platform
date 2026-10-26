@@ -48,3 +48,28 @@ test("negative gate prevents mutation; uncertain rollback reported separately",a
   assert.equal((await runIsolatedRevocationWriter(b.driver)).status,"ROLLBACK_UNKNOWN");
   assert.ok(!b.events.includes("UNEXPECTED_COMMIT"));
 });
+
+test("failed SQL transaction begin attempts rollback and never queries security gate", async () => {
+  const events: string[] = [];
+  const driver = createIsolatedRevocationSqlDriver({
+    async getPool() { events.push("pool"); return {}; },
+    transaction(): WorkstationSqlTransaction {
+      return {
+        async begin() { events.push("begin"); throw Error("BEGIN_FAILED"); },
+        async commit() { events.push("UNEXPECTED_COMMIT"); },
+        async rollback() { events.push("rollback"); },
+      };
+    },
+    request(): WorkstationSqlRequest { throw Error("UNEXPECTED_REQUEST"); },
+  });
+  assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
+  assert.deepEqual(events, ["pool", "begin", "rollback"]);
+});
+test("reacquiring security gate is rejected before another query", async () => {
+  const f = fixture();
+  const tx = await f.driver.beginSerializable();
+  assert.equal(await tx.acquireSecurityGate(), true);
+  await assert.rejects(tx.acquireSecurityGate(), /GATE_ALREADY_ACQUIRED/u);
+  await tx.rollback();
+  assert.equal(f.events.filter(e => e === "gate").length, 1);
+});
