@@ -94,13 +94,16 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults,
           const credential = await deps.request(tx)
             .input("workstationId", sql.NVarChar(20), scope.workstationId)
             .input("credentialId", sql.UniqueIdentifier, scope.credentialId)
-            .query(`SELECT CONVERT(VARCHAR(36),Id) AS CredentialId
+            .query(`SELECT CONVERT(VARCHAR(36),Id) AS CredentialId,
+       CredentialVersion
 FROM uqp.SharedWorkstationCredential WITH (UPDLOCK,HOLDLOCK)
 WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
   AND IsRevoked=0;`);
           if (credential.recordset.length !== 1 ||
               typeof credential.recordset[0]?.CredentialId !== "string" ||
-              credential.recordset[0].CredentialId.toLowerCase() !== scope.credentialId.toLowerCase())
+              credential.recordset[0].CredentialId.toLowerCase() !== scope.credentialId.toLowerCase() ||
+              (scope.expectedCredentialVersion !== undefined &&
+               credential.recordset[0].CredentialVersion !== scope.expectedCredentialVersion))
             throw new Error("CREDENTIAL_SCOPE_UNPROVEN");
           // Device-bound admission is optional only for legacy read-only tests:
           // missing device proof always blocks the writer.
