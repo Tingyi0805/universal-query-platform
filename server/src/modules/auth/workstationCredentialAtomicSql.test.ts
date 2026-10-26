@@ -77,3 +77,14 @@ test("total pre-CAS legacy count does not rely on mutable operator links", () =>
   assert.match(s.countUnmappedLegacy, /NOT EXISTS/u);
   assert.equal(s.revokeLegacy, null);
 });
+
+test("linked legacy mutation targets only one credential-bound active operator and refuses extra sessions", () => {
+  assert.match(s.revokeLinkedLegacy, /UPDATE ls SET RevokedAtUtc=/u);
+  assert.match(s.revokeLinkedLegacy, /os.OperatorSessionId=ls.Id/u);
+  assert.match(s.revokeLinkedLegacy, /ds.CredentialId=@credentialId/u);
+  assert.match(s.revokeLinkedLegacy, /remaining.Id<>ls.Id/u);
+  assert.match(s.revokeLinkedLegacy, /remaining.RevokedAtUtc IS NULL/u);
+  assert.match(s.revokeLinkedLegacy, /OUTPUT CONVERT\(VARCHAR\(36\),INSERTED.Id\)/u);
+  assert.equal(s.revokeLegacy, null);
+  assert.equal(s.productionReady, false);
+});
