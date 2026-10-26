@@ -230,7 +230,7 @@ test("version-bound device is queried in the owned transaction but writes remain
           const row = statement.includes("sp_getapplock") ? { GateResult: 0 }
             : statement.includes("UnmappedActiveLegacySessions") ? { UnmappedActiveLegacySessions: "0" }
             : statement.includes("AS WorkstationId") ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
-            : statement.includes("AS CredentialId") ? { CredentialId: credentialId }
+            : statement.includes("AS CredentialId") ? { CredentialId: credentialId, CredentialVersion: 2 }
             : { DeviceSessionId: deviceId, BoundCredentialVersion: 2 };
           return { recordset: [row], rowsAffected: [] };
         },
