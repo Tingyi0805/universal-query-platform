@@ -107,3 +107,13 @@ test("credential CAS is coupled to active device session and expected credential
   assert.match(s.credentialCas, /ds.RevokedAtUtc IS NULL/u);
   assert.match(s.credentialCas, /@@ROWCOUNT AS CredentialAffected/u);
 });
+
+test("device preflight locks exact active version-bound session before CAS", () => {
+  assert.match(s.lockCredentialDevice, /WITH \(UPDLOCK,HOLDLOCK\)/u);
+  assert.match(s.lockCredentialDevice, /Id=@deviceSessionId/u);
+  assert.match(s.lockCredentialDevice, /WorkstationId=CONVERT\(BIGINT,@workstationId\)/u);
+  assert.match(s.lockCredentialDevice, /CredentialId=@credentialId/u);
+  assert.match(s.lockCredentialDevice, /BoundCredentialVersion=@expectedCredentialVersion/u);
+  assert.match(s.lockCredentialDevice, /RevokedAtUtc IS NULL/u);
+  assert.equal(s.productionReady, false);
+});
