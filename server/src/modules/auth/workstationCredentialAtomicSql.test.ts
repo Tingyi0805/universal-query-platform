@@ -61,3 +61,11 @@ test("revocation request/audit/decision match 926 constrained operation and exac
   }
   assert.equal(s.auditDecisionIntegrated, false);
 });
+
+test("pre-CAS unlinked legacy scope cannot be hidden when operator link is cleared", () => {
+  assert.match(s.countUnmappedLegacy, /COUNT_BIG\(\*\) AS UnmappedActiveLegacySessions/u);
+  assert.match(s.countUnmappedLegacy, /NOT EXISTS/u);
+  assert.match(s.countUnmappedLegacy, /os.OperatorSessionId=ls.Id/u);
+  assert.match(s.countUnmappedLegacy, /ds.CredentialId=@credentialId/u);
+  assert.equal(s.revokeLegacy, null);
+});
