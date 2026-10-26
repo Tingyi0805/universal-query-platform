@@ -81,6 +81,22 @@ JOIN uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
   ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
 WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
   AND ds.CredentialId=@credentialId AND ls.RevokedAtUtc IS NULL;`,
+  // Must be checked BEFORE clearing OperatorSessionId: once the operator CAS
+  // clears that link, a join-only remainingLegacy count could falsely read 0.
+  // All active legacy sessions outside the one linked to this credential block
+  // revocation admission until historical lineage is designed and validated.
+  countUnmappedLegacy: `
+SELECT COUNT_BIG(*) AS UnmappedActiveLegacySessions
+FROM uqp.SharedWorkstationSession ls WITH (UPDLOCK,HOLDLOCK)
+WHERE ls.WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND ls.RevokedAtUtc IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM uqp.SharedWorkstationOperatorState os WITH (UPDLOCK,HOLDLOCK)
+    JOIN uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
+      ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
+    WHERE os.WorkstationId=ls.WorkstationId
+      AND os.OperatorSessionId=ls.Id AND ds.CredentialId=@credentialId
+  );`,
   // Request reservation and exact audit receipt must run in the SAME owned
   // transaction after the scope locks; never issue these standalone.
   reserveRequest: `
