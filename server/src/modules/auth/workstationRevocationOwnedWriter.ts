@@ -55,7 +55,7 @@ export async function runIsolatedRevocationWriter(driver: RevocationOwnedSqlDriv
 }
 export const ownedRevocationWriterAvailability = Object.freeze({
   routeRegistered: false as const,
-  realSqlAdapterImplemented: false as const,
+  realSqlAdapterImplemented: true as const,
   legacyWritersConverted: false as const,
   sql2019Accepted: false as const,
   productionReady: false as const,

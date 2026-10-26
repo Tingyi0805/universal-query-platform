@@ -42,7 +42,7 @@ test("mock writer owns ordered steps and always retains zero runtime authority",
   assert.equal(result.status, "SYNTHETIC_COMMITTED");
   assert.equal(result.authority, "NONE");
   assert.equal(result.runtimeEnabled, false);
-  assert.equal(ownedRevocationWriterAvailability.realSqlAdapterImplemented, false);
+  assert.equal(ownedRevocationWriterAvailability.realSqlAdapterImplemented, true);
   assert.deepEqual(h.events, ["begin", "gate", "lock", "mutation", "audit", "commit"]);
 });
 test("gate, lock, mutation, audit failures rollback without commit", async () => {
