@@ -38,6 +38,7 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults)
         throw beginError;
       }
       let gateAcquired = false;
+      let gateAttempted = false;
       let completed = false;
       const assertActive = () => {
         if (completed) throw new Error("TRANSACTION_CLOSED");
@@ -45,7 +46,8 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults)
       return {
         async acquireSecurityGate() {
           assertActive();
-          if (gateAcquired) throw new Error("GATE_ALREADY_ACQUIRED");
+          if (gateAttempted) throw new Error("GATE_ALREADY_ATTEMPTED");
+          gateAttempted = true;
           const result = await deps.request(tx).query(gateStatement);
           gateAcquired = result.recordset.length === 1 &&
             Number.isSafeInteger(result.recordset[0]?.GateResult) &&
