@@ -17,6 +17,7 @@ test("isolated SQL statements are scoped and parameterized, with no commit", () 
 test("operator CAS rotates generation and incarnation; session writes are counted", () => {
   assert.match(s.revokeOperatorCas, /Generation=Generation\+CONVERT\(BIGINT,1\)/u);
   assert.match(s.revokeOperatorCas, /Incarnation=@nextIncarnation/u);
+  assert.match(s.revokeOperatorCas, /Generation < CONVERT\(BIGINT, '9223372036854775807'\)/u);
   assert.match(s.revokeOperatorCas, /RowVersion=CONVERT\(BINARY\(8\),@expectedOperatorRevision,2\)/u);
   for (const sql of [s.credentialCas,s.revokeDevices,s.revokeLegacy,s.revokeOperatorCas]) {
     assert.match(sql, /@@ROWCOUNT/u);
