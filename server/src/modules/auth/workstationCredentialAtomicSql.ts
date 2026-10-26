@@ -33,7 +33,15 @@ SET NOCOUNT ON;
 UPDATE uqp.SharedWorkstationCredential
 SET IsRevoked=1, RevokedAtUtc=SYSUTCDATETIME()
 WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
-  AND IsRevoked=0 AND CredentialVersion=@expectedCredentialVersion;
+  AND IsRevoked=0 AND CredentialVersion=@expectedCredentialVersion
+  AND EXISTS (
+    SELECT 1 FROM uqp.SharedWorkstationDeviceSession ds WITH (UPDLOCK,HOLDLOCK)
+    WHERE ds.Id=@deviceSessionId
+      AND ds.WorkstationId=CONVERT(BIGINT,@workstationId)
+      AND ds.CredentialId=@credentialId
+      AND ds.BoundCredentialVersion=@expectedCredentialVersion
+      AND ds.RevokedAtUtc IS NULL
+  );
 SELECT @@ROWCOUNT AS CredentialAffected;`,
   revokeDevices: `
 SET NOCOUNT ON;
