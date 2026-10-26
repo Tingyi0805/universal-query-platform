@@ -29,7 +29,14 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults)
       const pool = await deps.getPool();
       if (!pool) throw new Error("DATABASE_UNAVAILABLE");
       const tx = deps.transaction(pool);
-      await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+      // A failed begin can leave a driver transaction in an uncertain state.
+      // Best-effort cleanup before refusing to supply a transaction handle.
+      try {
+        await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+      } catch (beginError) {
+        try { await tx.rollback(); } catch { /* begin failure remains untrusted */ }
+        throw beginError;
+      }
       let gateAcquired = false;
       let completed = false;
       const assertActive = () => {
@@ -38,6 +45,7 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults)
       return {
         async acquireSecurityGate() {
           assertActive();
+          if (gateAcquired) throw new Error("GATE_ALREADY_ACQUIRED");
           const result = await deps.request(tx).query(gateStatement);
           gateAcquired = result.recordset.length === 1 &&
             Number.isSafeInteger(result.recordset[0]?.GateResult) &&
@@ -55,8 +63,7 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults)
         async commit() { throw new Error(WRITE_BLOCKED); },
         async rollback() {
           assertActive();
-          completed = true;
-          await tx.rollback();
+          try { await tx.rollback(); } finally { completed = true; }
         },
       };
     },
