@@ -69,7 +69,16 @@ test("reacquiring security gate is rejected before another query", async () => {
   const f = fixture();
   const tx = await f.driver.beginSerializable();
   assert.equal(await tx.acquireSecurityGate(), true);
-  await assert.rejects(tx.acquireSecurityGate(), /GATE_ALREADY_ACQUIRED/u);
+  await assert.rejects(tx.acquireSecurityGate(), /GATE_ALREADY_ATTEMPTED/u);
+  await tx.rollback();
+  assert.equal(f.events.filter(e => e === "gate").length, 1);
+});
+
+test("denied security gate may not be retried inside the same transaction", async () => {
+  const f = fixture(-1);
+  const tx = await f.driver.beginSerializable();
+  assert.equal(await tx.acquireSecurityGate(), false);
+  await assert.rejects(tx.acquireSecurityGate(), /GATE_ALREADY_ATTEMPTED/u);
   await tx.rollback();
   assert.equal(f.events.filter(e => e === "gate").length, 1);
 });
