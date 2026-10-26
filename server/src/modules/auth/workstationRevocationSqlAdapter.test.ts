@@ -112,7 +112,7 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
     workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 4);
+  assert.equal(statements.length, 5);
   assert.match(statements[1]!, /UnmappedActiveLegacySessions/u);
   assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "workstationId", "credentialId"]);
 });
@@ -243,9 +243,10 @@ test("version-bound device is queried in the owned transaction but writes remain
     workstationId: "1", credentialId, deviceSessionId: deviceId, expectedCredentialVersion: 2,
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 6);
+  assert.equal(statements.length, 7);
   assert.match(statements[4]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
   assert.match(statements[5]!, /ORDER BY Id/u);
+  assert.match(statements[6]!, /os.OperatorSessionId=ls.Id/u);
   assert.equal(rollbacks, 1);
 });
 
@@ -282,5 +283,39 @@ test("credential version drift rejects before the device lock or any mutation", 
   }));
   assert.equal(result.status, "REJECTED");
   assert.equal(statements.length, 4);
+  assert.equal(rollbacks, 1);
+});
+
+test("multiple linked legacy session rows prevent writer admission and force rollback", async () => {
+  let rollbacks = 0;
+  const credentialId = "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad";
+  const deps = {
+    async getPool() { return {}; },
+    transaction(): WorkstationSqlTransaction {
+      return { async begin() {}, async commit() { throw Error("COMMIT_FORBIDDEN"); },
+        async rollback() { rollbacks++; } };
+    },
+    request(): WorkstationSqlRequest {
+      const req: WorkstationSqlRequest = {
+        input() { return req; },
+        async query(statement: string) {
+          const rows = statement.includes("sp_getapplock") ? [{ GateResult: 0 }]
+            : statement.includes("UnmappedActiveLegacySessions") ? [{ UnmappedActiveLegacySessions: "0" }]
+            : statement.includes("AS WorkstationId") ? [{ WorkstationId: "1", IsActive: true, RetiredAtUtc: null }]
+            : statement.includes("AS CredentialId") ? [{ CredentialId: credentialId, CredentialVersion: 2 }]
+            : statement.includes("AS DeviceSessionId") ? [{ DeviceSessionId: "0de670b0-6b21-4e51-b013-1c84c4d21d02", BoundCredentialVersion: 2 }]
+            : statement.includes("ORDER BY Id") ? [{ SessionId: "0de670b0-6b21-4e51-b013-1c84c4d21d02" }]
+            : [{ SessionId: "a" }, { SessionId: "b" }];
+          return { recordset: rows, rowsAffected: [] };
+        },
+      };
+      return req;
+    },
+  };
+  const driver = createIsolatedRevocationSqlDriver(deps, {
+    workstationId: "1", credentialId,
+    deviceSessionId: "0de670b0-6b21-4e51-b013-1c84c4d21d02", expectedCredentialVersion: 2,
+  });
+  assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
   assert.equal(rollbacks, 1);
 });
