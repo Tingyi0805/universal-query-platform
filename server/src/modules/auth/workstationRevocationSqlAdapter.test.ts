@@ -206,3 +206,38 @@ test("credential evidence rejects absent or non-string SQL credential values", a
     assert.equal(rolledBack, 1);
   }
 });
+
+test("version-bound device is queried in the owned transaction but writes remain disabled", async () => {
+  const statements: string[] = [];
+  let rollbacks = 0;
+  const deviceId = "0de670b0-6b21-4e51-b013-1c84c4d21d02";
+  const credentialId = "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad";
+  const deps = {
+    async getPool() { return {}; },
+    transaction(): WorkstationSqlTransaction {
+      return { async begin() {}, async commit() { throw Error("COMMIT_FORBIDDEN"); },
+        async rollback() { rollbacks++; } };
+    },
+    request(): WorkstationSqlRequest {
+      const req: WorkstationSqlRequest = {
+        input() { return req; },
+        async query(statement: string) {
+          statements.push(statement);
+          const row = statement.includes("sp_getapplock") ? { GateResult: 0 }
+            : statement.includes("UnmappedActiveLegacySessions") ? { UnmappedActiveLegacySessions: "0" }
+            : statement.includes("AS CredentialId") ? { CredentialId: credentialId }
+            : { DeviceSessionId: deviceId, BoundCredentialVersion: 2 };
+          return { recordset: [row], rowsAffected: [] };
+        },
+      };
+      return req;
+    },
+  };
+  const driver = createIsolatedRevocationSqlDriver(deps, {
+    workstationId: "1", credentialId, deviceSessionId: deviceId, expectedCredentialVersion: 2,
+  });
+  assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
+  assert.equal(statements.length, 4);
+  assert.match(statements[3]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
+  assert.equal(rollbacks, 1);
+});
