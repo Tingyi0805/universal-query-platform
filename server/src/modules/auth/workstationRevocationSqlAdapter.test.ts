@@ -176,3 +176,33 @@ test("scope validation cannot be replayed after initial rejection", async () => 
   assert.equal(scopeQueries, 1);
   await tx.rollback();
 });
+
+test("credential evidence rejects absent or non-string SQL credential values", async () => {
+  for (const credentialId of [undefined, null, 1, {}, "00000000-0000-4000-8000-000000000000"]) {
+    let rolledBack = 0;
+    const deps = {
+      async getPool() { return {}; },
+      transaction(): WorkstationSqlTransaction {
+        return { async begin() {}, async commit() { throw Error("UNEXPECTED_COMMIT"); },
+          async rollback() { rolledBack++; } };
+      },
+      request(): WorkstationSqlRequest {
+        const req: WorkstationSqlRequest = {
+          input() { return req; },
+          async query(stmt: string) {
+            return { recordset: [stmt.includes("sp_getapplock")
+              ? { GateResult: 0 } : stmt.includes("SharedWorkstationCredential")
+                ? { CredentialId: credentialId } : { UnmappedActiveLegacySessions: "0" }],
+              rowsAffected: [] };
+          },
+        };
+        return req;
+      },
+    };
+    const driver = createIsolatedRevocationSqlDriver(deps, {
+      workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
+    });
+    assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
+    assert.equal(rolledBack, 1);
+  }
+});
