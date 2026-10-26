@@ -45,6 +45,27 @@ SELECT @@ROWCOUNT AS DeviceSessionsRevoked;`,
   // Legacy sessions lack an authoritative credential relationship in 926.
   // No legacy mutation statement may be issued until schema lineage is reviewed.
   revokeLegacy: null as null,
+  // Narrow mutation for the ONE credential-linked current operator only.
+  // Caller must first verify zero unmapped legacy sessions inside the same
+  // serializable owned transaction; this statement is not wired to Runtime.
+  revokeLinkedLegacy: `
+SET NOCOUNT ON;
+UPDATE ls SET RevokedAtUtc=SYSUTCDATETIME()
+OUTPUT CONVERT(VARCHAR(36),INSERTED.Id) AS RevokedSessionId
+FROM uqp.SharedWorkstationSession ls
+JOIN uqp.SharedWorkstationOperatorState os
+  ON os.OperatorSessionId=ls.Id AND os.WorkstationId=ls.WorkstationId
+JOIN uqp.SharedWorkstationDeviceSession ds
+  ON ds.Id=os.DeviceSessionId AND ds.WorkstationId=os.WorkstationId
+WHERE os.WorkstationId=CONVERT(BIGINT,@workstationId)
+  AND ds.CredentialId=@credentialId
+  AND ls.RevokedAtUtc IS NULL
+  AND NOT EXISTS (
+    SELECT 1 FROM uqp.SharedWorkstationSession remaining WITH (UPDLOCK,HOLDLOCK)
+    WHERE remaining.WorkstationId=CONVERT(BIGINT,@workstationId)
+      AND remaining.RevokedAtUtc IS NULL
+      AND remaining.Id<>ls.Id
+  );`,
   revokeOperatorCas: `
 SET NOCOUNT ON;
 UPDATE uqp.SharedWorkstationOperatorState
