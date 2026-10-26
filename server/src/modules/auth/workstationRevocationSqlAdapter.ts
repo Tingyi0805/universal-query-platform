@@ -3,6 +3,7 @@ import { getPlatformDbPool } from "../../config/database.js";
 import type { WorkstationSqlRequest, WorkstationSqlTransaction } from "./workstationSessionSql.repository.js";
 import type { RevocationOwnedSqlDriver, RevocationOwnedSqlTransaction } from "./workstationRevocationOwnedWriter.js";
 import { workstationSessionRepositorySql } from "./workstationSessionSqlStatements.js";
+import { isolatedCredentialAtomicSql } from "./workstationCredentialAtomicSql.js";
 
 /**
  * H0-5C-2G — real mssql connection/transaction and gate adapter, fail-closed.
@@ -22,8 +23,13 @@ const defaults: Dependencies = {
 };
 const gateStatement = workstationSessionRepositorySql.acquireGate;
 const WRITE_BLOCKED = "H0_5C_2G_REVOCATION_WRITES_NOT_REVIEWED";
+export type IsolatedRevocationScope = Readonly<{ workstationId: string; credentialId: string }>;
+const safeScope = (scope: IsolatedRevocationScope | undefined): scope is IsolatedRevocationScope =>
+  !!scope && /^[1-9][0-9]{0,18}$/.test(scope.workstationId) &&
+  BigInt(scope.workstationId) <= 9223372036854775807n &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(scope.credentialId);
 
-export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults): RevocationOwnedSqlDriver {
+export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults, scope?: IsolatedRevocationScope): RevocationOwnedSqlDriver {
   return {
     async beginSerializable(): Promise<RevocationOwnedSqlTransaction> {
       const pool = await deps.getPool();
@@ -57,7 +63,16 @@ export function createIsolatedRevocationSqlDriver(deps: Dependencies = defaults)
         async lockAndRevalidateScope() {
           assertActive();
           if (!gateAcquired) throw new Error("GATE_NOT_HELD");
-          // Exact scope and canonical lock order not yet accepted.
+          // Preliminary read-only scope validation; no writer authority granted.
+          if (!safeScope(scope)) throw new Error("SCOPE_REQUIRED");
+          const req = deps.request(tx);
+          const result = await req.input("workstationId", sql.NVarChar(20), scope.workstationId)
+            .input("credentialId", sql.UniqueIdentifier, scope.credentialId)
+            .query(isolatedCredentialAtomicSql.countUnmappedLegacy);
+          if (result.recordset.length !== 1 ||
+              String(result.recordset[0]?.UnmappedActiveLegacySessions) !== "0")
+            throw new Error("UNMAPPED_LEGACY_SESSIONS");
+          // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
         },
         async revokeCredentialAndSessions() { throw new Error(WRITE_BLOCKED); },
