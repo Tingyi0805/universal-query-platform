@@ -147,6 +147,18 @@ WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
               legacy.recordset.length > 1 ||
               legacy.recordset.some(row => typeof row.SessionId !== "string"))
             throw new Error("LEGACY_SET_UNPROVEN");
+          // Independently count ALL active legacy rows while the same
+          // serializable transaction owns the locks. The operator link can be
+          // cleared by CAS, so this proof must be captured beforehand.
+          const total = await deps.request(tx)
+            .input("workstationId", sql.NVarChar(20), scope.workstationId)
+            .query(isolatedCredentialAtomicSql.countActiveLegacyBeforeCas);
+          const active = total.recordset[0]?.ActiveLegacySessions;
+          if (total.recordset.length !== 1 ||
+              !(active === legacy.recordset.length ||
+                active === BigInt(legacy.recordset.length) ||
+                active === String(legacy.recordset.length)))
+            throw new Error("LEGACY_LINEAGE_UNPROVEN");
           // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
         },
