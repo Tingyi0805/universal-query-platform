@@ -98,7 +98,9 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
           statements.push(statement);
           return { recordset: statement.includes("sp_getapplock")
             ? [{ GateResult: 0 }]
-            : [statement.includes("AS WorkstationId")
+            : [statement.includes("ActiveLegacySessions")
+              ? { ActiveLegacySessions: "0" }
+              : statement.includes("AS WorkstationId")
               ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
               : statement.includes("SharedWorkstationCredential")
               ? { CredentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad" }
@@ -112,9 +114,9 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
     workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 5);
+  assert.equal(statements.length, 6);
   assert.match(statements[1]!, /UnmappedActiveLegacySessions/u);
-  assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "workstationId", "credentialId", "workstationId", "credentialId"]);
+  assert.deepEqual(bindings, ["workstationId", "credentialId", "workstationId", "workstationId", "credentialId", "workstationId", "credentialId", "workstationId"]);
 });
 
 test("nonzero or missing COUNT_BIG evidence refuses mutation and commits nothing", async () => {
@@ -229,6 +231,7 @@ test("version-bound device is queried in the owned transaction but writes remain
           statements.push(statement);
           const row = statement.includes("sp_getapplock") ? { GateResult: 0 }
             : statement.includes("UnmappedActiveLegacySessions") ? { UnmappedActiveLegacySessions: "0" }
+            : statement.includes("ActiveLegacySessions") ? { ActiveLegacySessions: "0" }
             : statement.includes("AS WorkstationId") ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
             : statement.includes("AS CredentialId") ? { CredentialId: credentialId, CredentialVersion: 2 }
             : statement.includes("AS SessionId") ? { SessionId: deviceId }
@@ -243,10 +246,11 @@ test("version-bound device is queried in the owned transaction but writes remain
     workstationId: "1", credentialId, deviceSessionId: deviceId, expectedCredentialVersion: 2,
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 7);
+  assert.equal(statements.length, 8);
   assert.match(statements[4]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
   assert.match(statements[5]!, /ORDER BY Id/u);
   assert.match(statements[6]!, /os.OperatorSessionId=ls.Id/u);
+  assert.match(statements[7]!, /ActiveLegacySessions/u);
   assert.equal(rollbacks, 1);
 });
 
