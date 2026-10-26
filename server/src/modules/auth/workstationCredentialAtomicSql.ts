@@ -54,7 +54,8 @@ SET StateCode=N'DEVICE_REVOKED',
 WHERE WorkstationId=CONVERT(BIGINT,@workstationId)
   AND RowVersion=CONVERT(BINARY(8),@expectedOperatorRevision,2)
   AND Generation=CONVERT(BIGINT,@expectedGeneration)
-  AND Incarnation=@expectedIncarnation;
+  AND Incarnation=@expectedIncarnation
+  AND Generation < CONVERT(BIGINT, '9223372036854775807');
 SELECT @@ROWCOUNT AS OperatorAffected;`,
   remainingDevices: `
 SELECT COUNT_BIG(*) AS Remaining
