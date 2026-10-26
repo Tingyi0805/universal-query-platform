@@ -89,7 +89,8 @@ FROM uqp.SharedWorkstationCredential WITH (UPDLOCK,HOLDLOCK)
 WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
   AND IsRevoked=0;`);
           if (credential.recordset.length !== 1 ||
-              String(credential.recordset[0]?.CredentialId).toLowerCase() !== scope.credentialId.toLowerCase())
+              typeof credential.recordset[0]?.CredentialId !== "string" ||
+              credential.recordset[0].CredentialId.toLowerCase() !== scope.credentialId.toLowerCase())
             throw new Error("CREDENTIAL_SCOPE_UNPROVEN");
           // Still reject: a zero count does not establish historical writer coverage.
           throw new Error(WRITE_BLOCKED);
