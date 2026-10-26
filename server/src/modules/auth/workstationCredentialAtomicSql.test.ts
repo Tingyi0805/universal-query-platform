@@ -19,9 +19,10 @@ test("operator CAS rotates generation and incarnation; session writes are counte
   assert.match(s.revokeOperatorCas, /Incarnation=@nextIncarnation/u);
   assert.match(s.revokeOperatorCas, /Generation < CONVERT\(BIGINT, '9223372036854775807'\)/u);
   assert.match(s.revokeOperatorCas, /RowVersion=CONVERT\(BINARY\(8\),@expectedOperatorRevision,2\)/u);
-  for (const sql of [s.credentialCas,s.revokeDevices,s.revokeLegacy,s.revokeOperatorCas]) {
+  for (const sql of [s.credentialCas,s.revokeDevices,s.revokeOperatorCas]) {
     assert.match(sql, /@@ROWCOUNT/u);
   }
+  assert.equal(s.revokeLegacy, null);
   assert.match(s.remainingDevices, /COUNT_BIG\(\*\)/u);
   assert.match(s.remainingLegacy, /COUNT_BIG\(\*\)/u);
 });
