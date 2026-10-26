@@ -231,6 +231,7 @@ test("version-bound device is queried in the owned transaction but writes remain
             : statement.includes("UnmappedActiveLegacySessions") ? { UnmappedActiveLegacySessions: "0" }
             : statement.includes("AS WorkstationId") ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
             : statement.includes("AS CredentialId") ? { CredentialId: credentialId, CredentialVersion: 2 }
+            : statement.includes("AS SessionId") ? { SessionId: deviceId }
             : { DeviceSessionId: deviceId, BoundCredentialVersion: 2 };
           return { recordset: [row], rowsAffected: [] };
         },
@@ -242,8 +243,9 @@ test("version-bound device is queried in the owned transaction but writes remain
     workstationId: "1", credentialId, deviceSessionId: deviceId, expectedCredentialVersion: 2,
   });
   assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
-  assert.equal(statements.length, 5);
+  assert.equal(statements.length, 6);
   assert.match(statements[4]!, /BoundCredentialVersion=@expectedCredentialVersion/u);
+  assert.match(statements[5]!, /ORDER BY Id/u);
   assert.equal(rollbacks, 1);
 });
 
