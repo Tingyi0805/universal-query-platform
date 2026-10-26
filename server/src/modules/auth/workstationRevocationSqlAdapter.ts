@@ -143,11 +143,13 @@ WHERE Id=@credentialId AND WorkstationId=CONVERT(BIGINT,@workstationId)
             const operator = await deps.request(tx)
               .input("workstationId", sql.NVarChar(20), scope.workstationId)
               .query(isolatedCredentialAtomicSql.lockOperator);
+            const operatorRevision = operator.recordset[0]?.Revision;
+            const operatorGeneration = operator.recordset[0]?.Generation;
             if (operator.recordset.length !== 1 ||
                 typeof operator.recordset[0]?.DeviceSessionId !== "string" ||
                 operator.recordset[0].DeviceSessionId.toLowerCase() !== scope.deviceSessionId.toLowerCase() ||
-                !/^[0-9a-f]{16}$/.test(operator.recordset[0]?.Revision) ||
-                !/^[1-9][0-9]*$/.test(operator.recordset[0]?.Generation) ||
+                typeof operatorRevision !== "string" || !/^[0-9a-f]{16}$/.test(operatorRevision) ||
+                typeof operatorGeneration !== "string" || !/^[1-9][0-9]*$/.test(operatorGeneration) ||
                 typeof operator.recordset[0]?.Incarnation !== "string")
               throw new Error("OPERATOR_STATE_UNPROVEN");
           }
