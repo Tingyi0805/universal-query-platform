@@ -1,4 +1,4 @@
-import { assessCredentialRevocation, type CredentialRevocationEvidence } from "./workstationCredentialRevocationFence.js";
+import { assessCredentialRevocation, assessCredentialRevocationMutation, type CredentialRevocationEvidence } from "./workstationCredentialRevocationFence.js";
 
 /**
  * H0-5C-2F: isolated transaction-owned writer seam.
@@ -39,9 +39,7 @@ export async function runIsolatedRevocationWriter(driver: RevocationOwnedSqlDriv
     const mutation = await tx.revokeCredentialAndSessions();
     // Reject invalid mutation evidence BEFORE writing append-only request/audit/decision.
     if (mutation.commitOutcome !== "UNKNOWN") throw Error("PREMATURE_COMMIT_PROOF");
-    const preAudit = assessCredentialRevocation({ ...mutation,
-      requestReservationAffected: 1, auditAffected: 1, decisionAffected: 1,
-      auditLogId: "1", commitOutcome: "COMMITTED" });
+    const preAudit = assessCredentialRevocationMutation(mutation);
     if (!preAudit.admissible) throw Error(preAudit.reason);
     const receipt = await tx.insertRequestAuditAndDecision();
     const verdict = assessCredentialRevocation({ ...mutation, ...receipt, commitOutcome: "COMMITTED" });
