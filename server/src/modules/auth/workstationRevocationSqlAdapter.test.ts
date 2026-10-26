@@ -98,7 +98,11 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
           statements.push(statement);
           return { recordset: statement.includes("sp_getapplock")
             ? [{ GateResult: 0 }]
-            : [statement.includes("ActiveLegacySessions")
+            : statement.includes("os.OperatorSessionId=ls.Id")
+              ? []
+              : [statement.includes("UnmappedActiveLegacySessions")
+              ? { UnmappedActiveLegacySessions: "0" }
+              : statement.includes("ActiveLegacySessions")
               ? { ActiveLegacySessions: "0" }
               : statement.includes("AS WorkstationId")
               ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
@@ -234,9 +238,10 @@ test("version-bound device is queried in the owned transaction but writes remain
             : statement.includes("ActiveLegacySessions") ? { ActiveLegacySessions: "0" }
             : statement.includes("AS WorkstationId") ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
             : statement.includes("AS CredentialId") ? { CredentialId: credentialId, CredentialVersion: 2 }
+            : statement.includes("os.OperatorSessionId=ls.Id") ? null
             : statement.includes("AS SessionId") ? { SessionId: deviceId }
             : { DeviceSessionId: deviceId, BoundCredentialVersion: 2 };
-          return { recordset: [row], rowsAffected: [] };
+          return { recordset: row === null ? [] : [row], rowsAffected: [] };
         },
       };
       return req;
