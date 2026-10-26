@@ -82,3 +82,33 @@ test("denied security gate may not be retried inside the same transaction", asyn
   await tx.rollback();
   assert.equal(f.events.filter(e => e === "gate").length, 1);
 });
+
+test("scoped SQL adapter reads unmapped legacy count in same transaction and still refuses writes", async () => {
+  const statements: string[] = [];
+  const bindings: string[] = [];
+  const deps = {
+    async getPool() { return {}; },
+    transaction(): WorkstationSqlTransaction {
+      return { async begin() {}, async commit() { throw Error("UNEXPECTED_COMMIT"); }, async rollback() {} };
+    },
+    request(): WorkstationSqlRequest {
+      const req: WorkstationSqlRequest = {
+        input(name: string) { bindings.push(name); return req; },
+        async query(statement: string) {
+          statements.push(statement);
+          return { recordset: statement.includes("sp_getapplock")
+            ? [{ GateResult: 0 }]
+            : [{ UnmappedActiveLegacySessions: "0" }], rowsAffected: [] };
+        },
+      };
+      return req;
+    },
+  };
+  const driver = createIsolatedRevocationSqlDriver(deps, {
+    workstationId: "1", credentialId: "f0a14a4d-870b-4379-82b0-cc4d2d1c21ad",
+  });
+  assert.equal((await runIsolatedRevocationWriter(driver)).status, "REJECTED");
+  assert.equal(statements.length, 2);
+  assert.match(statements[1]!, /UnmappedActiveLegacySessions/u);
+  assert.deepEqual(bindings, ["workstationId", "credentialId"]);
+});
