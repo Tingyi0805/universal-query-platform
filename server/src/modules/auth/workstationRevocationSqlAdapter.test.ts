@@ -98,11 +98,11 @@ test("scoped SQL adapter reads unmapped legacy count in same transaction and sti
           statements.push(statement);
           return { recordset: statement.includes("sp_getapplock")
             ? [{ GateResult: 0 }]
-            : statement.includes("os.OperatorSessionId=ls.Id")
+            : statement.includes("UnmappedActiveLegacySessions")
+              ? [{ UnmappedActiveLegacySessions: "0" }]
+              : statement.includes("os.OperatorSessionId=ls.Id")
               ? []
-              : [statement.includes("UnmappedActiveLegacySessions")
-              ? { UnmappedActiveLegacySessions: "0" }
-              : statement.includes("ActiveLegacySessions")
+              : [statement.includes("ActiveLegacySessions")
               ? { ActiveLegacySessions: "0" }
               : statement.includes("AS WorkstationId")
               ? { WorkstationId: "1", IsActive: true, RetiredAtUtc: null }
@@ -344,8 +344,8 @@ test("scope lacking device binding stays blocked before mutation even with zero 
         input() { return req; },
         async query(statement: string) {
           const rows = statement.includes("sp_getapplock") ? [{ GateResult: 0 }]
-            : statement.includes("os.OperatorSessionId=ls.Id") ? []
             : statement.includes("UnmappedActiveLegacySessions") ? [{ UnmappedActiveLegacySessions: "0" }]
+            : statement.includes("os.OperatorSessionId=ls.Id") ? []
             : statement.includes("ActiveLegacySessions") ? [{ ActiveLegacySessions: "0" }]
             : statement.includes("AS WorkstationId") ? [{ WorkstationId: "1", IsActive: true, RetiredAtUtc: null }]
             : [{ CredentialId: credentialId }];
