@@ -54,6 +54,27 @@ export function assessCredentialRevocation(e: CredentialRevocationEvidence): Cre
   return result("SYNTHETIC_CONSISTENT");
 }
 
+/**
+ * Mutation-only preflight. No synthetic audit receipt or invented commit
+ * outcome is needed before append-only request/audit/decision inserts.
+ */
+export function assessCredentialRevocationMutation(
+  e: CredentialRevocationEvidence,
+): Readonly<{ admissible: boolean; reason: CredentialRevocationAssessment["reason"] }> {
+  if (e.commitOutcome !== "UNKNOWN") return { admissible: false, reason: "COMMIT_UNCONFIRMED" };
+  if (e.credentialMutationAffected !== 1 || e.expectedCredentialVersionMatched !== true)
+    return { admissible: false, reason: "MUTATION_UNPROVEN" };
+  if (![e.deviceSessionsLocked, e.deviceSessionsRevoked, e.deviceSessionsRemaining,
+        e.legacySessionsLocked, e.legacySessionsRevoked, e.legacySessionsRemaining].every(count) ||
+      e.deviceSessionsLocked !== e.deviceSessionsRevoked || e.deviceSessionsRemaining !== 0 ||
+      e.legacySessionsLocked !== e.legacySessionsRevoked || e.legacySessionsRemaining !== 0)
+    return { admissible: false, reason: "SESSION_SCOPE_UNPROVEN" };
+  if (e.operatorStatePresent !== true || e.operatorCasAffected !== 1 ||
+      e.operatorGenerationAdvanced !== true || e.operatorIncarnationRotated !== true)
+    return { admissible: false, reason: "OPERATOR_FENCE_UNPROVEN" };
+  return { admissible: true, reason: "SYNTHETIC_CONSISTENT" };
+}
+
 export const credentialRevocationRuntimeGate = Object.freeze({
   registered: false as const,
   writerIntegrated: false as const,
