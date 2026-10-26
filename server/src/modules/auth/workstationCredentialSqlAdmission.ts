@@ -22,9 +22,7 @@ export type CredentialRevocationSqlGap =
 
 export function inspectIsolatedCredentialSql(): Readonly<{ safeToEnable: false; gaps: readonly CredentialRevocationSqlGap[] }> {
   const gaps: CredentialRevocationSqlGap[] = [];
-  const normalizedLegacy = isolatedCredentialAtomicSql.revokeLegacy.replace(/\s+/gu, " ");
-  if (/WHERE WorkstationId=CONVERT\(BIGINT,@workstationId\) AND RevokedAtUtc IS NULL/iu.test(normalizedLegacy) &&
-      !/CredentialId|DeviceSessionId/iu.test(normalizedLegacy)) {
+  if (isolatedCredentialAtomicSql.revokeLegacy === null) {
     gaps.push("LEGACY_WORKSTATION_WIDE_REVOKE");
   }
   if (/CredentialVersion=@expectedCredentialVersion/u.test(isolatedCredentialAtomicSql.credentialCas) &&
