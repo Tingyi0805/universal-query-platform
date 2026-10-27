@@ -68,7 +68,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-task_report init # Fresh 21-case NOT_RUN report before touching the new VM daemon.
+task_report init # Fresh 35-case NOT_RUN report before touching the new VM daemon.
 task_docker info >/dev/null
 task_network="$(task_docker network create --internal --label "uqp926.run=$UQP926_RUN_ID" "uqp926-$UQP926_RUN_ID")"
 [[ "$task_network" =~ ^[0-9a-f]{64}$ ]]

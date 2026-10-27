@@ -17,6 +17,7 @@ import type { WorkstationSqlRequest, WorkstationSqlTransaction } from "../module
 import { isolated926Target, assertIsolated926Witness } from "./workstation926Isolation.js";
 import { create926Report, finish926Report, report926Url, sql926Cases, type Sql926CaseResult } from "./workstation926AcceptanceReport.js";
 
+import { acceptUserRevocation } from "./workstationUserRevocationSqlAcceptance.js";
 const rootUrl = new URL("../../../", import.meta.url);
 const userId = "9007199254740993";
 async function boundedBarrier(work: Promise<void>) {
@@ -154,13 +155,13 @@ export async function run926Acceptance() {
       SET IDENTITY_INSERT uqp.AuditLog OFF;`);
     const fixtureSource = await readFile(new URL("tools/sqlserver-acceptance/h0-926/fixture.sql", rootUrl), "utf8");
     let fixtureNumber = 0;
-    const fixture = async (legacyMode = 0): Promise<Fixture> => {
+    const fixture = async (legacyMode = 0, fixtureUserId = userId): Promise<Fixture> => {
       const workstationId = String(9007199254741000n + BigInt(fixtureNumber++));
       const credentialId = randomUUID(), deviceId = randomUUID(), legacyId = randomUUID(), incarnation = randomUUID();
       await root!.request().input("workstationId", sql.VarChar(20), workstationId).input("code", sql.NVarChar(100), "SYNTHETIC_" + workstationId)
         .input("credentialId", sql.UniqueIdentifier, credentialId).input("deviceId", sql.UniqueIdentifier, deviceId)
         .input("legacyId", sql.UniqueIdentifier, legacyId).input("incarnation", sql.UniqueIdentifier, incarnation)
-        .input("userId", sql.VarChar(20), userId).input("legacyMode", sql.Int, legacyMode).batch(fixtureSource);
+        .input("userId", sql.VarChar(20), fixtureUserId).input("legacyMode", sql.Int, legacyMode).batch(fixtureSource);
       return { legacyId, scope: { workstationId, credentialId, deviceSessionId: deviceId, expectedCredentialVersion: 2,
         requestId: randomUUID(), transactionCorrelationId: randomUUID(), nextIncarnation: randomUUID() } };
     };
@@ -390,6 +391,20 @@ export async function run926Acceptance() {
       } finally { await competitor.rollback().catch(() => undefined); }
       assert.deepEqual(await snapshot(a), before); assert.equal(await auditCount(), audits);
     });
+    stage="ACCOUNT_927_DRAFT";
+    const accountDdl=await readFile(new URL("database/drafts/927_account_revocation_decisions.sql",rootUrl),"utf8");
+    report.accountDraftSha256=createHash("sha256").update(accountDdl).digest("hex");
+    await root.request().batch(accountDdl);
+    await root.request().batch(`GRANT VIEW DEFINITION ON SCHEMA::uqp TO [${login}];
+      ${["AppUser","Role","UserRole","RolePermission","Permission","QuickPinPolicy","AccountRevocationRequest","AccountRevocationDecision"]
+        .map(t=>`GRANT SELECT ON OBJECT::uqp.${t} TO [${login}];`).join("\n")}
+      GRANT UPDATE ON OBJECT::uqp.AppUser TO [${login}];
+      GRANT INSERT,DELETE ON OBJECT::uqp.UserRole TO [${login}];
+      GRANT INSERT ON OBJECT::uqp.AccountRevocationRequest TO [${login}];
+      GRANT INSERT ON OBJECT::uqp.AccountRevocationDecision TO [${login}];
+      DENY UPDATE,DELETE ON OBJECT::uqp.AccountRevocationRequest TO [${login}];
+      DENY UPDATE,DELETE ON OBJECT::uqp.AccountRevocationDecision TO [${login}];`);
+    await acceptUserRevocation(root,app,fixture,runCase);
     report.observedSqlErrorNumbers = [...new Set(sqlErrors)].sort();
     assert.ok(cases.every(result => result.status === "PASS"), "EVERY_SQL_CASE_MUST_EXECUTE");
     report.SQL_ACCEPTANCE = "PASS_ISOLATED_REVOCATION_CASES_ONLY"; exit = 0;

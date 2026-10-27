@@ -124,14 +124,14 @@ jq '{SQL_ACCEPTANCE,startedAtUtc,finishedAtUtc,environment,launcher,summary,data
 
 ## 7. 判讀報告
 
-- 每次已核准啟動都先寫入新的 **21 個 NOT_RUN** 案例。每個實際執行案例才得到起訖時間及 PASS 或 FAIL；提前失敗後，其餘仍是 NOT_RUN。
+- 每次已核准啟動都先寫入新的 **35 個 NOT_RUN** 案例。每個實際執行案例才得到起訖時間及 PASS 或 FAIL；提前失敗後，其餘仍是 NOT_RUN。
 - environment.build / edition / engine 是 SQL SERVERPROPERTY 實際回傳；compatibility 是建 DB 後再查 sys.databases 的值。未取得證據時不填假版本。
 - launcher 保存 runId、Commit、Container/Network/Image ID 及可取得的 registry digest；sourceManifest / draftSha256 綁定測試 SQL 原始碼。
-- SQL_ACCEPTANCE=PASS_ISOLATED_REVOCATION_CASES_ONLY 只允許在 21 項均 PASS、觀測 Engine 15／Build 15.x／Compatibility 150 時出現。還必須檢查程序 exit code=0、databaseCleanup=COMPLETE、launcherCleanup 無失敗、cleanup=COMPLETE。
+- SQL_ACCEPTANCE=PASS_ISOLATED_REVOCATION_CASES_ONLY 只允許在 35 項均 PASS、觀測 Engine 15／Build 15.x／Compatibility 150 時出現。還必須檢查程序 exit code=0、databaseCleanup=COMPLETE、launcherCleanup 無失敗、cleanup=COMPLETE。
 - FAIL、任一 NOT_RUN、清理 REFUSED/FAILED/UNKNOWN、缺失版本、報告時間或 runId 不符，都不能當作驗收完成。先保存去敏報告再調查；不要盲目重跑 Commit Unknown。
 - 報告是可追溯的測試紀錄，不是不可偽造的簽章，也不是完整 SQL 鎖定／正式安全證明。
 
-**即使 21 項全數 PASS，legacyWriterCoverage／productionSafety 仍是 BLOCKED，Runtime 與 Feature Flag 仍 OFF。** 舊 Writer、權限異動、DBA／直接 SQL、混合部署及還原 incarnation 的缺口不會自動解除。不要部署 926 到共用 UQP DB。
+**即使 35 項全數 PASS，legacyWriterCoverage／productionSafety 仍是 BLOCKED，Runtime 與 Feature Flag 仍 OFF。** 舊 Writer、權限異動、DBA／直接 SQL、混合部署及還原 incarnation 的缺口不會自動解除。不要部署 926 到共用 UQP DB。
 
 ## 8. 清理與故障
 
@@ -140,3 +140,5 @@ jq '{SQL_ACCEPTANCE,startedAtUtc,finishedAtUtc,environment,launcher,summary,data
 Ownership 不符或有其他 Container 使用 Network 時拒絕清理；daemon 無法使用時記為 UNKNOWN。清理失敗不得回報成功。SIGKILL、VM 當機可能無法執行 trap。
 
 先保存報告並核對 runId。只可由新 VM 管理員核對該次資源後處理；不要複製通用刪除命令。若不能證明資源歸屬，停止，不擴大清理。這是一部全新拋棄式 VM，證據保存完畢後可直接還原 snapshot／刪除該 VM；不可還原或清理目前 UQP 主機。
+
+本次套件由原21項增加14項帳號撤權案例，共35項。只有相同已見證的拋棄式 DB 才會安裝927草稿；不修改926、不寫927 Migration ledger。所有新增案例目前 NOT_RUN，不可部署927至使用中的UQP。

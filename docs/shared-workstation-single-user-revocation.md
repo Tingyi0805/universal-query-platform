@@ -62,3 +62,5 @@ Gate 是合作式序列化。不同已取得 Gate 的 writer 不會同時進入�
 - 真實SQL至少要驗證4類命令、其他使用者/device/public token逐欄不變、兩連線switch/revoke／renew/revoke、UserId predicate phantom、每步SQL故障及Audit/Decision trigger rollback、RequestId重放、commit已持久化/未持久化兩種ack丟失、926 absent/full/partial。記錄真正15.x Build、Compatibility150與去敏證據。沒有獨立 VM 授權前不連線、不啟動容器。
 
 DBA/sysadmin、直接SQL、舊 Worker／混合部署、平台備份還原 incarnation、完整Catalog及資料庫 rollback／持久性／物理鎖測試仍 BLOCKED。正式使用者改密碼的當下密碼重驗、多使用者 RolePermission Writer、帳號刪除歷史保存、前後端 response fence 接線同樣未完成。第五關與正式 Runtime 均未通過。
+
+後續927帳號層隔離擴充與35項實機案例規格見 [927 account contract](shared-workstation-account-revocation-927.md)。它補上無Device的隔離證據路徑，不代表此文件的正式部署／Legacy整合阻擋已解除。

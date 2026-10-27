@@ -1,3 +1,4 @@
+import { userSqlCases } from "./workstationUserRevocationSqlAcceptanceCases.js";
 /** Safe acceptance evidence only. Never imports SQL or platform configuration. */
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -7,7 +8,7 @@ export const sql926Cases = ["catalog-roundtrip", "no-legacy", "linked-legacy", "
   "decision-trigger-rollback", "commit-unknown-committed", "commit-unknown-rolled-back", "concurrent-revoke",
   "concurrent-renewal-revoke", "legacy-insert-predicate-block", "gate-timeout",
   "legacy-writer-denial", "immutable-decision-request", "foreign-workstation-unchanged",
-  "multiple-active-device-constraint", "rollback-ack-unknown", "deadlock-1205"] as const;
+  "multiple-active-device-constraint", "rollback-ack-unknown", "deadlock-1205", ...userSqlCases] as const;
 export type Sql926CaseResult = {
   name: typeof sql926Cases[number]; status: "PASS" | "FAIL" | "NOT_RUN";
   startedAtUtc?: string; finishedAtUtc?: string; sqlError?: number;

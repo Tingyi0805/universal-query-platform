@@ -21,6 +21,8 @@ IF COL_LENGTH(N'uqp.QuickPinPolicy',N'PolicyRevision') IS NOT NULL
   OR OBJECT_ID(N'uqp.SharedWorkstationPinAttemptState') IS NOT NULL
   OR OBJECT_ID(N'uqp.SharedWorkstationSessionRequest') IS NOT NULL
   OR OBJECT_ID(N'uqp.SharedWorkstationSessionDecision') IS NOT NULL
+  OR OBJECT_ID(N'uqp.AccountRevocationRequest') IS NOT NULL
+  OR OBJECT_ID(N'uqp.AccountRevocationDecision') IS NOT NULL
   THROW 52926, 'LEGACY_WRITER_926_INTEGRATION_REQUIRED', 1;
 IF EXISTS (SELECT 1 FROM uqp.SchemaMigration WHERE FileName=N'926_shared_workstation_session_security.sql')
   THROW 52926, 'LEGACY_WRITER_926_INTEGRATION_REQUIRED', 1;

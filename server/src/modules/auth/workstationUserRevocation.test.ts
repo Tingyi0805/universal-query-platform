@@ -43,6 +43,11 @@ function fixture(command=input(),options:Options={}) {
       switch(name){
         case "gate": rows=[{GateResult:0}];break;
         case "schema": rows=[{SchemaReady:1}];break;
+        case "accountSchema": rows=[{AccountSchemaReady:1}];break;
+        case "readAccountRequest": rows=[];break;
+        case "reserveAccount": rows=[{RequestId:values.requestId}];break;
+        case "accountAudit":rows=[{AuditLogId:"9007199254741099"}];break;
+        case "accountDecision":rows=[{RequestId:values.requestId,AuditLogId:values.auditLogId,DecisionId:"9007199254741199"}];break;
         case "columns": rows=Array.from({length:70},()=>({ResultSet:"R2_COLUMNS",Status:"MATCH"}));break;
         case "user": rows=[{UserId:values.userId,TokenVersion:values.userId===command.targetUserId?state.token:5,
           IsActive:values.userId===command.targetUserId?state.isActive:true,AuthProvider:"LOCAL"}];break;
@@ -67,7 +72,7 @@ function fixture(command=input(),options:Options={}) {
         case "decision":rows=[{RequestId:values.requestId,DecisionId:(9007199254740997n+BigInt(state.pending.filter(n=>n==="decision").length)).toString(),AuditLogId:values.auditLogId}];break;
         case "remaining":rows=[{LegacyRemaining:String(state.legacy.length),OperatorRemaining:String(state.operators.length)}];break;
       }
-      if(["reserve","userCas","deleteRoles","insertRole","revokeLegacy","operatorCas","audit","decision"].includes(name))state.pending.push(name);
+      if(["reserveAccount","accountAudit","accountDecision","reserve","userCas","deleteRoles","insertRole","revokeLegacy","operatorCas","audit","decision"].includes(name))state.pending.push(name);
       return {recordset:options.override?.(name,values,rows,state)??rows,rowsAffected:[]};
     }};return req;
   }});
@@ -220,4 +225,36 @@ test("mandatory constraint and FK manifest covers the existing draft sidecars; n
   assert.equal(count,54);assert.match(sql.schema,/sys.foreign_key_columns/);assert.match(sql.schema,/constraint_column_id/);
   assert.match(sql.schema,/delete_referential_action<>0/);assert.match(sql.schema,/is_hypothetical/);
   for(const statement of Object.values(sql))assert.doesNotMatch(statement,/\b(?:CREATE|ALTER|DROP)\s+(?:TABLE|DATABASE|INDEX)/i);
+});
+
+const account={requestId:id(201),correlationId:id(202)};
+for(const operation of ["DISABLE","REVOKE_AUTHORIZATION","CHANGE_PASSWORD","REPLACE_ROLES"])test("927 account decision without any fabricated device: "+operation,async()=>{
+ const f=fixture(input({operation,account,scopes:[],...operation==="CHANGE_PASSWORD"?{passwordHash:hash}:{},...operation==="REPLACE_ROLES"?{roleIds:["9"]}:{}}));
+ f.state.legacy=[];
+ const r=await f.run();assert.equal(r.status,"COMMIT_ACKNOWLEDGED");assert.equal(r.receipts.length,1);
+ assert.equal(f.state.token,8);assert.ok(!f.state.events.includes("binding"));assert.ok(!f.state.events.includes("reserve"));
+ assert.ok(f.state.events.indexOf("reserveAccount")<f.state.events.indexOf("userCas"));assert.equal(r.runtimeEnabled,false);
+});
+test("927 account and every actual operator receipt commit together",async()=>{
+ const f=fixture(input({account}));const r=await f.run();assert.equal(r.status,"COMMIT_ACKNOWLEDGED");assert.equal(r.receipts.length,2);
+});
+for(const name of ["accountSchema","readAccountRequest","reserveAccount","accountAudit","accountDecision"])test("927 step failure rolls back account and session mutations: "+name,async()=>{
+ const f=fixture(input({account}),{fail:name});assert.equal((await f.run()).status,"REJECTED");assert.equal(f.state.token,7);assert.deepEqual(f.state.committed,[]);
+});
+for(const [name,rows,code] of [["accountSchema",[],"ACCOUNT_SCHEMA_UNPROVEN"],["readAccountRequest",[{RequestId:id(201)}],"ACCOUNT_REQUEST_REPLAY"],
+ ["accountAudit",[{AuditLogId:9007199254740992}],"ACCOUNT_AUDIT_INVALID"],["accountDecision",[],"ACCOUNT_DECISION_INVALID"]] as const)
+ test("927 rejects unsafe/missing evidence: "+code,async()=>{
+  const f=fixture(input({account}),{override:(n,v,r)=>n===name?[...rows]:r});assert.equal((await f.run()).code,code);assert.equal(f.state.token,7);
+ });
+test("927 account commit unknown does not retry",async()=>{
+ const f=fixture(input({account,scopes:[]}),{commitUnknown:true});f.state.legacy=[];
+ assert.equal((await f.run()).status,"COMMIT_UNKNOWN");assert.ok(!f.state.events.includes("rollback"));
+});
+test("927 remains a separate additive draft outside migration scanning and creates no fake device",()=>{
+ const ddl=readFileSync(new URL("../../../../database/drafts/927_account_revocation_decisions.sql",import.meta.url),"utf8");
+ assert.equal((ddl.match(/CREATE TABLE/g)||[]).length,2);assert.match(ddl,/AccountRevocationRequest/);
+ assert.doesNotMatch(ddl,/INSERT\s+(?:INTO\s+)?uqp\.(?:AppUser|SharedWorkstation|SchemaMigration)/i);
+ assert.doesNotMatch(ddl,/ALTER\s+TABLE\s+uqp\.SharedWorkstation/i);
+ assert.match(ddl,/INSTEAD OF UPDATE,DELETE/);assert.match(ddl,/ON DELETE NO ACTION/);
+ assert.doesNotMatch(ddl,/FOREIGN KEY\((?:ActorUserId|TargetUserId|AuditLogId)\)/);
 });

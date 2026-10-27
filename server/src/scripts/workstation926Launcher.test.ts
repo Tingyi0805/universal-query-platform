@@ -18,6 +18,7 @@ function launch(mode: string, approveVm = true) {
   const toolDir = join(dir, "tools/sqlserver-acceptance/h0-926"); mkdirSync(toolDir, { recursive: true });
   cpSync(new URL("tools/sqlserver-acceptance/h0-926/run-isolated.sh", root), join(toolDir, "run-isolated.sh"));
   cpSync(new URL("server/src/scripts/workstation926AcceptanceReport.ts", root), join(scripts, "workstation926AcceptanceReport.ts"));
+  cpSync(new URL("server/src/scripts/workstationUserRevocationSqlAcceptanceCases.ts", root), join(scripts, "workstationUserRevocationSqlAcceptanceCases.ts"));
   symlinkSync(fileURLToPath(new URL("server/node_modules", root)), join(dir, "server/node_modules"), "dir");
   const log = join(dir, "events"), state = join(dir, "state");
   writeFileSync(join(bin, "git"), "#!/bin/sh\nprintf '%s\\n' '" + "e".repeat(40) + "'\n", { mode: 0o755 });
@@ -96,13 +97,13 @@ test("new VM confirmation is required before any Docker command", () => {
   assert.equal(f.result.status, 2); assert.deepEqual(f.events, []);
   assert.match(f.result.stderr, /SQL_ACCEPTANCE=NOT_RUN/);
 });
-test("shell cleans only owned container/network; SQL is not run and all 21 cases remain NOT_RUN", () => {
+test("shell cleans only owned container/network; SQL is not run and all 35 cases remain NOT_RUN", () => {
   const f = launch("normal");
   assert.equal(f.result.status, 7);
   assert.ok(f.events.some(e => e[0] === "SQL_HARNESS_BLOCKED_BY_TEST"));
   assert.deepEqual(f.events.filter(e => e[0] === "rm"), [["rm","-f","b".repeat(64)]]);
   assert.deepEqual(f.events.filter(e => e[0] === "network" && e[1] === "rm"), [["network","rm","a".repeat(64)]]);
-  assert.equal(f.report.SQL_ACCEPTANCE, "NOT_RUN"); assert.equal(f.report.summary.notRun, 21);
+  assert.equal(f.report.SQL_ACCEPTANCE, "NOT_RUN"); assert.equal(f.report.summary.notRun, 35);
   assert.equal(f.report.cleanup, "COMPLETE");
   assert.equal(f.report.launcher.imageId, "sha256:" + "c".repeat(64));
   assert.equal(f.report.launcher.imageDigest, "mcr.microsoft.com/mssql/server@sha256:" + "d".repeat(64));
@@ -123,7 +124,7 @@ for (const mode of ["foreign-network", "busy-network", "cleanup-fails"]) test("n
 });
 test("report keeps unexecuted cases and missing engine evidence explicit", () => {
   const report = finish926Report(create926Report({ UQP926_PASSWORD: "DO_NOT_SERIALIZE" }));
-  assert.deepEqual(report.summary, { total: 21, passed: 0, failed: 0, notRun: 21 });
+  assert.deepEqual(report.summary, { total: 35, passed: 0, failed: 0, notRun: 35 });
   assert.equal(report.environment, undefined); assert.equal(report.SQL_ACCEPTANCE, "NOT_RUN");
   assert.doesNotMatch(JSON.stringify(report), /DO_NOT_SERIALIZE/);
 });
@@ -145,11 +146,11 @@ test("synthetic report formatter preserves PASS/FAIL/NOT_RUN separately and neve
     environment: { engine: 15, build: "15.0.9999.0", compatibility: 150, edition: "SYNTHETIC_FORMATTER_TEST_ONLY" } };
   finish926Report(report);
   assert.equal(report.SQL_ACCEPTANCE, "PASS_ISOLATED_REVOCATION_CASES_ONLY");
-  assert.deepEqual(report.summary, { total: 21, passed: 21, failed: 0, notRun: 0 });
+  assert.deepEqual(report.summary, { total: 35, passed: 35, failed: 0, notRun: 0 });
   assert.equal(report.productionReady, false); assert.equal(report.productionSafety, "BLOCKED");
   const mixed = create926Report();
   mixed.cases[0]!.status = "PASS"; mixed.cases[1]!.status = "FAIL";
-  assert.deepEqual(finish926Report(mixed).summary, { total: 21, passed: 1, failed: 1, notRun: 19 });
+  assert.deepEqual(finish926Report(mixed).summary, { total: 35, passed: 1, failed: 1, notRun: 33 });
   (report.environment as Record<string, unknown>).build = "16.0.9999.0";
   assert.equal(finish926Report(report).SQL_ACCEPTANCE, "FAIL");
 });

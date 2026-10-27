@@ -64,3 +64,13 @@ test("legacy denial uses the identical gate before old config locks; every named
     if (path.coverage === "COMMON_OWNER_DENY_ON_926") assert.ok(code.includes("withLegacyWorkstationTransaction"), path.source);
   }
 });
+
+test("account SQL extension is witness-guarded, preserves all original cases, and never opens a platform pool",()=>{
+ const source=read("server/src/scripts/workstationUserRevocationSqlAcceptance.ts");
+ assert.doesNotMatch(source,/getPlatformDbPool|config\/database|new sql.ConnectionPool|\.connect\(/);
+ assert.match(source,/witness.Machine/);assert.match(source,/witness.UserDatabases,1/);
+ const runner=read("server/src/scripts/workstation926SqlAcceptance.ts");
+ assert.ok(runner.indexOf("assertIsolated926Witness")<runner.indexOf("acceptUserRevocation(root,app,fixture,runCase)"));
+ assert.match(runner,/database\/drafts\/927_account_revocation_decisions.sql/);
+ assert.match(source,/Barrier|barrier/);assert.match(source,/SYNTHETIC_ACK_LOSS/);
+});

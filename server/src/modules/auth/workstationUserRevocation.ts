@@ -11,7 +11,7 @@ type Scope = Readonly<{ workstationId: string; deviceSessionId: string; revision
   incarnation: string; requestId: string; correlationId: string }>;
 type Command = Readonly<{ operation: "REVOKE_AUTHORIZATION" | "DISABLE" | "CHANGE_PASSWORD" | "REPLACE_ROLES";
   actorUserId: string; actorTokenVersion: number; targetUserId: string; expectedTokenVersion: number;
-  scopes: readonly Scope[]; roleIds?: readonly string[]; passwordHash?: string }>;
+  account?: Readonly<{requestId:string;correlationId:string}>; scopes: readonly Scope[]; roleIds?: readonly string[]; passwordHash?: string }>;
 type Dependencies = Readonly<{ getPool: () => Promise<unknown | null>;
   transaction: (pool: unknown) => WorkstationSqlTransaction;
   request: (tx: WorkstationSqlTransaction) => WorkstationSqlRequest; newUuid: () => string }>;
@@ -40,7 +40,7 @@ function array(value: unknown, max: number): unknown[] {
   return Array.from({length}, (_,i) => { const item=d[String(i)]; if (!item || !("value" in item)) throw Error("INVALID_COMMAND"); return item.value; });
 }
 function command(value: unknown): Command {
-  const c=plain(value,["operation","actorUserId","actorTokenVersion","targetUserId","expectedTokenVersion","scopes","roleIds","passwordHash"]);
+  const c=plain(value,["operation","actorUserId","actorTokenVersion","targetUserId","expectedTokenVersion","scopes","roleIds","passwordHash","account"]);
   if (typeof c.operation!=="string" || !["REVOKE_AUTHORIZATION","DISABLE","CHANGE_PASSWORD","REPLACE_ROLES"].includes(c.operation) ||
       !exactSqlBigintReceipt(c.actorUserId) || !exactSqlBigintReceipt(c.targetUserId) ||
       !version(c.actorTokenVersion) || !version(c.expectedTokenVersion) || c.expectedTokenVersion===2147483647) throw Error("INVALID_COMMAND");
@@ -50,7 +50,13 @@ function command(value: unknown): Command {
         !generation(s.generation) || BigInt(s.generation)===MAX || !uuid(s.incarnation) || !uuid(s.requestId) || !uuid(s.correlationId)) throw Error("INVALID_COMMAND");
     return Object.freeze(s) as Scope;
   }).sort((a,b)=>exactSort(a.workstationId,b.workstationId));
-  if (scopes.length===0) throw Error("NO_DEVICE_DECISION_SCHEMA_BLOCKED");
+  if ("account" in c) {
+    const account=plain(c.account,["requestId","correlationId"]);
+    if(!uuid(account.requestId)||!uuid(account.correlationId)) throw Error("INVALID_COMMAND");
+    if(scopes.some(s=>s.requestId===account.requestId||s.correlationId===account.correlationId)) throw Error("INVALID_COMMAND");
+    c.account=Object.freeze(account);
+  }
+  if (scopes.length===0 && !c.account) throw Error("NO_DEVICE_DECISION_SCHEMA_BLOCKED");
   for (const key of ["workstationId","requestId","correlationId","deviceSessionId"] as const)
     if (new Set(scopes.map(s=>s[key])).size!==scopes.length) throw Error("INVALID_COMMAND");
   if (c.operation==="CHANGE_PASSWORD") {
@@ -108,6 +114,7 @@ export function createIsolatedUserRevocationWriter(deps:Dependencies=defaults) {
       const schema=await run(statements.schema); require(schema.length===1 && schema[0]?.SchemaReady===1,"SCHEMA_UNPROVEN");
       const columns=await run(columnWitness());
       require(columns.length===70 && columns.every(r=>r.ResultSet==="R2_COLUMNS" && r.Status==="MATCH"),"SCHEMA_COLUMNS_UNPROVEN");
+      if(c.account){ const r=await run(statements.accountSchema); require(r.length===1&&r[0]?.AccountSchemaReady===1,"ACCOUNT_SCHEMA_UNPROVEN"); }
       // All identity rows in exact BIGINT order, before membership/Session locks.
       const users=new Map<string,Record<string,unknown>>();
       for (const id of [...new Set([c.actorUserId,c.targetUserId])].sort(exactSort)) {
@@ -142,6 +149,13 @@ export function createIsolatedUserRevocationWriter(deps:Dependencies=defaults) {
         new Set(legacy.map(r=>r.SessionId)).size===legacy.length,"LEGACY_SCOPE_UNPROVEN");
       for (const row of operators) if (row.OperatorSessionId!==null) require(
         legacy.some(l=>l.SessionId?.toString().toLowerCase()===row.OperatorSessionId?.toString().toLowerCase() && l.WorkstationId===row.WorkstationId),"LEGACY_LINK_UNPROVEN");
+      if(c.account){
+        const previous=await run(statements.readAccountRequest,{requestId:c.account.requestId});require(previous.length===0,"ACCOUNT_REQUEST_REPLAY");
+        const digest=createHash("sha256").update(JSON.stringify({contract:"ACCOUNT_REVOKE_V1",operation:c.operation,
+          actorUserId:c.actorUserId,targetUserId:c.targetUserId,expectedTokenVersion:c.expectedTokenVersion,scopes:c.scopes,roleIds:c.roleIds??null})).digest("hex");
+        const r=await run(statements.reserveAccount,{...c.account,actorUserId:c.actorUserId,targetUserId:c.targetUserId,operation:c.operation,digest});
+        require(r.length===1&&r[0]?.RequestId?.toString().toLowerCase()===c.account.requestId,"ACCOUNT_REQUEST_INVALID");
+      }
       // Reserve per-device requests BEFORE business DML. All roll back together.
       for (const s of c.scopes) {
         const digest=createHash("sha256").update(JSON.stringify({contract:"USER_REVOKE_V1",operation:c.operation,
@@ -189,6 +203,17 @@ export function createIsolatedUserRevocationWriter(deps:Dependencies=defaults) {
         (self && c.operation==="DISABLE" || finalActor[0]?.IsActive===true || finalActor[0]?.IsActive===1),"FINAL_ACTOR_CONFLICT");
       const finalAdmin=await run(statements.admin,{userId:c.actorUserId});
       require(finalAdmin.length===1 && finalAdmin[0]?.Allowed===1,"FINAL_ACTOR_FORBIDDEN");
+      if(c.account){
+        const common={...c.account,actorUserId:c.actorUserId,targetUserId:c.targetUserId,operation:c.operation,expectedTokenVersion:c.expectedTokenVersion};
+        const a=await run(statements.accountAudit,{actorUserId:c.actorUserId,parameters:JSON.stringify({contract:"ACCOUNT_REVOKE_V1",
+          ...common,nextTokenVersion:c.expectedTokenVersion+1,operatorCount:c.scopes.length})});
+        const auditLogId=a[0]?.AuditLogId;
+        require(a.length===1&&exactSqlBigintReceipt(auditLogId),"ACCOUNT_AUDIT_INVALID");
+        const d=await run(statements.accountDecision,{...common,auditLogId});
+        require(d.length===1&&exactSqlBigintReceipt(d[0]?.DecisionId)&&d[0]?.AuditLogId===auditLogId&&
+          d[0]?.RequestId?.toString().toLowerCase()===c.account.requestId,"ACCOUNT_DECISION_INVALID");
+        receipts.push({auditLogId:auditLogId as string,decisionId:d[0]!.DecisionId as string});
+      }
       committing=true; await tx.commit(); return outcome("COMMIT_ACKNOWLEDGED","OK",receipts);
     } catch {
       if (committing) return outcome("COMMIT_UNKNOWN","RECONCILIATION_REQUIRED");

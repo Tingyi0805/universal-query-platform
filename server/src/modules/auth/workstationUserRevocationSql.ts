@@ -121,6 +121,36 @@ IF EXISTS (SELECT 1 FROM sys.indexes WHERE index_id>0 AND object_id IN
  OBJECT_ID(N'uqp.SharedWorkstationSessionRequest'),OBJECT_ID(N'uqp.SharedWorkstationSessionDecision'))
  AND (is_disabled=1 OR is_hypothetical=1)) THROW 52926,'USER_REVOCATION_SCHEMA_UNPROVEN',1;
 SELECT 1 AS SchemaReady;`,
+  accountSchema: `
+IF OBJECT_ID(N'uqp.AccountRevocationRequest',N'U') IS NULL OR OBJECT_ID(N'uqp.AccountRevocationDecision',N'U') IS NULL
+ OR COL_LENGTH(N'uqp.AccountRevocationDecision',N'PreviousTokenVersion') IS NULL
+ OR COL_LENGTH(N'uqp.AccountRevocationDecision',N'NextTokenVersion') IS NULL
+ OR COL_LENGTH(N'uqp.AccountRevocationDecision',N'AuditLogId') IS NULL
+ OR COL_LENGTH(N'uqp.AccountRevocationDecision',N'PreviousTokenVersion')<>4
+ OR COL_LENGTH(N'uqp.AccountRevocationDecision',N'NextTokenVersion')<>4
+ OR COL_LENGTH(N'uqp.AccountRevocationDecision',N'AuditLogId')<>8
+ THROW 52927,'ACCOUNT_SCHEMA_UNPROVEN',1;
+IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE object_id=OBJECT_ID(N'uqp.FK_AccountRevocationDecision_Request')
+ AND parent_object_id=OBJECT_ID(N'uqp.AccountRevocationDecision') AND referenced_object_id=OBJECT_ID(N'uqp.AccountRevocationRequest')
+ AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0 AND update_referential_action=0)
+ THROW 52927,'ACCOUNT_SCHEMA_UNPROVEN',1;
+IF (SELECT COUNT(*) FROM sys.triggers WHERE name IN (N'TR_AccountRevocationRequest_AppendOnly',N'TR_AccountRevocationDecision_AppendOnly')
+ AND is_disabled=0 AND is_instead_of_trigger=1)<>2 THROW 52927,'ACCOUNT_SCHEMA_UNPROVEN',1;
+SELECT 1 AS AccountSchemaReady;`,
+  readAccountRequest: `SELECT CONVERT(VARCHAR(36),RequestId) AS RequestId
+FROM uqp.AccountRevocationRequest WITH (UPDLOCK,HOLDLOCK) WHERE RequestId=@requestId;`,
+  reserveAccount: `INSERT uqp.AccountRevocationRequest(RequestId,ActorUserId,TargetUserId,OperationCode,RequestDigest)
+OUTPUT CONVERT(VARCHAR(36),INSERTED.RequestId) AS RequestId
+VALUES(@requestId,CONVERT(BIGINT,@actorUserId),CONVERT(BIGINT,@targetUserId),@operation,CONVERT(BINARY(32),@digest,2));`,
+  accountAudit: `INSERT uqp.AuditLog(EventType,UserId,Status,ParametersJson,CreatedAtUtc,CompletedAtUtc)
+OUTPUT CONVERT(VARCHAR(20),INSERTED.Id) AS AuditLogId
+VALUES(N'ACCOUNT_AUTHORIZATION_REVOKED',CONVERT(BIGINT,@actorUserId),N'SUCCESS',@parameters,SYSUTCDATETIME(),SYSUTCDATETIME());`,
+  accountDecision: `INSERT uqp.AccountRevocationDecision
+(RequestId,ActorUserId,TargetUserId,OperationCode,PreviousTokenVersion,NextTokenVersion,AuditLogId,TransactionCorrelationId)
+OUTPUT CONVERT(VARCHAR(20),INSERTED.DecisionId) AS DecisionId,CONVERT(VARCHAR(20),INSERTED.AuditLogId) AS AuditLogId,
+ CONVERT(VARCHAR(36),INSERTED.RequestId) AS RequestId
+VALUES(@requestId,CONVERT(BIGINT,@actorUserId),CONVERT(BIGINT,@targetUserId),@operation,@expectedTokenVersion,
+ @expectedTokenVersion+1,CONVERT(BIGINT,@auditLogId),@correlationId);`,
   user: `
 SELECT CONVERT(VARCHAR(20),Id) AS UserId,TokenVersion,IsActive,AuthProvider
 FROM uqp.AppUser WITH (UPDLOCK,HOLDLOCK) WHERE Id=CONVERT(BIGINT,@userId);`,
