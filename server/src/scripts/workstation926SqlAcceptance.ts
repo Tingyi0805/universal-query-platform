@@ -15,6 +15,7 @@ import { deviceRenewalCasSql, workstationSessionRepositorySql } from "../modules
 import { legacyWorkstationWriterFenceSql } from "../modules/auth/workstationLegacyWriterFence.js";
 import type { WorkstationSqlRequest, WorkstationSqlTransaction } from "../modules/auth/workstationSessionSql.repository.js";
 import { isolated926Target, assertIsolated926Witness } from "./workstation926Isolation.js";
+import { create926Report, finish926Report, report926Url, sql926Cases, type Sql926CaseResult } from "./workstation926AcceptanceReport.js";
 
 const rootUrl = new URL("../../../", import.meta.url);
 const userId = "9007199254740993";
@@ -28,21 +29,14 @@ async function boundedBarrier(work: Promise<void>) {
 }
 type Fixture = { scope: IsolatedRevocationScope; legacyId: string };
 type Fault = "NONE" | "AUDIT" | "DECISION" | "COMMIT_BEFORE_ACK" | "COMMIT_AFTER_ACK" | "OPERATOR_CAS" | "ROLLBACK_ACK" | "DEADLOCK";
-type CaseResult = { name: string; status: "PASS" | "FAIL" | "NOT_RUN"; sqlError?: number };
-const names = ["catalog-roundtrip", "no-legacy", "linked-legacy", "unknown-history-before-dml",
-  "credential-version-conflict", "operator-cas-conflict", "request-replay-rollback", "audit-trigger-rollback",
-  "decision-trigger-rollback", "commit-unknown-committed", "commit-unknown-rolled-back", "concurrent-revoke",
-  "concurrent-renewal-revoke", "legacy-insert-predicate-block", "gate-timeout",
-  "legacy-writer-denial", "immutable-decision-request", "foreign-workstation-unchanged",
-  "multiple-active-device-constraint", "rollback-ack-unknown", "deadlock-1205"] as const;
+const names = sql926Cases;
 
 export async function run926Acceptance() {
-  const cases: CaseResult[] = names.map(name => ({ name, status: "NOT_RUN" }));
+  const cases: Sql926CaseResult[] = names.map(name => ({ name, status: "NOT_RUN" }));
   let stage = "APPROVAL", master: sql.ConnectionPool | undefined, root: sql.ConnectionPool | undefined;
   let app: sql.ConnectionPool | undefined, created = false, loginCreated = false;
   let database = "", login = "";
-  const report: Record<string, unknown> = { contract: "H0_926_SQL_ACCEPTANCE_V1", SQL_ACCEPTANCE: "NOT_RUN",
-    runtimeEnabled: false, productionReady: false, cases, sourceManifest: [] };
+  const report: Record<string, unknown> = { ...create926Report(process.env), cases };
   let exit = 1;
   try {
     const target = isolated926Target(process.env); database = target.database;
@@ -69,10 +63,14 @@ export async function run926Acceptance() {
       CONVERT(NVARCHAR(128),SERVERPROPERTY(N'Edition')) Edition;`)).recordset[0];
     assertIsolated926Witness(witness, target.machine);
     report.environment = { engine: witness.Engine, build: witness.Build, edition: witness.Edition,
-      compatibility: 150, isolatedEmptyInstance: true, tls: "ENCRYPTED_SELF_SIGNED_LOOPBACK_ONLY" };
-    await master.request().batch(`CREATE DATABASE [${database}]; ALTER DATABASE [${database}] SET COMPATIBILITY_LEVEL=150;`);
+      isolatedEmptyInstance: true, tls: "ENCRYPTED_SELF_SIGNED_LOOPBACK_ONLY" };
+    await master.request().batch(`CREATE DATABASE [${database}];`);
     created = true;
+    await master.request().batch(`ALTER DATABASE [${database}] SET COMPATIBILITY_LEVEL=150;`);
     root = await new sql.ConnectionPool({ ...config, database }).connect();
+    const compatibility = (await root.request().query("SELECT compatibility_level C FROM sys.databases WHERE database_id=DB_ID()")).recordset[0]?.C;
+    assert.equal(compatibility, 150);
+    (report.environment as Record<string, unknown>).compatibility = compatibility;
     await root.request().batch(`CREATE SCHEMA uqp;`);
     await root.request().batch(`CREATE TABLE uqp.SchemaMigration(FileName NVARCHAR(255) PRIMARY KEY,
       AppliedAtUtc DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME());`);
@@ -104,13 +102,14 @@ export async function run926Acceptance() {
     const runCase = async (name: typeof names[number], work: () => Promise<void>) => {
       stage = name;
       const result = cases.find(c => c.name === name)!;
+      result.startedAtUtc = new Date().toISOString();
       try { await work(); result.status = "PASS"; }
       catch (error) {
         result.status = "FAIL";
         if (error && typeof error === "object" && "number" in error && typeof error.number === "number")
           result.sqlError = error.number;
         throw error;
-      }
+      } finally { result.finishedAtUtc = new Date().toISOString(); }
     };
     await runCase("catalog-roundtrip", async () => {
       const sets = (await root!.request().query(catalogSource)).recordsets as unknown as Record<string, unknown>[][];
@@ -402,10 +401,13 @@ export async function run926Acceptance() {
     try {
       if (created) await master!.request().batch(`ALTER DATABASE [${database}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [${database}];`);
       if (loginCreated) await master!.request().batch(`DROP LOGIN [${login}];`);
-    } catch { report.cleanup = "FAILED_DISPOSABLE_CONTAINER_MUST_BE_REMOVED"; report.SQL_ACCEPTANCE = "FAIL"; exit = 1; }
+      report.databaseCleanup = created ? "COMPLETE" : "NOT_CREATED";
+    } catch { report.databaseCleanup = "FAILED_DISPOSABLE_CONTAINER_MUST_BE_REMOVED"; report.SQL_ACCEPTANCE = "FAIL"; exit = 1; }
     await master?.close().catch(() => undefined);
     // Fixed local report location. Never serialize driver exceptions/credentials/SQL.
-    await writeFile(new URL("tools/sqlserver-acceptance/h0-926/last-report.json", rootUrl), JSON.stringify(report, null, 2) + "\n");
+    finish926Report(report);
+    if (report.SQL_ACCEPTANCE === "FAIL") exit = 1;
+    await writeFile(report926Url, JSON.stringify(report, null, 2) + "\n");
     console.log("SQL_ACCEPTANCE=" + report.SQL_ACCEPTANCE);
     if (report.failureStage) console.log("FAILURE_STAGE=" + report.failureStage);
   }

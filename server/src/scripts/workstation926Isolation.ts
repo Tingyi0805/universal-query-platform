@@ -2,9 +2,11 @@
 export const isolated926Machine = "uqp-h0-926-isolated";
 export const isolated926Port = 14336;
 export const isolated926Approval = "CREATE_DISPOSABLE_SYNTHETIC_926_ONLY";
+export const isolated926VmApproval = "NEW_UBUNTU_2404_VM_ONLY";
 
 export function isolated926Target(env: NodeJS.ProcessEnv) {
-  if (env.UQP926_APPROVE !== isolated926Approval || !/^[0-9a-f]{32}$/.test(env.UQP926_RUN_ID ?? "") ||
+  if (env.UQP926_APPROVE !== isolated926Approval || env.UQP926_VM_APPROVE !== isolated926VmApproval ||
+      !/^[0-9a-f]{32}$/.test(env.UQP926_RUN_ID ?? "") ||
       !env.UQP926_PASSWORD || env.UQP926_PASSWORD.length < 24) throw Error("ISOLATED_926_APPROVAL_REQUIRED");
   return Object.freeze({
     server: "127.0.0.1", port: isolated926Port, machine: isolated926Machine,

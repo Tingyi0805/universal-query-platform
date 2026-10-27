@@ -6,11 +6,12 @@ import { workstationNamedWriterCoverage } from "../modules/auth/workstationRevoc
 import { legacyWorkstationWriterFenceSql } from "../modules/auth/workstationLegacyWriterFence.js";
 const root = new URL("../../../", import.meta.url);
 const read = (path: string) => readFileSync(new URL(path, root), "utf8");
-const approved = { UQP926_APPROVE: isolated926Approval, UQP926_RUN_ID: "a".repeat(32), UQP926_PASSWORD: "S9!" + "c".repeat(32) };
+const approved = { UQP926_APPROVE: isolated926Approval, UQP926_VM_APPROVE: "NEW_UBUNTU_2404_VM_ONLY",
+  UQP926_RUN_ID: "a".repeat(32), UQP926_PASSWORD: "S9!" + "c".repeat(32) };
 
 test("isolation target rejects absent approval, malformed nonce or credential before any connection", () => {
   for (const env of [{}, { ...approved, UQP926_APPROVE: "" }, { ...approved, UQP926_RUN_ID: "../production" },
-    { ...approved, UQP926_PASSWORD: "" }, { ...approved, UQP926_RUN_ID: "UQP" }])
+    { ...approved, UQP926_PASSWORD: "" }, { ...approved, UQP926_RUN_ID: "UQP" }, { ...approved, UQP926_VM_APPROVE: "" }])
     assert.throws(() => isolated926Target(env), /ISOLATED_926_APPROVAL_REQUIRED/);
   const target = isolated926Target({ ...approved, PLATFORM_DB_SERVER: "production", PLATFORM_DB_DATABASE: "UniversalQueryPlatform" });
   assert.equal(target.server, "127.0.0.1"); assert.equal(target.port, 14336);

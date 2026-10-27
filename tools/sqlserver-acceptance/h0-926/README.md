@@ -1,6 +1,6 @@
 # H0 gate 5 â€” disposable SQL Server 2019 acceptance
 
-Current result: **SQL_ACCEPTANCE=NOT_RUN**. No SQL Server was contacted. Local managed Docker socket access was denied by automatic security review; no alternate database or daemon was used. This package is executable test code plus preparation, not a SQL acceptance certificate.
+Current result: **SQL_ACCEPTANCE=NOT_RUN**. No SQL Server was contacted. Existing-environment Docker access is not authorized and will not be used. This package is executable test code plus preparation, not a SQL acceptance certificate.
 
 PR #67 must stay Draft. Runtime flags and hard gates stay OFF. Do not run against UniversalQueryPlatform, the shared Windows 11/Windows Server instance, HIS, Oracle or C:\UQP. Do not copy these files over an existing installation.
 
@@ -8,11 +8,11 @@ PR #67 must stay Draft. Runtime flags and hard gates stay OFF. Do not run agains
 
 Use a new x86-64 Linux VM with Docker Engine, Node 22, Bash and the Server npm dependencies. Recommended: 4 CPUs, 8 GB VM memory, 15 GB free disposable storage; the container is limited to 4 GB. Docker socket access is privileged and must be approved by the VM administrator.
 
-From a clone of this PR:
+Follow the complete [Ubuntu 24.04 new-VM manual](UBUNTU-24.04.md). Prepare the VM first; run the following only after that separate environment is approved for actual SQL acceptance.
 
 ```bash
-npm --prefix server install
-UQP926_APPROVE=CREATE_DISPOSABLE_SYNTHETIC_926_ONLY +  bash tools/sqlserver-acceptance/h0-926/run-isolated.sh
+npm --prefix server install --package-lock=false
+UQP926_APPROVE=CREATE_DISPOSABLE_SYNTHETIC_926_ONLY UQP926_VM_APPROVE=NEW_UBUNTU_2404_VM_ONLY bash tools/sqlserver-acceptance/h0-926/run-isolated.sh
 ```
 
 The launcher:
@@ -22,9 +22,10 @@ The launcher:
 - Publishes only 127.0.0.1:14336. An existing listener makes launch fail; it is never replaced.
 - Gives the container fixed hostname uqp-h0-926-isolated. The Node harness requires Engine 15, matching server/machine, master, sa, and **zero pre-existing user databases** before creating anything.
 - Creates a nonce-named UQP926_* database. It never reads PLATFORM_DB_*, .env, JWT configuration, saved UQP connection settings or user database names.
-- Removes only the container whose generated ID and ownership label match this invocation, then its new network. There is no system prune.
+- Removes only the container whose generated ID and ownership label match this invocation. Network removal separately requires its ID, matching run label and zero attached containers. It never disconnects others or runs volume/network/system prune.
+- Creates a fresh 21-case NOT_RUN report before daemon setup. Records the run/Commit/image IDs, per-case times and database/container/network cleanup outcomes. Cleanup refusal/failure is reported and makes a successful run exit nonzero.
 
-No approval, wrong instance, existing user database or insufficient environment evidence means NOT_RUN. Do not weaken the checks. Docker's image tag is 2019-latest; record its image digest with the de-identified engine build evidence for replay on the same build. This is an encrypted loopback test connection using a disposable self-signed server certificate; it does not validate production TLS certificates.
+No approval, no new-VM confirmation, wrong instance, existing user database or insufficient environment evidence means NOT_RUN. Confirmation strings are administrator declarations, not independent proof of VM isolation. Do not weaken the checks. Docker's image tag is 2019-latest; the report records its immutable image ID and available registry digest for replay review. This is an encrypted loopback test connection using a disposable self-signed server certificate; it does not validate production TLS certificates.
 
 ## Schema dependencies and fixture
 
@@ -73,11 +74,11 @@ Mode 0 has no legacy row; mode 1 explicitly builds a synthetic current Operatorâ
 
 The temporary sa identity is used only for instance witness, bootstrap, fixture and fault injection. The Writer runs through a separate SQL login with object SELECT, UPDATE on credential/device/legacy/operator, INSERT on Request/Decision/Audit, and explicit Request/Decision UPDATE/DELETE denial. It must have sysadmin=0, db_owner=0, CONTROL DATABASE=0 and VIEW SERVER STATE=0. This is an acceptance account, not an approved production grant recipe.
 
-last-report.json is generated locally and gitignored: per-case PASS/FAIL/NOT_RUN, safe stage code, numeric SQL errors, source hashes, engine/catalog/privilege witness. No SQL text, raw exception, PIN, connection string or credential is serialized. A failure aborts subsequent cases, leaving them NOT_RUN. Preserve this de-identified report and the exact commit/image digest outside the disposable container.
+last-report.json is generated locally and gitignored: per-case PASS/FAIL/NOT_RUN and times, summary counts, safe stage code, numeric SQL errors, source hashes, actual engine Build/Edition and observed database Compatibility Level, catalog/privilege witness, run/Commit/image identity and cleanup results. Missing engine evidence stays absent; no version is invented. A successful isolated report requires all 21 timed PASS results and observed Engine 15/Build 15.x/Compatibility 150. No SQL text, raw exception, PIN, connection string or credential is serialized. A failure aborts subsequent cases, leaving them NOT_RUN. Preserve this de-identified report outside the disposable container.
 
 The CLI was exercised **without approval** and returned SQL_ACCEPTANCE=NOT_RUN / FAILURE_STAGE=APPROVAL. Only this refusal and offline/unit/static checks have actually run here.
 
-Local regression: Server 1,956 passed / 0 failed; Client unit 12 passed / 0 failed; both Typecheck/Build passed. Bash syntax and git diff checks passed. GitHub CI results are reported against the pushed commit. None of these results substitutes for the 21 NOT_RUN SQL cases.
+Local VM-hardening regression: Server 1,966 passed / 0 failed; Client unit 12 passed / 0 failed; both Typecheck/Build passed. The 15 focused launcher/isolation/report checks are included in that Server total. GitHub CI results are reported against the pushed commit. Launcher tests use a fake Docker executable and block the SQL harness; no daemon is accessed. None of these checks substitutes for the 21 NOT_RUN SQL cases.
 
 ## Writer coverage and remaining blockers
 
@@ -96,6 +97,6 @@ External DBA/direct SQL, old workers, metadata visibility, mixed deployments and
 
 ## Cleanup, interruption and next gate
 
-Normal/error exit closes pools and removes only the generated database/login; shell EXIT removes the invocation's container/network. SIGKILL/host crash can prevent cleanup. The administrator must inspect the recorded nonce label, then remove **only** those disposable resources. Never run cleanup against a user database. Preserve safe evidence first; do not retain the generated secrets.
+Normal/error exit closes pools and removes only the generated database/login; shell EXIT removes the invocation's labelled container and empty labelled network. INT/TERM use the same cleanup. SIGKILL/host crash can prevent cleanup. Ownership mismatch, another attached container or daemon failure makes cleanup refuse/fail visibly. The administrator must inspect the recorded nonce label, then remove **only** those disposable resources; do not use broad stop/remove/prune commands. Never run cleanup against a user database. Preserve safe evidence first; do not retain the generated secrets.
 
-Next step: obtain approved Docker access in a new VM or prepare an equivalent independently isolated SQL Server 2019 test environment, run this package, and review its evidence. SQL text compilation/catalog persistence/actual races are not established by TypeScript or mocks. Broader SQL_LOCK_VERIFIED, production revocation coverage, runtime authorization, PIN API and patient delivery remain BLOCKED.
+Next step: complete the new Ubuntu 24.04 VM preparation in the manual, then obtain approval to run actual SQL acceptance there. Existing-environment Docker access remains forbidden. SQL text compilation/catalog persistence/actual races are not established by TypeScript or mocks. Broader SQL_LOCK_VERIFIED, production revocation coverage, runtime authorization, PIN API and patient delivery remain BLOCKED even if all 21 SQL cases later pass.
