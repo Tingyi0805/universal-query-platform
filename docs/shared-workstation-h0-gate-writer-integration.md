@@ -61,3 +61,5 @@ Even 21 isolated SQL PASS results would not automatically clear any bypass/produ
 ## Next smallest step
 
 Verify this commit's Server/Client CI, then execute the existing acceptance suite only on an approved new independent SQL Server 2019 VM. Use those observed scope/rollback/lock results to implement one narrowly scoped user-revocation replacement with exact affected-device receipts and final authorization checks. Keep the denial fence until its replacement passes; do not remove the fence merely to restore management availability.
+
+後續單一使用者撤權的隔離 Writer、可保留的 Device/Credential 與完整926安裝後的可用性阻擋，見 [單人撤權契約](shared-workstation-single-user-revocation.md)。它不會解除此文件的正式覆蓋缺口，也不是 legacy Writer 的已啟用 fallback。

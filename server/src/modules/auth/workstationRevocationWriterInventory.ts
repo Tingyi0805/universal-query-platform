@@ -26,6 +26,7 @@ export const workstationNamedWriterCoverage = Object.freeze([
   { source: "server/src/modules/auth/workstationSessionSql.repository.ts", functions: ["compareAndSwapRenewal"], coverage: "ISOLATED_RENEWAL_AUDIT_CAS_ONLY" },
   { source: "server/src/modules/auth/workstationSessionSql.repository.ts", functions: ["revokeDevice"], coverage: "RETIRED_NO_SQL_SCOPE_BLOCKED" },
   { source: "server/src/modules/auth/workstationOperatorSql.repository.ts", functions: ["recordPinFailure", "compareAndSwapSwitch"], coverage: "ISOLATED_ONLY_RUNTIME_BLOCKED" },
+  { source: "server/src/modules/auth/workstationUserRevocation.ts", functions: ["createIsolatedUserRevocationWriter"], coverage: "ISOLATED_USER_REVOCATION_SQL_NOT_RUN" },
   { source: "server/src/modules/auth/workstationRevocationSqlAdapter.ts", functions: ["revokeCredentialAndSessions"], coverage: "ISOLATED_ONLY_SQL_NOT_RUN" },
 ] as const);
 
@@ -40,6 +41,7 @@ export const workstationProtectedSqlSources = Object.freeze([
   "server/src/modules/auth/quickPin.service.ts",
   "server/src/modules/auth/workstationSessionSqlStatements.ts",
   "server/src/modules/auth/workstationCredentialAtomicSql.ts",
+  "server/src/modules/auth/workstationUserRevocationSql.ts",
   "server/src/modules/auth/workstationCredentialRevocationSql.ts",
 ] as const);
 
