@@ -81,7 +81,7 @@ function parseDateParameter(text: string, format: string | null, calendar: Param
   if (!supported.includes(pattern)) return null;
   const groups = pattern.match(/yyyy|yyy|MM|dd/g) ?? [];
   const separator = pattern.includes("/") ? "/" : pattern.includes("-") ? "-" : "";
-  const chunks = separator ? trimmed.split(separator) : trimmed.match(pattern.includes("yyy") ? /^(\d{3})(\d{2})(\d{2})$/ : /^(\d{4})(\d{2})(\d{2})$/)?.slice(1);
+  const chunks = separator ? trimmed.split(separator) : trimmed.match(pattern.startsWith("yyy") && !pattern.startsWith("yyyy") ? /^(\d{3})(\d{2})(\d{2})$/ : /^(\d{4})(\d{2})(\d{2})$/)?.slice(1);
   if (!chunks || chunks.length !== 3) return null;
   const fields: Record<string, number> = {};
   for (let i = 0; i < 3; i++) {
