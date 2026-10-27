@@ -149,6 +149,37 @@ export function DatasetParametersEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [serverPreview, setServerPreview] = useState<Record<string, { inputValue: string | null; outputValue: string | null }>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const dateRows = parameters.filter(isDateParameter);
+    if (!dateRows.length) { setServerPreview({}); return; }
+    void Promise.all(dateRows.map(async (parameter) => {
+      try {
+        const result = await apiRequest<{ inputValue: string | null; outputValue: string | null }>(
+          "/datasets/date-parameter-preview", {
+            method: "POST",
+            body: JSON.stringify({
+              value: parameter.defaultValue,
+              dataType: parameter.dataType,
+              dateOutputMode: parameter.dateOutputMode,
+              dateCalendar: parameter.dateCalendar,
+              dateFormat: parameter.dateFormat,
+            }),
+          }, accessToken,
+        );
+        return [parameter.name, result] as const;
+      } catch {
+        return [parameter.name, null] as const;
+      }
+    })).then((entries) => {
+      if (!cancelled) setServerPreview(Object.fromEntries(entries.filter(([, value]) => value !== null)));
+    });
+    return () => { cancelled = true; };
+  }, [accessToken, parameters]);
+
+
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -275,7 +306,7 @@ export function DatasetParametersEditor({
 
       {hasDateParameter && (
         <div className="parameter-date-note">
-          動態日期以 Server 的 <code>PLATFORM_TIME_ZONE</code> 計算；畫面預覽使用目前瀏覽器時間，正式查詢以 Server 為準。
+          動態日期預覽與正式查詢均使用 Server 的 <code>PLATFORM_TIME_ZONE</code> 規則。
         </div>
       )}
 
@@ -288,7 +319,7 @@ export function DatasetParametersEditor({
         <div className="parameter-card-list">
           {parameters.map((parameter, index) => {
             const source = dateSource(parameter.defaultValue);
-            const preview = isDateParameter(parameter) ? previewDate(parameter) : null;
+            const preview = isDateParameter(parameter) ? (serverPreview[parameter.name] ? { source: serverPreview[parameter.name].inputValue ?? "", output: serverPreview[parameter.name].outputValue ?? "" } : { source: "等待伺服器預覽", output: "等待伺服器預覽" }) : null;
 
             return (
               <article className="parameter-card" key={parameter.name}>
