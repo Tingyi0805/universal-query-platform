@@ -89,8 +89,8 @@ function parseDateParameter(text: string, format: string | null, calendar: Param
     if (!new RegExp("^\\d{" + expected + "}$").test(chunks[i])) return null;
     fields[groups[i]] = Number(chunks[i]);
   }
-  if (calendar === "ROC" && !pattern.includes("yyy")) return null;
-  if (calendar === "GREGORIAN" && pattern.includes("yyy") && !pattern.includes("yyyy")) return null;
+  if (calendar === "ROC" && !groups.includes("yyy")) return null;
+  if (calendar === "GREGORIAN" && !groups.includes("yyyy")) return null;
   const year = (fields.yyyy ?? fields.yyy) + (calendar === "ROC" ? 1911 : 0);
   const month = fields.MM, day = fields.dd;
   if (!year || year < 100 || year > 9999 || !month || !day) return null;
