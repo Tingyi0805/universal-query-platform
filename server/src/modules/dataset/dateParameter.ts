@@ -103,7 +103,7 @@ export function parseCanonicalDate(value: unknown, includeTime: boolean): Date {
 
   // DATETIME without an offset is a canonical platform wall-clock value.
   // Never let the host machine's local timezone reinterpret it.
-  const wallClock = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})(?::(\\d{2}))?$/.exec(text);
+  const wallClock = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
   if (wallClock) {
     const [, yyyy, MM, dd, HH, mm, ss = "00"] = wallClock;
     const year = Number(yyyy), month = Number(MM), day = Number(dd);
