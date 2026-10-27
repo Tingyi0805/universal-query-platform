@@ -624,6 +624,7 @@ export function QueryRuntimePage() {
     return (
       <input
         type={type}
+        step={type === "datetime-local" ? 1 : undefined}
         value={String(value ?? "")}
         placeholder={parameter.placeholder ?? ""}
         onChange={(e) => setValues({ ...values, [parameter.name]: e.target.value })}
