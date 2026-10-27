@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { previewDateParameter, resolveDateForRuntimeInput } from "./dateParameter.js";
+import { parseCanonicalDate, previewDateParameter, resolveDateForRuntimeInput } from "./dateParameter.js";
 
 test("DATETIME dynamic NOW preserves seconds in runtime and preview", () => {
   const runtime = resolveDateForRuntimeInput("$NOW", "DATETIME");
@@ -14,4 +14,11 @@ test("DATE preview remains date-only and canonical", () => {
   const preview = previewDateParameter("2026-10-27", "DATE", "STRING", "GREGORIAN", "yyyyMMdd");
   assert.equal(preview.inputValue, "2026-10-27");
   assert.equal(preview.outputValue, "20261027");
+});
+
+test("canonical DATE rejects rollover and accepts leap day", () => {
+  assert.throws(() => parseCanonicalDate("2026-02-29", false), /PARAMETER_DATE_INVALID/);
+  assert.throws(() => parseCanonicalDate("2026-02-30", false), /PARAMETER_DATE_INVALID/);
+  assert.throws(() => parseCanonicalDate("2026-13-01", false), /PARAMETER_DATE_INVALID/);
+  assert.equal(parseCanonicalDate("2024-02-29", false).toISOString().slice(0, 10), "2024-02-29");
 });
