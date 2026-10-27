@@ -60,30 +60,41 @@ type QueryResult = {
   elapsedMs: number;
 };
 
-function displayDateParameter(value: string, format: string | null): string {
+function displayDateParameter(value: string, format: string | null, calendar: Parameter["dateCalendar"]): string {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.slice(0, 10));
   if (!match) return value;
   const [, year, month, day] = match;
-  if (format === "yyyyMMdd") return year + month + day;
-  if (format === "yyyy/MM/dd") return year + "/" + month + "/" + day;
-  return year + "-" + month + "-" + day;
+  const displayedYear = String(Number(year) - (calendar === "ROC" ? 1911 : 0));
+  const pattern = format || (calendar === "ROC" ? "yyy/MM/dd" : "yyyy-MM-dd");
+  return pattern.replace(/yyyy|yyy|MM|M|dd|d/g, token => ({
+    yyyy: displayedYear.padStart(4, "0"), yyy: displayedYear.padStart(3, "0"),
+    MM: month, M: String(Number(month)), dd: day, d: String(Number(day)),
+  } as Record<string, string>)[token]);
 }
 
-function parseDateParameter(text: string, format: string | null): string | null {
+function parseDateParameter(text: string, format: string | null, calendar: Parameter["dateCalendar"]): string | null {
   const trimmed = text.trim();
   if (!trimmed) return "";
-  const shape = format === "yyyyMMdd" ? /^(\d{4})(\d{2})(\d{2})$/
-    : format === "yyyy/MM/dd" ? /^(\d{4})\/(\d{2})\/(\d{2})$/
-    : /^(\d{4})-(\d{2})-(\d{2})$/;
-  const match = shape.exec(trimmed);
-  if (!match) return null;
-  const [, y, m, d] = match;
-  const year = Number(y), month = Number(m), day = Number(d);
-  if (year < 100 || year > 9999) return null;
+  const pattern = format || (calendar === "ROC" ? "yyy/MM/dd" : "yyyy-MM-dd");
+  const supported = ["yyyyMMdd", "yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "MM/dd/yyyy",
+    "yyy/MM/dd", "yyy-MM-dd", "yyyMMdd"];
+  if (!supported.includes(pattern)) return null;
+  const groups = pattern.match(/yyyy|yyy|MM|dd/g) ?? [];
+  const separator = pattern.includes("/") ? "/" : pattern.includes("-") ? "-" : "";
+  const chunks = separator ? trimmed.split(separator) : trimmed.match(pattern.includes("yyy") ? /^(\d{3})(\d{2})(\d{2})$/ : /^(\d{4})(\d{2})(\d{2})$/)?.slice(1);
+  if (!chunks || chunks.length !== 3) return null;
+  const fields: Record<string, number> = {};
+  for (let i = 0; i < 3; i++) {
+    const expected = groups[i] === "yyy" ? 3 : groups[i] === "yyyy" ? 4 : 2;
+    if (!new RegExp("^\\d{" + expected + "}$").test(chunks[i])) return null;
+    fields[groups[i]] = Number(chunks[i]);
+  }
+  const year = (fields.yyyy ?? fields.yyy) + (calendar === "ROC" ? 1911 : 0);
+  const month = fields.MM, day = fields.dd;
+  if (!year || year < 100 || year > 9999 || !month || !day) return null;
   const date = new Date(Date.UTC(year, month - 1, day));
-  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day)
-    return null;
-  return y + "-" + m + "-" + d;
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return null;
+  return String(year).padStart(4, "0") + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0");
 }
 
 function DatasetDateInput({ parameter, value, onChange }: {
@@ -91,9 +102,9 @@ function DatasetDateInput({ parameter, value, onChange }: {
   value: string;
   onChange: (value: string) => void;
 }) {
-  const [draft, setDraft] = useState(() => displayDateParameter(value, parameter.dateFormat));
-  useEffect(() => setDraft(displayDateParameter(value, parameter.dateFormat)), [value, parameter.dateFormat]);
-  const valid = parseDateParameter(draft, parameter.dateFormat) !== null;
+  const [draft, setDraft] = useState(() => displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar));
+  useEffect(() => setDraft(displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar)), [value, parameter.dateFormat]);
+  const valid = parseDateParameter(draft, parameter.dateFormat, parameter.dateCalendar) !== null;
   return (
     <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
       <input
@@ -105,11 +116,11 @@ function DatasetDateInput({ parameter, value, onChange }: {
         onChange={(e) => {
           const next = e.target.value;
           setDraft(next);
-          const parsed = parseDateParameter(next, parameter.dateFormat);
+          const parsed = parseDateParameter(next, parameter.dateFormat, parameter.dateCalendar);
           if (parsed !== null) onChange(parsed);
         }}
         onBlur={() => {
-          if (!valid) setDraft(displayDateParameter(value, parameter.dateFormat));
+          if (!valid) setDraft(displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar));
         }}
       />
       <input
