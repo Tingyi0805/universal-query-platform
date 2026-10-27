@@ -93,56 +93,6 @@ function defaultFixedValue(dataType: ParameterRow["dataType"]) {
   return "";
 }
 
-function previewDate(parameter: ParameterRow): { source: string; output: string } {
-  if (!isDateParameter(parameter)) return { source: "", output: "" };
-
-  let date: Date;
-  const value = parameter.defaultValue ?? "";
-  if (value === "$NOW") {
-    date = new Date();
-  } else if (value === "$TODAY_START" || value === "$TODAY_END") {
-    date = new Date(`${isoToday()}T${value === "$TODAY_END" ? "23:59:59" : "00:00:00"}`);
-  } else if (value === "$TODAY" || /^\$TODAY[+-]\d+$/.test(value)) {
-    date = new Date(`${isoToday(dateOffset(value))}T00:00:00`);
-  } else {
-    date = new Date(value || defaultFixedValue(parameter.dataType));
-  }
-
-  if (Number.isNaN(date.getTime())) return { source: "格式不正確", output: "無法預覽" };
-
-  const gregorianYear = date.getFullYear();
-  const year = parameter.dateCalendar === "ROC" ? gregorianYear - 1911 : gregorianYear;
-  const values: Record<string, string> = {
-    yyyy: String(year).padStart(4, "0"),
-    yyy: String(year).padStart(3, "0"),
-    yy: String(year).slice(-2).padStart(2, "0"),
-    MM: String(date.getMonth() + 1).padStart(2, "0"),
-    M: String(date.getMonth() + 1),
-    dd: String(date.getDate()).padStart(2, "0"),
-    d: String(date.getDate()),
-    HH: String(date.getHours()).padStart(2, "0"),
-    H: String(date.getHours()),
-    mm: String(date.getMinutes()).padStart(2, "0"),
-    m: String(date.getMinutes()),
-    ss: String(date.getSeconds()).padStart(2, "0"),
-    s: String(date.getSeconds()),
-  };
-  const format = parameter.dateFormat || (
-    parameter.dataType === "DATETIME"
-      ? parameter.dateCalendar === "ROC" ? "yyy/MM/dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss"
-      : parameter.dateCalendar === "ROC" ? "yyy/MM/dd" : "yyyy-MM-dd"
-  );
-  const output = format.replace(/yyyy|yyy|yy|MM|M|dd|d|HH|H|mm|m|ss|s/g, (token) => values[token] ?? token);
-  const source = parameter.dataType === "DATE"
-    ? `${gregorianYear}-${values.MM}-${values.dd}`
-    : `${gregorianYear}-${values.MM}-${values.dd} ${values.HH}:${values.mm}:${values.ss}`;
-
-  return {
-    source,
-    output: parameter.dateOutputMode === "STRING" ? output : `${source}（原生日期）`,
-  };
-}
-
 export function DatasetParametersEditor({
   datasetId,
   datasets,
@@ -160,6 +110,30 @@ export function DatasetParametersEditor({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [serverPreview, setServerPreview] = useState<Record<string, { inputValue: string | null; outputValue: string | null }>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const rows = parameters.filter(isDateParameter);
+    if (!rows.length) { setServerPreview({}); return; }
+    void Promise.all(rows.map(async (parameter) => {
+      try {
+        const result = await apiRequest<{ inputValue: string | null; outputValue: string | null }>(
+          "/datasets/date-parameter-preview", {
+            method: "POST",
+            body: JSON.stringify({ value: parameter.defaultValue, dataType: parameter.dataType,
+              dateOutputMode: parameter.dateOutputMode, dateCalendar: parameter.dateCalendar,
+              dateFormat: parameter.dateFormat }),
+          }, accessToken);
+        return [parameter.name, result] as const;
+      } catch {
+        return [parameter.name, null] as const;
+      }
+    })).then(entries => {
+      if (!cancelled) setServerPreview(Object.fromEntries(entries.filter(([, v]) => v !== null)));
+    });
+    return () => { cancelled = true; };
+  }, [accessToken, parameters]);
+
   const [preview, setPreview] = useState<ParameterPreview | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [removeNames, setRemoveNames] = useState<string[]>([]);
@@ -349,7 +323,7 @@ export function DatasetParametersEditor({
 
       {hasDateParameter && (
         <div className="parameter-date-note">
-          動態日期以 Server 的 <code>PLATFORM_TIME_ZONE</code> 計算；畫面預覽使用目前瀏覽器時間，正式查詢以 Server 為準。
+          動態日期預覽與正式查詢均使用 Server 的 <code>PLATFORM_TIME_ZONE</code> 規則。
         </div>
       )}
 
@@ -362,7 +336,7 @@ export function DatasetParametersEditor({
         <div className="parameter-card-list">
           {parameters.map((parameter, index) => {
             const source = dateSource(parameter.defaultValue);
-            const preview = isDateParameter(parameter) ? previewDate(parameter) : null;
+            const preview = isDateParameter(parameter) ? (serverPreview[parameter.name] ? { source: serverPreview[parameter.name].inputValue ?? "", output: serverPreview[parameter.name].outputValue ?? "" } : { source: "等待伺服器預覽", output: "等待伺服器預覽" }) : null;
 
             return (
               <article className="parameter-card" key={parameter.name}>
