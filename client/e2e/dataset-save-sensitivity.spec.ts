@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
-async function setup(page: Page) {
-  const state = { sqlText: "SELECT {{REGNO_NAME}}", failSql: false, policyError: "", version: 1,
+async function setup(page: Page, initialSql = "SELECT {{REGNO_NAME}}") {
+  const state = { sqlText: initialSql, failSql: false, policyError: "", version: 1,
     rules: [{ columnName: "SYNTHETIC", sensitivityType: "OTHER", deviceMaskMode: "FULL" }] as Array<{ columnName: string; sensitivityType: string; deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string; start?: number; end?: number } | null }>,
     availableColumns: ["SYNTHETIC", "NAME", "PHONE", "MRN", "HIDDEN"],
     writes: [] as string[] };
@@ -173,4 +173,22 @@ test("Dataset alias suggestion requires explicit apply and save; never grants Da
   expect(state.rules.find(rule => rule.columnName === "MRN")).toMatchObject({
     deviceMaskMode: "CUSTOM", customMask: { prefix: 0, suffix: 4, symbol: "*" },
   });
+});
+
+for (const allowed of [true, false]) test(`protected SQL ${allowed ? "filter save preserves policy" : "unproven change retains SQL draft and policy"}`, async ({ page }) => {
+  const initial = "SELECT A.NAME AS SYNTHETIC FROM SYNTHETIC_OPERATIONS A";
+  const { state, policy } = await setup(page, initial);
+  state.failSql = !allowed;
+  const beforeRules = structuredClone(state.rules), beforeVersion = state.version;
+  const edited = allowed ? `${initial} WHERE A.APP_DATE BETWEEN {{S_DATE}} AND {{EXAM_DATE}}`
+    : "SELECT A.SECRET AS SYNTHETIC FROM SYNTHETIC_OPERATIONS A";
+  await page.locator("textarea").first().fill(edited);
+  await page.getByRole("button", { name: "儲存 Dataset", exact: true }).click();
+  if (allowed) await expect(page.getByText(/SQL／資料來源與已儲存設定一致/)).toBeVisible();
+  else await expect(page.getByText(/Dataset 儲存失敗；未儲存內容已保留/)).toBeVisible();
+  await expect(page.locator("textarea").first()).toHaveValue(edited);
+  await expect(policy.getByRole("button", { name: "移除", exact: true })).toBeVisible();
+  expect(state.sqlText).toBe(allowed ? edited : initial);
+  expect(state.rules).toEqual(beforeRules); expect(state.version).toBe(beforeVersion);
+  expect(state.writes).toEqual(["dataset"]);
 });

@@ -1,3 +1,8 @@
+import { proveDatasetFilterChange } from "./datasetFilterProof.js";
+import { listDatasetParameters } from "./parameter.repository.js";
+import { coerceRuntimeParameters } from "./parameter.service.js";
+import { runtimeParameterDefinitions } from "./parameterSync.js";
+import { writeAuditEvent } from "../audit/audit.repository.js";
 import { invalidatePatientMetadata } from "./patientAuditContract.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
@@ -84,30 +89,78 @@ export async function createDataset(input: DatasetInput): Promise<number> {
   return Number(result.recordset[0].Id);
 }
 
-export async function updateDataset(id: number, input: DatasetInput, userId?: number): Promise<void> {
-  const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
+export const createDatasetUpdater = (deps = {
+  getPool: requirePool,
+  createTransaction: (pool: sql.ConnectionPool) => new sql.Transaction(pool),
+  createRequest: (tx: sql.Transaction) => new sql.Request(tx),
+  snapshotVersion: snapshotDatasetVersion,
+  invalidateMetadata: invalidatePatientMetadata,
+  listParameters: listDatasetParameters,
+  audit: writeAuditEvent,
+}) => async (id: number, input: DatasetInput, userId?: number,
+  auditContext: { ipAddress?: string | null; userAgent?: string | null } = {}): Promise<void> => {
+  const pool = await deps.getPool();
+  const tx = deps.createTransaction(pool);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
   try {
-    // SQL or data-source changes may introduce new sensitive columns before
-    // preview metadata is refreshed. Without a trusted semantic review contract,
-    // confirmation/alias equality cannot authorize this change. Keep policies intact;
-    // ordinary display edits remain allowed.
-    const existing = await new sql.Request(tx).input("id", sql.BigInt, id)
-      .query("SELECT SqlText, DataSourceId FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
+    // Re-read the current definition under the same parent/range locks as the
+    // policy and dependents. A stale client cannot supply its own "before" proof.
+    let filterProof: ReturnType<typeof proveDatasetFilterChange> = null;
+    const existing = await deps.createRequest(tx).input("id", sql.BigInt, id)
+      .query("SELECT SqlText, DataSourceId, IsArchived FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
+    if (!existing.recordset.length) throw new Error("DATASET_NOT_FOUND");
+    if (existing.recordset[0].IsArchived) throw new Error("DATASET_ARCHIVED");
     if (existing.recordset.length &&
         (String(existing.recordset[0].SqlText) !== input.sqlText || Number(existing.recordset[0].DataSourceId) !== input.dataSourceId)) {
-      const protectedRules = await new sql.Request(tx).input("id", sql.BigInt, id)
-        .query("SELECT TOP (1) ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@id");
-      if (protectedRules.recordset.length) throw new Error("DATASET_SENSITIVITY_REVIEW_REQUIRED");
-      await invalidatePatientMetadata(tx, id);
+      const protectedRules = await deps.createRequest(tx).input("id", sql.BigInt, id)
+        .query("SELECT ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@id");
+      if (protectedRules.recordset.length) {
+        if (Number(existing.recordset[0].DataSourceId) === input.dataSourceId) filterProof = proveDatasetFilterChange(
+          String(existing.recordset[0].SqlText), input.sqlText, protectedRules.recordset.map(row => String(row.ColumnName)));
+        if (!filterProof || !Number.isSafeInteger(userId) || userId! < 1) throw new Error("DATASET_SENSITIVITY_REVIEW_REQUIRED");
+        // Output lineage is fixed by the proof. Also verify the parameter
+        // contract for every existing primary/extra/legacy Dashboard binding.
+        const primary = await deps.createRequest(tx).input("id", sql.BigInt, id).query(`
+          SELECT d.ParametersJson FROM uqp.Dashboard d WITH (HOLDLOCK)
+          INNER JOIN uqp.QueryDefinition q WITH (HOLDLOCK) ON q.Id=d.QueryDefinitionId
+          WHERE q.DatasetId=@id`);
+        const extra = await deps.createRequest(tx).input("id", sql.BigInt, id).query(`
+          IF OBJECT_ID(N'uqp.DashboardDataSource',N'U') IS NOT NULL
+          BEGIN
+            IF COL_LENGTH(N'uqp.DashboardDataSource',N'QueryDefinitionId') IS NOT NULL
+              EXEC sys.sp_executesql N'SELECT ds.ParametersJson FROM uqp.DashboardDataSource ds WITH (HOLDLOCK)
+                LEFT JOIN uqp.QueryDefinition q WITH (HOLDLOCK) ON q.Id=ds.QueryDefinitionId
+                WHERE ds.DatasetId=@id OR q.DatasetId=@id',N'@id BIGINT',@id=@id;
+            ELSE
+              EXEC sys.sp_executesql N'SELECT ds.ParametersJson FROM uqp.DashboardDataSource ds WITH (HOLDLOCK)
+                WHERE ds.DatasetId=@id',N'@id BIGINT',@id=@id;
+          END
+          ELSE SELECT CAST(NULL AS NVARCHAR(MAX)) AS ParametersJson WHERE 1=0;`);
+        // Lookup execution supplies no caller values; all parameters must be
+        // resolvable from the saved definition if this Dataset supplies options.
+        const lookups = await deps.createRequest(tx).input("id", sql.BigInt, id).query(
+          "SELECT TOP (1) DatasetId FROM uqp.DatasetParameter WITH (HOLDLOCK) WHERE LookupDatasetId=@id");
+        const bindings = [...primary.recordset, ...extra.recordset];
+        if (bindings.length || lookups.recordset.length) {
+          try {
+            const definitions = runtimeParameterDefinitions(input.sqlText, await deps.listParameters(id, tx));
+            if (lookups.recordset.length) coerceRuntimeParameters(definitions, {});
+            for (const row of bindings) {
+              const values: unknown = JSON.parse(row.ParametersJson);
+              if (!values || typeof values !== "object" || Array.isArray(values)) throw new Error("UNPROVEN_BINDING");
+              coerceRuntimeParameters(definitions, values as Record<string, unknown>);
+            }
+          } catch { throw new Error("DATASET_SENSITIVITY_REVIEW_REQUIRED"); }
+        }
+      }
+      await deps.invalidateMetadata(tx, id);
     }
     if (userId) {
-      await snapshotDatasetVersion(tx, id, userId, "DATASET_UPDATE");
+      await deps.snapshotVersion(tx, id, userId, "DATASET_UPDATE");
     }
 
-    const result = await new sql.Request(tx)
+    const result = await deps.createRequest(tx)
       .input("id", sql.BigInt, id)
       .input("name", sql.NVarChar(200), input.name)
       .input("description", sql.NVarChar(1000), input.description)
@@ -126,14 +179,14 @@ export async function updateDataset(id: number, input: DatasetInput, userId?: nu
       `);
 
     if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
-      const exists = await new sql.Request(tx)
+      const exists = await deps.createRequest(tx)
         .input("id", sql.BigInt, id)
         .query("SELECT IsArchived FROM uqp.Dataset WHERE Id=@id");
       if (exists.recordset[0]?.IsArchived) throw new Error("DATASET_ARCHIVED");
       throw new Error("DATASET_NOT_FOUND");
     }
 
-    await new sql.Request(tx)
+    await deps.createRequest(tx)
       .input("datasetId", sql.BigInt, id)
       .query(`
         UPDATE uqp.QueryDefinition
@@ -144,12 +197,15 @@ export async function updateDataset(id: number, input: DatasetInput, userId?: nu
         WHERE DatasetId=@datasetId AND IsPublished=1
       `);
 
+    if (filterProof) await deps.audit({ eventType: "DATASET_SQL_FILTER_UPDATED", userId, datasetId: id,
+      parameters: { proof: filterProof.kind }, ...auditContext }, tx);
     await tx.commit();
   } catch (error) {
-    await tx.rollback();
+    try { await tx.rollback(); } catch { /* Preserve the original failure; never report success. */ }
     throw error;
   }
-}
+};
+export const updateDataset = createDatasetUpdater();
 
 export async function archiveDataset(id: number, userId: number): Promise<void> {
   const pool = await requirePool();
