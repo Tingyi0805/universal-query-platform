@@ -1,3 +1,6 @@
+import { createDatasetService } from "../dataset/dataset.service.js";
+import { syntheticParameter } from "../dataset/parameterTestFixture.js";
+import type { DataSourceConfig } from "../datasource/datasource.types.js";
 import {DatasetDisplayError} from "../dataset/datasetDisplaySchema.js";
 import { createUserPlaybackSourcesReader } from "./dashboardQuerySourceExecution.repository.js";
 import { advanceDashboardAccessEvidence } from "../queryDefinition/queryAccess.repository.js";
@@ -701,3 +704,31 @@ test("two Dashboards sharing one Dataset require re-confirmation together and us
  confirmedVersion=f.control.policyVersion;epoch++;
  for(const [id,old] of [[1,a],[2,b]] as const){await assert.rejects(f.service.page(id,"PRIMARY",userSubject(),{page:1,snapshotId:old.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});assert.equal((await f.service.page(id,"PRIMARY",userSubject(),{page:1})).result.rows[0]!.NAME,"測***甲");}
 });
+
+for (const type of ["SQLSERVER", "ORACLE"] as const)
+  for (const calendar of ["ROC", "GREGORIAN"] as const)
+    test(`Dashboard ${type} inherits current Dataset ${calendar} formats and defaults through execution`, async () => {
+      const f = fixture();
+      f.control.bindings.WARD!.parameters = {};
+      const getDataset = f.deps.getDataset;
+      f.deps.getDataset = async id => ({ ...(await getDataset(id))!,
+        sqlText: "SELECT NAME, MRN FROM SYNTHETIC_DATES WHERE EXAM_DATE BETWEEN {{SDATE}} AND {{EDATE}}" });
+      f.deps.getParameters = async () => ["SDATE", "EDATE"].map(name => ({ ...syntheticParameter, name,
+        defaultValue: "2026-10-27", dateCalendar: calendar, dateFormat: calendar === "ROC" ? "yyyMMdd" : "yyyyMMdd" }));
+      const originalExecute = f.deps.execute;
+      let calls = 0;
+      const datasetService = createDatasetService({ getDataset: f.deps.getDataset, listDatasetParameters: f.deps.getParameters,
+        getDataSourceConfig: async () => ({ type, isActive: true, queryTimeoutSec: 10 } as DataSourceConfig),
+        createAdapter: async () => ({ testConnection: async () => ({ ok: true, message: "synthetic" }), executeQuery: async (_config, input) => {
+          calls++;
+          const expected = calendar === "ROC" ? "1151027" : "20261027";
+          assert.deepEqual(input.binds, { SDATE: expected, EDATE: expected });
+          assert.match(input.sql, type === "ORACLE" ? /BETWEEN :SDATE AND :EDATE/ : /BETWEEN @SDATE AND @EDATE/);
+          return originalExecute(99, {}, 10);
+        } }),
+      });
+      f.deps.execute = datasetService.executeSavedDataset;
+      const result = await f.service.page(1, "WARD", subject, { page: 1 });
+      assert.equal(calls, 1);
+      assert.equal(result.result.rows.length, 1);
+    });

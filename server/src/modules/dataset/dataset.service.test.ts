@@ -97,3 +97,34 @@ test("unauthenticated option resolver refuses every Dataset-backed lookup before
     assert.equal(f.state.queries.length, 0);
   }
 });
+
+for (const type of ["SQLSERVER", "ORACLE"] as const) {
+  for (const [calendar, format, expected] of [
+    ["GREGORIAN", "yyyyMMdd", ["20261026", "20261028"]],
+    ["ROC", "yyyMMdd", ["1151026", "1151028"]],
+  ] as const) test(`${type} BETWEEN SDATE/EDATE uses saved ${calendar} defaults and overrides exactly once`, async () => {
+    const f = fixture();
+    f.deps.getDataSourceConfig = async () => ({ type, isActive: true, queryTimeoutSec: 10 } as DataSourceConfig);
+    f.state.sqlText = "SELECT SYNTHETIC FROM SYNTHETIC_DATES WHERE EXAM_DATE BETWEEN {{SDATE}} AND {{EDATE}}";
+    f.state.definitions = ["SDATE", "EDATE"].map((name, i) => ({ ...syntheticParameter, name,
+      defaultValue: i ? "2026-10-28" : "2026-10-26", dateCalendar: calendar, dateFormat: format }));
+    await f.service.executeSavedDataset(2, {});
+    assert.deepEqual(f.state.queries[0]!.binds, { SDATE: expected[0], EDATE: expected[1] });
+    assert.equal(f.state.loads, 1);
+    assert.match(f.state.queries[0]!.sql, type === "SQLSERVER" ? /BETWEEN @SDATE AND @EDATE/ : /BETWEEN :SDATE AND :EDATE/);
+    await f.service.executeSavedDataset(2, { SDATE: "2026-10-28" });
+    assert.deepEqual(f.state.queries[1]!.binds, { SDATE: expected[1], EDATE: expected[1] });
+  });
+  test(`${type} native DATETIME BETWEEN retains Date values and second precision`, async () => {
+    const f = fixture();
+    f.deps.getDataSourceConfig = async () => ({ type, isActive: true, queryTimeoutSec: 10 } as DataSourceConfig);
+    f.state.sqlText = "SELECT SYNTHETIC FROM SYNTHETIC_DATES WHERE EXAM_DATE BETWEEN {{SDATE}} AND {{EDATE}}";
+    f.state.definitions = ["SDATE", "EDATE"].map(name => ({ ...syntheticParameter, name, dataType: "DATETIME",
+      controlType: "DATETIME", dateOutputMode: "NATIVE", defaultValue: name === "SDATE" ? "2026-10-27T11:26:47" : "$TODAY_END" }));
+    await f.service.executeSavedDataset(2, {});
+    const { SDATE, EDATE } = f.state.queries[0]!.binds;
+    assert.ok(SDATE instanceof Date && EDATE instanceof Date);
+    assert.equal(SDATE.toISOString(), "2026-10-27T11:26:47.000Z");
+    assert.equal(EDATE.toISOString().slice(11), "23:59:59.999Z");
+  });
+}

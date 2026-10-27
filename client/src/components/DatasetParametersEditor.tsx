@@ -421,6 +421,7 @@ export function DatasetParametersEditor({
                         <label>固定值
                           <input
                             type={parameter.dataType === "DATE" ? "date" : "datetime-local"}
+                            step={parameter.dataType === "DATETIME" ? 1 : undefined}
                             value={parameter.defaultValue ?? ""}
                             onChange={(e) => update(index, { defaultValue: e.target.value })}
                           />
