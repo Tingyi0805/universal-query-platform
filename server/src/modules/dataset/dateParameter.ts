@@ -96,7 +96,8 @@ export function parseCanonicalDate(value: unknown, includeTime: boolean): Date {
   if (!includeTime) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error("PARAMETER_DATE_INVALID");
     const date = new Date(`${text}T00:00:00.000Z`);
-    if (Number.isNaN(date.getTime())) throw new Error("PARAMETER_DATE_INVALID");
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text)
+      throw new Error("PARAMETER_DATE_INVALID");
     return date;
   }
 
