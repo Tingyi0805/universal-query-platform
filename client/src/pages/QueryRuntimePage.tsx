@@ -630,7 +630,7 @@ export function QueryRuntimePage() {
 
     const type =
       parameter.controlType === "NUMBER" ? "number" :
-      parameter.controlType === "DATE" ? "date" :
+
       parameter.controlType === "DATETIME" ? "datetime-local" :
       "text";
 
