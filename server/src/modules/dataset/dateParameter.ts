@@ -96,7 +96,8 @@ export function parseCanonicalDate(value: unknown, includeTime: boolean): Date {
   if (!includeTime) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error("PARAMETER_DATE_INVALID");
     const date = new Date(`${text}T00:00:00.000Z`);
-    if (Number.isNaN(date.getTime())) throw new Error("PARAMETER_DATE_INVALID");
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text)
+      throw new Error("PARAMETER_DATE_INVALID");
     return date;
   }
 
@@ -164,7 +165,7 @@ export function resolveDateForRuntimeInput(
   if (dataType === "DATE") {
     return formatParameterDate(date, "GREGORIAN", "yyyy-MM-dd");
   }
-  return formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm");
+  return formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm:ss");
 }
 
 export function previewDateParameter(
@@ -179,7 +180,7 @@ export function previewDateParameter(
   const date = parseCanonicalDate(value, dataType === "DATETIME");
   const inputValue = dataType === "DATE"
     ? formatParameterDate(date, "GREGORIAN", "yyyy-MM-dd")
-    : formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm");
+    : formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm:ss");
 
   const outputValue = outputMode === "STRING"
     ? formatParameterDate(date, calendar, format || defaultDateFormat(dataType, calendar))
