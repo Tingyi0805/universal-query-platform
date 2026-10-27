@@ -61,7 +61,7 @@ type QueryResult = {
 };
 
 function displayDateParameter(value: string, format: string | null): string {
-  const match = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(value.slice(0, 10));
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.slice(0, 10));
   if (!match) return value;
   const [, year, month, day] = match;
   if (format === "yyyyMMdd") return year + month + day;
@@ -72,14 +72,16 @@ function displayDateParameter(value: string, format: string | null): string {
 function parseDateParameter(text: string, format: string | null): string | null {
   const trimmed = text.trim();
   if (!trimmed) return "";
-  const shape = format === "yyyyMMdd" ? /^(\\d{4})(\\d{2})(\\d{2})$/
-    : format === "yyyy/MM/dd" ? /^(\\d{4})\\/(\\d{2})\\/(\\d{2})$/
-    : /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+  const shape = format === "yyyyMMdd" ? /^(\d{4})(\d{2})(\d{2})$/
+    : format === "yyyy/MM/dd" ? /^(\d{4})\/(\d{2})\/(\d{2})$/
+    : /^(\d{4})-(\d{2})-(\d{2})$/;
   const match = shape.exec(trimmed);
   if (!match) return null;
   const [, y, m, d] = match;
-  const date = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
-  if (date.getUTCFullYear() !== Number(y) || date.getUTCMonth() + 1 !== Number(m) || date.getUTCDate() !== Number(d))
+  const year = Number(y), month = Number(m), day = Number(d);
+  if (year < 100 || year > 9999) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day)
     return null;
   return y + "-" + m + "-" + d;
 }
