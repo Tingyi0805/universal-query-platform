@@ -79,7 +79,7 @@ function parseDateParameter(text: string, format: string | null, calendar: Param
   const supported = ["yyyyMMdd", "yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "MM/dd/yyyy",
     "yyy/MM/dd", "yyy-MM-dd", "yyyMMdd"];
   if (!supported.includes(pattern)) return null;
-  const groups = pattern.match(/yyyy|yyy|MM|dd/g) ?? [];
+  const groups: string[] = pattern.match(/yyyy|yyy|MM|dd/g) ?? [];
   const separator = pattern.includes("/") ? "/" : pattern.includes("-") ? "-" : "";
   const chunks = separator ? trimmed.split(separator) : trimmed.match(pattern.startsWith("yyy") && !pattern.startsWith("yyyy") ? /^(\d{3})(\d{2})(\d{2})$/ : /^(\d{4})(\d{2})(\d{2})$/)?.slice(1);
   if (!chunks || chunks.length !== 3) return null;
