@@ -1,3 +1,4 @@
+import { legacyWorkstationWriterFenceSql } from "../auth/workstationLegacyWriterFence.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { isAllowedPinLength } from "../auth/quickPin.service.js";
@@ -19,6 +20,7 @@ async function updateQuickPinPolicy(length: number): Promise<boolean> {
   await pool.request().input("length", sql.Int, length).query(`
     SET XACT_ABORT ON;
     BEGIN TRANSACTION;
+    ${legacyWorkstationWriterFenceSql}
     DECLARE @oldLength INT;
     SELECT @oldLength=PinLength FROM uqp.QuickPinPolicy WITH (UPDLOCK, HOLDLOCK) WHERE Id=1;
     IF @oldLength IS NULL THROW 50001, 'PIN_POLICY_MISSING', 1;

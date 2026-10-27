@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.e2e.json",
-    "test": "node --import tsx --test src/dashboard/*.test.ts src/security/*.test.ts",
+    "test": "node --import tsx --test src/dashboard/*.test.ts src/security/*.test.ts src/security/*.test.tsx",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -22,7 +22,7 @@
   "devDependencies": {
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
-    "tsx": "^4.19.2",
+    "tsx": "4.20.6",
     "@types/node": "^22.10.1",
     "@playwright/test": "^1.56.1"
   }

@@ -1,0 +1,65 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { assessRevocationTransaction, workstationRevocationLockOrder, type RevocationMutation } from "./workstationRevocationTransactionContract.js";
+import { sessionLockOrder } from "./workstationSessionSchema926.js";
+
+const valid = (): RevocationMutation => ({
+  scope: "USER",
+  scopeId: "9007199254740993",
+  transactionOwner: "REPOSITORY_OWNED",
+  isolation: "SERIALIZABLE",
+  xactAbort: true,
+  securityGateHeld: true,
+  locks: [...workstationRevocationLockOrder],
+  legacyMutationAffected: 1,
+  sessionInvalidationAffected: 0,
+  lockedActiveSessionsBefore: 0,
+  remainingActiveSessionsAfter: 0,
+  decisionAffected: 1,
+  auditAffected: 1,
+  auditLogId: "9007199254740993",
+  commitOutcome: "COMMITTED",
+  sqlServer2019Accepted: true,
+});
+
+test("complete synthetic transaction evidence cannot activate runtime", () => {
+  const result = assessRevocationTransaction(valid());
+  assert.equal(result.consistent, true);
+  assert.equal(result.runtimeEnabled, false);
+  assert.equal(result.authority, "NONE");
+});
+
+test("revocation requires canonical BIGINT IDs, no JS Number precision repair", () => {
+  for (const scopeId of ["0", "01", "9223372036854775808", " 1", 9007199254740993]) {
+    assert.ok(assessRevocationTransaction({ ...valid(), scopeId: scopeId as string }).failures.includes("INVALID_SCOPE"));
+  }
+});
+
+test("missing gate, invalid lock order, absent audit, unknown commit and absent SQL acceptance block", () => {
+  const cases: readonly Partial<RevocationMutation>[] = [
+    { securityGateHeld: false }, { locks: [...workstationRevocationLockOrder].reverse() },
+    { auditAffected: 0 }, { auditLogId: "01" }, { commitOutcome: "UNKNOWN" },
+    { commitOutcome: "ROLLED_BACK" }, { sqlServer2019Accepted: false },
+    { legacyMutationAffected: 0 }, { sessionInvalidationAffected: -1 },
+    { decisionAffected: 0 }, { lockedActiveSessionsBefore: 1 },
+    { remainingActiveSessionsAfter: 1 },
+  ];
+  for (const change of cases) {
+    const result = assessRevocationTransaction({ ...valid(), ...change });
+    assert.equal(result.consistent, false, JSON.stringify(change));
+    assert.equal(result.runtimeEnabled, false);
+  }
+});
+
+test("writer revocation and device/operator transactions use the identical canonical lock order", () => {
+  assert.strictEqual(workstationRevocationLockOrder, sessionLockOrder);
+  assert.equal(workstationRevocationLockOrder[0], "SESSION_SECURITY_GATE");
+  assert.equal(workstationRevocationLockOrder.at(-1), "DECISION");
+});
+
+test("a 0-row revocation only passes when a locked scope proves no active sessions", () => {
+  assert.equal(assessRevocationTransaction(valid()).consistent, true);
+  const invalid = assessRevocationTransaction({ ...valid(), lockedActiveSessionsBefore: 2, sessionInvalidationAffected: 1 });
+  assert.equal(invalid.consistent, false);
+  assert.ok(invalid.failures.includes("REVOCATION_SCOPE_NOT_PROVEN"));
+});

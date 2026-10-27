@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { legacyWorkstationWriterFenceSql } from "../auth/workstationLegacyWriterFence.js";
 import { getPlatformDbPool } from "../../config/database.js";
 import { listSharedWorkstations } from "./sharedWorkstation.repository.js";
 import {
@@ -51,6 +52,7 @@ export function createWorkstationManagementRepository(deps: ManagementDeps) {
     const tx = deps.transaction(p);
     await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     try {
+      await deps.request(tx).query(legacyWorkstationWriterFenceSql);
       // Single config lock establishes one lock order for copy, membership, lifecycle and binding.
       await deps.request(tx).query(`DECLARE @lock INT;
         EXEC @lock=sys.sp_getapplock @Resource='uqp.workstation.config', @LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=5000;
