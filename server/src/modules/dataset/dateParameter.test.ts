@@ -22,3 +22,10 @@ test("canonical DATE rejects rollover and accepts leap day", () => {
   assert.throws(() => parseCanonicalDate("2026-13-01", false), /PARAMETER_DATE_INVALID/);
   assert.equal(parseCanonicalDate("2024-02-29", false).toISOString().slice(0, 10), "2024-02-29");
 });
+
+test("timezone-less DATETIME is independent of server local timezone", () => {
+  assert.equal(parseCanonicalDate("2026-10-27T11:26:47", true).toISOString(), "2026-10-27T11:26:47.000Z");
+  assert.equal(parseCanonicalDate("2026-10-27T11:26", true).toISOString(), "2026-10-27T11:26:00.000Z");
+  assert.throws(() => parseCanonicalDate("2026-02-30T11:26", true), /PARAMETER_DATETIME_INVALID/);
+  assert.throws(() => parseCanonicalDate("2026-10-27T24:00", true), /PARAMETER_DATETIME_INVALID/);
+});
