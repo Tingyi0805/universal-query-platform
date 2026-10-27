@@ -60,6 +60,30 @@ type QueryResult = {
   elapsedMs: number;
 };
 
+function displayDateParameter(value: string, format: string | null): string {
+  const match = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(value.slice(0, 10));
+  if (!match) return value;
+  const [, year, month, day] = match;
+  if (format === "yyyyMMdd") return year + month + day;
+  if (format === "yyyy/MM/dd") return year + "/" + month + "/" + day;
+  return year + "-" + month + "-" + day;
+}
+
+function parseDateParameter(text: string, format: string | null): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const shape = format === "yyyyMMdd" ? /^(\\d{4})(\\d{2})(\\d{2})$/
+    : format === "yyyy/MM/dd" ? /^(\\d{4})\\/(\\d{2})\\/(\\d{2})$/
+    : /^(\\d{4})-(\\d{2})-(\\d{2})$/;
+  const match = shape.exec(trimmed);
+  if (!match) return null;
+  const [, y, m, d] = match;
+  const date = new Date(Date.UTC(Number(y), Number(m) - 1, Number(d)));
+  if (date.getUTCFullYear() !== Number(y) || date.getUTCMonth() + 1 !== Number(m) || date.getUTCDate() !== Number(d))
+    return null;
+  return y + "-" + m + "-" + d;
+}
+
 function formatValue(value: unknown, format: string | null): string {
   if (value == null) return "";
   if (!format) return String(value);
@@ -544,6 +568,31 @@ export function QueryRuntimePage() {
             <option key={index} value={String(option.value)}>{option.label}</option>
           ))}
         </select>
+      );
+    }
+
+    if (parameter.controlType === "DATE") {
+      const canonical = String(value ?? "");
+      return (
+        <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input
+            aria-label={parameter.label + "（" + (parameter.dateFormat || "yyyy-MM-dd") + "）"}
+            type="text"
+            value={displayDateParameter(canonical, parameter.dateFormat)}
+            placeholder={parameter.dateFormat || "yyyy-MM-dd"}
+            onChange={(e) => {
+              const parsed = parseDateParameter(e.target.value, parameter.dateFormat);
+              if (parsed !== null) setValues({ ...values, [parameter.name]: parsed });
+            }}
+          />
+          <input
+            aria-label={parameter.label + " 日曆選擇"}
+            type="date"
+            value={canonical.slice(0, 10)}
+            onChange={(e) => setValues({ ...values, [parameter.name]: e.target.value })}
+            style={{ width: 44, minWidth: 44 }}
+          />
+        </span>
       );
     }
 
