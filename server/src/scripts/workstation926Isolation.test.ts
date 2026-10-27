@@ -61,5 +61,6 @@ test("legacy denial uses the identical gate before old config locks; every named
     const code = read(path.source);
     for (const fn of path.functions) assert.ok(code.includes(fn), path.source + ":" + fn);
     if (path.coverage === "COMMON_GATE_DENY_ON_926") assert.ok(code.includes("legacyWorkstationWriterFenceSql"), path.source);
+    if (path.coverage === "COMMON_OWNER_DENY_ON_926") assert.ok(code.includes("withLegacyWorkstationTransaction"), path.source);
   }
 });

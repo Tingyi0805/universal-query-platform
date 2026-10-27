@@ -88,10 +88,11 @@ Named function inventory is in workstationRevocationWriterInventory.ts. The foll
 - Workstation management metadata, retire, removal, grants/copy, audience changes and device binding (session gate precedes existing config gate).
 - updateSharedWorkstation fallback / setWorkstationUsers.
 - Quick PIN enroll/revoke and policy changes.
+- Identity bootstrap/create/update/delete, role create/update, password/TokenVersion and session revocation now use a common SERIALIZABLE owner with the same before-DML denial fence. See the [current writer integration matrix](../../../docs/shared-workstation-h0-gate-writer-integration.md).
 
 These are guard conversions, not 926 atomic sidecar invalidation implementations. Installing 926 would intentionally block those legacy management operations; do not deploy it to the shared database. Pre-926 business semantics remain only when metadata visibility is sufficient. The guard requires VIEW DEFINITION on schema uqp (or covering owner rights); missing visibility and bounded gate contention are additional rejection conditions. No permissions are automatically granted. The guard emits no GateResult rowset, preserving existing inline batches' final result semantics.
 
-Still GAP: password reset/change, user disable/TokenVersion, roles/permissions, session revocation and user deletion; their existing JWT checks do not prove atomic 926 sidecar invalidation. They are inventoried, not silently modified. The older isolated device repository's revokeDependents still uses workstation-wide legacy revocation without the new credential-lineage/incarnation proof and remains forbidden for production integration. Operator and renewal adapters remain isolated. No production route was enabled.
+Still GAP: full atomic 926 sidecar invalidation for password reset/change, user disable/TokenVersion, roles/permissions, session revocation and user deletion. Those paths now acquire the common owner/gate and refuse 926; their legacy JWT checks are not promoted to sidecar evidence. The older isolated Device revokeDevice entry now returns REVOCATION_SCOPE_BLOCKED before any SQL, and its broad revokeDependents templates were removed. Operator and renewal adapters remain isolated. No production route was enabled.
 
 External DBA/direct SQL, old workers, metadata visibility, mixed deployments and backup/restore incarnation remain unproven. Cooperative gates cannot stop an authorized direct DML writer after commit. Runtime admission must stay blocked even if all listed disposable tests later pass.
 

@@ -72,10 +72,6 @@ function fixture(options: FakeOptions = {}) {
     if (text === deviceRenewalCasSql) return options.renewCas === false ? rows([]) : rows([{ NewRevision: nextRevision }]);
     if (text === workstationSessionRepositorySql.insertAudit) return rows([{ AuditLogId: auditLogId }]);
     if (text === workstationSessionRepositorySql.insertDecision) return rows([{ RequestId: values.requestId }]);
-    if (text === workstationSessionRepositorySql.revokeDevice) return rows([{ NewRevision: nextRevision }], [1]);
-    if (text === workstationSessionRepositorySql.revokeDependents ||
-        text === workstationSessionRepositorySql.revokeCredentialSessions ||
-        text === workstationSessionRepositorySql.revokeWorkstationSessions) return rows([], [1]);
     assert.fail(`unexpected SQL statement: ${text.slice(0, 60)}`);
   }
   const deps: WorkstationSqlRepositoryDependencies = {
@@ -205,44 +201,32 @@ test("device proof mismatch cannot mutate, authorize an operator, or leak proof"
   assert.equal(JSON.stringify(f.inputs).includes("B".repeat(43)), false);
 });
 
-test("explicit revocation reserves RequestId, cascades the selected boundary and correlates audit", async () => {
-  const f = fixture();
-  const adapter = createWorkstationSessionSqlRepository(f.deps);
-  const result = await adapter.revokeDevice({
-    format: "WORKSTATION_DEVICE_SESSION_REVOCATION_V1",
-    requestId: explicitRequestId, sessionId, workstationId, credentialId,
-    expectedRevision: initialRevision, cause: "CREDENTIAL_REVOKED",
-  });
-  assert.equal(result.ok, true);
-  if (!result.ok) return;
-  assert.equal(result.auditLogId, auditLogId);
-  assert.equal(result.authority, "NONE");
-  assert.ok(f.queries.includes(workstationSessionRepositorySql.revokeCredentialSessions));
-  assert.ok(f.queries.includes(workstationSessionRepositorySql.revokeDependents));
-  assert.equal(f.queries.includes(workstationSessionRepositorySql.revokeWorkstationSessions), false);
-  const decision = f.inputs.find(value => value.operation === "DEVICE_REVOKE" && value.decisionStatus === "SUCCESS");
-  assert.equal(decision?.auditLogId, auditLogId);
-  assert.equal(decision?.nextRevision, nextRevision);
+test("old Device revocation cannot bypass credential lineage or operator CAS even with a valid-looking command", async () => {
+  for (const cause of ["ADMIN_REVOKED", "CREDENTIAL_REVOKED", "WORKSTATION_REVOKED"] as const) {
+    const f = fixture();
+    const result = await createWorkstationSessionSqlRepository(f.deps).revokeDevice({
+      format: "WORKSTATION_DEVICE_SESSION_REVOCATION_V1", requestId: explicitRequestId,
+      sessionId, workstationId, credentialId, expectedRevision: initialRevision, cause,
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, "REVOCATION_SCOPE_BLOCKED");
+    assert.equal(f.queries.length, 0); assert.equal(f.transaction.begun.length, 0);
+    assert.equal(result.authority, "NONE"); assert.equal(result.runtimeWired, false);
+  }
 });
 
-test("replayed explicit RequestId is rejected without another mutation", async () => {
-  const first = fixture();
-  const firstAdapter = createWorkstationSessionSqlRepository(first.deps);
-  const command = {
-    format: "WORKSTATION_DEVICE_SESSION_REVOCATION_V1" as const,
-    requestId: explicitRequestId, sessionId, workstationId, credentialId,
-    expectedRevision: initialRevision, cause: "ADMIN_REVOKED" as const,
-  };
-  const digest = createHash("sha256").update(JSON.stringify([
-    "WORKSTATION_SESSION_SQL_REQUEST_V1", "DEVICE_REVOKE", sessionId,
-    workstationId, initialRevision, "ADMIN_REVOKED",
-  ])).digest("hex");
-  const replay = fixture({ replayDigest: digest });
-  const result = await createWorkstationSessionSqlRepository(replay.deps).revokeDevice(command);
-  assert.equal(result.ok, false);
-  if (!result.ok) assert.equal(result.reason, "REQUEST_REPLAY");
-  assert.equal(replay.queries.includes(workstationSessionRepositorySql.revokeDevice), false);
-  assert.equal(firstAdapter.runtimeEnabled, false);
+test("RequestId or matching replay digest cannot re-enable the retired Device writer", async () => {
+  const f = fixture({ replayDigest: "0".repeat(64) });
+  const adapter = createWorkstationSessionSqlRepository(f.deps);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const result = await adapter.revokeDevice({
+      format: "WORKSTATION_DEVICE_SESSION_REVOCATION_V1", requestId: explicitRequestId,
+      sessionId, workstationId, credentialId, expectedRevision: initialRevision, cause: "ADMIN_REVOKED",
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, "REVOCATION_SCOPE_BLOCKED");
+  }
+  assert.equal(f.queries.length, 0); assert.equal(adapter.runtimeEnabled, false);
 });
 
 test("revocation rejects Number BIGINT, unknown fields and Proxy input before SQL", async () => {

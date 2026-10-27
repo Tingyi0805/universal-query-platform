@@ -17,15 +17,30 @@ export const workstationRevocationWriterInventory = Object.freeze([
 /** Named paths, source-verifiable; a denial fence is NOT a converted 926 writer. */
 export const workstationNamedWriterCoverage = Object.freeze([
   { source: "server/src/modules/admin/workstationCredential.repository.ts", functions: ["issueDeviceCredential", "revokeDeviceCredential"], coverage: "COMMON_GATE_DENY_ON_926" },
-  { source: "server/src/modules/admin/workstationManagement.repository.ts", functions: ["metadata", "retire", "removeUnused", "saveGrants", "saveAudience", "bindDevice"], coverage: "COMMON_GATE_DENY_ON_926" },
-  { source: "server/src/modules/admin/sharedWorkstation.repository.ts", functions: ["updateSharedWorkstation", "setWorkstationUsers"], coverage: "COMMON_GATE_DENY_ON_926" },
+  { source: "server/src/modules/admin/workstationManagement.repository.ts", functions: ["create", "metadata", "retire", "removeUnused", "saveGrants", "saveAudience", "bindDevice"], coverage: "COMMON_GATE_DENY_ON_926" },
+  { source: "server/src/modules/admin/sharedWorkstation.repository.ts", functions: ["createSharedWorkstation", "updateSharedWorkstation", "setWorkstationUsers"], coverage: "COMMON_GATE_DENY_ON_926" },
   { source: "server/src/modules/auth/quickPin.service.ts", functions: ["mutate"], coverage: "COMMON_GATE_DENY_ON_926" },
   { source: "server/src/modules/admin/quickPinPolicy.repository.ts", functions: ["updateQuickPinPolicy"], coverage: "COMMON_GATE_DENY_ON_926" },
-  { source: "server/src/modules/auth/auth.repository.ts", functions: ["updateOwnLocalPassword"], coverage: "GAP_TOKEN_INVALIDATION_NOT_ATOMIC_SIDECARS" },
-  { source: "server/src/modules/admin/admin.repository.ts", functions: ["updateUser", "resetUserPassword", "updateRole", "deleteUser", "revokeUserSessions"], coverage: "GAP_TOKEN_ROLE_OR_DELETE" },
-  { source: "server/src/modules/auth/workstationSessionSql.repository.ts", functions: ["compareAndSwapRenewal", "revokeDevice"], coverage: "ISOLATED_ONLY_DEPENDENT_REVOCATION_GAP" },
+  { source: "server/src/modules/auth/auth.repository.ts", functions: ["updateOwnLocalPassword"], coverage: "COMMON_OWNER_DENY_ON_926" },
+  { source: "server/src/modules/admin/admin.repository.ts", functions: ["createInitialAdmin", "createUser", "updateUser", "resetUserPassword", "createRole", "updateRole", "deleteUser", "revokeUserSessions"], coverage: "COMMON_OWNER_DENY_ON_926" },
+  { source: "server/src/modules/auth/workstationSessionSql.repository.ts", functions: ["compareAndSwapRenewal"], coverage: "ISOLATED_RENEWAL_AUDIT_CAS_ONLY" },
+  { source: "server/src/modules/auth/workstationSessionSql.repository.ts", functions: ["revokeDevice"], coverage: "RETIRED_NO_SQL_SCOPE_BLOCKED" },
   { source: "server/src/modules/auth/workstationOperatorSql.repository.ts", functions: ["recordPinFailure", "compareAndSwapSwitch"], coverage: "ISOLATED_ONLY_RUNTIME_BLOCKED" },
   { source: "server/src/modules/auth/workstationRevocationSqlAdapter.ts", functions: ["revokeCredentialAndSessions"], coverage: "ISOLATED_ONLY_SQL_NOT_RUN" },
+] as const);
+
+/** Source inventory, NOT a grant of writer authority or proof of physical locks. */
+export const workstationProtectedSqlSources = Object.freeze([
+  "server/src/modules/admin/admin.repository.ts",
+  "server/src/modules/admin/sharedWorkstation.repository.ts",
+  "server/src/modules/admin/workstationCredential.repository.ts",
+  "server/src/modules/admin/workstationManagement.repository.ts",
+  "server/src/modules/admin/quickPinPolicy.repository.ts",
+  "server/src/modules/auth/auth.repository.ts",
+  "server/src/modules/auth/quickPin.service.ts",
+  "server/src/modules/auth/workstationSessionSqlStatements.ts",
+  "server/src/modules/auth/workstationCredentialAtomicSql.ts",
+  "server/src/modules/auth/workstationCredentialRevocationSql.ts",
 ] as const);
 
 export type RevocationWriterEvidence = Readonly<{
@@ -41,7 +56,8 @@ export function assessWorkstationRevocationCoverage(evidence: readonly Revocatio
   const missing = workstationRevocationWriterInventory
     .filter(writer => {
       const proof = evidence.find(item => item.writerId === writer.id);
-      return writer.state === "UNKNOWN" || !proof || !proof.transactionOwnerProven || !proof.sharedGateProven ||
+      // Caller assertions cannot erase known source gaps or certify real SQL.
+      return writer.state === "UNKNOWN" || writer.state === "GAP" || !proof || !proof.transactionOwnerProven || !proof.sharedGateProven ||
         !proof.invalidationAtomicityProven || !proof.auditAtomicityProven || !proof.sql2019Accepted;
     })
     .map(writer => writer.id);

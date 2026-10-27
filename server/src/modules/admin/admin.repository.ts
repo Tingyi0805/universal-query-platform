@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { withLegacyWorkstationTransaction } from "../auth/workstationLegacyTransaction.js";
 import { explicitSystemAdminCapabilities } from "../dataset/datasetScopeManagement.js";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -17,15 +18,12 @@ export async function countUsers(): Promise<number | undefined> {
 
 export async function createInitialAdmin(input: { username: string; displayName: string; passwordHash: string; }): Promise<void> {
   const pool = await requirePool();
-  const transaction = new sql.Transaction(pool);
-  await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-
-  try {
-    const countResult = await new sql.Request(transaction)
+  return withLegacyWorkstationTransaction(pool, async tx => {
+    const countResult = await new sql.Request(tx)
       .query("SELECT COUNT(1) AS Cnt FROM uqp.AppUser WITH (UPDLOCK, HOLDLOCK)");
     if (Number(countResult.recordset[0]?.Cnt ?? 0) > 0) throw new Error("BOOTSTRAP_ALREADY_COMPLETED");
 
-    const userResult = await new sql.Request(transaction)
+    const userResult = await new sql.Request(tx)
       .input("username", sql.NVarChar(100), input.username)
       .input("displayName", sql.NVarChar(200), input.displayName)
       .input("passwordHash", sql.NVarChar(255), input.passwordHash)
@@ -35,18 +33,14 @@ export async function createInitialAdmin(input: { username: string; displayName:
         VALUES (@username, @displayName, @passwordHash, 'LOCAL', 1)
       `);
 
-    await new sql.Request(transaction)
+    await new sql.Request(tx)
       .input("userId", sql.BigInt, userResult.recordset[0].Id)
       .query(`
         INSERT INTO uqp.UserRole (UserId, RoleId)
         SELECT @userId, Id FROM uqp.Role WHERE Code = 'SYSTEM_ADMIN'
       `);
 
-    await transaction.commit();
-  } catch (error) {
-    await transaction.rollback();
-    throw error;
-  }
+  });
 }
 
 export async function listUsers() {
@@ -130,9 +124,7 @@ export async function listPermissions() {
 
 export async function createUser(input: { username: string; displayName: string; passwordHash: string; roleCodes: string[]; }) {
   const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin();
-  try {
+  return withLegacyWorkstationTransaction(pool, async tx => {
     const user = await new sql.Request(tx)
       .input("username", sql.NVarChar(100), input.username)
       .input("displayName", sql.NVarChar(200), input.displayName)
@@ -147,16 +139,13 @@ export async function createUser(input: { username: string; displayName: string;
         .query(`INSERT INTO uqp.UserRole (UserId, RoleId)
                 SELECT @userId, Id FROM uqp.Role WHERE Code=@code AND IsActive=1`);
     }
-    await tx.commit();
     return Number(userId);
-  } catch (error) { await tx.rollback(); throw error; }
+  });
 }
 
 export async function updateUser(userId: number, input: { displayName: string; isActive: boolean; roleCodes: string[]; }) {
   const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-  try {
+  return withLegacyWorkstationTransaction(pool, async tx => {
     const current = await new sql.Request(tx).input("userId", sql.BigInt, userId).query(`
       SELECT u.IsActive,
         CASE WHEN EXISTS (
@@ -215,29 +204,28 @@ export async function updateUser(userId: number, input: { displayName: string; i
       await new sql.Request(tx).input("userId", sql.BigInt, userId).input("code", sql.NVarChar(100), code)
         .query("INSERT INTO uqp.UserRole (UserId, RoleId) SELECT @userId, Id FROM uqp.Role WHERE Code=@code AND IsActive=1");
     }
-    await tx.commit();
-  } catch (error) { await tx.rollback(); throw error; }
+  });
 }
 
 export async function resetUserPassword(userId: number, passwordHash: string) {
   const pool = await requirePool();
-  const result = await pool.request().input("userId", sql.BigInt, userId).input("passwordHash", sql.NVarChar(255), passwordHash)
-    .query(`
-      UPDATE uqp.AppUser
-      SET PasswordHash=@passwordHash,
-          TokenVersion=TokenVersion+1,
-          UpdatedAtUtc=SYSUTCDATETIME()
-      WHERE Id=@userId AND AuthProvider='LOCAL';
-      SELECT @@ROWCOUNT AS Affected;
-    `);
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("USER_NOT_FOUND_OR_NOT_LOCAL");
+  return withLegacyWorkstationTransaction(pool, async tx => {
+    const result = await new sql.Request(tx).input("userId", sql.BigInt, userId).input("passwordHash", sql.NVarChar(255), passwordHash)
+      .query(`
+        UPDATE uqp.AppUser
+        SET PasswordHash=@passwordHash,
+            TokenVersion=TokenVersion+1,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE Id=@userId AND AuthProvider='LOCAL';
+        SELECT @@ROWCOUNT AS Affected;
+      `);
+    if (Number(result.recordset[0]?.Affected ?? 0) === 0) throw new Error("USER_NOT_FOUND_OR_NOT_LOCAL");
+  });
 }
 
 export async function createRole(input: { code: string; name: string; description?: string | null; permissionCodes: string[]; }) {
   const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin();
-  try {
+  return withLegacyWorkstationTransaction(pool, async tx => {
     const role = await new sql.Request(tx)
       .input("code", sql.NVarChar(100), input.code)
       .input("name", sql.NVarChar(200), input.name)
@@ -250,16 +238,13 @@ export async function createRole(input: { code: string; name: string; descriptio
         .query("INSERT INTO uqp.RolePermission (RoleId, PermissionId) SELECT @roleId, Id FROM uqp.Permission WHERE Code=@code");
     }
 
-    await tx.commit();
     return Number(roleId);
-  } catch (error) { await tx.rollback(); throw error; }
+  });
 }
 
 export async function updateRole(roleId: number, input: { name: string; description?: string | null; isActive: boolean; permissionCodes: string[]; }) {
   const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin();
-  try {
+  return withLegacyWorkstationTransaction(pool, async tx => {
     const role = await new sql.Request(tx)
       .input("roleId", sql.BigInt, roleId)
       .query("SELECT Code, IsSystem, IsActive FROM uqp.Role WHERE Id=@roleId");
@@ -317,8 +302,7 @@ export async function updateRole(roleId: number, input: { name: string; descript
         `);
     }
 
-    await tx.commit();
-  } catch (error) { await tx.rollback(); throw error; }
+  });
 }
 
 
@@ -352,10 +336,7 @@ export async function getUserDeleteImpact(userId: number) {
 
 export async function deleteUser(userId: number): Promise<void> {
   const pool = await requirePool();
-  const tx = new sql.Transaction(pool);
-  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-
-  try {
+  return withLegacyWorkstationTransaction(pool, async tx => {
     const current = await new sql.Request(tx)
       .input("userId", sql.BigInt, userId)
       .query(`
@@ -411,28 +392,26 @@ export async function deleteUser(userId: number): Promise<void> {
       .input("userId", sql.BigInt, userId)
       .query("DELETE FROM uqp.AppUser WHERE Id=@userId");
 
-    await tx.commit();
-  } catch (error) {
-    await tx.rollback();
-    throw error;
-  }
+  });
 }
 
 
 export async function revokeUserSessions(userId: number): Promise<number> {
   const pool = await requirePool();
-  const result = await pool.request()
-    .input("userId", sql.BigInt, userId)
-    .query(`
-      UPDATE uqp.AppUser
-      SET TokenVersion=TokenVersion+1,
-          UpdatedAtUtc=SYSUTCDATETIME()
-      OUTPUT INSERTED.TokenVersion
-      WHERE Id=@userId;
-    `);
+  return withLegacyWorkstationTransaction(pool, async tx => {
+    const result = await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .query(`
+        UPDATE uqp.AppUser
+        SET TokenVersion=TokenVersion+1,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        OUTPUT INSERTED.TokenVersion
+        WHERE Id=@userId;
+      `);
 
-  if (!result.recordset[0]) throw new Error("USER_NOT_FOUND");
-  return Number(result.recordset[0].TokenVersion);
+    if (!result.recordset[0]) throw new Error("USER_NOT_FOUND");
+    return Number(result.recordset[0].TokenVersion);
+  });
 }
 
 export async function listUsersPaged(input: {

@@ -1,7 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { types } from "node:util";
 import sql from "mssql";
-import { getPlatformDbPool } from "../../config/database.js";
 import {
   type DeviceSessionRenewalAudit,
   type DeviceSessionRenewalMutation,
@@ -43,7 +42,8 @@ export type WorkstationSqlRepositoryDependencies = Readonly<{
 }>;
 
 const defaults: WorkstationSqlRepositoryDependencies = Object.freeze({
-  getPool: getPlatformDbPool as () => Promise<unknown | null>,
+  // Unverified SQL adapter: only an explicitly injected isolated pool is usable.
+  getPool: async () => null,
   createTransaction: pool => new sql.Transaction(pool as sql.ConnectionPool) as unknown as WorkstationSqlTransaction,
   createRequest: transaction => new sql.Request(transaction as unknown as sql.Transaction) as unknown as WorkstationSqlRequest,
   newUuid: randomUUID,
@@ -113,7 +113,7 @@ export type DeviceSessionRevocationCommand = Readonly<{
 
 export type DeviceSessionRevocationResult =
   | Readonly<{ ok: true; status: "REVOKED"; auditLogId: string } & typeof restrictions>
-  | Readonly<{ ok: false; status: "REJECTED"; reason: "FORMAT_INVALID" | "NOT_FOUND" | "CAS_CONFLICT" | "REQUEST_REPLAY" | "PERSISTENCE_FAILURE" | "AUDIT_FAILURE" | "COMMIT_UNKNOWN" | "ROLLBACK_FAILED" } & typeof restrictions>;
+  | Readonly<{ ok: false; status: "REJECTED"; reason: "REVOCATION_SCOPE_BLOCKED" | "FORMAT_INVALID" | "NOT_FOUND" | "CAS_CONFLICT" | "REQUEST_REPLAY" | "PERSISTENCE_FAILURE" | "AUDIT_FAILURE" | "COMMIT_UNKNOWN" | "ROLLBACK_FAILED" } & typeof restrictions>;
 
 function infrastructure(code: "DATABASE_UNAVAILABLE" | "PERSISTENCE_FAILURE" | "AUDIT_FAILURE" | "COMMIT_UNKNOWN" | "ROLLBACK_FAILED") {
   return new WorkstationLifecycleInfrastructureError(code);
@@ -539,70 +539,10 @@ export function createWorkstationSessionSqlRepository(
 
   async function revokeDevice(input: unknown): Promise<DeviceSessionRevocationResult> {
     if (!isRevocationCommand(input)) return rejected("FORMAT_INVALID");
-    try {
-      return await ownedTransaction(deps, async tx => {
-        const context = contextFor(tx);
-        const locked = await loadLockedDevice(deps, context, input.sessionId);
-        if (!locked) return rejected("NOT_FOUND");
-        if (locked.snapshot.workstationId !== input.workstationId || locked.snapshot.credentialId !== input.credentialId ||
-            locked.snapshot.sessionRevision !== input.expectedRevision) return rejected("CAS_CONFLICT");
-        const claim: RequestEvidence = Object.freeze({
-          requestId: input.requestId,
-          operation: "DEVICE_REVOKE",
-          digest: digestFor("DEVICE_REVOKE", input.sessionId, input.workstationId, input.expectedRevision, input.cause),
-        });
-        if (await reserveRequest(deps, context, claim) !== "CLAIMED") return rejected("REQUEST_REPLAY");
-        const mutation = await bind(request(deps, context), [
-          ["reason", sql.NVarChar(64), input.cause],
-          ["sessionId", sql.UniqueIdentifier, input.sessionId],
-          ["workstationId", sql.VarChar(20), input.workstationId],
-          ["credentialId", sql.UniqueIdentifier, input.credentialId],
-          ["expectedRevision", sql.VarChar(16), input.expectedRevision],
-        ]).query(workstationSessionRepositorySql.revokeDevice);
-        const nextRevision = typeof mutation.recordset[0]?.NewRevision === "string"
-          ? String(mutation.recordset[0]!.NewRevision).toLowerCase() : null;
-        if (!nextRevision) {
-          await writeAuditAndDecision(deps, context, Object.freeze({
-            eventType: "WORKSTATION_DEVICE_SESSION_REVOCATION_REJECTED", status: "FAILED",
-            reason: "SESSION_REVISION_CONFLICT", sessionId: input.sessionId,
-            workstationId: input.workstationId, credentialId: input.credentialId,
-            renewalCounter: locked.snapshot.renewalCounter,
-          }));
-          return rejected("CAS_CONFLICT");
-        }
-        if (!isRevision(nextRevision) || nextRevision === input.expectedRevision || mutation.recordset.length !== 1) {
-          throw infrastructure("PERSISTENCE_FAILURE");
-        }
-        if (input.cause === "CREDENTIAL_REVOKED") {
-          await bind(request(deps, context), [
-            ["workstationId", sql.VarChar(20), input.workstationId],
-            ["credentialId", sql.UniqueIdentifier, input.credentialId],
-          ]).query(workstationSessionRepositorySql.revokeCredentialSessions);
-        } else if (input.cause === "WORKSTATION_REVOKED") {
-          await bind(request(deps, context), [
-            ["workstationId", sql.VarChar(20), input.workstationId],
-          ]).query(workstationSessionRepositorySql.revokeWorkstationSessions);
-        }
-        await bind(request(deps, context), [
-          ["workstationId", sql.VarChar(20), input.workstationId],
-          ["sessionId", sql.UniqueIdentifier, input.sessionId],
-        ]).query(workstationSessionRepositorySql.revokeDependents);
-        context.mutation = Object.freeze({ previousRevision: input.expectedRevision, nextRevision, affectedRows: 1 });
-        const auditLogId = await writeAuditAndDecision(deps, context, Object.freeze({
-          eventType: "WORKSTATION_DEVICE_SESSION_REVOKED",
-          status: "SUCCESS",
-          reason: null,
-          sessionId: input.sessionId,
-          workstationId: input.workstationId,
-          credentialId: input.credentialId,
-          renewalCounter: locked.snapshot.renewalCounter,
-        }));
-        return Object.freeze({ ok: true, status: "REVOKED", auditLogId, ...restrictions });
-      });
-    } catch (error) {
-      const code = error instanceof WorkstationLifecycleInfrastructureError ? error.code : "PERSISTENCE_FAILURE";
-      return rejected(code === "DATABASE_UNAVAILABLE" ? "PERSISTENCE_FAILURE" : code);
-    }
+    // The historical Device command has no complete legacy lineage or operator
+    // incarnation CAS. Never translate it into a broader credential revocation.
+    // Callers must adopt the separately reviewed owned revocation command.
+    return rejected("REVOCATION_SCOPE_BLOCKED");
   }
 
   return Object.freeze({

@@ -35,7 +35,7 @@ test("no evidence or missing atomicity blocks admission without runtime authorit
   })) satisfies RevocationWriterEvidence[];
   const partial = assessWorkstationRevocationCoverage(evidence.map((x, i) =>
     i === 0 ? { ...x, auditAtomicityProven: false } : x));
-  assert.deepEqual(partial.missing, ["PIN_ENROLL_REVOKE", "LEGACY_WORKERS_AND_DBA"]);
+  assert.deepEqual(partial.missing, workstationRevocationWriterInventory.map(writer => writer.id));
 });
 
 test("synthetic evidence cannot clear unknown DBA bypass or enable runtime", () => {
@@ -46,7 +46,7 @@ test("synthetic evidence cannot clear unknown DBA bypass or enable runtime", () 
   }));
   const result = assessWorkstationRevocationCoverage(evidence);
   assert.equal(result.readyForReview, false);
-  assert.deepEqual(result.missing, ["LEGACY_WORKERS_AND_DBA"]);
+  assert.deepEqual(result.missing, workstationRevocationWriterInventory.map(writer => writer.id));
   assert.equal(result.runtimeEnabled, false);
   assert.equal(result.authority, "NONE");
 });

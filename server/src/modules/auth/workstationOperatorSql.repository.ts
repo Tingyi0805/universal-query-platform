@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import bcrypt from "bcryptjs";
 import sql from "mssql";
-import { getPlatformDbPool } from "../../config/database.js";
 import type {
   OperatorPinFailureMutation,
   OperatorSwitchAudit,
@@ -32,7 +31,8 @@ type Dependencies = WorkstationSqlRepositoryDependencies & Readonly<{
 }>;
 
 const defaults: Dependencies = Object.freeze({
-  getPool: getPlatformDbPool as () => Promise<unknown | null>,
+  // Never fall back to the shared platform database while Runtime is blocked.
+  getPool: async () => null,
   createTransaction: pool => new sql.Transaction(pool as sql.ConnectionPool) as unknown as WorkstationSqlTransaction,
   createRequest: transaction => new sql.Request(transaction as unknown as sql.Transaction) as unknown as WorkstationSqlRequest,
   newUuid: randomUUID,

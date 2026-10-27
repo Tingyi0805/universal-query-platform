@@ -1,5 +1,6 @@
 import { legacyWorkstationWriterFenceSql } from "../auth/workstationLegacyWriterFence.js";
 import sql from "mssql";
+import { withLegacyWorkstationTransaction } from "../auth/workstationLegacyTransaction.js";
 import { getPlatformDbPool } from "../../config/database.js";
 
 export type WorkstationPlatform = "WINDOWS" | "ANDROID" | "IOS" | "UNKNOWN";
@@ -24,12 +25,14 @@ export async function listSharedWorkstations(): Promise<Workstation[] | null> {
 export async function createSharedWorkstation(code: string, name: string, platform: WorkstationPlatform): Promise<number | null> {
   const pool = await getPlatformDbPool();
   if (!pool) return null;
-  const result = await pool.request().input("code", sql.NVarChar(100), code)
-    .input("name", sql.NVarChar(200), name).input("platform", sql.NVarChar(20), platform).query(`
-      INSERT INTO uqp.SharedWorkstation (WorkstationCode, DisplayName, PlatformCode, IsActive, PinLoginEnabled)
-      OUTPUT INSERTED.Id AS id VALUES (@code, @name, @platform, 0, 0)
-    `);
-  return Number(result.recordset[0].id);
+  return withLegacyWorkstationTransaction(pool, async tx => {
+    const result = await new sql.Request(tx).input("code", sql.NVarChar(100), code)
+      .input("name", sql.NVarChar(200), name).input("platform", sql.NVarChar(20), platform).query(`
+        INSERT INTO uqp.SharedWorkstation (WorkstationCode, DisplayName, PlatformCode, IsActive, PinLoginEnabled)
+        OUTPUT INSERTED.Id AS id VALUES (@code, @name, @platform, 0, 0)
+      `);
+    return Number(result.recordset[0].id);
+  });
 }
 
 export async function updateSharedWorkstation(id: number, name: string, active: boolean, actor: number): Promise<"OK" | "NOT_FOUND" | "NOT_CONFIGURED"> {

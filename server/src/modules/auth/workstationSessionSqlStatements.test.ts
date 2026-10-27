@@ -49,7 +49,7 @@ test("repository statements use a cooperative transaction gate and exact OUTPUT 
 });
 
 
-test("workstation revoke reason is accepted by Migration 926", () => {
-  assert.match(workstationSessionRepositorySql.revokeWorkstationSessions, /N'WORKSTATION_DISABLED'/u);
-  assert.doesNotMatch(workstationSessionRepositorySql.revokeWorkstationSessions, /N'WORKSTATION_REVOKED'/u);
+test("unreviewed broad revocation statements are no longer exported by the old Device repository", () => {
+  for (const key of ["revokeDevice", "revokeDependents", "revokeCredentialSessions", "revokeWorkstationSessions"])
+    assert.equal(key in workstationSessionRepositorySql, false);
 });

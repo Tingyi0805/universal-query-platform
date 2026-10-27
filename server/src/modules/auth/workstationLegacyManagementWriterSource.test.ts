@@ -11,7 +11,7 @@ const source = (id: string): string => {
   return readFileSync(new URL(writer.source, root), "utf8");
 };
 
-test("user, role and permission mutations lack the new 926 shared session gate", () => {
+test("user, role and permission mutations use the common owner; no unreviewed 926 sidecar writes", () => {
   const code = source("USER_ROLE_PERMISSION");
   for (const marker of [
     "export async function updateUser(", "export async function resetUserPassword(",
@@ -19,6 +19,8 @@ test("user, role and permission mutations lack the new 926 shared session gate",
     "export async function revokeUserSessions(", "DELETE FROM uqp.UserRole",
     "DELETE FROM uqp.RolePermission",
   ]) assert.ok(code.includes(marker), marker);
+  assert.match(code, /withLegacyWorkstationTransaction/u);
+  assert.doesNotMatch(code, /new sql.Transaction|\.begin\(|\.commit\(|\.rollback\(/u);
   assert.doesNotMatch(code, /SharedWorkstationOperatorState|SharedWorkstationDeviceSession|uqp\.workstation\.session\.security/u);
 });
 

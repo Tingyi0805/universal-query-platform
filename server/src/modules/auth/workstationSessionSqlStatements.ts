@@ -111,35 +111,9 @@ VALUES
    CONVERT(BINARY(8), @previousRevision, 2),
    CASE WHEN @nextRevision IS NULL THEN NULL ELSE CONVERT(BINARY(8), @nextRevision, 2) END,
    NULL, NULL, NULL, NULL, CONVERT(BIGINT, @auditLogId), @eventType, @correlationId);`,
-  revokeDevice: `
-UPDATE uqp.SharedWorkstationDeviceSession
-SET RevokedAtUtc = SYSUTCDATETIME(), RevocationReason = @reason
-OUTPUT LOWER(CONVERT(VARCHAR(16), INSERTED.RowVersion, 2)) AS NewRevision
-WHERE Id = @sessionId
-  AND WorkstationId = CONVERT(BIGINT, @workstationId)
-  AND CredentialId = @credentialId
-  AND RowVersion = CONVERT(BINARY(8), @expectedRevision, 2)
-  AND RevokedAtUtc IS NULL;`,
-  revokeDependents: `
-UPDATE uqp.SharedWorkstationSession
-SET RevokedAtUtc = COALESCE(RevokedAtUtc, SYSUTCDATETIME())
-WHERE WorkstationId = CONVERT(BIGINT, @workstationId) AND RevokedAtUtc IS NULL;
-UPDATE uqp.SharedWorkstationOperatorState
-SET StateCode = N'DEVICE_REVOKED', Generation = Generation + CONVERT(BIGINT, 1),
-    OperatorSessionId = NULL, OperatorUserId = NULL, TokenVersion = NULL,
-    PinVersion = NULL, AuthMethod = NULL, LastMutationAtUtc = SYSUTCDATETIME()
-WHERE WorkstationId = CONVERT(BIGINT, @workstationId) AND DeviceSessionId = @sessionId;`,
-  revokeCredentialSessions: `
-UPDATE uqp.SharedWorkstationDeviceSession
-SET RevokedAtUtc = COALESCE(RevokedAtUtc, SYSUTCDATETIME()),
-    RevocationReason = COALESCE(RevocationReason, N'CREDENTIAL_REVOKED')
-WHERE WorkstationId = CONVERT(BIGINT, @workstationId)
-  AND CredentialId = @credentialId AND RevokedAtUtc IS NULL;`,
-  revokeWorkstationSessions: `
-UPDATE uqp.SharedWorkstationDeviceSession
-SET RevokedAtUtc = COALESCE(RevokedAtUtc, SYSUTCDATETIME()),
-    RevocationReason = COALESCE(RevocationReason, N'WORKSTATION_DISABLED')
-WHERE WorkstationId = CONVERT(BIGINT, @workstationId) AND RevokedAtUtc IS NULL;`,
+  // Retired: revokeDevice/revokeDependents used workstation-wide legacy scope
+  // without a proven credential lineage and operator incarnation CAS.
+  // Revocation is available only through the isolated reviewed atomic writer.
 } as const);
 
 export const workstationOperatorRepositorySql = Object.freeze({

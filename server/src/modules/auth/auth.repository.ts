@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { withLegacyWorkstationTransaction } from "./workstationLegacyTransaction.js";
 import { getPlatformDbPool } from "../../config/database.js";
 
 export type AuthUserRecord = {
@@ -101,22 +102,23 @@ export async function updateOwnLocalPassword(userId: number, passwordHash: strin
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("AUTH_NOT_CONFIGURED");
 
-  const result = await pool
-    .request()
-    .input("userId", sql.BigInt, userId)
-    .input("passwordHash", sql.NVarChar(255), passwordHash)
-    .query(`
-      UPDATE uqp.AppUser
-      SET PasswordHash=@passwordHash,
-          TokenVersion=TokenVersion+1,
-          UpdatedAtUtc=SYSUTCDATETIME()
-      WHERE Id=@userId AND IsActive=1 AND AuthProvider='LOCAL';
-      SELECT @@ROWCOUNT AS Affected;
-    `);
+  return withLegacyWorkstationTransaction(pool, async tx => {
+    const result = await new sql.Request(tx)
+      .input("userId", sql.BigInt, userId)
+      .input("passwordHash", sql.NVarChar(255), passwordHash)
+      .query(`
+        UPDATE uqp.AppUser
+        SET PasswordHash=@passwordHash,
+            TokenVersion=TokenVersion+1,
+            UpdatedAtUtc=SYSUTCDATETIME()
+        WHERE Id=@userId AND IsActive=1 AND AuthProvider='LOCAL';
+        SELECT @@ROWCOUNT AS Affected;
+      `);
 
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
-    throw new Error("USER_NOT_FOUND_OR_NOT_LOCAL");
-  }
+    if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
+      throw new Error("USER_NOT_FOUND_OR_NOT_LOCAL");
+    }
+  });
 }
 
 
