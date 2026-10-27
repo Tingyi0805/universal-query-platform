@@ -89,6 +89,8 @@ function parseDateParameter(text: string, format: string | null, calendar: Param
     if (!new RegExp("^\\d{" + expected + "}$").test(chunks[i])) return null;
     fields[groups[i]] = Number(chunks[i]);
   }
+  if (calendar === "ROC" && !pattern.includes("yyy")) return null;
+  if (calendar === "GREGORIAN" && pattern.includes("yyy")) return null;
   const year = (fields.yyyy ?? fields.yyy) + (calendar === "ROC" ? 1911 : 0);
   const month = fields.MM, day = fields.dd;
   if (!year || year < 100 || year > 9999 || !month || !day) return null;
@@ -103,7 +105,7 @@ function DatasetDateInput({ parameter, value, onChange }: {
   onChange: (value: string) => void;
 }) {
   const [draft, setDraft] = useState(() => displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar));
-  useEffect(() => setDraft(displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar)), [value, parameter.dateFormat]);
+  useEffect(() => setDraft(displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar)), [value, parameter.dateFormat, parameter.dateCalendar]);
   const valid = parseDateParameter(draft, parameter.dateFormat, parameter.dateCalendar) !== null;
   return (
     <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
