@@ -129,7 +129,10 @@ export function DatasetParametersEditor({
         return [parameter.name, null] as const;
       }
     })).then(entries => {
-      if (!cancelled) setServerPreview(Object.fromEntries(entries.filter(([, v]) => v !== null)));
+      if (!cancelled) {
+        const validEntries = entries.filter((entry): entry is readonly [string, { inputValue: string | null; outputValue: string | null }] => entry[1] !== null);
+        setServerPreview(Object.fromEntries(validEntries));
+      }
     });
     return () => { cancelled = true; };
   }, [accessToken, parameters]);
