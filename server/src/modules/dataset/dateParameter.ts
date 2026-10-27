@@ -164,7 +164,7 @@ export function resolveDateForRuntimeInput(
   if (dataType === "DATE") {
     return formatParameterDate(date, "GREGORIAN", "yyyy-MM-dd");
   }
-  return formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm");
+  return formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm:ss");
 }
 
 export function previewDateParameter(
@@ -179,7 +179,7 @@ export function previewDateParameter(
   const date = parseCanonicalDate(value, dataType === "DATETIME");
   const inputValue = dataType === "DATE"
     ? formatParameterDate(date, "GREGORIAN", "yyyy-MM-dd")
-    : formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm");
+    : formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm:ss");
 
   const outputValue = outputMode === "STRING"
     ? formatParameterDate(date, calendar, format || defaultDateFormat(dataType, calendar))
