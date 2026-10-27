@@ -46,6 +46,7 @@ function fixture() {
         state.queries.push(text);
         if (state.failOn && text.includes(state.failOn))
           throw new Error("synthetic password PIN token SQL");
+        if (text.includes("sp_getapplock")) return { recordset: [{ GateResult: 0 }] };
         if (text.startsWith("SELECT PinLength"))
           return { recordset: [{ PinLength: state.policy }] };
         if (text.startsWith("SELECT IsActive"))
@@ -124,7 +125,7 @@ test("current policy is checked under lock; raced policy cannot accept old-lengt
   );
   assert.equal(f.state.commits, 0);
   assert.equal(f.state.pin.PinHash, "hash:804297");
-  assert.ok(f.state.queries[0]!.includes("UPDLOCK,HOLDLOCK"));
+  assert.ok(f.state.queries[0]!.includes("sp_getapplock") && f.state.queries[1]!.includes("UPDLOCK,HOLDLOCK"));
 });
 test("same/weak PIN is rejected and stale password/token version cannot update PIN", async () => {
   const f = fixture();
@@ -169,13 +170,22 @@ test("revocation increments version and disables the PIN without enabling sign-i
 });
 test("session/audit-adjacent failures rollback the PIN mutation and preserve original errors", async () => {
   const f = fixture();
-  f.state.failOn = "SharedWorkstationSession";
+  f.state.failOn = "UPDATE uqp.SharedWorkstationSession SET RevokedAtUtc";
   await assert.rejects(
     f.service.enrollQuickPin(1, "synthetic-correct-password", "739204"),
   );
   assert.equal(f.state.pin.PinVersion, 1);
   assert.equal(f.state.commits, 0);
   assert.equal(f.state.rollbacks, 1);
+});
+
+test("926 legacy guard denies PIN mutation before policy/user/PIN locks", async () => {
+  const f = fixture();
+  f.state.failOn = "LEGACY_WRITER_926_INTEGRATION_REQUIRED";
+  await assert.rejects(f.service.enrollQuickPin(1, "synthetic-correct-password", "739204"));
+  assert.equal(f.state.pin.PinVersion, 1);
+  assert.equal(f.state.commits, 0); assert.equal(f.state.rollbacks, 1);
+  assert.equal(f.state.queries.length, 1);
 });
 test("invalid policy fails closed instead of accepting a default length", async () => {
   const f = fixture();

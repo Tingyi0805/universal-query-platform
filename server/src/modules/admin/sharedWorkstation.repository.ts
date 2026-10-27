@@ -1,3 +1,4 @@
+import { legacyWorkstationWriterFenceSql } from "../auth/workstationLegacyWriterFence.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -47,6 +48,7 @@ export async function updateSharedWorkstation(id: number, name: string, active: 
     .input("name", sql.NVarChar(200), name).input("active", sql.Bit, active).query(`
       SET XACT_ABORT ON;
       BEGIN TRANSACTION;
+      ${legacyWorkstationWriterFenceSql}
       UPDATE uqp.SharedWorkstation SET DisplayName=@name, IsActive=@active,
         PinLoginEnabled=0, CredentialVersion=CredentialVersion+1,
         UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@id;
@@ -77,8 +79,9 @@ export async function setWorkstationUsers(workstationId: number, userIds: number
   const pool = await getPlatformDbPool();
   if (!pool) return "NOT_CONFIGURED";
   const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
+    await new sql.Request(transaction).query(legacyWorkstationWriterFenceSql);
     const lock = await new sql.Request(transaction).input("id", sql.BigInt, workstationId)
       .query("SELECT * FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
     if (lock.recordset.length === 0 || lock.recordset[0].RetiredAtUtc) { await transaction.rollback(); return "NOT_FOUND"; }

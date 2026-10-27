@@ -14,6 +14,20 @@ export const workstationRevocationWriterInventory = Object.freeze([
   { id: "LEGACY_WORKERS_AND_DBA", source: null, state: "UNKNOWN" },
 ] as const);
 
+/** Named paths, source-verifiable; a denial fence is NOT a converted 926 writer. */
+export const workstationNamedWriterCoverage = Object.freeze([
+  { source: "server/src/modules/admin/workstationCredential.repository.ts", functions: ["issueDeviceCredential", "revokeDeviceCredential"], coverage: "COMMON_GATE_DENY_ON_926" },
+  { source: "server/src/modules/admin/workstationManagement.repository.ts", functions: ["metadata", "retire", "removeUnused", "saveGrants", "saveAudience", "bindDevice"], coverage: "COMMON_GATE_DENY_ON_926" },
+  { source: "server/src/modules/admin/sharedWorkstation.repository.ts", functions: ["updateSharedWorkstation", "setWorkstationUsers"], coverage: "COMMON_GATE_DENY_ON_926" },
+  { source: "server/src/modules/auth/quickPin.service.ts", functions: ["mutate"], coverage: "COMMON_GATE_DENY_ON_926" },
+  { source: "server/src/modules/admin/quickPinPolicy.repository.ts", functions: ["updateQuickPinPolicy"], coverage: "COMMON_GATE_DENY_ON_926" },
+  { source: "server/src/modules/auth/auth.repository.ts", functions: ["updateOwnLocalPassword"], coverage: "GAP_TOKEN_INVALIDATION_NOT_ATOMIC_SIDECARS" },
+  { source: "server/src/modules/admin/admin.repository.ts", functions: ["updateUser", "resetUserPassword", "updateRole", "deleteUser", "revokeUserSessions"], coverage: "GAP_TOKEN_ROLE_OR_DELETE" },
+  { source: "server/src/modules/auth/workstationSessionSql.repository.ts", functions: ["compareAndSwapRenewal", "revokeDevice"], coverage: "ISOLATED_ONLY_DEPENDENT_REVOCATION_GAP" },
+  { source: "server/src/modules/auth/workstationOperatorSql.repository.ts", functions: ["recordPinFailure", "compareAndSwapSwitch"], coverage: "ISOLATED_ONLY_RUNTIME_BLOCKED" },
+  { source: "server/src/modules/auth/workstationRevocationSqlAdapter.ts", functions: ["revokeCredentialAndSessions"], coverage: "ISOLATED_ONLY_SQL_NOT_RUN" },
+] as const);
+
 export type RevocationWriterEvidence = Readonly<{
   writerId: typeof workstationRevocationWriterInventory[number]["id"];
   transactionOwnerProven: boolean;

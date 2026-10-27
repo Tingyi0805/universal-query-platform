@@ -22,7 +22,7 @@ test("user, role and permission mutations lack the new 926 shared session gate",
   assert.doesNotMatch(code, /SharedWorkstationOperatorState|SharedWorkstationDeviceSession|uqp\.workstation\.session\.security/u);
 });
 
-test("legacy workstation status and grants invalidate old sessions without 926 gate", () => {
+test("legacy workstation status and grants retain old invalidation behind the transitional guard", () => {
   const code = source("WORKSTATION_STATE");
   for (const marker of [
     "export async function updateSharedWorkstation(",
@@ -30,10 +30,11 @@ test("legacy workstation status and grants invalidate old sessions without 926 g
     "UPDATE uqp.SharedWorkstationSession SET RevokedAtUtc",
     "DELETE FROM uqp.SharedWorkstationUser",
   ]) assert.ok(code.includes(marker), marker);
+  assert.match(code, /legacyWorkstationWriterFenceSql/u);
   assert.doesNotMatch(code, /SharedWorkstationOperatorState|SharedWorkstationDeviceSession|uqp\.workstation\.session\.security/u);
 });
 
-test("workstation management has a distinct config gate, not the H0 session gate", () => {
+test("workstation management takes the H0 legacy denial fence before its config gate", () => {
   const code = source("WORKSTATION_GRANTS");
   for (const marker of [
     "uqp.workstation.config", "UPDATE uqp.SharedWorkstationCredential SET IsRevoked=1",
@@ -41,5 +42,8 @@ test("workstation management has a distinct config gate, not the H0 session gate
     "DELETE FROM uqp.SharedWorkstationAudience",
     "WorkstationAudienceMember",
   ]) assert.ok(code.includes(marker), marker);
+  assert.match(code, /await deps.request\(tx\).query\(legacyWorkstationWriterFenceSql\)/u);
+  assert.ok(code.indexOf("await deps.request(tx).query(legacyWorkstationWriterFenceSql)") <
+    code.indexOf("EXEC @lock=sys.sp_getapplock"));
   assert.doesNotMatch(code, /SharedWorkstationOperatorState|SharedWorkstationDeviceSession|uqp\.workstation\.session\.security/u);
 });

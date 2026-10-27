@@ -1,3 +1,4 @@
+import { legacyWorkstationWriterFenceSql } from "../auth/workstationLegacyWriterFence.js";
 import { randomUUID } from "node:crypto";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
@@ -25,8 +26,9 @@ export async function issueDeviceCredential(workstationId: number):
   const secret = createDeviceSecret();
   const id = randomUUID();
   const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
+    await new sql.Request(transaction).query(legacyWorkstationWriterFenceSql);
     const workstation = await new sql.Request(transaction).input("id", sql.BigInt, workstationId).query(`
       SELECT * FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK)
       WHERE Id=@id AND IsActive=1
@@ -50,8 +52,9 @@ export async function revokeDeviceCredential(workstationId: number, credentialId
   const pool = await getPlatformDbPool();
   if (!pool) return "NOT_CONFIGURED";
   const transaction = new sql.Transaction(pool);
-  await transaction.begin();
+  await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
+    await new sql.Request(transaction).query(legacyWorkstationWriterFenceSql);
     const result = await new sql.Request(transaction)
       .input("workstationId", sql.BigInt, workstationId)
       .input("credentialId", sql.UniqueIdentifier, credentialId).query(`

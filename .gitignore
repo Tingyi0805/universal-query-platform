@@ -14,3 +14,4 @@ Thumbs.db
 *.tsbuildinfo
 client/test-results/
 client/playwright-report/
+tools/sqlserver-acceptance/h0-926/last-report.json

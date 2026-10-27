@@ -144,17 +144,23 @@ ORDER BY e.TableName,e.Ordinal;
 /* R3: actual key order, includes, filters and disabled state. */
 SELECT N'R3_INDEXES' AS ResultSet,t.name AS TableName,i.name AS IndexName,i.is_unique,
   i.is_primary_key,i.is_disabled,i.has_filter,i.filter_definition,
-  STRING_AGG(CASE WHEN ic.is_included_column=0 THEN c.name END,N',')
-    WITHIN GROUP (ORDER BY CASE WHEN ic.is_included_column=0 THEN ic.key_ordinal ELSE 32767 END) AS KeyColumns,
-  STRING_AGG(CASE WHEN ic.is_included_column=1 THEN c.name END,N',')
-    WITHIN GROUP (ORDER BY CASE WHEN ic.is_included_column=1 THEN ic.index_column_id ELSE 32767 END) AS IncludeColumns
+  k.KeyColumns,n.IncludeColumns
 FROM sys.tables AS t
 JOIN sys.indexes AS i ON i.object_id=t.object_id AND i.index_id>0
-LEFT JOIN sys.index_columns AS ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
-LEFT JOIN sys.columns AS c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+OUTER APPLY (
+  SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),c.name),N',')
+    WITHIN GROUP (ORDER BY ic.key_ordinal) AS KeyColumns
+  FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+  WHERE ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.is_included_column=0
+) k
+OUTER APPLY (
+  SELECT STRING_AGG(CONVERT(NVARCHAR(MAX),c.name),N',')
+    WITHIN GROUP (ORDER BY ic.index_column_id) AS IncludeColumns
+  FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+  WHERE ic.object_id=i.object_id AND ic.index_id=i.index_id AND ic.is_included_column=1
+) n
 WHERE t.schema_id=SCHEMA_ID(N'uqp')
   AND (t.name LIKE N'SharedWorkstation%' OR t.name=N'UserQuickPinSecurityBinding')
-GROUP BY t.name,i.name,i.is_unique,i.is_primary_key,i.is_disabled,i.has_filter,i.filter_definition
 ORDER BY t.name,i.name;
 
 /* R4: every candidate FK must remain enabled, trusted and NO ACTION. */

@@ -155,6 +155,19 @@ test("disable invalidates credentials/sessions and bound playback tokens in one 
   assert.equal(f.state.commits, 1);
   assert.deepEqual(f.state.database.audits, ["SHARED_WORKSTATION_UPDATED"]);
 });
+
+test("926 legacy denial or common-gate failure rolls back before config locks and mutation", async () => {
+  const f = fixture();
+  const before = structuredClone(f.state.database);
+  f.state.failOn = "LEGACY_WRITER_926_INTEGRATION_REQUIRED";
+  await assert.rejects(f.repo.metadata(1, {
+    displayName: "synthetic", purposeCode: "SHARED_QUERY", sortOrder: 1,
+    isActive: false, expectedVersion: 4,
+  }, 5));
+  assert.deepEqual(f.state.database, before);
+  assert.equal(f.state.commits, 0); assert.equal(f.state.rollbacks, 1);
+  assert.ok(!f.state.queries.some(q => q.text.includes("uqp.workstation.config")));
+});
 test("retirement is terminal; stale and retired mutation attempts cannot reactivate credentials", async () => {
   const f = fixture();
   await f.repo.retire(1, 4, 5);

@@ -1,3 +1,4 @@
+import { legacyWorkstationWriterFenceSql } from "./workstationLegacyWriterFence.js";
 import bcrypt from "bcryptjs";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
@@ -50,6 +51,7 @@ export function createQuickPinService(deps: QuickPinDependencies) {
     const pool=await deps.getPool(); if(!pool) return "NOT_CONFIGURED";
     const tx=deps.transaction(pool); await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     try {
+      await deps.request(tx).query(legacyWorkstationWriterFenceSql);
       // Policy lock precedes PIN row locks, matching the policy update transaction.
       const policy=await deps.request(tx).query("SELECT PinLength FROM uqp.QuickPinPolicy WITH (UPDLOCK,HOLDLOCK) WHERE Id=1");
       const length=Number(policy.recordset[0]?.PinLength);
