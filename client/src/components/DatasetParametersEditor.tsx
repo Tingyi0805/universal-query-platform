@@ -84,56 +84,6 @@ function defaultFixedValue(dataType: ParameterRow["dataType"]) {
   return "";
 }
 
-function previewDate(parameter: ParameterRow): { source: string; output: string } {
-  if (!isDateParameter(parameter)) return { source: "", output: "" };
-
-  let date: Date;
-  const value = parameter.defaultValue ?? "";
-  if (value === "$NOW") {
-    date = new Date();
-  } else if (value === "$TODAY_START" || value === "$TODAY_END") {
-    date = new Date(`${isoToday()}T${value === "$TODAY_END" ? "23:59:59" : "00:00:00"}`);
-  } else if (value === "$TODAY" || /^\$TODAY[+-]\d+$/.test(value)) {
-    date = new Date(`${isoToday(dateOffset(value))}T00:00:00`);
-  } else {
-    date = new Date(value || defaultFixedValue(parameter.dataType));
-  }
-
-  if (Number.isNaN(date.getTime())) return { source: "格式不正確", output: "無法預覽" };
-
-  const gregorianYear = date.getFullYear();
-  const year = parameter.dateCalendar === "ROC" ? gregorianYear - 1911 : gregorianYear;
-  const values: Record<string, string> = {
-    yyyy: String(year).padStart(4, "0"),
-    yyy: String(year).padStart(3, "0"),
-    yy: String(year).slice(-2).padStart(2, "0"),
-    MM: String(date.getMonth() + 1).padStart(2, "0"),
-    M: String(date.getMonth() + 1),
-    dd: String(date.getDate()).padStart(2, "0"),
-    d: String(date.getDate()),
-    HH: String(date.getHours()).padStart(2, "0"),
-    H: String(date.getHours()),
-    mm: String(date.getMinutes()).padStart(2, "0"),
-    m: String(date.getMinutes()),
-    ss: String(date.getSeconds()).padStart(2, "0"),
-    s: String(date.getSeconds()),
-  };
-  const format = parameter.dateFormat || (
-    parameter.dataType === "DATETIME"
-      ? parameter.dateCalendar === "ROC" ? "yyy/MM/dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss"
-      : parameter.dateCalendar === "ROC" ? "yyy/MM/dd" : "yyyy-MM-dd"
-  );
-  const output = format.replace(/yyyy|yyy|yy|MM|M|dd|d|HH|H|mm|m|ss|s/g, (token) => values[token] ?? token);
-  const source = parameter.dataType === "DATE"
-    ? `${gregorianYear}-${values.MM}-${values.dd}`
-    : `${gregorianYear}-${values.MM}-${values.dd} ${values.HH}:${values.mm}:${values.ss}`;
-
-  return {
-    source,
-    output: parameter.dateOutputMode === "STRING" ? output : `${source}（原生日期）`,
-  };
-}
-
 export function DatasetParametersEditor({
   datasetId,
   datasets,
