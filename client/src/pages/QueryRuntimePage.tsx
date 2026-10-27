@@ -84,6 +84,43 @@ function parseDateParameter(text: string, format: string | null): string | null 
   return y + "-" + m + "-" + d;
 }
 
+function DatasetDateInput({ parameter, value, onChange }: {
+  parameter: Parameter;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(() => displayDateParameter(value, parameter.dateFormat));
+  useEffect(() => setDraft(displayDateParameter(value, parameter.dateFormat)), [value, parameter.dateFormat]);
+  const valid = parseDateParameter(draft, parameter.dateFormat) !== null;
+  return (
+    <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <input
+        aria-label={parameter.label + "（" + (parameter.dateFormat || "yyyy-MM-dd") + "）"}
+        aria-invalid={!valid}
+        type="text"
+        value={draft}
+        placeholder={parameter.dateFormat || "yyyy-MM-dd"}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          const parsed = parseDateParameter(next, parameter.dateFormat);
+          if (parsed !== null) onChange(parsed);
+        }}
+        onBlur={() => {
+          if (!valid) setDraft(displayDateParameter(value, parameter.dateFormat));
+        }}
+      />
+      <input
+        aria-label={parameter.label + " 日曆選擇"}
+        type="date"
+        value={value.slice(0, 10)}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: 44, minWidth: 44 }}
+      />
+    </span>
+  );
+}
+
 function formatValue(value: unknown, format: string | null): string {
   if (value == null) return "";
   if (!format) return String(value);
@@ -572,28 +609,8 @@ export function QueryRuntimePage() {
     }
 
     if (parameter.controlType === "DATE") {
-      const canonical = String(value ?? "");
-      return (
-        <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input
-            aria-label={parameter.label + "（" + (parameter.dateFormat || "yyyy-MM-dd") + "）"}
-            type="text"
-            value={displayDateParameter(canonical, parameter.dateFormat)}
-            placeholder={parameter.dateFormat || "yyyy-MM-dd"}
-            onChange={(e) => {
-              const parsed = parseDateParameter(e.target.value, parameter.dateFormat);
-              if (parsed !== null) setValues({ ...values, [parameter.name]: parsed });
-            }}
-          />
-          <input
-            aria-label={parameter.label + " 日曆選擇"}
-            type="date"
-            value={canonical.slice(0, 10)}
-            onChange={(e) => setValues({ ...values, [parameter.name]: e.target.value })}
-            style={{ width: 44, minWidth: 44 }}
-          />
-        </span>
-      );
+      return <DatasetDateInput parameter={parameter} value={String(value ?? "")}
+        onChange={(next) => setValues((previous) => ({ ...previous, [parameter.name]: next }))} />;
     }
 
     const type =
