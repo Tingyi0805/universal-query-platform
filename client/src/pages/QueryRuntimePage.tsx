@@ -60,6 +60,82 @@ type QueryResult = {
   elapsedMs: number;
 };
 
+function displayDateParameter(value: string, format: string | null, calendar: Parameter["dateCalendar"]): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.slice(0, 10));
+  if (!match) return value;
+  const [, year, month, day] = match;
+  const displayedYear = String(Number(year) - (calendar === "ROC" ? 1911 : 0));
+  const pattern = format || (calendar === "ROC" ? "yyy/MM/dd" : "yyyy-MM-dd");
+  return pattern.replace(/yyyy|yyy|MM|M|dd|d/g, token => ({
+    yyyy: displayedYear.padStart(4, "0"), yyy: displayedYear.padStart(3, "0"),
+    MM: month, M: String(Number(month)), dd: day, d: String(Number(day)),
+  } as Record<string, string>)[token]);
+}
+
+function parseDateParameter(text: string, format: string | null, calendar: Parameter["dateCalendar"]): string | null {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const pattern = format || (calendar === "ROC" ? "yyy/MM/dd" : "yyyy-MM-dd");
+  const supported = ["yyyyMMdd", "yyyy-MM-dd", "yyyy/MM/dd", "dd/MM/yyyy", "MM/dd/yyyy",
+    "yyy/MM/dd", "yyy-MM-dd", "yyyMMdd"];
+  if (!supported.includes(pattern)) return null;
+  const groups: string[] = pattern.match(/yyyy|yyy|MM|dd/g) ?? [];
+  const separator = pattern.includes("/") ? "/" : pattern.includes("-") ? "-" : "";
+  const chunks = separator ? trimmed.split(separator) : trimmed.match(pattern.startsWith("yyy") && !pattern.startsWith("yyyy") ? /^(\d{3})(\d{2})(\d{2})$/ : /^(\d{4})(\d{2})(\d{2})$/)?.slice(1);
+  if (!chunks || chunks.length !== 3) return null;
+  const fields: Record<string, number> = {};
+  for (let i = 0; i < 3; i++) {
+    const expected = groups[i] === "yyy" ? 3 : groups[i] === "yyyy" ? 4 : 2;
+    if (!new RegExp("^\\d{" + expected + "}$").test(chunks[i])) return null;
+    fields[groups[i]] = Number(chunks[i]);
+  }
+  if (calendar === "ROC" && !groups.includes("yyy")) return null;
+  if (calendar === "GREGORIAN" && !groups.includes("yyyy")) return null;
+  const year = (fields.yyyy ?? fields.yyy) + (calendar === "ROC" ? 1911 : 0);
+  const month = fields.MM, day = fields.dd;
+  if (!year || year < 100 || year > 9999 || !month || !day) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month || date.getUTCDate() !== day) return null;
+  return String(year).padStart(4, "0") + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+}
+
+function DatasetDateInput({ parameter, value, onChange }: {
+  parameter: Parameter;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  const [draft, setDraft] = useState(() => displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar));
+  useEffect(() => setDraft(displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar)), [value, parameter.dateFormat, parameter.dateCalendar]);
+  const valid = parseDateParameter(draft, parameter.dateFormat, parameter.dateCalendar) !== null;
+  return (
+    <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <input
+        aria-label={parameter.label + "（" + (parameter.dateFormat || "yyyy-MM-dd") + "）"}
+        aria-invalid={!valid}
+        type="text"
+        value={draft}
+        placeholder={parameter.dateFormat || "yyyy-MM-dd"}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          const parsed = parseDateParameter(next, parameter.dateFormat, parameter.dateCalendar);
+          if (parsed !== null) onChange(parsed);
+        }}
+        onBlur={() => {
+          if (!valid) setDraft(displayDateParameter(value, parameter.dateFormat, parameter.dateCalendar));
+        }}
+      />
+      <input
+        aria-label={parameter.label + " 日曆選擇"}
+        type="date"
+        value={value.slice(0, 10)}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ width: 44, minWidth: 44 }}
+      />
+    </span>
+  );
+}
+
 function formatValue(value: unknown, format: string | null): string {
   if (value == null) return "";
   if (!format) return String(value);
@@ -547,15 +623,21 @@ export function QueryRuntimePage() {
       );
     }
 
+    if (parameter.controlType === "DATE") {
+      return <DatasetDateInput parameter={parameter} value={String(value ?? "")}
+        onChange={(next) => setValues((previous) => ({ ...previous, [parameter.name]: next }))} />;
+    }
+
     const type =
       parameter.controlType === "NUMBER" ? "number" :
-      parameter.controlType === "DATE" ? "date" :
+
       parameter.controlType === "DATETIME" ? "datetime-local" :
       "text";
 
     return (
       <input
         type={type}
+        step={type === "datetime-local" ? 1 : undefined}
         value={String(value ?? "")}
         placeholder={parameter.placeholder ?? ""}
         onChange={(e) => setValues({ ...values, [parameter.name]: e.target.value })}

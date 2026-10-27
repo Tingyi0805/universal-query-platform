@@ -1,3 +1,6 @@
+import { coerceRuntimeParameters } from "../../dataset/parameter.service.js";
+import { syntheticParameter } from "../../dataset/parameterTestFixture.js";
+import { compileQuery } from "../../../query/queryCompiler.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import oracledb from "oracledb";
@@ -33,4 +36,24 @@ test("Oracle metadata version gate admits 11.2 only in Thick mode", () => {
   assert.equal(supportsOracleDescriptionServer(true, 1102000000), false);
   assert.equal(supportsOracleDescriptionServer(true, 1201000000), true);
   assert.equal(supportsOracleDescriptionServer(false, NaN), false);
+});
+
+test("Oracle driver boundary preserves canonical DATETIME Dates and formatted ROC strings", async t => {
+  const definitions = [
+    { ...syntheticParameter, name: "SDATE", dataType: "DATETIME" as const, controlType: "DATETIME" as const, dateOutputMode: "NATIVE" as const },
+    { ...syntheticParameter, name: "EDATE", dateOutputMode: "STRING" as const },
+  ];
+  const values = coerceRuntimeParameters(definitions, { SDATE: "2026-10-27T11:26:47", EDATE: "2026-10-28" });
+  const compiled = compileQuery("SELECT 1 FROM DUAL WHERE SYNTHETIC BETWEEN {{SDATE}} AND {{EDATE}}", "ORACLE", values);
+  let closed = 0, calls = 0;
+  t.mock.method(oracledb, "getConnection", async () => ({ execute: async (sql: string, binds: Record<string, unknown>) => {
+    calls++;
+    assert.match(sql, /BETWEEN :SDATE AND :EDATE/);
+    assert.ok(binds.SDATE instanceof Date);
+    assert.equal(binds.SDATE.toISOString(), "2026-10-27T11:26:47.000Z");
+    assert.equal(binds.EDATE, "1151028");
+    return { rows: [], metaData: [] };
+  }, close: async () => { closed++; } }));
+  await new OracleAdapter().executeQuery(config, { ...compiled, timeoutSec: 1, maxRows: 1 });
+  assert.equal(calls, 1); assert.equal(closed, 1);
 });

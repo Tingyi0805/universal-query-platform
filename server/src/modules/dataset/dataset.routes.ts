@@ -30,7 +30,7 @@ import {
 } from "./parameter.repository.js";
 import { createDatasetParameterRouter } from "./parameter.routes.js";
 import { withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
-import { isDynamicDateExpression } from "./dateParameter.js";
+import { isDynamicDateExpression, previewDateParameter } from "./dateParameter.js";
 import {
   listDatasetVersions,
   restoreDatasetVersion,
@@ -218,6 +218,26 @@ function sendDatasetExecutionError(res: any, error: unknown): boolean {
 export const datasetRouter = Router();
 datasetRouter.use(authenticateJwt, requirePermission("DESIGN_QUERY"));
 datasetRouter.use(createDatasetParameterRouter());
+
+datasetRouter.post("/date-parameter-preview", (req, res) => {
+  const body = z.object({
+    value: z.string().max(1000).nullable(),
+    dataType: z.enum(["DATE", "DATETIME"]),
+    dateOutputMode: z.enum(["NATIVE", "STRING"]),
+    dateCalendar: z.enum(["GREGORIAN", "ROC"]),
+    dateFormat: z.string().max(100).nullable(),
+  }).safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "日期預覽參數不正確。" } });
+    return;
+  }
+  try {
+    res.json(previewDateParameter(body.data.value, body.data.dataType,
+      body.data.dateOutputMode, body.data.dateCalendar, body.data.dateFormat));
+  } catch {
+    res.status(400).json({ error: { code: "PARAMETER_DATE_PREVIEW_INVALID", message: "日期預覽失敗。" } });
+  }
+});
 
 datasetRouter.get("/datasource-options", async (_req, res, next) => {
   try { res.json({ dataSources: await listDesignerDataSources() }); }

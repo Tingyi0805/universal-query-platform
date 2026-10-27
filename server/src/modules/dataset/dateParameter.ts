@@ -96,10 +96,25 @@ export function parseCanonicalDate(value: unknown, includeTime: boolean): Date {
   if (!includeTime) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error("PARAMETER_DATE_INVALID");
     const date = new Date(`${text}T00:00:00.000Z`);
-    if (Number.isNaN(date.getTime())) throw new Error("PARAMETER_DATE_INVALID");
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== text)
+      throw new Error("PARAMETER_DATE_INVALID");
     return date;
   }
 
+  // DATETIME without an offset is a canonical platform wall-clock value.
+  // Never let the host machine's local timezone reinterpret it.
+  const wallClock = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(text);
+  if (wallClock) {
+    const [, yyyy, MM, dd, HH, mm, ss = "00"] = wallClock;
+    const year = Number(yyyy), month = Number(MM), day = Number(dd);
+    const hour = Number(HH), minute = Number(mm), second = Number(ss);
+    const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month ||
+        date.getUTCDate() !== day || date.getUTCHours() !== hour ||
+        date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second)
+      throw new Error("PARAMETER_DATETIME_INVALID");
+    return date;
+  }
   const date = new Date(text);
   if (Number.isNaN(date.getTime())) throw new Error("PARAMETER_DATETIME_INVALID");
   return date;
@@ -164,7 +179,7 @@ export function resolveDateForRuntimeInput(
   if (dataType === "DATE") {
     return formatParameterDate(date, "GREGORIAN", "yyyy-MM-dd");
   }
-  return formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm");
+  return formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm:ss");
 }
 
 export function previewDateParameter(
@@ -179,7 +194,7 @@ export function previewDateParameter(
   const date = parseCanonicalDate(value, dataType === "DATETIME");
   const inputValue = dataType === "DATE"
     ? formatParameterDate(date, "GREGORIAN", "yyyy-MM-dd")
-    : formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm");
+    : formatParameterDate(date, "GREGORIAN", "yyyy-MM-ddTHH:mm:ss");
 
   const outputValue = outputMode === "STRING"
     ? formatParameterDate(date, calendar, format || defaultDateFormat(dataType, calendar))

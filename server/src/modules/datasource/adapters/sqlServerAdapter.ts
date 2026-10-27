@@ -86,7 +86,10 @@ export class SqlServerAdapter implements DataSourceAdapter {
       const request = pool.request();
 
       for (const [name, value] of Object.entries(input.binds)) {
-        request.input(name, value as any);
+        // Inferred mssql DateTime rounds 23:59:59.999 into the next day.
+        // Keep canonical native dates precise; formatted STRING dates stay strings.
+        if (value instanceof Date) request.input(name, sql.DateTime2(7), value);
+        else request.input(name, value as any);
       }
 
       const fetchRows = input.maxRows + 1;

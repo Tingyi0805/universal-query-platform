@@ -297,3 +297,23 @@ test("plan enforces an aggregate parameter bound before preparing a Request", ()
     values: Object.fromEntries(names.map(name => [name, 1])) };
   assert.throws(() => compileSqlServerTypedBindPlan(input), /TYPED_BIND_LIST_UNSUPPORTED/);
 });
+
+test("canonical runtime dates retain native DATE/DATETIME2 typed contracts; ROC strings remain NVARCHAR", () => {
+  for (const [dataType, nativeType, text] of [
+    ["DATE", { type: "DATE" }, "2026-10-27"],
+    ["DATETIME", { type: "DATETIME2" }, "2026-10-27T11:26:47"],
+  ] as const) {
+    const definition = { name: "P", dataType, controlType: dataType, isRequired: true, defaultValue: null,
+      dateOutputMode: "NATIVE", dateCalendar: "ROC", dateFormat: "yyyMMdd" } as DatasetParameterRecord;
+    const values = coerceRuntimeParameters([definition], { P: text });
+    const { runtime } = prepare({ ...single(nativeType, values.P), values });
+    assert.equal(runtime.parameters.P.type, dataType === "DATE" ? sql.Date : sql.DateTime2);
+    assert.equal(runtime.parameters.P.value.toISOString(), dataType === "DATE" ? "2026-10-27T00:00:00.000Z" : "2026-10-27T11:26:47.000Z");
+    const stringValues = coerceRuntimeParameters([{ ...definition, dateOutputMode: "STRING" }], { P: text });
+    const input = { ...single({ type: "NVARCHAR", length: 20 }, stringValues.P),
+      definitions: [{ ...definition, dateOutputMode: "STRING" as const }], values: stringValues };
+    assert.equal(prepare(input).runtime.parameters.P.value, "1151027");
+    assert.throws(() => compileSqlServerTypedBindPlan({ ...input,
+      declarations: single(nativeType, null).declarations }), /TYPED_BIND_DEFINITION_MISMATCH/);
+  }
+});
