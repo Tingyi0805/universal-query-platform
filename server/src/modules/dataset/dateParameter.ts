@@ -101,6 +101,20 @@ export function parseCanonicalDate(value: unknown, includeTime: boolean): Date {
     return date;
   }
 
+  // DATETIME without an offset is a canonical platform wall-clock value.
+  // Never let the host machine's local timezone reinterpret it.
+  const wallClock = /^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})(?::(\\d{2}))?$/.exec(text);
+  if (wallClock) {
+    const [, yyyy, MM, dd, HH, mm, ss = "00"] = wallClock;
+    const year = Number(yyyy), month = Number(MM), day = Number(dd);
+    const hour = Number(HH), minute = Number(mm), second = Number(ss);
+    const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+    if (date.getUTCFullYear() !== year || date.getUTCMonth() + 1 !== month ||
+        date.getUTCDate() !== day || date.getUTCHours() !== hour ||
+        date.getUTCMinutes() !== minute || date.getUTCSeconds() !== second)
+      throw new Error("PARAMETER_DATETIME_INVALID");
+    return date;
+  }
   const date = new Date(text);
   if (Number.isNaN(date.getTime())) throw new Error("PARAMETER_DATETIME_INVALID");
   return date;
