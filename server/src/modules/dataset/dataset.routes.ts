@@ -372,7 +372,7 @@ datasetRouter.put("/:id", async (req, res, next) => {
       return;
     }
     assertSelectOnlySql(parsed.data.sqlText);
-    await updateDataset(id.data, parsed.data, req.authUser!.id);
+    await updateDataset(id.data, parsed.data, req.authUser!.id, auditRequestContext(req));
     const parameterNames = extractParameterNames(parsed.data.sqlText);
     res.json({ status: "OK", parameterNames });
   } catch (error) {
