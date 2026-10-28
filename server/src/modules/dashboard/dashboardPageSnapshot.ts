@@ -73,3 +73,8 @@ export function getDashboardPageSnapshot(id: string, deviceId: number, dashboard
   }
   return item.deviceId === deviceId && item.dashboardId === dashboardId ? item : null;
 }
+
+/** Evict only the authenticated device's process-local patient snapshots. */
+export function purgeDashboardDeviceSnapshots(dashboardId: number, deviceId: number) {
+  for (const [id,snapshot] of snapshots) if (snapshot.dashboardId===dashboardId && snapshot.deviceId===deviceId) snapshots.delete(id);
+}

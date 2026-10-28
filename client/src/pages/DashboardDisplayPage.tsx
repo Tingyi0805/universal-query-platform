@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
 import { dashboardFullscreenActive, dashboardFullscreenSupported, requestDashboardFullscreen } from "../dashboard/fullscreen";
@@ -123,15 +124,22 @@ export function DashboardDisplayPage() {
   const queryPreview = searchParams.get("queryPreview") === "1";
   const [previewAuthorized,setPreviewAuthorized] = useState(true);
   const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
-  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode ? readDashboardToken(dashboardId) : null);
+  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode && !searchParams.has("deviceId") ? readDashboardToken(dashboardId) : null);
+  const intendedDeviceId = Number(searchParams.get("deviceId"));
+  const persistentCapable = deviceMode && window.location.protocol === "https:" && Number.isSafeInteger(intendedDeviceId) && intendedDeviceId > 0;
+  const [restoringDevice,setRestoringDevice] = useState(false);
+  const [persistDevice, setPersistDevice] = useState(persistentCapable);
+  const cookieSession = deviceToken === "COOKIE_SESSION";
+  const deviceHeaders: Record<string,string> = cookieSession ? {"X-UQP-Kiosk":"1", "X-UQP-Device-Id":String(intendedDeviceId)} : {"X-Dashboard-Device-Token":deviceToken ?? "", ...(Number.isSafeInteger(intendedDeviceId) && intendedDeviceId>0 ? {"X-UQP-Expected-Device-Id":String(intendedDeviceId)} : {})};
+  const deviceLeaseDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activationInput, setActivationInput] = useState("");
   const [activationBusy, setActivationBusy] = useState(false);
   const activationAttempt = useRef(0);
   const [activationError, setActivationError] = useState("");
-  const [activationRequired, setActivationRequired] = useState(() => deviceMode && !readDashboardToken(dashboardId));
+  const [activationRequired, setActivationRequired] = useState(() => deviceMode && (searchParams.has("deviceId") || !readDashboardToken(dashboardId)));
   const handoffRequestId = useRef(dashboardHandoffNonce());
   useEffect(()=>{
-    if (!deviceMode || readDashboardToken(dashboardId)) return;
+    if (!deviceMode || deviceToken || readDashboardToken(dashboardId)) return;
     // Keep one document nonce across StrictMode effect setup/cleanup replay.
     if (!window.opener && searchParams.get("handoff") !== "1") return;
     return requestDashboardTokenHandoff(dashboardId, token => {
@@ -178,6 +186,53 @@ export function DashboardDisplayPage() {
   const [fullscreenNeedsClick, setFullscreenNeedsClick] = useState(false);
   const [fullscreenActive,setFullscreenActive]=useState(()=>dashboardFullscreenActive(document));
   const fullscreenSupported=dashboardFullscreenSupported(document);
+
+  const clearDevicePlayback = useCallback((message: string) => {
+    if (deviceLeaseDeadline.current !== null) {clearTimeout(deviceLeaseDeadline.current);deviceLeaseDeadline.current=null;}
+    ++latestDataRequest.current; ++latestLayoutRequest.current; ++supplementalRequestGeneration.current;
+    pageSnapshotId.current = null; pageSnapshotCreatedAt.current = 0; lastVisibleColumns.current = [];
+    forgetDashboardToken(dashboardId); setDeviceToken(null); setActivationRequired(true);
+    setPreview(null); setProfiles([]); setSupplementalPages({}); setSupplementalErrors({}); setCountdown(0);
+    setActivationInput(""); setActivationError(message);
+  }, [dashboardId]);
+  function armDeviceLease(expires: number) {
+    if (!Number.isSafeInteger(expires) || expires <= Date.now()) throw new Error("KIOSK_LEASE_INVALID");
+    if (deviceLeaseDeadline.current !== null) clearTimeout(deviceLeaseDeadline.current);
+    deviceLeaseDeadline.current = setTimeout(() => clearDevicePlayback("裝置授權已到期，已清除患者資料；請重新授權。"), Math.min(2147483647, expires-Date.now()));
+  }
+  useEffect(() => {
+    if (!persistentCapable || window.opener || searchParams.get("handoff") === "1") return;
+    clearDevicePlayback("");
+    const attempt = ++activationAttempt.current;
+    setRestoringDevice(true);
+    let stopped = false;
+    const controller = new AbortController();
+    void apiRequest<{deviceId:number;dashboardId:number;authorizationExpiresAt:number}>(`/dashboards/device/${dashboardId}/kiosk/session`, {
+      method:"POST",signal:controller.signal,headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId})
+    }).then(value => {
+      if (stopped || attempt !== activationAttempt.current) return;
+      if (value.deviceId !== intendedDeviceId || value.dashboardId !== dashboardId) throw new Error("KIOSK_DEVICE_MISMATCH");
+      armDeviceLease(value.authorizationExpiresAt); setDeviceToken("COOKIE_SESSION"); setActivationRequired(false); setActivationError("");
+    }).catch(() => { if (!stopped && attempt === activationAttempt.current) setActivationError("未找到有效的持久授權。請輸入此裝置 Token，確認 HTTPS 設定後重新啟用。"); }).finally(()=>{if(!stopped && attempt===activationAttempt.current)setRestoringDevice(false);});
+    return () => { stopped = true; ++activationAttempt.current; controller.abort(); if (deviceLeaseDeadline.current !== null) clearTimeout(deviceLeaseDeadline.current); };
+  }, [dashboardId, intendedDeviceId, persistentCapable]);
+  useEffect(() => {
+    if (!deviceMode) return;
+    const leave = () => {++activationAttempt.current;flushSync(() => clearDevicePlayback("頁面已離開，已清除患者資料。"));};
+    // Purge before a page enters the browser back/forward cache. A restored page
+    // reloads and revalidates its enrollment rather than resurrecting a PHI snapshot.
+    const shown = (event: PageTransitionEvent) => { if (event.persisted) window.location.reload(); };
+    window.addEventListener("pagehide",leave); window.addEventListener("pageshow",shown);
+    // Polling and request deadlines below protect visible playback; avoid pausing
+    // ordinary kiosk playback solely because a browser control opened another tab.
+    return () => { window.removeEventListener("pagehide",leave); window.removeEventListener("pageshow",shown); if (deviceLeaseDeadline.current !== null) clearTimeout(deviceLeaseDeadline.current); };
+  }, [deviceMode, clearDevicePlayback]);
+
+  async function forgetPersistentDevice() {
+    try { await apiRequest(`/dashboards/device/${dashboardId}/kiosk/forget`,{method:"POST",headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId})}); }
+    catch { clearDevicePlayback("無法確認 Cookie 已清除；請清除此網站瀏覽資料或由管理者撤銷裝置。"); return; }
+    clearDevicePlayback("已清除此瀏覽器持久授權；重新播放須再次輸入 Token。");
+  }
 
   const clearUserPlayback = useCallback((message: string) => {
     for (const timer of userSourceExpiry.current.values()) window.clearTimeout(timer); userSourceExpiry.current.clear();
@@ -252,7 +307,7 @@ export function DashboardDisplayPage() {
         if (deviceMode) return apiRequest<SupplementalPage>(
           `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
           { method: "POST", signal, body: JSON.stringify({ page: requestedPage, ...(snapshotId ? { snapshotId } : {}) }),
-            headers: { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" } }, null);
+            headers: deviceHeaders }, null);
         if (userMode === "QUERY_ONLY") {
           if (!snapshotId) setSupplementalPages(previous => { const next = {...previous}; delete next[key]; return next; });
           return apiRequest<SupplementalPage>(`/dashboards/${dashboardId}/playback/v1/${encodeURIComponent(key)}/page`,
@@ -325,7 +380,7 @@ export function DashboardDisplayPage() {
       },
     }));
     return () => { ++supplementalRequestGeneration.current; stops.forEach(stop => stop()); };
-  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken, queryPreview, previewAuthorized, userRoute, userMode, clearUserPlayback, userRoute ? snapshotReloadKey : 0]);
+  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken, queryPreview, previewAuthorized, userRoute, userMode, clearUserPlayback, intendedDeviceId, userRoute ? snapshotReloadKey : 0]);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId) || (userRoute && userMode === null)) return;
@@ -354,7 +409,7 @@ export function DashboardDisplayPage() {
           method: "POST",
           body: serverPaged ? JSON.stringify({ page, ...(pageSnapshotId.current ? { snapshotId: pageSnapshotId.current } : {}) }) : undefined,
           headers: deviceMode
-            ? { "X-Dashboard-Device-Token": deviceToken ?? "", "Content-Type": "application/json" }
+            ? deviceHeaders
             : undefined,
         },
         deviceMode ? null : accessToken,
@@ -378,6 +433,7 @@ export function DashboardDisplayPage() {
       if (deviceMode) { setActivationRequired(false); setActivationError(""); }
     } catch (e) {
       if (requestId !== latestDataRequest.current) return;
+      if (cookieSession && !["DASHBOARD_SNAPSHOT_EXPIRED","DASHBOARD_PAGE_OUT_OF_RANGE"].includes((e as {code?:string}).code ?? "")) { clearDevicePlayback("播放安全驗證失敗，已清除患者資料；請確認授權與政策後重新開啟。"); return; }
       if (userRoute && userMode === "QUERY_ONLY") { clearUserPlayback("播放要求失敗，已清除所有患者資料與快照；請重新開啟播放。"); return; }
       if ((serverPaged) && (e as { code?: string }).code === "DASHBOARD_SNAPSHOT_EXPIRED") {
         pageSnapshotId.current = null;
@@ -466,7 +522,7 @@ export function DashboardDisplayPage() {
           : `/dashboards/${dashboardId}/layout`,
         {
           headers: deviceMode
-            ? { "X-Dashboard-Device-Token": deviceToken ?? "" }
+            ? deviceHeaders
             : undefined,
         },
         deviceMode ? null : accessToken,
@@ -476,6 +532,7 @@ export function DashboardDisplayPage() {
       setLayoutWarning("");
     } catch (e) {
       if (requestId !== latestLayoutRequest.current) return;
+      if (cookieSession) { clearDevicePlayback("裝置授權失效，已清除患者資料；請重新啟用。"); return; }
       if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
@@ -497,7 +554,7 @@ export function DashboardDisplayPage() {
         setError(message);
       }
     }
-  }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey, serverPaged, userRoute, userMode]);
+  }, [accessToken, dashboardId, deviceMode, deviceToken, previewKey, serverPaged, userRoute, userMode, intendedDeviceId]);
 
   // Verify the device lease independently of long refresh/page intervals; no clinical Query runs here.
   useEffect(()=>{
@@ -508,7 +565,15 @@ export function DashboardDisplayPage() {
       if(stopped || inFlight || !navigator.onLine)return;
       inFlight=true;
       const deadline=window.setTimeout(()=>controller.abort(),5000);
-      try {await apiRequest(`/dashboards/device/${dashboardId}/layout`,{signal:controller.signal,headers:{"X-Dashboard-Device-Token":deviceToken}},null);}
+      try {
+        if (cookieSession) {
+          const value = await apiRequest<{deviceId:number;dashboardId:number;authorizationExpiresAt:number}>(`/dashboards/device/${dashboardId}/kiosk/session`,{method:"POST",signal:controller.signal,headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId})});
+          if (stopped) return;
+          if (value.deviceId !== intendedDeviceId || value.dashboardId !== dashboardId) throw new Error("KIOSK_DEVICE_MISMATCH");
+          armDeviceLease(value.authorizationExpiresAt);
+        }
+        await apiRequest(`/dashboards/device/${dashboardId}/layout`,{signal:controller.signal,headers:deviceHeaders},null);
+      }
       catch {
         if(stopped || !navigator.onLine)return;
         ++latestDataRequest.current;++latestLayoutRequest.current;++supplementalRequestGeneration.current;
@@ -521,7 +586,7 @@ export function DashboardDisplayPage() {
     const timer=window.setInterval(()=>void verify(),15000);
     document.addEventListener("visibilitychange",visible);
     return ()=>{stopped=true;controller.abort();window.clearInterval(timer);document.removeEventListener("visibilitychange",visible);};
-  },[deviceMode,deviceToken,activationRequired,dashboardId]);
+  },[deviceMode,deviceToken,activationRequired,dashboardId,intendedDeviceId]);
 
   useEffect(() => {
     void loadData();
@@ -897,9 +962,14 @@ export function DashboardDisplayPage() {
     try {
       // Verify with the server BEFORE persisting; this endpoint enforces dashboard,
       // revocation, expiry and source-IP restrictions.
-      await apiRequest<{ profiles: LayoutProfile[] }>(
+      if (persistDevice && persistentCapable) {
+        const value = await apiRequest<{deviceId:number;dashboardId:number;authorizationExpiresAt:number}>(`/dashboards/device/${dashboardId}/kiosk/enrollment`,{method:"POST",headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId,token})});
+        if (attempt !== activationAttempt.current || !navigator.onLine) return;
+        if (value.deviceId !== intendedDeviceId || value.dashboardId !== dashboardId) throw new Error("KIOSK_DEVICE_MISMATCH");
+        armDeviceLease(value.authorizationExpiresAt);
+      } else await apiRequest<{ profiles: LayoutProfile[] }>(
         `/dashboards/device/${dashboardId}/layout`,
-        { headers: { "X-Dashboard-Device-Token": token } },
+        { headers: { "X-Dashboard-Device-Token": token, ...(intendedDeviceId>0 ? {"X-UQP-Expected-Device-Id":String(intendedDeviceId)} : {}) } },
         null,
       );
       if (attempt !== activationAttempt.current || !navigator.onLine) return;
@@ -913,8 +983,8 @@ export function DashboardDisplayPage() {
       setRetryDelaySeconds(5);
       setDataWarning("");
       setLayoutWarning("");
-      rememberDashboardToken(dashboardId, token);
-      setDeviceToken(token);
+      if (persistDevice && persistentCapable) { forgetDashboardToken(dashboardId); setDeviceToken("COOKIE_SESSION"); }
+      else { rememberDashboardToken(dashboardId, token); setDeviceToken(token); }
       setActivationInput("");
       setActivationRequired(false);
       setPreview(null);
@@ -945,17 +1015,18 @@ export function DashboardDisplayPage() {
           <p>Dashboard #{dashboardId} 尚未在目前瀏覽器設定檔完成驗證，或原有憑證已失效。</p>
           <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
-            <p>Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
+            {persistentCapable ? <label><input type="checkbox" checked={persistDevice} onChange={e=>setPersistDevice(e.target.checked)}/>在此瀏覽器持久授權裝置 #{intendedDeviceId}（僅限受管理裝置；HTTPS 安全 Cookie）</label> : <p>目前僅支援本次頁面授權。持久授權須使用管理者提供的 HTTPS 裝置播放網址。</p>}
+            <p>未啟用持久授權時，Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>
             <input id="dashboard-device-activation-token" type="password" autoComplete="off" spellCheck={false} required
               value={activationInput} onChange={(event) => setActivationInput(event.target.value)}
               placeholder="貼上管理員提供的 Device Token" style={{ width: "100%", padding: 12, fontSize: 16 }} />
             {activationError && <p role="alert" style={{ color: "#b42318" }}>{activationError}</p>}
-            <button type="submit" disabled={activationBusy} style={{ padding: 12 }}>
-              {activationBusy ? "驗證中…" : "驗證並啟用播放"}
+            <button type="submit" disabled={activationBusy || restoringDevice} style={{ padding: 12 }}>
+              {restoringDevice ? "恢復授權中…" : activationBusy ? "驗證中…" : "驗證並啟用播放"}
             </button>
           </form>
-          <p style={{ fontSize: 14, marginTop: 16 }}>等待管理者授權：憑證只保留於本次頁面記憶體。重新整理、關閉或裝置重啟後，請由管理者在 Dashboard 管理頁重新核發並透過可信流程交付；到期、撤銷或停用的憑證不能自動恢復。</p>
+          <p style={{ fontSize: 14, marginTop: 16 }}>等待管理者授權：持久授權僅適用 HTTPS 與固定瀏覽器設定檔；到期、撤銷或停用後仍須重新授權，網址本身不提供播放權限。</p>
           <Link to="/designer/dashboards">管理者登入並重新核發憑證</Link>
         </div>
       </main>
@@ -999,6 +1070,7 @@ export function DashboardDisplayPage() {
             dataWarning || layoutWarning ? dataWarning || layoutWarning :
             "播放正常"}
           {lastUpdatedAt && " · 最後更新 " + lastUpdatedAt.toLocaleTimeString("zh-TW")}
+          {cookieSession && <button type="button" onClick={()=>void forgetPersistentDevice()}>清除此瀏覽器持久授權</button>}
         </div>
       )}
       <div

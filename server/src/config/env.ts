@@ -30,6 +30,8 @@ const envSchema = z.object({
   CLIENT_IP_DIAGNOSTICS: envBoolean(false),
   DASHBOARD_QUERY_SOURCE_MANAGEMENT: envBoolean(false),
   DASHBOARD_QUERY_SOURCE_EXECUTION: envBoolean(false),
+  DASHBOARD_PUBLIC_CLIENT_ORIGIN: optionalString,
+  DASHBOARD_KIOSK_COOKIE_KEY: optionalString,
   DASHBOARD_QUERY_DEVICE_PLAYBACK: envBoolean(false),
   DATASET_SECURITY_SCOPE_MANAGEMENT: envBoolean(false),
   DATASET_PUBLIC_DISPLAY_MANAGEMENT: envBoolean(false),

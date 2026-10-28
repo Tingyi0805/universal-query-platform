@@ -1,3 +1,4 @@
+import { createKioskRouter } from "./dashboardKiosk.routes.js";
 import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
 import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
 import { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
@@ -190,7 +191,15 @@ const dashboardSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
+const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPlaybackSources, loadBinding: loadQueryExecutionBinding,
+  getApprovalEvidence: getDashboardApprovalEvidence,
+  getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
+  getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
+  getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
+  execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
+
 export const dashboardRouter = Router();
+dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect}));
 
 dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
   try {
@@ -281,12 +290,6 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
   }
 });
 
-const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPlaybackSources, loadBinding: loadQueryExecutionBinding,
-  getApprovalEvidence: getDashboardApprovalEvidence,
-  getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
-  getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
-  getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
-  execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 dashboardRouter.use(createQueryDeviceRouter(queryExecution, { mode: readDashboardQueryMode, checkDevice: checkDashboardDisplayDevice, dashboard: getDashboard, reportColumns: listReportColumns }));
 
 dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,

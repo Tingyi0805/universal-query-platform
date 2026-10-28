@@ -13,6 +13,22 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   const [draft, setDraft] = useState<{ deviceId: number | null; operation: "metadata" | "placement" } | null>(null);
   const [metadata, setMetadata] = useState<Metadata>(empty), [placement, setPlacement] = useState(defaultPlacement);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
+  type PlaybackLink = {dashboardId:number;deviceId:number;url:string;bat:string};
+  const [links,setLinks] = useState<Record<number,PlaybackLink>>({});
+  const [linkMessage,setLinkMessage] = useState("");
+  async function playbackLink(deviceId:number) {
+    const current=sequence.current;
+    try {
+      const value=await apiRequest<PlaybackLink>(`${base}/${deviceId}/playback-link`,{},accessToken), url=new URL(value.url);
+      if (value.dashboardId!==dashboardId || value.deviceId!==deviceId || url.protocol!=="https:" || url.username || url.password || url.hash || url.pathname!==`/display/dashboards/${dashboardId}` || url.search!==`?deviceId=${deviceId}` || typeof value.bat!=="string" || !value.bat.startsWith("@echo off")) throw new Error("KIOSK_LINK_INVALID");
+      if(current===sequence.current) {setLinks(previous=>({...previous,[deviceId]:value}));setLinkMessage("播放網址已產生；網址本身不授權，請在目標裝置的瀏覽器設定檔首次輸入 Token。");}
+    } catch {if(current===sequence.current)setLinkMessage("播放網址暫不可用，請確認 HTTPS 公開來源設定及裝置狀態。");}
+  }
+  async function copyLink(value:string) {try {await navigator.clipboard.writeText(value);setLinkMessage("已複製播放網址。");}catch{setLinkMessage("無法自動複製，請選取播放網址手動複製。");}}
+  function downloadLauncher(value:PlaybackLink) {
+    const url=URL.createObjectURL(new Blob([value.bat],{type:"application/octet-stream"}));
+    const a=document.createElement("a");a.href=url;a.download=`UQP-device-${value.deviceId}.bat`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
   const sequence = useRef(0), base = `/dashboards/${dashboardId}/device-management/v1`;
   function trusted(value: Snapshot) {
     if (!value || value.dashboardId !== dashboardId || typeof value.version !== "string" || !/^[a-f0-9]{64}$/.test(value.version) || typeof value.canCreate !== "boolean" || !Array.isArray(value.devices)) throw new Error("DEVICE_MANAGEMENT_INVALID");
@@ -35,7 +51,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     } catch (error) { if (read === sequence.current) setMessage(dashboardOperationError(error)); }
     finally { if (read === sequence.current) setBusy(false); }
   }
-  useEffect(() => { setSnapshot(null); setDraft(null); void load(); return () => { ++sequence.current; }; }, [dashboardId, accessToken]);
+  useEffect(() => { setSnapshot(null); setDraft(null); setLinks({}); void load(); return () => { ++sequence.current; }; }, [dashboardId, accessToken]);
   useEffect(() => {
     const changed = (event: Event) => {
       if ((event as CustomEvent).detail?.dashboardId !== dashboardId) return;
@@ -62,6 +78,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
         (draft.deviceId === null ? result.credentialIssued !== false : result.deviceCredentialsInvalidated !== (draft.operation === "metadata"))) throw new Error("DEVICE_RESULT_INVALID");
       setSnapshot(value); setDraft(null); setVersion(null);
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "device-management" } }));
+      void playbackLink(result.deviceId);
       setMessage(draft.operation === "placement" ? "播放位置已保存；資料授權與遮蔽政策未變更。請重新載入後再編輯。" : "裝置設定已保存；未核發憑證，既有裝置須明確重新授權。請重新載入後再編輯。");
     } catch (error) { if (read === sequence.current) { setVersion(null); setMessage(`${dashboardOperationError(error)} 草稿已保留；請明確重新載入，不會自動覆寫。`); } }
     finally { if (read === sequence.current) setBusy(false); }
@@ -74,7 +91,16 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     <ul>{snapshot?.devices.map(device => <li key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
+      {deviceMayIssue(device) && <button type="button" onClick={()=>void playbackLink(device.id)}>顯示 {device.deviceName} 播放網址</button>}
+      {links[device.id] && deviceMayIssue(device) && <div aria-label={`裝置 ${device.id} 播放網址`}>
+        <input aria-label={`裝置 ${device.id} 播放網址`} readOnly value={links[device.id]!.url} onFocus={e=>e.currentTarget.select()}/>
+        <button type="button" onClick={()=>void copyLink(links[device.id]!.url)}>複製播放網址</button>
+        <a href={links[device.id]!.url} target="_blank" rel="noopener noreferrer">開啟播放網址</a>
+        <button type="button" onClick={()=>downloadLauncher(links[device.id]!)}>下載 Windows BAT</button>
+        <p>BAT 使用獨立且固定的瀏覽器設定檔；首次請從 BAT 開啟並輸入 Token。指定螢幕依 Windows DeviceName 排序，非顯示設定編號；座標為桌面絕對座標。</p>
+      </div>}
     </li>)}</ul>
+    {linkMessage && <p role="status">{linkMessage}</p>}
     {draft && <fieldset className="uqp-device-fieldset" disabled={busy} aria-label="裝置設定草稿"><legend>{draft.deviceId === null ? "建立未授權裝置" : `裝置 ${draft.deviceId} 設定草稿`}</legend>
       {draft.operation === "metadata" ? <div className="uqp-device-fields">
         <label>裝置名稱<input aria-label="裝置名稱" maxLength={200} value={metadata.deviceName} onChange={e => setMetadata({ ...metadata, deviceName: e.target.value })}/></label>

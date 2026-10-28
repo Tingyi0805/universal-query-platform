@@ -1,3 +1,5 @@
+import { env } from "../../config/env.js";
+import { kioskPlaybackLink, kioskLauncher } from "./dashboardKioskLauncher.js";
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
@@ -19,6 +21,16 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
     if (!payload || typeof payload === "string" || Number(payload.sub) !== req.authUser!.id || !Number.isSafeInteger(payload.tokenVersion) || payload.tokenVersion < 1) throw new QuerySourceError("INVALID_TOKEN", 401);
     return { id: id.data, actor: { userId: req.authUser!.id, tokenVersion: Number(payload.tokenVersion), ...auditRequestContext(req) } };
   };
+  router.get("/:id/device-management/v1/:deviceId/playback-link", async (req,res) => {
+    try {
+      const c = context(req), deviceId = idSchema.parse(req.params.deviceId), snapshot = await service.read(c.id,c.actor);
+      const device = snapshot.devices.find(d=>d.id===deviceId);
+      if (!device || !device.isActive || device.revokedAtUtc || device.archivedAtUtc) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+      const url = kioskPlaybackLink(env.DASHBOARD_PUBLIC_CLIENT_ORIGIN,c.id,deviceId);
+      const placement = device.placement ?? {browser:"edge",screenNumber:2,fullscreen:true,windowX:1920,windowY:0,windowWidth:1920,windowHeight:1080};
+      res.json({dashboardId:c.id,deviceId,url,bat:kioskLauncher(url,placement).bat});
+    } catch { res.status(409).json({error:{code:"KIOSK_LINK_UNAVAILABLE",message:"無法提供播放網址；請確認 HTTPS 公開來源設定與裝置權限。"}}); }
+  });
   router.get("/:id/device-management/v1", async (req, res) => {
     try { const c = context(req); res.json(await service.read(c.id, c.actor)); }
     catch (error) { failure(error, res, req.id); }
