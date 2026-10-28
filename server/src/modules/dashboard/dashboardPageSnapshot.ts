@@ -5,7 +5,7 @@ export type DashboardPageSnapshot = {
   deviceId: number;
   dashboardId: number;
   queryId: number;
-  executionContext?: "designer" | "user" | "device";
+  executionContext?: "designer" | "user" | "device" | "admin-preview";
   sourceKey?: string;
   sourceId?: number;
   bindingRevision?: number;

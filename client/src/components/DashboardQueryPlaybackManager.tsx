@@ -14,10 +14,45 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
   const [readMessages, setReadMessages] = useState<string[]>([]), [issuedDeviceId, setIssuedDeviceId] = useState<number | null>(null);
   const [placement, setPlacement] = useState<{ deviceId: number; settings: PlaybackPlacement } | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [handoffBusy, setHandoffBusy] = useState(false), [handoffUsed, setHandoffUsed] = useState(false);
+  const [copying, setCopying] = useState(false), [copyMessage, setCopyMessage] = useState("");
+  const tokenDialog = useRef<HTMLDialogElement>(null), tokenText = useRef<HTMLTextAreaElement>(null);
   const issued = useRef<{ deviceId: number; token: string } | null>(null), cleanup = useRef<(() => void) | null>(null);
   const epoch = useRef(0), readSequence = useRef(0);
   const base = `/dashboards/${dashboardId}/query-mode/v1`;
-  function clearCredential() { cleanup.current?.(); cleanup.current = null; issued.current = null; setIssuedDeviceId(null); forgetDashboardToken(dashboardId); }
+  function clearCredential() {
+    cleanup.current?.(); cleanup.current = null;
+    if (issued.current) issued.current.token = "";
+    issued.current = null;
+    // Clear the live DOM synchronously as pagehide may freeze a page in bfcache
+    // before React can commit its state updates.
+    if (tokenText.current) { tokenText.current.value = ""; tokenText.current.defaultValue = ""; tokenText.current.textContent = ""; }
+    if (tokenDialog.current?.open) tokenDialog.current.close();
+    setIssuedDeviceId(null); setHandoffBusy(false); setHandoffUsed(false); setCopying(false); setCopyMessage(""); setMessage("");
+    forgetDashboardToken(dashboardId);
+  }
+  useEffect(() => {
+    if (issuedDeviceId !== null && tokenDialog.current && !tokenDialog.current.open) tokenDialog.current.showModal();
+  }, [issuedDeviceId]);
+  async function copyToken() {
+    const credential = issued.current;
+    if (!credential || copying || !tokenDialog.current?.open) return;
+    setCopying(true); setCopyMessage("");
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(credential.token);
+      else {
+        // HTTP intranets may not expose Clipboard API. Copy only from the
+        // already-visible, user-authorized field; never create hidden secrets.
+        const field = tokenText.current;
+        if (!field) throw new Error("COPY_UNAVAILABLE");
+        field.focus(); field.select(); field.setSelectionRange(0, field.value.length);
+        if (!document.execCommand("copy")) throw new Error("COPY_UNAVAILABLE");
+      }
+      if (issued.current === credential) setCopyMessage("已複製 Token，可貼至播放裝置的 Device Token 欄位。");
+    } catch {
+      if (issued.current === credential) setCopyMessage("無法自動複製，請選取上方 Token 手動複製。");
+    } finally { if (issued.current === credential) setCopying(false); }
+  }
   async function refresh() {
     const current = epoch.current, read = ++readSequence.current;
     clearCredential(); setPlacement(null); setBusy(true); setMode(null); setPreflight(null); setConfiguration(null); setDevices([]); setReadMessages([]);
@@ -49,7 +84,9 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
   }
   useEffect(() => {
     ++epoch.current; setMessage(""); void refresh();
-    return () => { ++epoch.current; ++readSequence.current; cleanup.current?.(); issued.current = null; forgetDashboardToken(dashboardId); };
+    const leave = () => { ++epoch.current; ++readSequence.current; clearCredential(); setBusy(false); };
+    window.addEventListener("pagehide", leave); window.addEventListener("beforeunload", leave);
+    return () => { window.removeEventListener("pagehide", leave); window.removeEventListener("beforeunload", leave); leave(); };
   }, [dashboardId, accessToken]);
   useEffect(() => {
     const changed = (event: Event) => { const detail = (event as CustomEvent).detail;
@@ -87,7 +124,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     finally { if (current === epoch.current) setBusy(false); }
   }
   async function credential(device: ManagedDevice, revoke = false) {
-    if (busy || !mode || (!revoke && !canIssue(device)) || !window.confirm(revoke ? `撤銷裝置「${device.deviceName}」？不能透過重新整理恢復原憑證。` : `明確重新授權「${device.deviceName}」？舊憑證立即失效；不顯示原始 Token。`)) return;
+    if (busy || !mode || (!revoke && !canIssue(device)) || !window.confirm(revoke ? `撤銷裝置「${device.deviceName}」？不能透過重新整理恢復原憑證。` : `明確重新授權「${device.deviceName}」？舊憑證立即失效；新 Token 僅顯示一次，請於關閉前複製。`)) return;
     const current = epoch.current; clearCredential(); setBusy(true); setMessage("");
     try {
       const result = await apiRequest<{ token?: string; device?: { id: number; dashboardId: number }; deviceId?: number; revoked?: boolean }>(`${base}/devices/${device.id}/credential`, { method: revoke ? "DELETE" : "POST", body: JSON.stringify({ expectedVersion: mode.version }) }, accessToken);
@@ -98,7 +135,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
       } else {
         if (result.device?.id !== device.id || result.device.dashboardId !== dashboardId || typeof result.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(result.token)) throw new Error("CREDENTIAL_INVALID");
         issued.current = { deviceId: device.id, token: result.token }; setIssuedDeviceId(device.id);
-        setMessage("核發成功；憑證僅在本頁記憶體，不顯示、複製或寫入 URL／儲存區。重新載入即清除。");
+        setMessage("核發成功；請在此一次性視窗複製 Token，於播放裝置手動輸入。");
       }
       setPreflight(null);
     } catch (error) { if (current === epoch.current) failed(error); }
@@ -114,12 +151,17 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     finally { if (current === epoch.current) setBusy(false); }
   }
   function handoff() {
+    if (cleanup.current || handoffUsed) return;
     const credential = issued.current;
     if (!credential || !devices.some(d => d.id === credential.deviceId && deviceMayIssue(d))) { clearCredential(); return; }
-    const popup = window.open("about:blank", "_blank");
+    const popup = window.open(`/display/dashboards/${dashboardId}?handoff=1`, "_blank");
     if (!popup) { setMessage("瀏覽器封鎖授權交付視窗；請允許後重新操作。"); return; }
-    cleanup.current?.(); cleanup.current = prepareDashboardTokenHandoff(popup, dashboardId, credential.token);
-    popup.location.replace(`/display/dashboards/${dashboardId}`);
+    setHandoffBusy(true); setMessage("正在向指定播放視窗交付授權，請保持本頁開啟。");
+    cleanup.current = prepareDashboardTokenHandoff(popup, dashboardId, credential.token, result => {
+      cleanup.current = null; setHandoffBusy(false); setHandoffUsed(true);
+      setMessage(result === "delivered" ? "裝置憑證已單次交付至指定播放視窗。" : result === "expired"
+        ? "裝置交接逾時，未完成授權交付；可複製此 Token 到播放裝置手動啟用。" : "播放視窗已關閉或交接中斷；可複製此 Token 到播放裝置手動啟用。");
+    });
   }
   const result = (value: Check) => value.ok ? "通過" : `未通過：${value.code ?? "REQUEST_FAILED"}`;
   return <section className="dashboard-editor-card" id="dashboard-device-management">
@@ -144,7 +186,22 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
       <button type="button" disabled={busy || !mode || mode.mode === "LEGACY" || !device.isActive || deviceArchived(device)} onClick={() => void credential(device, true)}>撤銷 {device.deviceName}</button></td>
     </tr>)}</tbody></table>
     {placement && <p role="status">裝置 {placement.deviceId} 已保存播放位置（唯讀）：{placement.settings.browser}，螢幕 {placement.settings.screenNumber}，{placement.settings.fullscreen ? "全螢幕" : "視窗"}，位置 {placement.settings.windowX}／{placement.settings.windowY}，尺寸 {placement.settings.windowWidth}×{placement.settings.windowHeight}。修改須先補齊版本化安全 API。</p>}
-    {issuedDeviceId !== null && <div role="status">已取得裝置 {issuedDeviceId} 的本次憑證，原始值不放入 DOM。<button type="button" onClick={handoff}>在此裝置開啟安全播放</button><button type="button" onClick={clearCredential}>清除本頁憑證</button></div>}
-    {readMessages.map(text => <p role="status" key={text}>{text}</p>)}{message && <p role="status">{message}</p>}
+    {issuedDeviceId !== null && issued.current && <dialog ref={tokenDialog} aria-labelledby="issued-device-token-title"
+      onCancel={event => { event.preventDefault(); clearCredential(); }}
+      onClose={event => { if (event.currentTarget === tokenDialog.current) clearCredential(); }}
+      style={{ width: "min(560px, calc(100vw - 32px))", maxHeight: "calc(100dvh - 32px)", overflow: "auto", borderRadius: 12, padding: 24 }}>
+      <h2 id="issued-device-token-title">一次性 Device Token</h2>
+      <p>裝置 {issuedDeviceId} 的 Token 僅在此視窗顯示。關閉、離開頁面或重新整理後無法找回，需要時請重新核發。</p>
+      <label htmlFor="issued-device-token">Device Token（僅顯示一次）</label>
+      <textarea id="issued-device-token" ref={tokenText} readOnly value={issued.current.token} rows={2}
+        autoComplete="off" spellCheck={false} onFocus={event => event.currentTarget.select()}
+        style={{ width: "100%", boxSizing: "border-box", fontFamily: "monospace", fontSize: 16 }} />
+      <div><button type="button" onClick={() => void copyToken()} disabled={copying}>複製 Token</button>
+        <button type="button" onClick={clearCredential}>關閉並清除 Token</button></div>
+      {!handoffUsed && <button type="button" onClick={handoff} disabled={handoffBusy}>在此裝置開啟安全播放</button>}
+      {copyMessage && <p role="status">{copyMessage}</p>}{message && <p role="status">{message}</p>}
+    </dialog>}
+    {readMessages.map(text => <p role="status" key={text}>{text}</p>)}{message && issuedDeviceId === null && <p role="status">{message}</p>}
+
   </section>;
 }

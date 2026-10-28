@@ -5,7 +5,7 @@ import { previewAuthorizationFailed, type QuerySourceConfiguration } from "../da
 import { formatDashboardValue } from "../dashboard/displayFormat";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { readDashboardToken,rememberDashboardToken,forgetDashboardToken,requestDashboardTokenHandoff } from "../security/dashboardToken";
+import { readDashboardToken,rememberDashboardToken,forgetDashboardToken,requestDashboardTokenHandoff, dashboardHandoffNonce } from "../security/dashboardToken";
 import { apiRequest } from "../api/client";
 import { startSourcePlayback, retainSourceColumns } from "../dashboard/sourcePlayback";
 import { useAuth } from "../auth/AuthContext";
@@ -129,10 +129,15 @@ export function DashboardDisplayPage() {
   const activationAttempt = useRef(0);
   const [activationError, setActivationError] = useState("");
   const [activationRequired, setActivationRequired] = useState(() => deviceMode && !readDashboardToken(dashboardId));
+  const handoffRequestId = useRef(dashboardHandoffNonce());
   useEffect(()=>{
-    if(!deviceMode)return;
-    return requestDashboardTokenHandoff(dashboardId,token=>{setDeviceToken(token);setActivationRequired(false);});
-  },[dashboardId,deviceMode]);
+    if (!deviceMode || readDashboardToken(dashboardId)) return;
+    // Keep one document nonce across StrictMode effect setup/cleanup replay.
+    if (!window.opener && searchParams.get("handoff") !== "1") return;
+    return requestDashboardTokenHandoff(dashboardId, token => {
+      setActivationError(""); setDeviceToken(token); setActivationRequired(false);
+    }, () => setActivationError("安全交接未完成或已逾時。請保持管理頁開啟，重新核發並從管理頁開啟播放。"), handoffRequestId.current);
+  },[dashboardId,deviceMode,deviceToken]);
   const { accessToken } = useAuth();
   const userRoute = !deviceMode && !queryPreview && !window.location.pathname.startsWith("/designer/");
   const [userMode, setUserMode] = useState<"LEGACY" | "QUERY_ONLY" | null>(null);

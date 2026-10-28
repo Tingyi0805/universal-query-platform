@@ -32,7 +32,7 @@ async function setup(page: Page, managed = false, canManage = true) {
       if (state.schemaMissing) { await route.fulfill({ status: 503, json: { error: { code: "SECURITY_SCHEMA_REQUIRED", message: "SQL private Bind" } } }); return; }
       const { deviceColumnMasks, deviceColumnTypes, deviceSourceColumnMasks, snapshotKind, snapshotSeconds, ...parameters } = dashboard.parameters;
       const primary = { sourceKey: "PRIMARY", queryDefinitionId: 2, parameters, pageSize: 5, pageSeconds: 10, refreshSeconds: 30, maxRows: 100 };
-      await route.fulfill({ json: { version: state.version, editable: !state.active, isActive: state.active, dashboardMode: "QUERY_ONLY_DISABLED", presentation: { name: dashboard.name, description: null, displayMode: dashboard.displayMode, displayTitle: null, showClock: false, showPageNumber: false, showCountdown: false }, primary, sources: [{ ...primary, id: 5, sourceKey: "WARD", isEnabled: true }] } }); return;
+      await route.fulfill({ json: { version: state.version, editable: !state.active, isActive: state.active, dashboardMode: state.active ? "QUERY_ONLY" : "QUERY_ONLY_DISABLED", presentation: { name: dashboard.name, description: null, displayMode: dashboard.displayMode, displayTitle: null, showClock: false, showPageNumber: false, showCountdown: false }, primary, sources: [{ ...primary, id: 5, sourceKey: "WARD", isEnabled: true }] } }); return;
     }
     if (path.endsWith("/query-sources/v1/primary")) {
       const body = route.request().postDataJSON();
@@ -51,7 +51,7 @@ async function setup(page: Page, managed = false, canManage = true) {
       await route.fulfill({ json: { version: state.version } }); return;
     }
     if (path.endsWith("/query-sources/v1/configuration") || path.endsWith("/query-mode/v1")) { await route.fulfill({ status: 503, json: { error: { code: "QUERY_SOURCE_MANAGEMENT_DISABLED" } } }); return; }
-    if (path === "/api/dashboards") { await route.fulfill({ json: { dashboards: [dashboard], total: 1, totalPages: 1 } }); return; }
+    if (path === "/api/dashboards") { await route.fulfill({ json: { dashboards: [{ ...dashboard, isActive: state.active }], total: 1, totalPages: 1 } }); return; }
     if (path === "/api/queries") { await route.fulfill({ json: { queries: [{ id: 2, code: "Q", name: "合成 Query", canExecute: true }, { id: 3, code: "OTHER", name: "另一合成 Query", canExecute: true }] } }); return; }
     if (path === "/api/query-definitions") { await route.fulfill({ json: { queryDefinitions: [{ id: 2, datasetId: 3, name: "合成 Query", code: "Q", isPublished: true, isActive: true, isArchived: false }, { id: 3, datasetId: 3, name: "另一合成 Query", code: "OTHER", isPublished: true, isActive: true, isArchived: false }] } }); return; }
     if (path === "/api/query-definitions/2") { await route.fulfill({ json: { queryDefinition: { id: 2, datasetId: 3 } } }); return; }
@@ -64,13 +64,13 @@ async function setup(page: Page, managed = false, canManage = true) {
       ...(state.layoutMasks?[{id:3,widgetType:"FIELD",title:null,x:800,y:0,width:500,height:150,fontSize:20,alignment:"LEFT",config:{dataSourceKey:"PRIMARY",maskMode:"MRN"},sortOrder:2,sourceKey:"MRN"}]:[]),
       { id: 2, widgetType: "TEXT", title: null, x: 0, y: 500, width: 800, height: 60, fontSize: 20, alignment: "LEFT", config: {}, sortOrder: 1, sourceKey: null, staticText: "固定合成標題" },
     ] }] } }); return; }
-    if (path.endsWith("/preview")) state.legacyPreviewRequests++;
+    if (path.endsWith("/preview") && !path.includes("/query-sources/v1/")) state.legacyPreviewRequests++;
     if (path.endsWith("/preview") || /query-sources\/v1\/[^/]+\/page$/.test(path)) {
       const extra = path.includes("/data-sources/") || (path.includes("/query-sources/v1/") && !path.includes("/PRIMARY/"));
       if (state.authFail) { await route.fulfill({ status: 403, json: { error: { code: "FORBIDDEN", message: "private Bind patient Token" } } }); return; }
       if (state.fail || (extra ? state.extraFail : state.primaryFail)) { await route.fulfill({ status: extra ? 403 : 503, json: { error: { code: extra ? "DASHBOARD_EXECUTE_FORBIDDEN" : "PATIENT_AUDIT_FAILED", message: "driver SQL Bind patient password Token" } } }); return; }
       const { parameters: _private, ...safeDashboard } = dashboard;
-      const body = path.endsWith("/page") ? { page: 1, totalPages: 1, snapshotId: "11111111-1111-4111-8111-111111111111", query: { id: 2, code: "Q", name: "合成預覽" }, refreshSeconds: 30, pageSize: 5, pageSeconds: 10, result } : extra ? { sourceKey: "WARD", pageSize: 5, pageSeconds: 10, refreshSeconds: 30, result } : { dashboard: safeDashboard, reportColumns: [], result, disclosureId: 1 };
+      const body = (path.includes("/query-sources/v1/") || path.endsWith("/page")) ? { page: 1, totalPages: 1, snapshotId: "11111111-1111-4111-8111-111111111111", query: { id: 2, code: "Q", name: "合成預覽" }, refreshSeconds: 30, pageSize: 5, pageSeconds: 10, result } : extra ? { sourceKey: "WARD", pageSize: 5, pageSeconds: 10, refreshSeconds: 30, result } : { dashboard: safeDashboard, reportColumns: [], result, disclosureId: 1 };
       expect(JSON.stringify(body)).not.toContain(rawName); expect(JSON.stringify(body)).not.toContain(rawMrn);
       await route.fulfill({ json: body }); return;
     }
@@ -168,4 +168,16 @@ for(const path of ["/designer/dashboards/1/layout","/designer/dashboards/1/displ
  await expect(page.getByRole("option",{name:"姓名遮蔽（王○佑）",exact:true})).toHaveCount(0);
  for(const value of [rawName,rawMrn])await expect(page.locator("body")).not.toContainText(value);
  expect(state.approval).toBeNull();expect(state.saved).toBeNull();
+});
+
+for (const active of [false, true]) test(`list read-only Query preview works with Query-only ${active ? "enabled" : "disabled"}`, async ({ page }) => {
+  const state = await setup(page, true); state.active = active;
+  const calls: string[] = [];
+  page.on("request", request => { if (new URL(request.url()).pathname.startsWith("/api/dashboards")) calls.push(`${request.method()} ${new URL(request.url()).pathname}`); });
+  await page.goto("/designer/dashboards");
+  await page.getByRole("button", { name: "預覽", exact: true }).click();
+  await expect(page.locator(".dashboard-preview-card").getByText("*************54", { exact: true })).toBeVisible();
+  expect(calls).toContain("POST /api/dashboards/1/query-sources/v1/PRIMARY/preview");
+  expect(calls.some(call => call.startsWith("PUT ") || call.startsWith("PATCH ") || call.startsWith("DELETE ") || call.includes("/query-mode/"))).toBe(false);
+  expect(state.active).toBe(active); expect(state.legacyPreviewRequests).toBe(0);
 });

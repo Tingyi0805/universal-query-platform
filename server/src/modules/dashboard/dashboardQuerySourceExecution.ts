@@ -18,7 +18,7 @@ export type ExecutionBinding = {
   mode?: string; modeRevision?: number; referenced?: boolean;
   refreshSeconds: number; pageSeconds: number; pageSize: number; maxRows: number | null;
 };
-export type ExecutionSubject = { context?: "designer" | "user" | "device"; expiresAt?: number; userId: number; tokenVersion: number; tokenHash: string; deviceId?: number;
+export type ExecutionSubject = { context?: "designer" | "user" | "device" | "admin-preview"; expiresAt?: number; userId: number; tokenVersion: number; tokenHash: string; deviceId?: number;
   verifyDevice?: () => Promise<{ deviceId: number; userId: number; tokenVersion: number; fingerprint: string }> };
 export type ExecutionDependencies = {
   loadUserSources?: (id: number) => Promise<{ keys: string[]; references: string[]; version: string }>;
@@ -50,7 +50,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     const context = subject.context ?? (subject.deviceId !== undefined ? "device" : "designer");
     if (!enabled(subject.deviceId !== undefined, context)) throw new QuerySourceError("QUERY_SOURCE_EXECUTION_DISABLED", 404);
     if ((context === "device") !== (subject.deviceId !== undefined)) throw new QuerySourceError("INVALID_EXECUTION_CONTEXT", 403);
-    if (context === "user" && (!Number.isSafeInteger(subject.expiresAt) || subject.expiresAt! * 1000 <= Date.now())) throw new QuerySourceError("TOKEN_REVOKED", 401);
+    if ((context === "user" || context === "admin-preview") && (!Number.isSafeInteger(subject.expiresAt) || subject.expiresAt! * 1000 <= Date.now())) throw new QuerySourceError("TOKEN_REVOKED", 401);
     const proof = subject.deviceId !== undefined ? await subject.verifyDevice?.() : undefined;
     if (subject.deviceId !== undefined && (!proof || proof.deviceId !== subject.deviceId || proof.userId !== subject.userId || proof.tokenVersion !== subject.tokenVersion))
       throw new QuerySourceError("DASHBOARD_DEVICE_UNAUTHORIZED", 401);
@@ -60,7 +60,9 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       throw new QuerySourceError(subject.deviceId !== undefined ? "DASHBOARD_DEVICE_UNAUTHORIZED" : "QUERY_SOURCE_PERMISSION_REVOKED", subject.deviceId !== undefined ? 401 : 403);
     const approvals = await approvalEvidence(id);
     const binding = await deps.loadBinding(id, key);
-    if (context === "user" || context === "device") {
+    if (context === "admin-preview" && (!["LEGACY", "QUERY_ONLY", "QUERY_ONLY_DISABLED"].includes(binding.mode ?? "") ||
+        binding.mode === "QUERY_ONLY" && !binding.dashboardActive)) throw new QuerySourceError("QUERY_SOURCE_MODE_NOT_ACTIVATED");
+    if (context === "user" || context === "device" || context === "admin-preview" && binding.dashboardActive) {
       if (binding.mode !== "QUERY_ONLY" || !binding.modeRevision || !binding.dashboardActive || !binding.managed)
         throw new QuerySourceError("QUERY_SOURCE_MODE_NOT_ACTIVATED");
       if (context === "device" && key !== "PRIMARY" && !binding.referenced) throw new QuerySourceError("DASHBOARD_SOURCE_NOT_IN_LAYOUT", 403);
@@ -88,7 +90,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     const sensitivity = await deps.getSensitivity(dataset.id);
     try { assertDatasetSensitivityPolicy(sensitivity); } catch (error) { throw new QuerySourceError(error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"
       ? "QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED" : "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", 503); }
-    const publicDisplay = context === "designer" ? null : await (deps.getPublicDisplay ?? getDatasetPublicDisplay)(dataset.id);
+    const publicDisplay = context === "designer" || context === "admin-preview" && !binding.dashboardActive ? null : await (deps.getPublicDisplay ?? getDatasetPublicDisplay)(dataset.id);
     if (publicDisplay && (publicDisplay.status !== "CONFIRMED" || !publicDisplay.policy?.confirmed || publicDisplay.sensitivityVersion !== sensitivity.version))
       throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
     if(publicDisplay&&!Object.keys(resolveDatasetPublicDisplayMasks(sensitivity,publicDisplay.policy,sensitivity.columns.map(r=>r.columnName))).length)throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
@@ -96,7 +98,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     // Binding/masks and policy are read independently. Bracket those reads so a
     // concurrent write (including A→B→A) cannot produce an apparently current mix.
     if (await approvalEvidence(id) !== approvals) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
-    const modeVersion = context === "device" ? `QUERY_ONLY_DEVICE_V1:${binding.modeRevision}` : context === "user" ? `QUERY_ONLY_USER_V1:${binding.modeRevision}` : "QUERY_ONLY_PREVIEW_V1";
+    const modeVersion = context === "device" ? `QUERY_ONLY_DEVICE_V1:${binding.modeRevision}` : context === "user" ? `QUERY_ONLY_USER_V1:${binding.modeRevision}` : context === "admin-preview" ? `QUERY_ONLY_ADMIN_PREVIEW_V1:${binding.modeRevision ?? 0}` : "QUERY_ONLY_PREVIEW_V1";
     const fingerprint = createHash("sha256").update(JSON.stringify({ approvals, context, modeVersion, proof, subject, binding, query,
       session, access, accessRevision, dataset, source, definitions, sensitivity, publicDisplay })).digest("hex");
     return { fingerprint, approvals, binding, query, dataset, sensitivity, publicDisplay, accessRevision, modeVersion };
