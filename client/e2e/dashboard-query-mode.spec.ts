@@ -1,7 +1,7 @@
 import {test,expect,type Page} from "@playwright/test";
 const token="A".repeat(43),version="a".repeat(64);
 async function setup(page:Page){
-  const state={disabled:false,ready:true,pending:false,missingPublicPolicy:false,expiry:null as string|null|undefined,archived:false,preflightDenied:false,mode:"LEGACY",revision:0,failStatus:0,revoked:false,writes:[] as {path:string;method:string;body:any}[],legacyExecutions:0};
+  const state={disabled:false,ready:true,pending:false,missingPublicPolicy:false,expiry:null as string|null|undefined,archived:false,preflightDenied:false,mode:"LEGACY",revision:0,failStatus:0,revoked:false,writes:[] as {path:string;method:string;body:any}[],legacyExecutions:0,credentialSerial:0};
   await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic",user:{id:1,username:"synthetic",displayName:"測試",permissions:["DESIGN_QUERY","VIEW_QUERY","EXECUTE_QUERY"]}})));
   const primary={sourceKey:"PRIMARY",queryDefinitionId:20,parameters:{},refreshSeconds:5,pageSeconds:5,pageSize:1,maxRows:100};
   await page.context().route(url=>url.pathname.startsWith("/api/"),async route=>{
@@ -19,7 +19,7 @@ async function setup(page:Page){
       }
       await route.fulfill({json:{mode:state.mode,modeVersion:state.revision,version}});return;
     }
-    if(path.endsWith("/credential")){if(req.method()==="DELETE")state.revoked=true;await route.fulfill({json:req.method()==="DELETE"?{deviceId:7,revoked:true}:{token,device:{id:7,dashboardId:1}}});return;}
+    if(path.endsWith("/credential")){if(req.method()==="DELETE")state.revoked=true;else state.credentialSerial++;await route.fulfill({json:req.method()==="DELETE"?{deviceId:7,revoked:true}:{token:state.credentialSerial===1?token:"B".repeat(43),device:{id:7,dashboardId:1}}});return;}
     if(path==="/api/dashboards/1/devices"){await route.fulfill({json:{devices:[{id:7,deviceName:"合成平板",isActive:!state.revoked,expiresAtUtc:state.expiry,archivedAtUtc:state.archived?"2026-10-20T00:00:00Z":null,revokedAtUtc:state.revoked?"2026-10-20T00:00:00Z":null,createdByUserId:1,enforceIpRestriction:false}]}});return;}
     if(path.includes("/device/1/")){
       if(state.revoked){await route.fulfill({status:401,json:{error:{code:"DASHBOARD_DEVICE_UNAUTHORIZED",message:"SECRET"}}});return;}
@@ -45,13 +45,14 @@ test("manual preflight, enable, credential handoff, reload waiting, revoke and d
   await page.getByRole("button",{name:"啟用 Query-only",exact:true}).click();
   await expect(page.getByText(/目前模式：QUERY_ONLY/)).toBeVisible();
   await page.getByRole("button",{name:"核發／重新核發 合成平板",exact:true}).click();
-  await expect(page.getByRole("button",{name:"清除本頁憑證",exact:true})).toBeVisible();
+  await expect(page.getByRole("button",{name:"關閉並清除 Token",exact:true})).toBeVisible();
   await expect(page.getByRole("button",{name:"顯示本次憑證",exact:true})).toHaveCount(0);
-  expect(await page.locator("body").innerHTML()).not.toContain(token);
+  await expect(page.getByLabel("Device Token（僅顯示一次）",{exact:true})).toHaveValue(token);
   const storage=await page.evaluate(()=>[...Object.values(localStorage),...Object.values(sessionStorage)].join(" "));expect(storage).not.toContain(token);
   const popupPromise=page.waitForEvent("popup");await page.getByRole("button",{name:"在此裝置開啟安全播放",exact:true}).click();const popup=await popupPromise;
   await expect(popup.getByText("合○測試",{exact:true})).toBeVisible();expect(popup.url()).not.toContain(token);expect(new URL(popup.url()).pathname).toBe("/display/dashboards/1");
   await popup.reload();await expect(popup.getByLabel("Device Token",{exact:true})).toBeVisible();await expect(popup.getByText("合○測試",{exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"關閉並清除 Token",exact:true}).click();
   await page.getByRole("button",{name:"撤銷 合成平板",exact:true}).click();
   await expect(page.getByText("裝置已撤銷，請勿重用原憑證。")).toBeVisible();
   await expect(page.getByRole("button",{name:"顯示本次憑證",exact:true})).toHaveCount(0);
@@ -105,11 +106,13 @@ test("policy and permission refusals clear cached readiness without automatic ac
   state.preflightDenied = true; await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click(); await expect(page.getByText(/設定未完成：FORBIDDEN/)).toBeVisible();
   await expect(page.getByRole("button",{name:"執行啟用前檢查",exact:true})).toBeDisabled(); expect(state.writes).toHaveLength(0);
 });
-test("refresh clears an issued credential without DOM or storage disclosure and revoked devices remain revoked", async ({page}) => {
+test("configuration refresh clears the one-time credential and revoked devices remain revoked", async ({page}) => {
   const state = await setup(page); state.mode="QUERY_ONLY";
   await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await page.getByRole("button",{name:"核發／重新核發 合成平板",exact:true}).click();
-  await expect(page.getByRole("button",{name:"清除本頁憑證",exact:true})).toBeVisible(); expect(await page.locator("body").innerHTML()).not.toContain(token);
-  await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await expect(page.getByRole("button",{name:"清除本頁憑證",exact:true})).toHaveCount(0);
+  await expect(page.getByRole("dialog",{name:"一次性 Device Token"})).toBeVisible();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId: 1, origin: "external" } })));
+  await expect(page.getByRole("button",{name:"關閉並清除 Token",exact:true})).toHaveCount(0);
+  expect(await page.locator("body").innerHTML()).not.toContain(token);
   await page.getByRole("button",{name:"撤銷 合成平板",exact:true}).click(); await expect(page.getByText("裝置已撤銷，請勿重用原憑證。")).toBeVisible();
   await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await expect(page.getByRole("button",{name:"核發／重新核發 合成平板",exact:true})).toBeDisabled();
   const storage=await page.evaluate(()=>[...Object.values(localStorage),...Object.values(sessionStorage)].join(" ")); expect(storage).not.toContain(token);
@@ -152,6 +155,7 @@ test("actual manager popup recovers a lost first delivery and consumes the crede
   await expect(page.getByText("裝置憑證已單次交付至指定播放視窗。", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "在此裝置開啟安全播放", exact: true })).toHaveCount(0);
   expect(page.isClosed()).toBe(false);
+  await page.getByRole("button", { name: "關閉並清除 Token", exact: true }).click();
   for (const tab of [page, popup]) {
     expect(tab.url()).not.toContain(token);
     expect(await tab.locator("html").innerHTML()).not.toContain(token);
@@ -180,6 +184,9 @@ test("expired or closed popup handoff reports failure without storing or exposin
   await popup.clock.runFor(31000);
   await expect(page.getByText(/裝置交接逾時，未完成授權交付/)).toBeVisible();
   await expect(popup.getByText(/安全交接未完成或已逾時/)).toBeVisible();
+  await expect(page.getByLabel("Device Token（僅顯示一次）", { exact: true })).toHaveValue(token);
+  await expect(page.getByRole("button", { name: "複製 Token", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "關閉並清除 Token", exact: true }).click();
   expect(await popup.locator("html").innerHTML()).not.toContain(token);
   await popup.close();
 });
@@ -190,4 +197,101 @@ test("a handoff window without its manager reports failure instead of silently a
   await expect(page.getByText(/安全交接未完成或已逾時/)).toBeVisible();
   await expect(page.getByLabel("Device Token", { exact: true })).toHaveValue("");
   await expect(page.getByText("合○測試", { exact: true })).toHaveCount(0);
+});
+
+async function issueOneTimeToken(page: Page) {
+  const state = await setup(page); state.mode = "QUERY_ONLY";
+  await page.getByRole("button", { name: "重新載入播放狀態", exact: true }).click();
+  await page.getByRole("button", { name: "核發／重新核發 合成平板", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "一次性 Device Token", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Device Token（僅顯示一次）", { exact: true })).toHaveValue(token);
+  return state;
+}
+async function expectTokenCleared(page: Page) {
+  await expect(page.getByRole("dialog", { name: "一次性 Device Token", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "複製 Token", exact: true })).toHaveCount(0);
+  expect(await page.locator("html").innerHTML()).not.toContain(token);
+  expect(await page.locator("input,textarea").evaluateAll(inputs => inputs.map(input => (input as HTMLInputElement).value).join(" "))).not.toContain(token);
+  expect(page.url()).not.toContain(token);
+  expect(await page.evaluate(() => [...Object.values(localStorage), ...Object.values(sessionStorage)].join(" "))).not.toContain(token);
+}
+test("one-time Token copies exactly, clears on close, and manually activates a separate playback device", async ({ page }) => {
+  let leaked = false; page.on("console", message => { leaked ||= message.text().includes(token); });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  const state = await issueOneTimeToken(page);
+  await page.getByRole("button", { name: "複製 Token", exact: true }).click();
+  await expect(page.getByText(/已複製 Token，可貼至播放裝置/)).toBeVisible();
+  const copied = await page.evaluate(() => navigator.clipboard.readText()); expect(copied).toBe(token);
+  await page.getByRole("button", { name: "關閉並清除 Token", exact: true }).click(); await expectTokenCleared(page);
+  const player = await page.context().newPage();
+  await player.goto("/display/dashboards/1");
+  await player.getByLabel("Device Token", { exact: true }).fill(copied);
+  await player.getByRole("button", { name: "驗證並啟用播放", exact: true }).click();
+  await expect(player.getByText("合○測試", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "重新載入播放狀態", exact: true }).click(); await expectTokenCleared(page);
+  expect(state.credentialSerial).toBe(1); expect(JSON.stringify(state.writes)).not.toContain(token); expect(leaked).toBe(false);
+  await player.close();
+});
+for (const action of ["Escape", "pagehide", "navigation", "reload"] as const) test(`one-time Token clears on ${action} without a historical lookup`, async ({ page }) => {
+  const state = await issueOneTimeToken(page);
+  if (action === "Escape") await page.keyboard.press("Escape");
+  if (action === "pagehide") {
+    const synchronousEmpty = await page.evaluate(() => {
+      const field = document.querySelector<HTMLTextAreaElement>("#issued-device-token")!;
+      window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+      return field.value === "" && field.textContent === "";
+    });
+    expect(synchronousEmpty).toBe(true);
+  }
+  if (action === "navigation") { await page.goto("/queries"); await page.goBack(); }
+  if (action === "reload") await page.reload();
+  await expectTokenCleared(page);
+  expect(state.credentialSerial).toBe(1);
+  expect(state.writes.filter(w => w.path.endsWith("/credential") && w.method === "POST")).toHaveLength(1);
+});
+test("closing requires reissue; the former Token cannot be reopened", async ({ page }) => {
+  const state = await issueOneTimeToken(page);
+  await page.getByRole("button", { name: "關閉並清除 Token", exact: true }).click(); await expectTokenCleared(page);
+  await expect(page.getByRole("button", { name: "顯示本次憑證", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "核發／重新核發 合成平板", exact: true }).click();
+  await expect(page.getByLabel("Device Token（僅顯示一次）", { exact: true })).toHaveValue("B".repeat(43));
+  expect(await page.locator("html").innerHTML()).not.toContain(token); expect(state.credentialSerial).toBe(2);
+  await page.getByRole("button", { name: "關閉並清除 Token", exact: true }).click();
+});
+for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 800 }]) test(`HTTP clipboard fallback and one-time dialog fit ${viewport.width}px playback management`, async ({ page }) => {
+  await page.setViewportSize(viewport);
+  await issueOneTimeToken(page);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
+    document.execCommand = command => command === "copy" && document.activeElement instanceof HTMLTextAreaElement &&
+      document.activeElement.selectionEnd - document.activeElement.selectionStart === 43;
+  });
+  await page.getByRole("button", { name: "複製 Token", exact: true }).click();
+  await expect(page.getByText(/已複製 Token，可貼至播放裝置/)).toBeVisible();
+  const box = await page.getByRole("dialog", { name: "一次性 Device Token", exact: true }).boundingBox();
+  expect(box!.width).toBeLessThanOrEqual(viewport.width); expect(box!.height).toBeLessThanOrEqual(viewport.height);
+  await page.keyboard.press("Escape"); await expectTokenCleared(page);
+});
+test("clipboard denial provides manual copy guidance without losing the one-time display", async ({ page }) => {
+  await issueOneTimeToken(page);
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async () => { throw new Error("denied"); } } }));
+  await page.getByRole("button", { name: "複製 Token", exact: true }).click();
+  await expect(page.getByText("無法自動複製，請選取上方 Token 手動複製。", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Device Token（僅顯示一次）", { exact: true })).toHaveValue(token);
+  await page.keyboard.press("Escape"); await expectTokenCleared(page);
+});
+test("a late clipboard completion cannot restore a closed Token or alter a newly issued dialog", async ({ page }) => {
+  await issueOneTimeToken(page);
+  await page.evaluate(() => Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: () => new Promise<void>(resolve => {
+    (window as unknown as { finishSyntheticCopy: () => void }).finishSyntheticCopy = resolve;
+  }) } }));
+  await page.getByRole("button", { name: "複製 Token", exact: true }).click();
+  await expect(page.getByRole("button", { name: "複製 Token", exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "關閉並清除 Token", exact: true }).click(); await expectTokenCleared(page);
+  await page.getByRole("button", { name: "核發／重新核發 合成平板", exact: true }).click();
+  await page.evaluate(() => (window as unknown as { finishSyntheticCopy: () => void }).finishSyntheticCopy());
+  await expect(page.getByLabel("Device Token（僅顯示一次）", { exact: true })).toHaveValue("B".repeat(43));
+  await expect(page.getByText(/已複製 Token，可貼至播放裝置/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "複製 Token", exact: true })).toBeEnabled();
+  await page.keyboard.press("Escape"); await expectTokenCleared(page);
 });
