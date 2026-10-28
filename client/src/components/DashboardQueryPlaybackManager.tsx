@@ -14,10 +14,11 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
   const [readMessages, setReadMessages] = useState<string[]>([]), [issuedDeviceId, setIssuedDeviceId] = useState<number | null>(null);
   const [placement, setPlacement] = useState<{ deviceId: number; settings: PlaybackPlacement } | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [handoffBusy, setHandoffBusy] = useState(false);
   const issued = useRef<{ deviceId: number; token: string } | null>(null), cleanup = useRef<(() => void) | null>(null);
   const epoch = useRef(0), readSequence = useRef(0);
   const base = `/dashboards/${dashboardId}/query-mode/v1`;
-  function clearCredential() { cleanup.current?.(); cleanup.current = null; issued.current = null; setIssuedDeviceId(null); forgetDashboardToken(dashboardId); }
+  function clearCredential() { setHandoffBusy(false); cleanup.current?.(); cleanup.current = null; issued.current = null; setIssuedDeviceId(null); forgetDashboardToken(dashboardId); }
   async function refresh() {
     const current = epoch.current, read = ++readSequence.current;
     clearCredential(); setPlacement(null); setBusy(true); setMode(null); setPreflight(null); setConfiguration(null); setDevices([]); setReadMessages([]);
@@ -114,12 +115,17 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     finally { if (current === epoch.current) setBusy(false); }
   }
   function handoff() {
+    if (cleanup.current) return;
     const credential = issued.current;
     if (!credential || !devices.some(d => d.id === credential.deviceId && deviceMayIssue(d))) { clearCredential(); return; }
-    const popup = window.open("about:blank", "_blank");
+    const popup = window.open(`/display/dashboards/${dashboardId}?handoff=1`, "_blank");
     if (!popup) { setMessage("瀏覽器封鎖授權交付視窗；請允許後重新操作。"); return; }
-    cleanup.current?.(); cleanup.current = prepareDashboardTokenHandoff(popup, dashboardId, credential.token);
-    popup.location.replace(`/display/dashboards/${dashboardId}`);
+    setHandoffBusy(true); setMessage("正在向指定播放視窗交付授權，請保持本頁開啟。");
+    cleanup.current = prepareDashboardTokenHandoff(popup, dashboardId, credential.token, result => {
+      clearCredential();
+      setMessage(result === "delivered" ? "裝置憑證已單次交付至指定播放視窗。" : result === "expired"
+        ? "裝置交接逾時，未完成授權交付；請重新核發後開啟播放。" : "播放視窗已關閉或交接中斷；請重新核發後開啟播放。");
+    });
   }
   const result = (value: Check) => value.ok ? "通過" : `未通過：${value.code ?? "REQUEST_FAILED"}`;
   return <section className="dashboard-editor-card" id="dashboard-device-management">
@@ -144,7 +150,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
       <button type="button" disabled={busy || !mode || mode.mode === "LEGACY" || !device.isActive || deviceArchived(device)} onClick={() => void credential(device, true)}>撤銷 {device.deviceName}</button></td>
     </tr>)}</tbody></table>
     {placement && <p role="status">裝置 {placement.deviceId} 已保存播放位置（唯讀）：{placement.settings.browser}，螢幕 {placement.settings.screenNumber}，{placement.settings.fullscreen ? "全螢幕" : "視窗"}，位置 {placement.settings.windowX}／{placement.settings.windowY}，尺寸 {placement.settings.windowWidth}×{placement.settings.windowHeight}。修改須先補齊版本化安全 API。</p>}
-    {issuedDeviceId !== null && <div role="status">已取得裝置 {issuedDeviceId} 的本次憑證，原始值不放入 DOM。<button type="button" onClick={handoff}>在此裝置開啟安全播放</button><button type="button" onClick={clearCredential}>清除本頁憑證</button></div>}
+    {issuedDeviceId !== null && <div role="status">已取得裝置 {issuedDeviceId} 的本次憑證，原始值不放入 DOM。<button type="button" onClick={handoff} disabled={handoffBusy}>在此裝置開啟安全播放</button><button type="button" onClick={clearCredential}>清除本頁憑證</button></div>}
     {readMessages.map(text => <p role="status" key={text}>{text}</p>)}{message && <p role="status">{message}</p>}
   </section>;
 }

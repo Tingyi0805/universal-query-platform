@@ -6,7 +6,7 @@ async function setup(page:Page) {
   await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic",user:{id:1,username:"synthetic",displayName:"測試",permissions:["DESIGN_QUERY","VIEW_QUERY","EXECUTE_QUERY"]}})));
   await page.route(url=>url.pathname.startsWith("/api/"),async route=>{
     const path=new URL(route.request().url()).pathname;
-    if(route.request().method()!=="GET"&&!path.endsWith("/page")){
+    if(route.request().method()!=="GET"&&!path.endsWith("/page")&&!path.endsWith("/preview")){
       state.writes.push({path,body:route.request().postDataJSON()});
       await route.fulfill(state.fail?{status:409,json:{error:{code:"QUERY_SOURCE_VERSION_CONFLICT",message:"SQL SECRET"}}}:{json:{...state.config,version:"b".repeat(64)}});return;
     }
@@ -14,7 +14,7 @@ async function setup(page:Page) {
     if(path.endsWith("/configuration")){await route.fulfill({json:state.config});return;}
     if(path==="/api/queries"){await route.fulfill({json:{queries:[{id:20,name:"合成 Query",code:"Q20",canExecute:true},{id:21,name:"另一 Query",code:"Q21",canExecute:true}]}});return;}
     if(path.endsWith("/layout")){await route.fulfill({json:{profiles:[{id:1,name:"合成版型",isDefault:true,sortOrder:0,canvasWidth:1920,canvasHeight:1080,config:{},widgets:[{id:1,widgetType:"TEXT",title:null,sourceKey:null,staticText:"固定診間科別",x:10,y:10,width:300,height:60,fontSize:24,alignment:"LEFT",config:{},sortOrder:0}]}]}});return;}
-    if(path.endsWith("/page")){await route.fulfill({status:400,json:{error:{code:"PARAMETER_REQUIRED"}}});return;}
+    if(path.endsWith("/page")||path.endsWith("/preview")){await route.fulfill({status:400,json:{error:{code:"PARAMETER_REQUIRED"}}});return;}
     if(path==="/api/dashboards"){await route.fulfill({json:{dashboards:[{id:1,code:"SYNTHETIC",name:"合成看板",queryDefinitionId:20,parameters:{},refreshSeconds:30,pageSize:10,pageSeconds:15,isActive:false}]}});return;}
     await route.fulfill({json:{queryDefinitions:[],datasets:[],devices:[],parameters:[],columns:[],reportColumns:[],categories:[],profiles:[]}});
   });return state;

@@ -127,7 +127,7 @@ export function DashboardDesignerPage() {
     setError("");
     try {
       const configuration = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken));
-      const page = await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page`, { method: "POST", body: JSON.stringify({ page: 1 }) }, accessToken);
+      const page = await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/preview`, { method: "POST", body: JSON.stringify({ page: 1 }) }, accessToken);
       const result = { ...page, reportColumns: [], dashboard: { id: dashboardId, code: "", name: configuration.presentation?.name ?? "Query-only 設計預覽", refreshSeconds: configuration.primary.refreshSeconds } } as unknown as PreviewResult;
       if (sequence !== previewSequence.current) return;
       setPreview(result);

@@ -732,3 +732,75 @@ for (const type of ["SQLSERVER", "ORACLE"] as const)
       assert.equal(calls, 1);
       assert.equal(result.result.rows.length, 1);
     });
+
+const adminPreviewSubject = () => ({ ...subject, context: "admin-preview" as const, expiresAt: Math.floor(Date.now() / 1000) + 3600 });
+function activeAdminFixture() {
+  const f = fixture();
+  Object.assign(f.control.bindings.WARD!, { mode: "QUERY_ONLY", modeRevision: 1, dashboardActive: true });
+  return f;
+}
+test("active administrator preview uses Query identity, public Dataset masks and audit without a device grant", async () => {
+  const f = activeAdminFixture(), before = structuredClone(f.control.bindings);
+  const response = await f.service.page(1, "WARD", adminPreviewSubject(), { page: 1 });
+  assert.match(response.modeVersion, /^QUERY_ONLY_ADMIN_PREVIEW_V1:1$/);
+  assert.equal(response.result.rows[0]!.NAME, "測○○○甲"); assert.equal(response.result.rows[0]!.MRN, undefined);
+  assert.equal(f.control.audits[0]!.masked, true); assert.equal(f.control.audits[0]!.userId, 1);
+  assert.equal(f.control.audits[0]!.dashboardDeviceId, undefined);
+  assert.deepEqual(f.control.executions, [99]); assert.deepEqual(f.control.bindings, before);
+  await assert.rejects(f.service.page(1, "WARD", subject, { page: 1 }), { code: "QUERY_SOURCE_PREVIEW_REQUIRES_STAGED_DASHBOARD" });
+});
+for (const reason of ["mode", "revision", "public", "permission", "acl", "expired", "audit", "receipt", "flag"])
+  test(`active admin preview rejects ${reason} without legacy fallback`, async () => {
+    const f = activeAdminFixture(), admin = adminPreviewSubject();
+    if (reason === "mode") f.control.bindings.WARD!.mode = "QUERY_ONLY_DISABLED";
+    if (reason === "revision") f.control.bindings.WARD!.modeRevision = 0;
+    if (reason === "public") f.control.publicAllowed = false;
+    if (reason === "permission") f.control.session.permissions = ["VIEW_QUERY", "EXECUTE_QUERY"];
+    if (reason === "acl") f.control.denied.add(21);
+    if (reason === "expired") admin.expiresAt = 1;
+    if (reason === "audit") f.control.failAudit = true;
+    if (reason === "receipt") f.control.missingAudit = true;
+    if (reason === "flag") f.control.enabled = false;
+    await assert.rejects(f.service.page(1, "WARD", admin, { page: 1 }));
+    if (!["audit", "receipt"].includes(reason)) assert.equal(f.control.executions.length, 0);
+  });
+for (const stage of ["afterExecute", "afterAudit"] as const)
+  for (const reason of ["mode", "public", "acl", "binding"])
+    test(`admin preview ${stage} ${reason} mutation prevents disclosure`, async () => {
+      const f = activeAdminFixture();
+      f.control[stage] = () => {
+        if (reason === "mode") f.control.bindings.WARD!.modeRevision!++;
+        if (reason === "public") f.control.publicEpoch++;
+        if (reason === "acl") f.control.denied.add(21);
+        if (reason === "binding") f.control.bindings.WARD!.bindingRevision++;
+      };
+      await assert.rejects(f.service.page(1, "WARD", adminPreviewSubject(), { page: 1 }));
+    });
+test("staged admin preview retains staging protection and cannot share another context's snapshot", async () => {
+  const f = fixture();
+  f.control.bindings.WARD!.mode = "QUERY_ONLY_DISABLED";
+  const staged = await f.service.page(1, "WARD", subject, { page: 1 });
+  await assert.rejects(f.service.page(1, "WARD", adminPreviewSubject(), { page: 1, snapshotId: staged.snapshotId }), { code: "DASHBOARD_SNAPSHOT_EXPIRED" });
+  assert.equal((await f.service.page(1, "WARD", adminPreviewSubject(), { page: 1 })).result.rows.length, 1);
+});
+for (const reason of ["success", "page", "snapshot", "context", "permission", "expired"])
+  test(`admin read-only preview HTTP contract: ${reason}`, async () => {
+    const f = activeAdminFixture(), oldSecret = env.JWT_SECRET;
+    env.JWT_SECRET = "synthetic-admin-preview-only";
+    const app = express(); app.use(express.json()); app.use(createAuthenticateJwt(f.deps.getSession));
+    app.use(createQuerySourceExecutionRouter(f.service));
+    const server = createServer(app); await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    try {
+      if (reason === "permission") f.control.session.permissions = ["VIEW_QUERY", "EXECUTE_QUERY"];
+      const token = jwt.sign({ sub: "1", tokenVersion: 1 }, env.JWT_SECRET, { expiresIn: reason === "expired" ? -1 : 3600 });
+      const response = await fetch(`http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/1/query-sources/v1/WARD/preview`, {
+        method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ page: reason === "page" ? 2 : 1,
+          ...(reason === "snapshot" ? { snapshotId: "11111111-1111-4111-8111-111111111111" } : {}), ...(reason === "context" ? { context: "designer" } : {}) }),
+      });
+      assert.equal(response.status, reason === "success" ? 200 : reason === "permission" ? 403 : reason === "expired" ? 401 : 400);
+      if (reason !== "expired") assert.equal(response.headers.get("cache-control"), "no-store");
+      const body = await response.json(); assert.ok(!JSON.stringify(body).includes("00000123"));
+      if (reason !== "success") { assert.equal(body.result, undefined); assert.equal(f.control.executions.length, 0); }
+    } finally { env.JWT_SECRET = oldSecret; await new Promise<void>(resolve => server.close(() => resolve())); }
+  });

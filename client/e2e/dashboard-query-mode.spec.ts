@@ -131,3 +131,63 @@ test("server Dataset public preflight permits explicit activation without a seco
  await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
  await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeEnabled();expect(oldReads).toBe(0);expect(state.writes).toHaveLength(0);
 });
+
+test("actual manager popup recovers a lost first delivery and consumes the credential once", async ({ page }) => {
+  let leaked = false;
+  const consoleCheck = (message: { text(): string }) => { leaked ||= message.text().includes(token); };
+  page.on("console", consoleCheck); page.context().on("page", tab => tab.on("console", consoleCheck));
+  const state = await setup(page); state.mode = "QUERY_ONLY";
+  await page.getByRole("button", { name: "重新載入播放狀態", exact: true }).click();
+  await page.getByRole("button", { name: "核發／重新核發 合成平板", exact: true }).click();
+  await page.context().addInitScript(() => {
+    let dropped = false;
+    window.addEventListener("message", event => {
+      if (!dropped && event.data?.type === "uqp.dashboard.token") { dropped = true; event.stopImmediatePropagation(); }
+    });
+  });
+  const pending = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "在此裝置開啟安全播放", exact: true }).click();
+  const popup = await pending;
+  await expect(popup.getByText("合○測試", { exact: true })).toBeVisible();
+  await expect(page.getByText("裝置憑證已單次交付至指定播放視窗。", { exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "在此裝置開啟安全播放", exact: true })).toHaveCount(0);
+  expect(page.isClosed()).toBe(false);
+  for (const tab of [page, popup]) {
+    expect(tab.url()).not.toContain(token);
+    expect(await tab.locator("html").innerHTML()).not.toContain(token);
+    expect(await tab.locator("input").evaluateAll(inputs => inputs.map(input => (input as HTMLInputElement).value).join(" "))).not.toContain(token);
+    expect(await tab.evaluate(() => [...Object.values(localStorage), ...Object.values(sessionStorage)].join(" "))).not.toContain(token);
+  }
+  await popup.reload(); await expect(popup.getByLabel("Device Token", { exact: true })).toBeVisible();
+  await expect(popup.getByText("合○測試", { exact: true })).toHaveCount(0);
+  expect(state.writes.filter(w => w.path.endsWith("/credential") && w.method === "POST")).toHaveLength(1);
+  expect(leaked).toBe(false);
+  await popup.close();
+});
+test("expired or closed popup handoff reports failure without storing or exposing the credential", async ({ page }) => {
+  const state = await setup(page); state.mode = "QUERY_ONLY";
+  await page.getByRole("button", { name: "重新載入播放狀態", exact: true }).click();
+  await page.getByRole("button", { name: "核發／重新核發 合成平板", exact: true }).click();
+  await page.clock.install();
+  await page.context().addInitScript(() => window.addEventListener("message", event => {
+    if (event.data?.type === "uqp.dashboard.token") event.stopImmediatePropagation();
+  }));
+  const pending = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "在此裝置開啟安全播放", exact: true }).click(); const popup = await pending;
+  await expect(page.getByRole("button", { name: "在此裝置開啟安全播放", exact: true })).toBeDisabled();
+  await expect(popup.getByLabel("Device Token", { exact: true })).toBeVisible();
+  await page.clock.runFor(31000);
+  await popup.clock.runFor(31000);
+  await expect(page.getByText(/裝置交接逾時，未完成授權交付/)).toBeVisible();
+  await expect(popup.getByText(/安全交接未完成或已逾時/)).toBeVisible();
+  expect(await popup.locator("html").innerHTML()).not.toContain(token);
+  await popup.close();
+});
+
+test("a handoff window without its manager reports failure instead of silently asking for a token", async ({ page }) => {
+  await setup(page);
+  await page.goto("/display/dashboards/1?handoff=1");
+  await expect(page.getByText(/安全交接未完成或已逾時/)).toBeVisible();
+  await expect(page.getByLabel("Device Token", { exact: true })).toHaveValue("");
+  await expect(page.getByText("合○測試", { exact: true })).toHaveCount(0);
+});
