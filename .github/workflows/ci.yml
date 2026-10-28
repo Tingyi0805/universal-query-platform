@@ -35,6 +35,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Install synthetic kiosk API test dependencies (no database/native drivers)
+        run: npm install --prefix ../server --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
 
@@ -307,3 +309,19 @@ jobs:
           path: output/
           retention-days: 7
           if-no-files-found: error
+
+  windows-kiosk-launcher:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install offline generator dependencies without native database drivers
+        working-directory: server
+        run: npm install --ignore-scripts
+      - name: Verify Windows PowerShell 5.1 launcher syntax and mock launch arguments
+        shell: powershell
+        run: .\tools\test-uqp-kiosk-launcher.ps1

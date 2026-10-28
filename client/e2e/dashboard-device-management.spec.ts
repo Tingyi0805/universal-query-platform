@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const initialVersion = "a".repeat(64);
 async function setup(page: Page) {
-  const state = { revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
+  const state = { linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
     writes: [] as { path: string; method: string; body: any }[], reads: 0, oldWrites: 0,
     devices: [{ id: 7, dashboardId: 1, deviceName: "合成裝置", isActive: true, createdByUserId: 2, sharedWorkstationId: 3,
       enforceIpRestriction: true, allowedIp: "192.0.2.1" as string | null, allowedCidr: null, expiresAtUtc: null as string | null,
@@ -10,6 +10,7 @@ async function setup(page: Page) {
   await page.addInitScript(() => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY", "VIEW_QUERY", "EXECUTE_QUERY"] } })));
   await page.context().route(url => url.pathname.startsWith("/api/"), async route => {
     const req = route.request(), path = new URL(req.url()).pathname;
+    if(path.endsWith("/playback-link")){const deviceId=Number(path.split("/").at(-2));await route.fulfill({json:{dashboardId:1,deviceId,url:state.linkUrl.replace("deviceId=7",`deviceId=${deviceId}`),bat:"@echo off\r\nREM synthetic public URL only\r\n"}});return;}
     if (path.includes("/device-management/v1")) {
       const version = () => state.revision === 0 ? initialVersion : String(state.revision).repeat(64);
       if (req.method() === "GET") state.reads++;
@@ -109,4 +110,17 @@ test("cross-section change invalidates authority while preserving draft", async 
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId: 1, origin: "layout" } })));
   await expect(panel.getByLabel("裝置名稱", { exact: true })).toHaveValue("跨區草稿"); await expect(panel.getByRole("button", { name: "確認保存裝置設定" })).toBeDisabled();
   expect(state.writes).toHaveLength(0);
+});
+
+test("saved settings automatically show configured device URL with copy/open/BAT; no new credential",async({page})=>{
+ const {state,panel}=await setup(page);await page.context().grantPermissions(["clipboard-read","clipboard-write"]);
+ await panel.getByRole("button",{name:"編輯 合成裝置 播放位置"}).click();await panel.getByRole("button",{name:"確認保存裝置設定"}).click();
+ const url=panel.getByRole("textbox",{name:"裝置 7 播放網址",exact:true});await expect(url).toHaveValue(state.linkUrl);
+ await panel.getByRole("button",{name:"複製播放網址",exact:true}).click();expect(await page.evaluate(()=>navigator.clipboard.readText())).toBe(state.linkUrl);
+ await expect(panel.getByRole("link",{name:"開啟播放網址",exact:true})).toHaveAttribute("href",state.linkUrl);await expect(panel.getByRole("link",{name:"開啟播放網址",exact:true})).toHaveAttribute("rel","noopener noreferrer");
+ const downloadPromise=page.waitForEvent("download");await panel.getByRole("button",{name:"下載 Windows BAT",exact:true}).click();expect((await downloadPromise).suggestedFilename()).toBe("UQP-device-7.bat");
+ expect(state.writes).toHaveLength(1);expect(state.oldWrites).toBe(0);
+});
+for(const url of ["http://hospital.example/display/dashboards/1?deviceId=7","https://hospital.example/display/dashboards/2?deviceId=7","https://hospital.example/display/dashboards/1?deviceId=7&token=secret"])test(`invalid playback link is not shown: ${url}`,async({page})=>{
+ const {state,panel}=await setup(page);state.linkUrl=url;await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByText(/播放網址暫不可用/)).toBeVisible();await expect(panel.getByRole("link",{name:"開啟播放網址"})).toHaveCount(0);expect(state.writes).toHaveLength(0);
 });
