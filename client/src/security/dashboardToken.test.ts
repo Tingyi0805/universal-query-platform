@@ -35,6 +35,13 @@ function handoffWindow(t: any) {
   };
   return { window, opener, sent, dispatch, advance: (ms: number) => { time += ms; }, tick: () => { for (const callback of [...timers.values()]) callback(); }, timers, handlers };
 }
+test("HTTP handoff refuses both sender and receiver before listeners, timers or postMessage", t => {
+  const f=handoffWindow(t);f.window.location.origin="http://127.0.0.1";
+  let closed=0,failed=0;
+  prepareDashboardTokenHandoff(f.opener as any,15,"B".repeat(43),()=>closed++);
+  requestDashboardTokenHandoff(15,()=>assert.fail("HTTP token accepted"),()=>failed++);
+  assert.equal(closed,1);assert.equal(failed,1);assert.equal(f.sent.length,0);assert.equal(f.timers.size,0);assert.equal(f.handlers.size,0);assert.equal(readDashboardToken(15),null);
+});
 test("sender binds origin/window/document nonce, retries until ACK, then expires the one-shot grant", t => {
   const f = handoffWindow(t), results: string[] = [], nonce = dashboardHandoffNonce();
   prepareDashboardTokenHandoff(f.opener as any, 15, "B".repeat(43), result => results.push(result));

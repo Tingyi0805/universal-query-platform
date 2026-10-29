@@ -23,16 +23,36 @@ writeFileSync(process.argv[2],JSON.stringify(variants));
       if ($parseErrors.Count -gt 0) { throw ('KIOSK_POWERSHELL_SYNTAX: ' + ($parseErrors | Out-String)) }
       if ($variant.bat -notmatch '-EncodedCommand ([A-Za-z0-9+/=]+)') { throw 'KIOSK_BAT_ENCODING' }
       if ([Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($Matches[1])) -cne $variant.script) { throw 'KIOSK_BAT_ROUNDTRIP' }
-      # Test launcher execution with browser/filesystem launch operations intercepted.
+      # HTTPS without an installed Agent retains the original browser launcher.
+      $script:CapturedLaunch = $null
+      function Test-Path { param($LiteralPath) if ($LiteralPath -like 'HKLM:*') { return $false }; return $true }
+      function Start-Process { param($FilePath, $ArgumentList) $script:CapturedLaunch = @{ FilePath = $FilePath; Arguments = $ArgumentList } }
+      $http = $variant.script.Contains("throw 'Install and enroll")
+      $refused = $false
+      try { & ([scriptblock]::Create($variant.script)) } catch { $refused = $true }
+      if ($http) { if (-not $refused -or $script:CapturedLaunch) { throw 'HTTP_AGENT_REQUIRED' } }
+      else {
+        if ($refused -or -not $script:CapturedLaunch) { throw 'KIOSK_LAUNCH_NOT_CALLED' }
+        $arguments = $script:CapturedLaunch.Arguments -join ' '
+        if ($arguments -notlike '*--user-data-dir=*' -or $arguments -notlike '*--window-size=1400,800*' -or $arguments -notmatch '--app=https://hospital\.example/display/dashboards/1\?deviceId=7') { throw 'KIOSK_ARGUMENTS_INVALID' }
+      }
+      # Installed public registry metadata is administrator-protected. Mock signature
+      # and Start-Process here only; no unsigned Agent is registered or executed.
       $script:CapturedLaunch = $null
       function Test-Path { param($LiteralPath) return $true }
-      function Start-Process { param($FilePath, $ArgumentList) $script:CapturedLaunch = @{ FilePath = $FilePath; Arguments = $ArgumentList } }
+      $certificate = [Text.Encoding]::UTF8.GetBytes('synthetic publisher certificate')
+      $hash = [Security.Cryptography.SHA256]::Create()
+      try { $publisher = ([BitConverter]::ToString($hash.ComputeHash($certificate))).Replace('-','') } finally { $hash.Dispose() }
+      function Get-ItemProperty { param($LiteralPath) return @{ Executable='C:\Synthetic\Uqp.Kiosk.Agent.exe'; Configuration='C:\Synthetic\agent.json'; PublisherSha256=$publisher } }
+      function Get-AuthenticodeSignature { param($LiteralPath) return @{ Status='Valid'; SignerCertificate=@{ RawData=$certificate } } }
       & ([scriptblock]::Create($variant.script))
-      if (-not $script:CapturedLaunch) { throw 'KIOSK_LAUNCH_NOT_CALLED' }
+      if (-not $script:CapturedLaunch -or $script:CapturedLaunch.FilePath -notlike '*Uqp.Kiosk.Agent.exe') { throw 'NATIVE_AGENT_NOT_SELECTED' }
       $arguments = $script:CapturedLaunch.Arguments -join ' '
-      if ($arguments -notlike '*--user-data-dir=*' -or $arguments -notlike '*--window-size=1400,800*' -or $arguments -notmatch '--app=https?://hospital\.example/display/dashboards/1\?deviceId=7') { throw 'KIOSK_ARGUMENTS_INVALID' }
-      if ($arguments -match '(?i)token|incognito|inprivate|--kiosk') { throw 'KIOSK_FORBIDDEN_ARGUMENT' }
-      Remove-Item Function:Test-Path, Function:Start-Process -ErrorAction SilentlyContinue
+      if ($arguments -notmatch '--placement-base64 ([A-Za-z0-9+/=]+)') { throw 'AGENT_PLACEMENT_MISSING' }
+      $placement = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Matches[1])) | ConvertFrom-Json
+      if ($placement.WindowX -ne -2000 -or $placement.WindowWidth -ne 1400 -or $placement.ScreenNumber -ne 1) { throw 'AGENT_PLACEMENT_CHANGED' }
+      if ($arguments -match '(?i)token|inprivate|incognito') { throw 'KIOSK_FORBIDDEN_ARGUMENT' }
+      Remove-Item Function:Test-Path, Function:Start-Process, Function:Get-ItemProperty, Function:Get-AuthenticodeSignature -ErrorAction SilentlyContinue
     }
     Write-Host 'KIOSK_WINDOWS_POWERSHELL_SYNTAX_AND_ARGUMENTS_PASS (mock launch; no physical browser/reboot acceptance)'
   } finally { Remove-Item -LiteralPath $output, $generator -Force -ErrorAction SilentlyContinue }

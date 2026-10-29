@@ -152,6 +152,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     finally { if (current === epoch.current) setBusy(false); }
   }
   function handoff() {
+    if (window.location.protocol !== "https:") { setMessage("HTTP 視窗不接受憑證交接。請使用 Windows Managed Kiosk Agent 安全登入並授權；請勿在 HTTP 播放頁輸入 Token。"); return; }
     if (cleanup.current || handoffUsed) return;
     const credential = issued.current;
     if (!credential || !devices.some(d => d.id === credential.deviceId && deviceMayIssue(d))) { clearCredential(); return; }

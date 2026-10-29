@@ -190,7 +190,7 @@ const dashboardSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
-const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPlaybackSources, loadBinding: loadQueryExecutionBinding,
+export const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPlaybackSources, loadBinding: loadQueryExecutionBinding,
   getApprovalEvidence: getDashboardApprovalEvidence,
   getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
   getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,

@@ -48,6 +48,7 @@ export function prepareDashboardTokenHandoff(
   onResult: (result: "delivered" | "expired" | "closed") => void = () => {},
 ) {
   if (!Number.isSafeInteger(id) || id <= 0 || !/^[A-Za-z0-9_-]{43}$/.test(token)) throw new Error("裝置 Token 格式不正確。");
+  if (new URL(window.location.origin).protocol !== "https:") { onResult("closed"); return () => {}; }
   const origin = window.location.origin, expiresAt = Date.now() + HANDOFF_MS, monotonicDeadline = performance.now() + HANDOFF_MS;
   const handoffId = dashboardHandoffNonce();
   let secret: string | null = token, requestId: string | null = null, active = true;
@@ -81,6 +82,7 @@ export function requestDashboardTokenHandoff(
   id: number, onToken: (token: string) => void,
   onFailure: () => void = () => {}, requestId = dashboardHandoffNonce(),
 ) {
+  if (new URL(window.location.origin).protocol !== "https:") { onFailure(); return () => {}; }
   const opener: Window | null = window.opener;
   if (!opener) { onFailure(); return () => {}; }
   const origin = window.location.origin, deadline = Date.now() + HANDOFF_MS, monotonicDeadline = performance.now() + HANDOFF_MS;
