@@ -23,3 +23,5 @@ export const devicePlacementSchema = z.object({
   windowWidth: z.number().int().min(200).max(7680), windowHeight: z.number().int().min(200).max(4320),
 }).strict();
 export type DevicePlacement = z.infer<typeof devicePlacementSchema>;
+
+export const deviceRenewalSchema = z.object({ days: z.number().int().min(1).max(365) }).strict();

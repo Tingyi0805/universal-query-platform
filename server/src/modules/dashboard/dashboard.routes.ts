@@ -68,7 +68,6 @@ import {
   listDashboardDisplayDevices,
   listExpiringDashboardDisplayDevices,
   reissueDashboardDisplayDeviceToken,
-  renewDashboardDisplayDevice,
   updateDashboardDisplayDeviceSettings,
   revokeDashboardDisplayDevice,
   checkDashboardDisplayDevice,
@@ -233,7 +232,8 @@ dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
       verification.device.queryModeGrantVersion !== mode.version || verification.device.delegatorTokenVersion !== verification.device.authorizationRevision)) {
       res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } }); return;
     }
-    res.json(await getDashboardLayout(id.data));
+    res.setHeader("Cache-Control","no-store");
+    res.json({...await getDashboardLayout(id.data),deviceAuthorization:{expiresAtUtc:verification.device.expiresAtUtc,serverNowUtc:new Date().toISOString()}});
   } catch (error) {
     next(error);
   }
@@ -306,6 +306,7 @@ dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore,
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
 dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  res.setHeader("Cache-Control","no-store");
   try {
     const parsed = z.object({
       days: z.coerce.number().int().min(1).max(365).default(30),
@@ -317,6 +318,7 @@ dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (
 
     res.json({
       days: parsed.data.days,
+      asOfUtc: new Date().toISOString(),
       devices: await listExpiringDashboardDisplayDevices(parsed.data.days),
     });
   } catch (error) {
@@ -535,40 +537,9 @@ dashboardRouter.post("/:id/devices/:deviceId/reissue-token", requirePermission("
   }
 });
 
-dashboardRouter.patch("/:id/devices/:deviceId/renew", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const deviceId = idSchema.safeParse(req.params.deviceId);
-    const parsed = z.object({
-      days: z.coerce.number().int().min(1).max(3650).default(365),
-    }).safeParse(req.body ?? {});
-
-    if (!id.success || !deviceId.success || !parsed.success || !req.authUser) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "延長顯示裝置期限的設定不正確。" } });
-      return;
-    }
-
-    const device = await renewDashboardDisplayDevice(id.data, deviceId.data, parsed.data.days);
-    await tryWriteAuditEvent({
-      eventType: "DASHBOARD_DEVICE_RENEWED",
-      userId: req.authUser.id,
-      parameters: {
-        dashboardId: id.data,
-        deviceId: deviceId.data,
-        extendDays: parsed.data.days,
-        expiresAtUtc: device.expiresAtUtc,
-      },
-      ...auditRequestContext(req),
-    });
-
-    res.json({ status: "OK", device });
-  } catch (error) {
-    if (error instanceof Error && error.message === "DASHBOARD_DEVICE_NOT_FOUND") {
-      res.status(404).json({ error: { code: error.message, message: "找不到可延長的顯示裝置。" } });
-      return;
-    }
-    next(error);
-  }
+// Unversioned renewals cannot bypass the transaction/audit/concurrency contract.
+dashboardRouter.patch("/:id/devices/:deviceId/renew",requirePermission("DESIGN_QUERY"),(_req,res)=>{
+  res.status(409).json({error:{code:"DASHBOARD_DEVICE_VERSIONED_API_REQUIRED",message:"請使用版本化裝置管理介面明確確認續期。"}});
 });
 
 dashboardRouter.delete("/:id/devices/:deviceId", requirePermission("DESIGN_QUERY"), async (req, res, next) => {

@@ -1,3 +1,4 @@
+import { deviceExpiry } from "../dashboard/deviceExpiry";
 import "./DashboardDeviceMetadataManager.css";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
@@ -13,6 +14,9 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   const [draft, setDraft] = useState<{ deviceId: number | null; operation: "metadata" | "placement" } | null>(null);
   const [metadata, setMetadata] = useState<Metadata>(empty), [placement, setPlacement] = useState(defaultPlacement);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
+  const [renewId,setRenewId]=useState<number|null>(null),[renewDays,setRenewDays]=useState(30);
+  const [alerts,setAlerts]=useState<{due30:number;due7:number;expired:number}|null>(null),[alertMessage,setAlertMessage]=useState("");
+  const [now,setNow]=useState(Date.now());const serverOffset=useRef(0);
   type PlaybackLink = {dashboardId:number;deviceId:number;url:string;bat:string};
   const [links,setLinks] = useState<Record<number,PlaybackLink>>({});
   const [linkMessage,setLinkMessage] = useState("");
@@ -20,11 +24,13 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     const current=sequence.current;
     try {
       const value=await apiRequest<PlaybackLink>(`${base}/${deviceId}/playback-link`,{},accessToken), url=new URL(value.url);
-      if (value.dashboardId!==dashboardId || value.deviceId!==deviceId || url.protocol!=="https:" || url.username || url.password || url.hash || url.pathname!==`/display/dashboards/${dashboardId}` || url.search!==`?deviceId=${deviceId}` || typeof value.bat!=="string" || !value.bat.startsWith("@echo off")) throw new Error("KIOSK_LINK_INVALID");
+      if (value.dashboardId!==dashboardId || value.deviceId!==deviceId || !["http:","https:"].includes(url.protocol) || url.username || url.password || url.hash || url.pathname!==`/display/dashboards/${dashboardId}` || url.search!==`?deviceId=${deviceId}` || typeof value.bat!=="string" || !value.bat.startsWith("@echo off")) throw new Error("KIOSK_LINK_INVALID");
       if(current===sequence.current) {setLinks(previous=>({...previous,[deviceId]:value}));setLinkMessage("播放網址已產生；網址本身不授權，請在目標裝置的瀏覽器設定檔首次輸入 Token。");}
-    } catch {if(current===sequence.current)setLinkMessage("播放網址暫不可用，請確認 HTTPS 公開來源設定及裝置狀態。");}
+    } catch {if(current===sequence.current)setLinkMessage("播放網址暫不可用，請確認 HTTP／HTTPS 公開來源設定及裝置狀態。");}
   }
-  async function copyLink(value:string) {try {await navigator.clipboard.writeText(value);setLinkMessage("已複製播放網址。");}catch{setLinkMessage("無法自動複製，請選取播放網址手動複製。");}}
+  async function copyLink(value:string,field:HTMLInputElement|null) {try {
+    if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(value);
+    else {if(!field)throw new Error("COPY_UNAVAILABLE");field.focus();field.select();if(!document.execCommand("copy"))throw new Error("COPY_UNAVAILABLE");}setLinkMessage("已複製播放網址。");}catch{setLinkMessage("無法自動複製，請選取播放網址手動複製。");}}
   function downloadLauncher(value:PlaybackLink) {
     const url=URL.createObjectURL(new Blob([value.bat],{type:"application/octet-stream"}));
     const a=document.createElement("a");a.href=url;a.download=`UQP-device-${value.deviceId}.bat`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
@@ -43,14 +49,24 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   }
   async function load(discard = false) {
     if (discard && draft && !window.confirm("重新載入會捨棄本區裝置草稿，確定繼續？")) return;
-    const read = ++sequence.current; setBusy(true); setVersion(null); setMessage("");
+    const read = ++sequence.current; setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
     try {
-      const value = trusted(await apiRequest<Snapshot>(base, {}, accessToken));
+      const [metadata,reminders]=await Promise.allSettled([apiRequest<Snapshot>(base,{},accessToken),apiRequest<{asOfUtc?:string;devices:{id:number;dashboardId:number;expiresAtUtc:string|null}[]}>("/dashboards/device-alerts?days=30",{},accessToken)]);
+      if(metadata.status!=="fulfilled")throw metadata.reason;
+      const value=trusted(metadata.value);
+      if(read!==sequence.current)return;
+      if(reminders.status==="fulfilled" && Array.isArray(reminders.value.devices)){
+        const serverTime=Date.parse(reminders.value.asOfUtc??"");serverOffset.current=Number.isFinite(serverTime)?serverTime-Date.now():0;const current=Date.now()+serverOffset.current;setNow(current);
+        const rows=reminders.value.devices.filter(d=>d.dashboardId===dashboardId && value.devices.some(v=>v.id===d.id && deviceMayIssue({...v,expiresAtUtc:null})));
+        const bands=rows.map(d=>deviceExpiry(d.expiresAtUtc,current).band);
+        setAlerts({due30:bands.filter(b=>b==="DUE30"||b==="DUE7").length,due7:bands.filter(b=>b==="DUE7").length,expired:bands.filter(b=>b==="EXPIRED").length});
+      }else setAlertMessage("到期提醒暫時無法讀取；請確認每台裝置的到期日。");
       if (read !== sequence.current) return;
-      setSnapshot(value); setVersion(value.version); setDraft(null);
+      setSnapshot(value); setVersion(value.version); setDraft(null);setRenewId(null);
     } catch (error) { if (read === sequence.current) setMessage(dashboardOperationError(error)); }
     finally { if (read === sequence.current) setBusy(false); }
   }
+  useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()+serverOffset.current),60000);return()=>clearInterval(timer);},[]);
   useEffect(() => { setSnapshot(null); setDraft(null); setLinks({}); void load(); return () => { ++sequence.current; }; }, [dashboardId, accessToken]);
   useEffect(() => {
     const changed = (event: Event) => {
@@ -65,6 +81,20 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     setDraft({ deviceId: device?.id ?? null, operation });
     setMetadata(device ? { deviceName: device.deviceName, enforceIpRestriction: device.enforceIpRestriction, allowedIp: device.allowedIp, allowedCidr: device.allowedCidr, expiresAtUtc: device.expiresAtUtc } : empty);
     setPlacement(device?.placement ?? defaultPlacement); setMessage("");
+  }
+  async function renew() {
+    if(busy||!version||renewId===null||!Number.isInteger(renewDays)||renewDays<1||renewDays>365||!window.confirm(`確認延長裝置 ${renewId} 的到期日 ${renewDays} 天？最遠不得超過目前時間 365 天，不重新核發 Token；已失效授權不會恢復。`))return;
+    const read=++sequence.current;setBusy(true);setMessage("");
+    try{
+      const result=await apiRequest<Snapshot&{deviceId:number;credentialIssued:boolean;deviceCredentialsInvalidated:boolean}>(`${base}/${renewId}/renew`,{method:"POST",body:JSON.stringify({expectedVersion:version,confirmed:true,days:renewDays})},accessToken);
+      if(read!==sequence.current)return;
+      const value=trusted(result);
+      if(result.deviceId!==renewId||result.credentialIssued!==false||result.deviceCredentialsInvalidated!==false)throw new Error("RENEWAL_INVALID");
+      setSnapshot(value);setVersion(null);setRenewId(null);setAlerts(null);
+      window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId,origin:"device-management"}}));
+      setMessage("裝置已安全續期；未重新核發 Token。請重新載入確認到期提醒；HTTPS 既有持久授權仍受原登錄期限限制。");
+    }catch(error){if(read===sequence.current){setVersion(null);setMessage(`${dashboardOperationError(error)} 續期未完成，請明確重新載入，不會自動重試。`);}}
+    finally{if(read===sequence.current)setBusy(false);}
   }
   async function save() {
     if (busy || !draft || !version || !window.confirm(draft.operation === "placement" ? "保存播放位置？此操作不改動患者資料權限。" : "保存裝置設定？不核發憑證；既有裝置的舊憑證將失效，須明確重新授權。")) return;
@@ -86,21 +116,32 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   return <section className="uqp-device-manager" aria-label="版本化裝置基本管理">
     <h3>裝置建立與基本設定</h3>
     <p>新建僅保存 metadata，委派者固定為目前操作人員，不會取得播放權限。名稱／IP／到期修改會使舊憑證失效；已失效裝置不可在此恢復。工作站換綁與封存仍為唯讀。</p>
+    {alerts && <p role="status">到期提醒：30 天內 {alerts.due30} 台；7 天內 {alerts.due7} 台；已到期 {alerts.expired} 台。</p>}
+    {alertMessage && <p role="status">{alertMessage}</p>}
     <button type="button" disabled={busy} onClick={() => void load(true)}>重新載入裝置設定</button>
     <button type="button" disabled={busy || !version || !snapshot?.canCreate} onClick={() => edit(null, "metadata")}>建立未授權裝置</button>
     <ul>{snapshot?.devices.map(device => <li key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
+      <span>；到期：{device.expiresAtUtc??"未設定到期日"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</span>
+      <button type="button" disabled={busy||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
       {deviceMayIssue(device) && <button type="button" onClick={()=>void playbackLink(device.id)}>顯示 {device.deviceName} 播放網址</button>}
       {links[device.id] && deviceMayIssue(device) && <div aria-label={`裝置 ${device.id} 播放網址`}>
         <input aria-label={`裝置 ${device.id} 播放網址`} readOnly value={links[device.id]!.url} onFocus={e=>e.currentTarget.select()}/>
-        <button type="button" onClick={()=>void copyLink(links[device.id]!.url)}>複製播放網址</button>
+        <button type="button" onClick={e=>void copyLink(links[device.id]!.url,e.currentTarget.parentElement?.querySelector("input")??null)}>複製播放網址</button>
         <a href={links[device.id]!.url} target="_blank" rel="noopener noreferrer">開啟播放網址</a>
         <button type="button" onClick={()=>downloadLauncher(links[device.id]!)}>下載 Windows BAT</button>
+        {links[device.id]!.url.startsWith("http:") && <p>HTTP 僅供手動播放；重整、關閉或重啟後須再次輸入 Token，不支援持久授權。HTTP 無法保護傳輸中的 Token。</p>}
         <p>BAT 使用獨立且固定的瀏覽器設定檔；首次請從 BAT 開啟並輸入 Token。指定螢幕依 Windows DeviceName 排序，非顯示設定編號；座標為桌面絕對座標。</p>
       </div>}
     </li>)}</ul>
     {linkMessage && <p role="status">{linkMessage}</p>}
+    {renewId!==null && <fieldset disabled={busy} aria-label="安全續期"><legend>安全續期裝置 {renewId}</legend>
+      <label>延長天數<input aria-label="延長天數" type="number" min={1} max={365} value={renewDays} onChange={e=>setRenewDays(Number(e.target.value))}/></label>
+      <p>僅限尚未到期且授權有效的裝置；延長後的到期日最多為目前時間起 365 天。</p>
+      <button type="button" disabled={!version||!Number.isInteger(renewDays)||renewDays<1||renewDays>365} onClick={()=>void renew()}>確認安全續期</button>
+      <button type="button" onClick={()=>setRenewId(null)}>取消續期</button>
+    </fieldset>}
     {draft && <fieldset className="uqp-device-fieldset" disabled={busy} aria-label="裝置設定草稿"><legend>{draft.deviceId === null ? "建立未授權裝置" : `裝置 ${draft.deviceId} 設定草稿`}</legend>
       {draft.operation === "metadata" ? <div className="uqp-device-fields">
         <label>裝置名稱<input aria-label="裝置名稱" maxLength={200} value={metadata.deviceName} onChange={e => setMetadata({ ...metadata, deviceName: e.target.value })}/></label>

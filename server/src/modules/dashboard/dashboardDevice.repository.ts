@@ -199,9 +199,10 @@ export async function renewDashboardDisplayDevice(
   dashboardId: number,
   deviceId: number,
   extendDays = 365,
+  request?: sql.Request,
 ) {
-  const pool = await requirePool();
-  const result = await pool.request()
+  if (!Number.isInteger(extendDays) || extendDays < 1 || extendDays > 365) throw new QuerySourceError("VALIDATION_ERROR", 400);
+  const result = await (request ?? (await requirePool()).request())
     .input("dashboardId", sql.BigInt, dashboardId)
     .input("deviceId", sql.BigInt, deviceId)
     .input("extendDays", sql.Int, extendDays)
@@ -219,7 +220,9 @@ export async function renewDashboardDisplayDevice(
       OUTPUT INSERTED.*
       WHERE Id=@deviceId
         AND DashboardId=@dashboardId
-        AND IsActive=1
+        AND IsActive=1 AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL
+        AND ExpiresAtUtc IS NOT NULL AND ExpiresAtUtc>SYSUTCDATETIME()
+        AND DATEADD(DAY,@extendDays,ExpiresAtUtc)<=DATEADD(DAY,365,SYSUTCDATETIME())
     `);
 
   if (!result.recordset[0]) {

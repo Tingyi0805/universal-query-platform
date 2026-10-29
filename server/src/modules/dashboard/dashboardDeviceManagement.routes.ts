@@ -1,11 +1,11 @@
 import { env } from "../../config/env.js";
-import { kioskPlaybackLink, kioskLauncher } from "./dashboardKioskLauncher.js";
+import { manualPlaybackLink, kioskLauncher } from "./dashboardKioskLauncher.js";
 import { Router } from "express";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { requirePermission } from "../auth/auth.middleware.js";
 import { auditRequestContext } from "../audit/auditContext.js";
-import { deviceExpectedVersion, deviceMetadataSchema, devicePlacementSchema } from "./dashboardDeviceManagement.schema.js";
+import { deviceExpectedVersion, deviceMetadataSchema, devicePlacementSchema, deviceRenewalSchema } from "./dashboardDeviceManagement.schema.js";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { failure } from "./dashboardQuerySources.routes.js";
 import type { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
@@ -26,10 +26,10 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
       const c = context(req), deviceId = idSchema.parse(req.params.deviceId), snapshot = await service.read(c.id,c.actor);
       const device = snapshot.devices.find(d=>d.id===deviceId);
       if (!device || !device.isActive || device.revokedAtUtc || device.archivedAtUtc) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
-      const url = kioskPlaybackLink(env.DASHBOARD_PUBLIC_CLIENT_ORIGIN,c.id,deviceId);
+      const url = manualPlaybackLink(env.DASHBOARD_PUBLIC_CLIENT_ORIGIN,c.id,deviceId);
       const placement = device.placement ?? {browser:"edge",screenNumber:2,fullscreen:true,windowX:1920,windowY:0,windowWidth:1920,windowHeight:1080};
       res.json({dashboardId:c.id,deviceId,url,bat:kioskLauncher(url,placement).bat});
-    } catch { res.status(409).json({error:{code:"KIOSK_LINK_UNAVAILABLE",message:"無法提供播放網址；請確認 HTTPS 公開來源設定與裝置權限。"}}); }
+    } catch { res.status(409).json({error:{code:"KIOSK_LINK_UNAVAILABLE",message:"無法提供播放網址；請確認 HTTP／HTTPS 公開來源設定與裝置權限。"}}); }
   });
   router.get("/:id/device-management/v1", async (req, res) => {
     try { const c = context(req); res.json(await service.read(c.id, c.actor)); }
@@ -41,6 +41,14 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
       if (!input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
       res.status(201).json(await service.create(c.id, c.actor, input.data));
     } catch (error) { failure(error, res, req.id); }
+  });
+  router.post("/:id/device-management/v1/:deviceId/renew",async(req,res)=>{
+    try{
+      const c=context(req),deviceId=idSchema.parse(req.params.deviceId);
+      const input=z.object({...confirmed,days:deviceRenewalSchema.shape.days}).strict().safeParse(req.body);
+      if(!input.success)throw new QuerySourceError("VALIDATION_ERROR",400);
+      res.json(await service.renew(c.id,deviceId,c.actor,input.data));
+    }catch(error){failure(error,res,req.id);}
   });
   for (const operation of ["metadata", "placement"] as const) router.put(`/:id/device-management/v1/:deviceId/${operation}`, async (req, res) => {
     try {
