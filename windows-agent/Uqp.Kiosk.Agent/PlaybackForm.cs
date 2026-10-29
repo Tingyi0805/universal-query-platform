@@ -47,7 +47,7 @@ public sealed class PlaybackForm:Form
     }
     async Task Resume()
     {
-        try{await session.Validate(lifetime.Token);stopped=false;retryAllowed=false;++generation;view.CoreWebView2.Navigate(AgentConfiguration.UiOrigin+session.Config.DisplayPath);}
+        try{await session.Validate(lifetime.Token);stopped=false;retryAllowed=false;++generation;if(Uri.TryCreate(view.CoreWebView2.Source,UriKind.Absolute,out var current)&&session.Config.IsDisplayUri(current))view.CoreWebView2.Reload();else view.CoreWebView2.Navigate(AgentConfiguration.UiOrigin+session.Config.DisplayPath);}
         catch(Exception error){Stop();retryAllowed=Retryable(error);}
     }
     static bool Retryable(Exception error)=>error is ChannelUnavailableException or TimeoutException or TaskCanceledException || error is HttpRequestException request && request.InnerException is not System.Security.Authentication.AuthenticationException;
@@ -74,27 +74,27 @@ public sealed class PlaybackForm:Form
     }
     async void Resource(object? sender,CoreWebView2WebResourceRequestedEventArgs e)
     {
-        using var deferred=e.GetDeferral();var attempt=generation;
+        using var deferred=e.GetDeferral();var attempt=generation;var resourceStage="ORIGIN";
         try{
             var uri=new Uri(e.Request.Uri);
             if(uri.GetLeftPart(UriPartial.Authority)!=AgentConfiguration.UiOrigin||stopped)throw new InvalidDataException();
             if(uri.AbsolutePath.StartsWith("/api/",StringComparison.Ordinal))
             {
-                if(e.ResourceContext is not(CoreWebView2WebResourceContext.Fetch or CoreWebView2WebResourceContext.XmlHttpRequest)||!session.Config.IsDisplayUri(new Uri(view.CoreWebView2.Source)))throw new InvalidDataException();
-                var headers=e.Request.Headers;if(headers.Contains("Origin")&&headers.GetHeader("Origin")!=AgentConfiguration.UiOrigin)throw new InvalidDataException();
+                resourceStage="API_SOURCE";if(e.ResourceContext is not(CoreWebView2WebResourceContext.Fetch or CoreWebView2WebResourceContext.XmlHttpRequest)||!session.Config.IsDisplayUri(new Uri(view.CoreWebView2.Source)))throw new InvalidDataException();
+                resourceStage="API_ORIGIN";var headers=e.Request.Headers;if(headers.Contains("Origin")&&headers.GetHeader("Origin")!=AgentConfiguration.UiOrigin)throw new InvalidDataException();
                 var root=$"/api/dashboards/device/{session.Config.DashboardId}";byte[] data;
                 if(e.Request.Method=="POST"&&uri.PathAndQuery==root+"/kiosk/session")
                 {
-                    var input=await ReadBody(e.Request.Content,256);
+                    resourceStage="SESSION_BODY";var input=await ReadBody(e.Request.Content,256);
                     using var json=JsonDocument.Parse(input);if(json.RootElement.GetProperty("deviceId").GetInt32()!=session.Config.DeviceId)throw new InvalidDataException();
-                    data=JsonSerializer.SerializeToUtf8Bytes(new{deviceId=session.Config.DeviceId,dashboardId=session.Config.DashboardId,authorizationExpiresAt=await session.Validate(lifetime.Token)});
+                    resourceStage="SESSION_CALL";data=JsonSerializer.SerializeToUtf8Bytes(new{deviceId=session.Config.DeviceId,dashboardId=session.Config.DashboardId,authorizationExpiresAt=await session.Validate(lifetime.Token)});
                 }
                 else if(e.Request.Method=="POST"&&uri.PathAndQuery==root+"/kiosk/forget"){session.Forget();Reply(e,200,"application/json","{\"forgotten\":true}"u8.ToArray());Stop();return;}
-                else if(e.Request.Method=="GET"&&uri.PathAndQuery==root+"/layout")data=(await session.Layout(lifetime.Token)).Body;
+                else if(e.Request.Method=="GET"&&uri.PathAndQuery==root+"/layout"){resourceStage="LAYOUT_CALL";data=(await session.Layout(lifetime.Token)).Body;}
                 else if(e.Request.Method=="POST"&&(uri.PathAndQuery==root+"/page"||System.Text.RegularExpressions.Regex.IsMatch(uri.PathAndQuery,$"^{root}/data-sources/[A-Za-z][A-Za-z0-9_]{{0,63}}/page$")))
                 {
-                    var input=await ReadBody(e.Request.Content,1048576);
-                    data=(await session.Page(uri.PathAndQuery,input,lifetime.Token)).Body;
+                    resourceStage="PAGE_BODY";var input=await ReadBody(e.Request.Content,1048576);
+                    resourceStage="PAGE_CALL";data=(await session.Page(uri.PathAndQuery,input,lifetime.Token)).Body;
                 }
                 else if(e.Request.Method=="GET"&&uri.PathAndQuery=="/api/system-settings/branding")data=JsonSerializer.SerializeToUtf8Bytes(new{organizationName="",platformName="UQP",platformTitle="UQP Managed Kiosk",platformSubtitle=""});
                 else throw new InvalidDataException();
@@ -102,11 +102,11 @@ public sealed class PlaybackForm:Form
             }
             if(e.Request.Method!="GET")throw new InvalidDataException();
             if(uri.AbsolutePath=="/favicon.ico"){Reply(e,404,"image/x-icon",Array.Empty<byte>());return;}
-            var asset=session.Config.IsDisplayUri(uri)?"index.html":uri.AbsolutePath.TrimStart('/');
+            resourceStage="ASSET_PATH";var asset=session.Config.IsDisplayUri(uri)?"index.html":uri.AbsolutePath.TrimStart('/');
             if(asset!="index.html"&&(!asset.StartsWith("assets/",StringComparison.Ordinal)||asset.Contains("..")||asset.Contains('%')||asset.Contains('\\')||uri.Query!=""))throw new InvalidDataException();
-            var assembly=Assembly.GetExecutingAssembly();using var stream=assembly.GetManifestResourceStream(assembly.GetManifestResourceNames().Single(n=>n.Replace('\\','/')=="Ui/"+asset))??throw new InvalidDataException();using var contents=new MemoryStream();await stream.CopyToAsync(contents,lifetime.Token);
+            resourceStage="ASSET_RESOURCE";var assembly=Assembly.GetExecutingAssembly();using var stream=assembly.GetManifestResourceStream(assembly.GetManifestResourceNames().Single(n=>n.Replace('\\','/')=="Ui/"+asset))??throw new InvalidDataException();using var contents=new MemoryStream();await stream.CopyToAsync(contents,lifetime.Token);
             var type=Path.GetExtension(asset) switch{".js"=>"text/javascript",".css"=>"text/css",".html"=>"text/html",".woff2"=>"font/woff2",".svg"=>"image/svg+xml",".png"=>"image/png",".jpg"=>"image/jpeg",".webp"=>"image/webp",_=>throw new InvalidDataException()};
             Reply(e,200,type+"; charset=utf-8",contents.ToArray());
-        }catch(Exception error){FailureCode="RESOURCE_"+error.GetType().Name+"_"+unchecked((uint)error.HResult).ToString("X8");if(!stopped&&attempt==generation){Stop();retryAllowed=Retryable(error);}Reply(e,403,"application/json","{\"error\":{\"code\":\"MANAGED_KIOSK_DENIED\"}}"u8.ToArray());}
+        }catch(Exception error){if(!stopped&&attempt==generation){FailureCode="RESOURCE_"+resourceStage+"_"+error.GetType().Name+"_"+unchecked((uint)error.HResult).ToString("X8");Stop();retryAllowed=Retryable(error);}Reply(e,403,"application/json","{\"error\":{\"code\":\"MANAGED_KIOSK_DENIED\"}}"u8.ToArray());}
     }
 }

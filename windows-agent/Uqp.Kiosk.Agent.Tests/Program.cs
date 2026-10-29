@@ -71,9 +71,9 @@ internal static class Program
                 if(output.EndsWith("probe-1.json",StringComparison.Ordinal)){
                     stage="READ_ONLY_NETWORK_RECOVERY";using var client=new HttpClient();
                     using(var outage=await client.PostAsync(control,new StringContent("{\"unavailable\":true}")))outage.EnsureSuccessStatusCode();
-                    await WaitFor(()=>Task.FromResult(!view.Visible),20);
+                    stage="OUTAGE_VIEW_CLEAR";await WaitFor(()=>Task.FromResult(!view.Visible),20);
                     using(var online=await client.PostAsync(control,new StringContent("{\"unavailable\":false}")))online.EnsureSuccessStatusCode();
-                    await WaitFor(async()=>view.Visible&&(JsonSerializer.Deserialize<string>(await view.ExecuteScriptAsync("document.body.innerText"))??"").Contains("合○Agent"));
+                    stage="RECOVERY_NEW_DOCUMENT";await WaitFor(async()=>view.Visible&&(JsonSerializer.Deserialize<string>(await view.ExecuteScriptAsync("document.body.innerText"))??"").Contains("合○Agent"));
                     stage="REVOCATION_PURGE";using var result=await client.PostAsync(control,new StringContent("{\"revoked\":true}"));result.EnsureSuccessStatusCode();
                     await WaitFor(()=>Task.FromResult(!view.Visible),20);Check(!view.Visible);
                     using(var restored=await client.PostAsync(control,new StringContent("{\"revoked\":false}")))restored.EnsureSuccessStatusCode();await Task.Delay(5500);Check(!view.Visible);
