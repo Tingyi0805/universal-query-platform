@@ -20,7 +20,9 @@ public sealed class ChannelClient:IDisposable
     public DateTimeOffset CertificateExpiry=>certificate.NotAfter.ToUniversalTime();
     public ChannelClient(AgentConfiguration config,byte[] pfx,string password,SslProtocols protocols=SslProtocols.Tls12|SslProtocols.Tls13)
     {
-        this.config=config;config.Validate();if(protocols==SslProtocols.None||(protocols&~(SslProtocols.Tls12|SslProtocols.Tls13))!=0)throw new InvalidDataException("LEGACY_TLS_DENIED");certificate=X509CertificateLoader.LoadPkcs12(pfx,password,X509KeyStorageFlags.EphemeralKeySet);
+        this.config=config;config.Validate();if(protocols==SslProtocols.None||(protocols&~(SslProtocols.Tls12|SslProtocols.Tls13))!=0)throw new InvalidDataException("LEGACY_TLS_DENIED");// Schannel requires a user key provider; ephemeral key handles fail on Windows.
+        // No Exportable/PersistKeySet/MachineKeySet and no certificate-store install.
+        certificate=X509CertificateLoader.LoadPkcs12(pfx,password,OperatingSystem.IsWindows()?X509KeyStorageFlags.UserKeySet:X509KeyStorageFlags.EphemeralKeySet);
         if(!certificate.HasPrivateKey||DateTime.UtcNow<certificate.NotBefore.ToUniversalTime()||DateTime.UtcNow>=certificate.NotAfter.ToUniversalTime())throw new InvalidDataException("CLIENT_CERTIFICATE_INVALID");
         var handler=new SocketsHttpHandler{UseCookies=false,UseProxy=false,AllowAutoRedirect=false,MaxConnectionsPerServer=6,PooledConnectionLifetime=TimeSpan.FromSeconds(20),MaxResponseHeadersLength=32};
         handler.SslOptions=new SslClientAuthenticationOptions{

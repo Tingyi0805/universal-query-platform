@@ -9,6 +9,11 @@ try{
  using var setup=JsonDocument.Parse(await child.StandardOutput.ReadLineAsync()??throw new InvalidDataException());directory=setup.RootElement.GetProperty("directory").GetString()!;
  var config=AgentConfiguration.Load(Path.Combine(directory,"agent.json"));Check(config.Digest.Length==64);Check(JsonSerializer.Deserialize<AgentConfiguration>(JsonSerializer.Serialize(config))!.Digest==config.Digest);Check(!JsonSerializer.Serialize(config).Contains("Digest"));var pfx=File.ReadAllBytes(Path.Combine(directory,"client.pfx"));
  using var channel=new ChannelClient(config,pfx,"fixture-only");
+ if(OperatingSystem.IsWindows()){
+  var certificate=(System.Security.Cryptography.X509Certificates.X509Certificate2)typeof(ChannelClient).GetField("certificate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.GetValue(channel)!;
+  using var key=System.Security.Cryptography.X509Certificates.ECDsaCertificateExtensions.GetECDsaPrivateKey(certificate);
+  Check(key is System.Security.Cryptography.ECDsaCng cng&&!cng.Key.IsMachineKey&&cng.Key.ExportPolicy==System.Security.Cryptography.CngExportPolicies.None);
+ }
  var login=await channel.Send(HttpMethod.Post,"/api/auth/login",JsonSerializer.SerializeToUtf8Bytes(new{username="manager",password="fixture-secret"}));login.RequireSuccess();
  using var json=login.Json();Check(json.RootElement.GetProperty("accessToken").GetString()=="fixture-session");
  var mode=await channel.Send(HttpMethod.Get,"/api/dashboards/1/query-mode/v1",jwt:"fixture-session");mode.RequireSuccess();

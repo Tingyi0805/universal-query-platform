@@ -19,7 +19,7 @@ Server 在現有 HTTP API listener 接收固定 `CONNECT uqp-kiosk.internal:443`
 5. 成功後以原有 Device Token 驗證 layout／政策，讀取已保存播放位置，再存 DPAPI。首次註冊也必須通過 server 憑證與 client binding，沒有明文 HTTP 手動 Token 註冊路徑。
 6. F5、關閉 Agent 視窗後重新執行、相同使用者互動式登入啟動，都會讀取同一 DPAPI record，重新驗證 Server／裝置，不再次要求 Token。這是程式行為；實體冷開機仍須驗收。
 
-DPAPI 使用 CurrentUser；額外 entropy 與 record 綁定 Windows SID／MachineGuid、server pin、endpoint、公開 URL、Dashboard／Device 及配置摘要。Vault 在 `%LOCALAPPDATA%\UQP\ManagedKiosk\<config-digest>`，只有該 SID／SYSTEM DACL，拒絕 reparse point、採原子密文寫入。PFX 以 EphemeralKeySet 載入，PFX 與其密碼、Token 皆只在 DPAPI record；不加入 browser certificate store。首次使用的原始 PFX 檔由 IT 安全交付並依組織程序回收；Agent 不假裝能保證 SSD 安全抹除。
+DPAPI 使用 CurrentUser；額外 entropy 與 record 綁定 Windows SID／MachineGuid、server pin、endpoint、公開 URL、Dashboard／Device 及配置摘要。Vault 在 `%LOCALAPPDATA%\UQP\ManagedKiosk\<config-digest>`，只有該 SID／SYSTEM DACL，拒絕 reparse point、採原子密文寫入。Windows Schannel 使用 UserKeySet 的使用者 key provider（非 exportable／MachineKeySet，未指定 PersistKeySet），正常 Dispose 清理；key container 由 Windows 使用者金鑰保護，突然斷電可能留下需 IT 管理的受保護 container，不宣稱私鑰從未落在 OS key store。PFX 與其密碼、Token 皆在 DPAPI record；不加入 browser certificate store。非 Windows 互通測試才用 EphemeralKeySet。首次使用的原始 PFX 檔由 IT 安全交付並依組織程序回收；Agent 不假裝能保證 SSD 安全抹除。
 
 **DPAPI 不隔離同一使用者的惡意程式／系統管理員。** 生產必須是專用低權限帳號，透過 WDAC／AppLocker／端點管理限制可執行程式、瀏覽器擴充、debug／dump、登入與資料匯出；不允許一般工作站任意軟體。沒有宣稱抵抗該帳號／OS 已遭入侵。
 
