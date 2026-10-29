@@ -11,7 +11,7 @@ const widgetSchema = z.object({
   height: z.coerce.number().int().min(30).max(4320),
   fontSize: z.coerce.number().int().min(8).max(240).default(36),
   alignment: z.enum(["LEFT","CENTER","RIGHT"]).default("CENTER"),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   sortOrder: z.coerce.number().int().min(-10000).max(10000).default(0),
 });
 
@@ -22,7 +22,7 @@ const profileSchema = z.object({
   canvasHeight: z.coerce.number().int().min(240).max(4320),
   isDefault: z.boolean().default(false),
   sortOrder: z.coerce.number().int().min(-10000).max(10000).default(0),
-  config: z.record(z.unknown()).default({}),
+  config: z.record(z.string(), z.unknown()).default({}),
   widgets: z.array(widgetSchema).max(200),
 });
 

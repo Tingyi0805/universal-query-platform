@@ -14,7 +14,7 @@ function fixture(profile: SyntheticScopeRequest["profile"] = "QUERY_DATASET"): S
       id: profile === "USER_ROLE" ? "40" : profile === "DASHBOARD_ACL" ? "90" : "20" }],
     graph: { domainId: uid(99), incarnation: uid(98), revision, authorizationEpoch: revision,
       writers: ["QUERY_DATASET", "USER_ROLE", "DASHBOARD_ACL"],
-      predicateRevisions: Object.fromEntries(predicateNames.map(k => [k, revision])),
+      predicateRevisions: Object.fromEntries(predicateNames.map(k => [k, revision])) as Record<typeof predicateNames[number], string>,
       nodes: [
         { resource: "Dataset", id: "10", revision }, { resource: "Dataset", id: "11", revision },
         { resource: "Query", id: "20", datasetId: "10", revision }, { resource: "Query", id: "21", datasetId: "11", revision },

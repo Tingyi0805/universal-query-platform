@@ -26,12 +26,12 @@
     "express": "^4.21.1",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
-    "mssql": "^11.0.1",
+    "mssql": "12.7.13",
     "oracledb": "^6.8.0",
     "pino": "^9.5.0",
     "pino-http": "^10.3.0",
-    "zod": "^3.23.8",
-    "exceljs": "^4.4.0",
+    "zod": "4.6.7",
+    "exceljs": "4.4.0",
     "mysql2": "^3.15.3",
     "pg": "^8.16.3",
     "odbc": "^2.6.0"
@@ -44,7 +44,23 @@
     "@types/node": "^22.10.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
-    "@types/mssql": "^9.1.7",
+    "@types/mssql": "12.3.0",
     "@types/pg": "^8.15.5"
+  },
+  "engines": {
+    "node": ">=24.15.0 <25",
+    "npm": ">=11 <13"
+  },
+  "overrides": {
+    "exceljs@4.4.0": {
+      "uuid": "11.1.1"
+    },
+    "@azure/identity@4.14.0": {
+      "@azure/msal-node": "7.1.2"
+    }
+  },
+  "packageManager": "npm@12.2.1",
+  "allowScripts": {
+    "odbc@2.6.0": true
   }
 }

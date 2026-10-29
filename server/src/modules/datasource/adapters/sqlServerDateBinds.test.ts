@@ -7,8 +7,9 @@ import type { DataSourceConfig } from "../datasource.types.js";
 import { parseCanonicalDate } from "../../dataset/dateParameter.js";
 
 const require = createRequire(import.meta.url);
-const tedious = require("tedious");
-const WritableBuffer = require("tedious/lib/tracking-buffer/writable-tracking-buffer.js");
+const driverRequire = createRequire(require.resolve("mssql"));
+const tedious = driverRequire("tedious");
+const WritableBuffer = driverRequire("tedious/lib/tracking-buffer/writable-tracking-buffer.js");
 
 // Production adapter, actual mssql Request and local TDS serialization only.
 // No connection, SQL execution or database is used.

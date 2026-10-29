@@ -6,7 +6,7 @@ export const supplementalSourceSchema = z.object({
   refreshSeconds: z.number().int().min(5).max(3600).default(30),
   pageSize: z.number().int().min(1).max(100).default(10),
   pageSeconds: z.number().int().min(5).max(3600).default(15),
-  parameters: z.record(z.unknown()).default({}),
+  parameters: z.record(z.string(), z.unknown()).default({}),
   isEnabled: z.boolean().default(true),
 });
 export const dashboardSourcesSchema = z.object({ sources: z.array(supplementalSourceSchema).max(8) }).refine(value => {
