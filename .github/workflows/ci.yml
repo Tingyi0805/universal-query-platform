@@ -341,6 +341,11 @@ jobs:
 
   windows-node24-dependencies:
     runs-on: windows-latest
+    # Existing SQL/source SHA witnesses pin Git's LF bytes; do not rewrite them to CRLF.
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
     defaults:
       run:
         working-directory: server
