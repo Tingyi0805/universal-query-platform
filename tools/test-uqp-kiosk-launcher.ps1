@@ -11,7 +11,7 @@ import {pathToFileURL} from 'node:url';
 import path from 'node:path';
 const {kioskLauncher}=await import(pathToFileURL(path.resolve('src/modules/dashboard/dashboardKioskLauncher.ts')).href);
 const variants=[];
-for(const browser of ['edge','chrome'])for(const fullscreen of [true,false])variants.push(kioskLauncher('https://hospital.example/display/dashboards/1?deviceId=7',{browser,fullscreen,screenNumber:1,windowX:-2000,windowY:100,windowWidth:1400,windowHeight:800}));
+for(const protocol of ['http','https'])for(const browser of ['edge','chrome'])for(const fullscreen of [true,false])variants.push(kioskLauncher(`${protocol}://hospital.example/display/dashboards/1?deviceId=7`,{browser,fullscreen,screenNumber:1,windowX:-2000,windowY:100,windowWidth:1400,windowHeight:800}));
 writeFileSync(process.argv[2],JSON.stringify(variants));
 '@ | Set-Content -LiteralPath $generator -Encoding UTF8
     node --import tsx $generator $output
@@ -30,7 +30,7 @@ writeFileSync(process.argv[2],JSON.stringify(variants));
       & ([scriptblock]::Create($variant.script))
       if (-not $script:CapturedLaunch) { throw 'KIOSK_LAUNCH_NOT_CALLED' }
       $arguments = $script:CapturedLaunch.Arguments -join ' '
-      if ($arguments -notlike '*--user-data-dir=*' -or $arguments -notlike '*--window-size=1400,800*' -or $arguments -notlike '*--app=https://hospital.example/display/dashboards/1?deviceId=7*') { throw 'KIOSK_ARGUMENTS_INVALID' }
+      if ($arguments -notlike '*--user-data-dir=*' -or $arguments -notlike '*--window-size=1400,800*' -or $arguments -notmatch '--app=https?://hospital\.example/display/dashboards/1\?deviceId=7') { throw 'KIOSK_ARGUMENTS_INVALID' }
       if ($arguments -match '(?i)token|incognito|inprivate|--kiosk') { throw 'KIOSK_FORBIDDEN_ARGUMENT' }
       Remove-Item Function:Test-Path, Function:Start-Process -ErrorAction SilentlyContinue
     }

@@ -1,3 +1,4 @@
+import { deviceExpiry } from "../dashboard/deviceExpiry";
 import { DashboardDeviceMetadataManager } from "./DashboardDeviceMetadataManager";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -181,7 +182,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken}/>
     <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
     <table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{devices.map(device => <tr key={device.id}>
-      <td>{device.deviceName}（ID {device.id}）</td><td>{deviceStatus(device, now)}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{device.expiresAtUtc === null ? "無到期日設定" : device.expiresAtUtc ?? "尚未提供"}</td>
+      <td>{device.deviceName}（ID {device.id}）</td><td>{deviceStatus(device, now)}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc??"尚未提供"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
       <td><button type="button" disabled={busy} onClick={() => void readPlacement(device.id)}>檢視 {device.deviceName} 播放位置（唯讀）</button><button type="button" disabled={busy || !canIssue(device, now)} onClick={() => void credential(device)}>核發／重新核發 {device.deviceName}</button>
       <button type="button" disabled={busy || !mode || mode.mode === "LEGACY" || !device.isActive || deviceArchived(device)} onClick={() => void credential(device, true)}>撤銷 {device.deviceName}</button></td>
     </tr>)}</tbody></table>

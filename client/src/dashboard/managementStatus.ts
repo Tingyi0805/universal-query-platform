@@ -35,6 +35,8 @@ export function deviceStatus(device: ManagedDevice, now = Date.now()) {
 }
 export function dashboardOperationError(error: unknown) {
   const code = (error as { code?: unknown })?.code;
+  if(code==="DASHBOARD_DEVICE_RENEWAL_LIMIT")return "續期未完成：須設定有效到期日，延長後的到期日不得超過目前時間起 365 天。";
+  if(code==="DASHBOARD_DEVICE_NOT_EDITABLE")return "裝置已失效或到期；不能藉續期恢復舊授權。";
   if (code === "QUERY_DEVICE_PLAYBACK_DISABLED") return "Query-only 播放功能旗標關閉：啟用、停用及憑證管理 API 已安全停用；不代表系統故障，不回退 Legacy。";
   if (code === "QUERY_SOURCE_MANAGEMENT_DISABLED") return "新版資料來源管理功能旗標關閉：設定與版型僅供查看，禁止寫入，不回退 Legacy。";
   return managementError(error);

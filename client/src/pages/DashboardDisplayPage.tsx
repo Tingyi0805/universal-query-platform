@@ -1,3 +1,4 @@
+import { deviceExpiry } from "../dashboard/deviceExpiry";
 import { flushSync } from "react-dom";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
@@ -131,6 +132,8 @@ export function DashboardDisplayPage() {
   const [persistDevice, setPersistDevice] = useState(persistentCapable);
   const cookieSession = deviceToken === "COOKIE_SESSION";
   const deviceHeaders: Record<string,string> = cookieSession ? {"X-UQP-Kiosk":"1", "X-UQP-Device-Id":String(intendedDeviceId)} : {"X-Dashboard-Device-Token":deviceToken ?? "", ...(Number.isSafeInteger(intendedDeviceId) && intendedDeviceId>0 ? {"X-UQP-Expected-Device-Id":String(intendedDeviceId)} : {})};
+  const [deviceExpiryInfo,setDeviceExpiryInfo]=useState<{expiresAtUtc:string|null;offset:number}|null>(null);
+  const deviceExpiryTimer=useRef<ReturnType<typeof setTimeout>|null>(null);
   const deviceLeaseDeadline = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [activationInput, setActivationInput] = useState("");
   const [activationBusy, setActivationBusy] = useState(false);
@@ -189,12 +192,26 @@ export function DashboardDisplayPage() {
 
   const clearDevicePlayback = useCallback((message: string) => {
     if (deviceLeaseDeadline.current !== null) {clearTimeout(deviceLeaseDeadline.current);deviceLeaseDeadline.current=null;}
+    if(deviceExpiryTimer.current!==null)clearTimeout(deviceExpiryTimer.current);setDeviceExpiryInfo(null);
     ++latestDataRequest.current; ++latestLayoutRequest.current; ++supplementalRequestGeneration.current;
     pageSnapshotId.current = null; pageSnapshotCreatedAt.current = 0; lastVisibleColumns.current = [];
     forgetDashboardToken(dashboardId); setDeviceToken(null); setActivationRequired(true);
     setPreview(null); setProfiles([]); setSupplementalPages({}); setSupplementalErrors({}); setCountdown(0);
     setActivationInput(""); setActivationError(message);
   }, [dashboardId]);
+  function applyDeviceAuthorization(value?:{expiresAtUtc:string|null;serverNowUtc:string}) {
+    if(value===undefined)return; // Historical layout fixtures/clients have no lease metadata.
+    if(!value || typeof value.serverNowUtc!=="string" || value.expiresAtUtc!==null && typeof value.expiresAtUtc!=="string")throw Object.assign(new Error("DEVICE_EXPIRY_INVALID"),{code:"DEVICE_EXPIRY_INVALID"});
+    const serverNow=Date.parse(value.serverNowUtc),expires=value.expiresAtUtc===null?null:Date.parse(value.expiresAtUtc);
+    if(!Number.isFinite(serverNow)||expires!==null&&!Number.isFinite(expires))throw Object.assign(new Error("DEVICE_EXPIRY_INVALID"),{code:"DEVICE_EXPIRY_INVALID"});
+    if(deviceExpiryTimer.current!==null)clearTimeout(deviceExpiryTimer.current);
+    setDeviceExpiryInfo({expiresAtUtc:value.expiresAtUtc,offset:serverNow-Date.now()});
+    if(expires!==null){
+      const deadline=Date.now()+expires-serverNow;
+      const check=()=>{const remaining=deadline-Date.now();if(remaining<=0)clearDevicePlayback("裝置授權已到期，已清除患者資料；請聯絡管理者。");else deviceExpiryTimer.current=setTimeout(check,Math.min(2147483647,remaining));};
+      check();if(expires<=serverNow)throw new Error("DEVICE_EXPIRED");
+    }
+  }
   function armDeviceLease(expires: number) {
     if (!Number.isSafeInteger(expires) || expires <= Date.now()) throw new Error("KIOSK_LEASE_INVALID");
     if (deviceLeaseDeadline.current !== null) clearTimeout(deviceLeaseDeadline.current);
@@ -225,7 +242,7 @@ export function DashboardDisplayPage() {
     window.addEventListener("pagehide",leave); window.addEventListener("pageshow",shown);
     // Polling and request deadlines below protect visible playback; avoid pausing
     // ordinary kiosk playback solely because a browser control opened another tab.
-    return () => { window.removeEventListener("pagehide",leave); window.removeEventListener("pageshow",shown); if (deviceLeaseDeadline.current !== null) clearTimeout(deviceLeaseDeadline.current); };
+    return () => { window.removeEventListener("pagehide",leave); window.removeEventListener("pageshow",shown); if (deviceLeaseDeadline.current !== null) clearTimeout(deviceLeaseDeadline.current);if(deviceExpiryTimer.current!==null)clearTimeout(deviceExpiryTimer.current); };
   }, [deviceMode, clearDevicePlayback]);
 
   async function forgetPersistentDevice() {
@@ -516,7 +533,7 @@ export function DashboardDisplayPage() {
         return;
       }
 
-      const result = await apiRequest<{ profiles: LayoutProfile[] }>(
+      const result = await apiRequest<{ profiles: LayoutProfile[];deviceAuthorization?:{expiresAtUtc:string|null;serverNowUtc:string} }>(
         deviceMode
           ? `/dashboards/device/${dashboardId}/layout`
           : `/dashboards/${dashboardId}/layout`,
@@ -528,11 +545,12 @@ export function DashboardDisplayPage() {
         deviceMode ? null : accessToken,
       );
       if (requestId !== latestLayoutRequest.current || ((serverPaged) && !navigator.onLine)) return;
+      if(deviceMode)applyDeviceAuthorization(result.deviceAuthorization);
       setProfiles(result.profiles);
       setLayoutWarning("");
     } catch (e) {
       if (requestId !== latestLayoutRequest.current) return;
-      if (cookieSession) { clearDevicePlayback("裝置授權失效，已清除患者資料；請重新啟用。"); return; }
+      if (cookieSession || (e as {code?:string}).code==="DEVICE_EXPIRY_INVALID") { clearDevicePlayback("裝置授權失效，已清除患者資料；請重新啟用。"); return; }
       if (deviceMode && [401, 403].includes((e as { status?: number }).status ?? 0)) {
         ++latestDataRequest.current;
         pageSnapshotId.current = null;
@@ -572,7 +590,8 @@ export function DashboardDisplayPage() {
           if (value.deviceId !== intendedDeviceId || value.dashboardId !== dashboardId) throw new Error("KIOSK_DEVICE_MISMATCH");
           armDeviceLease(value.authorizationExpiresAt);
         }
-        await apiRequest(`/dashboards/device/${dashboardId}/layout`,{signal:controller.signal,headers:deviceHeaders},null);
+        const layout=await apiRequest<{deviceAuthorization?:{expiresAtUtc:string|null;serverNowUtc:string}}>(`/dashboards/device/${dashboardId}/layout`,{signal:controller.signal,headers:deviceHeaders},null);
+        if(!stopped)applyDeviceAuthorization(layout.deviceAuthorization);
       }
       catch {
         if(stopped || !navigator.onLine)return;
@@ -967,11 +986,12 @@ export function DashboardDisplayPage() {
         if (attempt !== activationAttempt.current || !navigator.onLine) return;
         if (value.deviceId !== intendedDeviceId || value.dashboardId !== dashboardId) throw new Error("KIOSK_DEVICE_MISMATCH");
         armDeviceLease(value.authorizationExpiresAt);
-      } else await apiRequest<{ profiles: LayoutProfile[] }>(
+      } else {const layout=await apiRequest<{ profiles: LayoutProfile[];deviceAuthorization?:{expiresAtUtc:string|null;serverNowUtc:string} }>(
         `/dashboards/device/${dashboardId}/layout`,
         { headers: { "X-Dashboard-Device-Token": token, ...(intendedDeviceId>0 ? {"X-UQP-Expected-Device-Id":String(intendedDeviceId)} : {}) } },
         null,
       );
+      if(attempt===activationAttempt.current && navigator.onLine)applyDeviceAuthorization(layout.deviceAuthorization);}
       if (attempt !== activationAttempt.current || !navigator.onLine) return;
       pageSnapshotId.current = null;
       ++latestDataRequest.current;
@@ -1016,6 +1036,7 @@ export function DashboardDisplayPage() {
           <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
             {persistentCapable ? <label><input type="checkbox" checked={persistDevice} onChange={e=>setPersistDevice(e.target.checked)}/>在此瀏覽器持久授權裝置 #{intendedDeviceId}（僅限受管理裝置；HTTPS 安全 Cookie）</label> : <p>目前僅支援本次頁面授權。持久授權須使用管理者提供的 HTTPS 裝置播放網址。</p>}
+            {window.location.protocol==="http:" && <p>HTTP 僅限信任的內網手動播放，Token 可能遭網路攔截；不提供重啟後自動恢復。請優先使用 HTTPS。</p>}
             <p>未啟用持久授權時，Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>
             <input id="dashboard-device-activation-token" type="password" autoComplete="off" spellCheck={false} required
@@ -1069,6 +1090,7 @@ export function DashboardDisplayPage() {
           {!online ? "網路已中斷，已清除患者資料；連線恢復後會重新載入" :
             dataWarning || layoutWarning ? dataWarning || layoutWarning :
             "播放正常"}
+          {deviceExpiryInfo && deviceExpiry(deviceExpiryInfo.expiresAtUtc,now.getTime()+deviceExpiryInfo.offset).band==="DUE7" && <span> · 播放授權將於 7 天內到期，請通知管理者。</span>}
           {lastUpdatedAt && " · 最後更新 " + lastUpdatedAt.toLocaleTimeString("zh-TW")}
           {cookieSession && <button type="button" onClick={()=>void forgetPersistentDevice()}>清除此瀏覽器持久授權</button>}
         </div>

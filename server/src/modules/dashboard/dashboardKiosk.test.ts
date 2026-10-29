@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import { kioskFixture } from "./dashboardKiosk.testFixture.js";
 import { kioskCodec,kioskOrigin } from "./dashboardKiosk.routes.js";
-import { kioskLauncher,kioskPlaybackLink } from "./dashboardKioskLauncher.js";
+import { kioskLauncher,kioskPlaybackLink,manualPlaybackLink } from "./dashboardKioskLauncher.js";
 async function setup(t: import("node:test").TestContext) {
  const f=kioskFixture();f.server.listen(0,"127.0.0.1");await once(f.server,"listening");t.after(()=>{f.server.closeAllConnections();f.server.close();});const address=f.server.address() as import("node:net").AddressInfo;
  const request=(path:string,body:unknown={deviceId:7},headers:Record<string,string>={},method="POST")=>new Promise<Response>((resolve,reject)=>{
@@ -65,5 +65,10 @@ test("playback link API preserves designer guard and service authorization; uses
  const call=(role?:string,id=7)=>fetch(`http://127.0.0.1:${port}/1/device-management/v1/${id}/playback-link`,{headers:{authorization:`Bearer ${jwt.sign({sub:"1",tokenVersion:3},"synthetic")}`,...(role?{"x-test-role":role}:{})}});
  assert.equal((await call()).status,403);assert.equal((await call("viewer")).status,403);assert.equal(reads,0);
  const r=await call("designer");assert.equal(r.status,200);const body=await r.json();assert.equal(body.url,"https://hospital.example:8443/display/dashboards/1?deviceId=7");assert(body.bat.startsWith("@echo off"));assert.equal(r.headers.get("cache-control"),"no-store");assert(!JSON.stringify(body).includes(grant.token));
- assert.equal((await call("designer",8)).status,409);deny=true;const failed=await call("designer");assert.equal(failed.status,409);assert(!JSON.stringify(await failed.json()).includes("PRIVATE"));deny=false;env.DASHBOARD_PUBLIC_CLIENT_ORIGIN="http://hospital.example";assert.equal((await call("designer")).status,409);
+ assert.equal((await call("designer",8)).status,409);deny=true;const failed=await call("designer");assert.equal(failed.status,409);assert(!JSON.stringify(await failed.json()).includes("PRIVATE"));deny=false;env.DASHBOARD_PUBLIC_CLIENT_ORIGIN="http://hospital.example";assert.equal((await call("designer")).status,200);
 });
+
+for(const origin of ["http://hospital.example:8080","https://hospital.example:8443"])test(`configured manual URL/BAT ${origin} contains no authority and keeps secure-cookie origin strict`,()=>{
+ const url=manualPlaybackLink(origin,1,7),{bat,script}=kioskLauncher(url,{browser:"edge",screenNumber:1,fullscreen:true,windowX:0,windowY:0,windowWidth:1920,windowHeight:1080});assert.equal(url,`${origin}/display/dashboards/1?deviceId=7`);assert(script.includes(`--app=${url}`));assert(!bat.includes(grant.token));if(origin.startsWith("http:")){assert.match(bat,/HTTP manual playback only/);assert.throws(()=>kioskOrigin(origin));}
+});
+for(const origin of [undefined,"http://user:secret@host.test","http://host.test/","http://host.test/path","http://host.test?token=x","javascript:alert(1)","https://host.test#x"])test(`manual URL rejects ${origin}`,()=>assert.throws(()=>manualPlaybackLink(origin,1,7)));

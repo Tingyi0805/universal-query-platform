@@ -1,3 +1,4 @@
+import { renewDashboardDisplayDevice } from "./dashboardDevice.repository.js";
 import sql from "mssql";
 import { createHash } from "node:crypto";
 import { getTokenSessionState } from "../auth/auth.repository.js";
@@ -83,9 +84,10 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
             credentialFingerprint: createHash("sha256").update(row.TokenHash).digest("hex"), placement: parsed?.success ? parsed.data : null };
         });
       },
-      async delegation(device) {
+      async delegation(device, modeVersion) {
         const owner = await deps.session(device.createdByUserId, transaction);
         if (!owner?.isActive || !["DESIGN_QUERY", "EXECUTE_QUERY"].every(p => owner.permissions.includes(p))) throw new QuerySourceError("QUERY_DEVICE_DELEGATION_INVALID", 403);
+        if(modeVersion!==undefined && (!Number.isSafeInteger(modeVersion) || device.queryModeGrantVersion!==modeVersion || device.delegatorTokenVersion!==owner.tokenVersion))throw new QuerySourceError("QUERY_DEVICE_DELEGATION_INVALID",403);
         if (device.sharedWorkstationId !== null) {
           const station = (await request().input("id", sql.BigInt, device.sharedWorkstationId)
             .query("SELECT IsActive,RetiredAtUtc,PurposeCode FROM uqp.SharedWorkstation WITH (HOLDLOCK) WHERE Id=@id")).recordset[0];
@@ -127,14 +129,19 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
             (DashboardId,DeviceId,Browser,ScreenNumber,Fullscreen,WindowX,WindowY,WindowWidth,WindowHeight)
             VALUES (@dashboardId,@deviceId,@browser,@screenNumber,@fullscreen,@windowX,@windowY,@windowWidth,@windowHeight);`);
       },
+      async renewDevice(id,deviceId,days) {
+        const device=await renewDashboardDisplayDevice(id,deviceId,days,request());
+        if(!device.expiresAtUtc)throw new QuerySourceError("DASHBOARD_DEVICE_VERSION_CONFLICT");
+        return device.expiresAtUtc;
+      },
       async touch(id) {
         const result = await scoped(id).query("UPDATE uqp.Dashboard SET UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@dashboardId");
         if (result.rowsAffected[0] !== 1) throw new QuerySourceError("DASHBOARD_DEVICE_VERSION_CONFLICT");
       },
-      async deviceAudit(id, actor, action, deviceId, invalidated) {
+      async deviceAudit(id, actor, action, deviceId, invalidated, renewal) {
         const result = await deps.writeAuditEvent({ eventType: `DASHBOARD_DEVICE_${action}`, userId: actor.userId,
           ipAddress: actor.ipAddress, userAgent: actor.userAgent,
-          parameters: { dashboardId: id, deviceId, credentialIssued: false, deviceCredentialsInvalidated: invalidated } }, transaction);
+          parameters: { dashboardId: id, deviceId, credentialIssued: false, deviceCredentialsInvalidated: invalidated, ...(renewal ?? {}) } }, transaction);
         if (!Number.isSafeInteger(result) || result < 1) throw new QuerySourceError("DASHBOARD_DEVICE_AUDIT_REQUIRED", 503);
       },
     } satisfies Partial<DeviceManagementTransaction>);

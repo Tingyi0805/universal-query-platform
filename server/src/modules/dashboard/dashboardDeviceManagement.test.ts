@@ -58,6 +58,13 @@ function fixture() {
         if (s.startsWith("SELECT p.* FROM uqp.DashboardDevicePlaybackSettings")) { assert.match(s, /UPDLOCK,HOLDLOCK/); return { recordset: copy(staged.placements) }; }
         if (s.startsWith("SELECT Id,DatasetId,IsPublished")) return { recordset: control.query ? [{ Id: 20, DatasetId: 2, IsPublished: true, IsActive: true, IsArchived: false }] : [] };
         if (s.includes("FROM uqp.SharedWorkstation WITH")) return { recordset: [{ IsActive: control.workstation, RetiredAtUtc: null, PurposeCode: "DASHBOARD" }] };
+        if(/UPDATE\s+uqp\.DashboardDisplayDevice\s+SET ExpiresAtUtc=DATEADD/.test(s)){
+          assert.match(s,/ArchivedAtUtc IS NULL/);assert.match(s,/RevokedAtUtc IS NULL/);assert.match(s,/ExpiresAtUtc>SYSUTCDATETIME/);assert.match(s,/DATEADD\(DAY,365,SYSUTCDATETIME/);
+          assert.doesNotMatch(s.split("OUTPUT")[0]!,/TokenHash=|QueryModeGrantVersion=|DelegatorTokenVersion=|IsActive=/);
+          const d=staged.devices.find(d=>d.Id===v.deviceId&&d.DashboardId===v.dashboardId)!;
+          if(control.failAt==="renew-expired")return{recordset:[]};
+          d.ExpiresAtUtc=new Date(Date.parse(d.ExpiresAtUtc)+v.extendDays*86400000).toISOString();fail("renew");return{recordset:[copy(d)]};
+        }
         if (s.startsWith("INSERT INTO uqp.DashboardDisplayDevice")) {
           assert.match(s, /CRYPT_GEN_RANDOM\(32\)/); assert.match(s, /NULL,1,@expiresAtUtc/); assert.doesNotMatch(s, /OUTPUT INSERTED\.\*/);
           staged.devices.push({ Id: 8, DashboardId: v.dashboardId, DeviceName: v.deviceName, CreatedByUserId: v.ownerId, SharedWorkstationId: null,
@@ -215,4 +222,41 @@ test("Legacy write guard rejects managed/unversioned writes and preserves pure r
       { status(v: number) { status = v; return this; }, json() {} } as any, () => { next = true; });
     assert.equal(next, method === "GET" || (!managed && mode === "LEGACY")); assert.equal(status, next ? 200 : 409);
   }
+});
+
+test("versioned renewal reuses existing SQL and atomically changes only expiry, preserving credentials and grants",async()=>{
+ const f=fixture();f.db().devices[0]!.ExpiresAtUtc=new Date(Date.now()+7*86400000).toISOString();const before=f.snapshot(),version=await f.version();
+ const result=await f.service.renew(1,7,actor,{expectedVersion:version,confirmed:true,days:30});
+ assert.notEqual(result.version,version);assert.equal(result.credentialIssued,false);assert.equal(result.deviceCredentialsInvalidated,false);
+ const expected=copy(before.devices);expected[0]!.ExpiresAtUtc=new Date(Date.parse(expected[0]!.ExpiresAtUtc)+30*86400000).toISOString();assert.deepEqual(f.db().devices,expected);
+ const audit=f.db().audits[0]!;assert.equal(audit.eventType,"DASHBOARD_DEVICE_RENEWED");assert.equal(audit.parameters.extendDays,30);assert.equal(audit.parameters.previousExpiresAtUtc,before.devices[0]!.ExpiresAtUtc);assert.equal(audit.parameters.expiresAtUtc,expected[0]!.ExpiresAtUtc);
+ assert.doesNotMatch(JSON.stringify([result,audit]),/TokenHash|credentialFingerprint|"token"/);
+ await assert.rejects(f.service.renew(1,7,actor,{expectedVersion:version,confirmed:true,days:1}),/DASHBOARD_DEVICE_VERSION_CONFLICT/);
+});
+for(const failure of ["renew","renew-expired","touch","audit","audit-evidence","commit"])test(`renewal ${failure} rolls back expiry and audit`,async()=>{
+ const f=fixture();f.db().devices[0]!.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();const version=await f.version(),before=f.snapshot();f.control.failAt=failure;
+ await assert.rejects(f.service.renew(1,7,actor,{expectedVersion:version,confirmed:true,days:30}));assert.deepEqual(f.snapshot(),before);assert.equal(f.control.events.at(-1),"rollback");
+});
+for(const reason of ["expired","revoked","archived","inactive","none","over-limit","owner","workstation","permission","token","query","disabled-mode","mode-grant","delegator-version"])test(`safe renewal rejects ${reason} without restoring authority`,async()=>{
+ const f=fixture(),d=f.db().devices[0]!;d.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();
+ if(reason==="expired")d.ExpiresAtUtc=new Date(Date.now()-1).toISOString();if(reason==="revoked")d.RevokedAtUtc=new Date().toISOString();if(reason==="archived")d.ArchivedAtUtc=new Date().toISOString();if(reason==="inactive")d.IsActive=false;if(reason==="none")d.ExpiresAtUtc=null;if(reason==="over-limit")d.ExpiresAtUtc=new Date(Date.now()+360*86400000).toISOString();
+ if(reason==="owner")f.control.deniedUser=2;if(reason==="workstation")f.control.workstation=false;if(reason==="disabled-mode")f.db().parent.QueryMode="QUERY_ONLY_DISABLED";
+ if(reason==="mode-grant"||reason==="delegator-version"){f.db().parent.QueryMode="QUERY_ONLY";f.db().parent.QueryModeVersion=4;f.db().parent.IsActive=true;d.QueryModeGrantVersion=reason==="mode-grant"?3:4;d.DelegatorTokenVersion=reason==="delegator-version"?0:1;}
+ const version=await f.version(),before=f.snapshot();if(reason==="query")f.control.query=false;if(reason==="permission")f.control.permissions=["DESIGN_QUERY"];if(reason==="token")f.control.tokenVersion++;
+ await assert.rejects(f.service.renew(1,7,actor,{expectedVersion:version,confirmed:true,days:30}));assert.deepEqual(f.snapshot(),before);
+});
+for(const days of [0,-1,366,1.5,NaN])test(`renewal bounds reject ${days}`,async()=>{const f=fixture();f.db().devices[0]!.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();await assert.rejects(f.service.renew(1,7,actor,{expectedVersion:await f.version(),confirmed:true,days}));});
+test("concurrent renewals with the same version commit exactly once",async()=>{const f=fixture();f.db().devices[0]!.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();const input={expectedVersion:await f.version(),confirmed:true as const,days:30};const results=await Promise.allSettled([f.service.renew(1,7,actor,input),f.service.renew(1,7,actor,input)]);assert.equal(results.filter(r=>r.status==="fulfilled").length,1);assert.equal(f.db().audits.length,1);});
+test("renewal HTTP route requires explicit confirmation, version and bounded days",async()=>{const f=await httpFixture();try{
+ f.db().devices[0]!.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();let version=(await f.request()).body.version;
+ for(const body of [{days:30},{expectedVersion:version,days:30},{expectedVersion:version,confirmed:true,days:366},{expectedVersion:version,confirmed:true,days:30,token:"forbidden"}])assert.equal((await f.request("POST","/7/renew",body)).status,400);
+ const result=await f.request("POST","/7/renew",{expectedVersion:version,confirmed:true,days:30});assert.equal(result.status,200);assert.equal(result.body.credentialIssued,false);assert.equal(result.cache,"no-store");assert.equal((await f.request("POST","/7/renew",{expectedVersion:version,confirmed:true,days:30})).status,409);
+ }finally{await f.close();}});
+test("renew active Query-only with matching mode/delegator grant to the 365-day lifetime bound",async()=>{
+ const f=fixture(),d=f.db().devices[0]!;f.db().parent.QueryMode="QUERY_ONLY";f.db().parent.QueryModeVersion=4;f.db().parent.IsActive=true;d.QueryModeGrantVersion=4;d.DelegatorTokenVersion=1;d.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();
+ const result=await f.service.renew(1,7,actor,{expectedVersion:await f.version(),confirmed:true,days:364});assert.equal(result.deviceCredentialsInvalidated,false);assert.equal(f.db().devices[0]!.QueryModeGrantVersion,4);assert.equal(f.db().devices[0]!.DelegatorTokenVersion,1);
+});
+for(const reason of ["missing-mode-version","inactive-query-only"])test(`Query-only renewal requires reliable active-mode evidence: ${reason}`,async()=>{
+ const f=fixture(),d=f.db().devices[0]!;d.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();d.QueryModeGrantVersion=4;d.DelegatorTokenVersion=1;f.db().parent.QueryMode="QUERY_ONLY";f.db().parent.IsActive=reason!=="inactive-query-only";f.db().parent.QueryModeVersion=reason==="missing-mode-version"?undefined:4;const version=await f.version(),before=f.snapshot();
+ await assert.rejects(f.service.renew(1,7,actor,{expectedVersion:version,confirmed:true,days:30}));assert.deepEqual(f.snapshot(),before);
 });
