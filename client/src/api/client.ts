@@ -1,3 +1,4 @@
+import { assertDevicePlaybackTransport } from "../security/deviceTransport";
 const API_BASE = "/api";
 
 type ApiError = { error?: { code?: string; message?: string; detail?: string; requestId?: string } };
@@ -14,6 +15,10 @@ export async function apiRequest<T>(
   options: RequestInit = {},
   accessToken?: string | null,
 ): Promise<T> {
+  // Stop before constructing credential headers or invoking fetch. The server
+  // independently refuses ordinary HTTP delivery; UI checks alone are insufficient.
+  const deviceRequest = path.startsWith("/dashboards/device/");
+  if (deviceRequest) assertDevicePlaybackTransport(window.location.protocol);
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
@@ -25,7 +30,7 @@ export async function apiRequest<T>(
   options.signal?.addEventListener("abort", abort, { once: true });
   if (options.signal?.aborted) abort();
   try {
-    const response = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store" });
+    const response = await fetch(`${API_BASE}${path}`, { ...options, headers, signal: controller.signal, cache: "no-store", ...(deviceRequest ? {redirect:"error"} : {}) });
     const body = (await response.json().catch(() => ({}))) as T & ApiError;
 
     if (!response.ok) {

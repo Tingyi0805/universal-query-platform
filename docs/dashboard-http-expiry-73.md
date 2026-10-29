@@ -1,5 +1,7 @@
 # Issue 73: HTTP manual playback and expiry management
 
+> Superseded for HTTP playback by [Issue #77](windows-http-kiosk-77.md): ordinary HTTP Device playback is now BLOCKED, including manual activation and handoff. The historical HTTP acceptance steps below must not be used to deliver patient data. Expiry management and existing HTTPS playback remain supported.
+
 Based on PR #72 `e9d495a9421605d730bfc520517d1ba09fcac592`. Independent Draft; no production action, schema change, Migration or update package.
 
 ## HTTP now, HTTPS later
