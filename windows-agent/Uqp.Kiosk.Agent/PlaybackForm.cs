@@ -7,6 +7,7 @@ namespace Uqp.Kiosk.Agent;
 public sealed class PlaybackForm:Form
 {
     public string FailureCode{get;private set;}="NONE";
+    readonly Label stoppedMessage=new(){Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,Text="正在驗證安全播放連線…"};
     readonly AgentSession session;readonly WebView2 view=new(){Dock=DockStyle.Fill};readonly System.Windows.Forms.Timer watchdog=new(){Interval=5000};
     readonly CancellationTokenSource lifetime=new();bool stopped=true,checking,retryAllowed;int generation;
     public PlaybackForm(AgentSession session,Placement? requestedPlacement=null)
@@ -20,7 +21,7 @@ public sealed class PlaybackForm:Form
         var toolbar=new FlowLayoutPanel{Dock=DockStyle.Top,AutoSize=true};
         var refresh=new Button{Text="重新整理"};refresh.Click+=async(_,_)=>await Resume();
         var forget=new Button{Text="清除此裝置本機授權"};forget.Click+=(_,_)=>{if(MessageBox.Show(this,"清除後須由管理者再次授權。","UQP",MessageBoxButtons.OKCancel)==DialogResult.OK){session.Forget();Stop();Close();}};
-        toolbar.Controls.Add(refresh);toolbar.Controls.Add(forget);toolbar.Controls.Add(new Label{AutoSize=true,Text="本機註冊至 "+session.Enrollment.EnrollmentExpiresAtUtc.ToString("u")+"；裝置續期不會延長此註冊。"});Controls.Add(view);Controls.Add(toolbar);
+        toolbar.Controls.Add(refresh);toolbar.Controls.Add(forget);toolbar.Controls.Add(new Label{AutoSize=true,Text="本機註冊至 "+session.Enrollment.EnrollmentExpiresAtUtc.ToString("u")+"；裝置續期不會延長此註冊。"});Controls.Add(stoppedMessage);Controls.Add(view);Controls.Add(toolbar);
         Load+=async(_,_)=>{try{await Initialize();await Resume();watchdog.Start();}catch(Exception error){FailureCode="INITIALIZE_"+error.GetType().Name+"_"+unchecked((uint)error.HResult).ToString("X8");Stop();}};
         watchdog.Tick+=async(_,_)=>{if(checking||stopped&&!retryAllowed)return;checking=true;try{if(stopped)await Resume();else await session.Validate(lifetime.Token);}catch(Exception error){Stop();retryAllowed=Retryable(error);}finally{checking=false;}};
         FormClosing+=(_,_)=>{watchdog.Stop();lifetime.Cancel();Stop();};FormClosed+=(_,_)=>{watchdog.Dispose();view.Dispose();session.Dispose();lifetime.Dispose();};
@@ -39,7 +40,7 @@ public sealed class PlaybackForm:Form
         var core=view.CoreWebView2;var settings=core.Settings;settings.AreDevToolsEnabled=false;settings.AreDefaultContextMenusEnabled=false;settings.AreHostObjectsAllowed=false;
         settings.IsWebMessageEnabled=false;settings.IsPasswordAutosaveEnabled=false;settings.IsGeneralAutofillEnabled=false;settings.IsStatusBarEnabled=false;
         core.NavigationStarting+=(_,e)=>{if(!(Uri.TryCreate(e.Uri,UriKind.Absolute,out var u)&&session.Config.IsDisplayUri(u))&&!(stopped&&e.Uri=="about:blank"))e.Cancel=true;};
-        core.NavigationCompleted+=(_,e)=>{if(!stopped&&e.IsSuccess&&session.Config.IsDisplayUri(view.Source))view.Visible=true;};
+        core.NavigationCompleted+=(_,e)=>{if(!stopped&&e.IsSuccess&&session.Config.IsDisplayUri(new Uri(core.Source))){stoppedMessage.Visible=false;view.Visible=true;}};
         core.FrameNavigationStarting+=(_,e)=>e.Cancel=true;core.NewWindowRequested+=(_,e)=>e.Handled=true;core.PermissionRequested+=(_,e)=>e.State=CoreWebView2PermissionState.Deny;
         core.DownloadStarting+=(_,e)=>e.Cancel=true;core.ProcessFailed+=(_,_)=>Stop();
         core.AddWebResourceRequestedFilter("*",CoreWebView2WebResourceContext.All);core.WebResourceRequested+=Resource;
@@ -52,8 +53,13 @@ public sealed class PlaybackForm:Form
     static bool Retryable(Exception error)=>error is ChannelUnavailableException or TimeoutException or TaskCanceledException || error is HttpRequestException request && request.InnerException is not System.Security.Authentication.AuthenticationException;
     void Stop()
     {
-        stopped=true;retryAllowed=false;++generation;if(IsDisposed||Disposing||view.IsDisposed)return;view.Visible=false;
-        if(view.CoreWebView2!=null){view.CoreWebView2.Stop();view.CoreWebView2.NavigateToString("<!doctype html><html lang=zh-Hant><meta charset=utf-8><title>UQP 播放停止</title><h1>播放已停止，患者資料已清除</h1><p>請確認網路、裝置到期、註冊期限與管理權限，再按重新整理。到期或撤銷不會自動重新核發。</p></html>");}
+        stopped=true;retryAllowed=false;++generation;if(IsDisposed||Disposing||view.IsDisposed)return;view.Visible=false;stoppedMessage.Text="播放已停止，患者資料已清除。\n網路或服務暫時不可用會安全重試；授權失效請聯絡管理者。";stoppedMessage.Visible=true;
+        if(view.CoreWebView2!=null){view.CoreWebView2.Stop();
+            // Purge the existing trusted document without queuing an about:blank
+            // navigation that can race the next validated resume. Stay hidden.
+            _=view.CoreWebView2.ExecuteScriptAsync("window.dispatchEvent(new PageTransitionEvent('pagehide',{persisted:false}));document.body?.replaceChildren();")
+                .ContinueWith(task=>{_=task.Exception;},TaskContinuationOptions.OnlyOnFaulted);
+        }
     }
     const string SecurityHeaders="Cache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n";
     void Reply(CoreWebView2WebResourceRequestedEventArgs e,int status,string type,byte[] body)
@@ -74,7 +80,7 @@ public sealed class PlaybackForm:Form
             if(uri.GetLeftPart(UriPartial.Authority)!=AgentConfiguration.UiOrigin||stopped)throw new InvalidDataException();
             if(uri.AbsolutePath.StartsWith("/api/",StringComparison.Ordinal))
             {
-                if(e.ResourceContext is not(CoreWebView2WebResourceContext.Fetch or CoreWebView2WebResourceContext.XmlHttpRequest)||!session.Config.IsDisplayUri(new Uri(view.Source.AbsoluteUri)))throw new InvalidDataException();
+                if(e.ResourceContext is not(CoreWebView2WebResourceContext.Fetch or CoreWebView2WebResourceContext.XmlHttpRequest)||!session.Config.IsDisplayUri(new Uri(view.CoreWebView2.Source)))throw new InvalidDataException();
                 var headers=e.Request.Headers;if(headers.Contains("Origin")&&headers.GetHeader("Origin")!=AgentConfiguration.UiOrigin)throw new InvalidDataException();
                 var root=$"/api/dashboards/device/{session.Config.DashboardId}";byte[] data;
                 if(e.Request.Method=="POST"&&uri.PathAndQuery==root+"/kiosk/session")
