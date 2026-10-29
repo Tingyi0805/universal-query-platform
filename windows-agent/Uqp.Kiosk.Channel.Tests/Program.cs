@@ -7,7 +7,7 @@ using var child=Process.Start(new ProcessStartInfo("node","--import tsx src/modu
 string? directory=null;
 try{
  using var setup=JsonDocument.Parse(await child.StandardOutput.ReadLineAsync()??throw new InvalidDataException());directory=setup.RootElement.GetProperty("directory").GetString()!;
- var config=AgentConfiguration.Load(Path.Combine(directory,"agent.json"));var pfx=File.ReadAllBytes(Path.Combine(directory,"client.pfx"));
+ var config=AgentConfiguration.Load(Path.Combine(directory,"agent.json"));Check(config.Digest.Length==64);Check(JsonSerializer.Deserialize<AgentConfiguration>(JsonSerializer.Serialize(config))!.Digest==config.Digest);Check(!JsonSerializer.Serialize(config).Contains("Digest"));var pfx=File.ReadAllBytes(Path.Combine(directory,"client.pfx"));
  using var channel=new ChannelClient(config,pfx,"fixture-only");
  var login=await channel.Send(HttpMethod.Post,"/api/auth/login",JsonSerializer.SerializeToUtf8Bytes(new{username="manager",password="fixture-secret"}));login.RequireSuccess();
  using var json=login.Json();Check(json.RootElement.GetProperty("accessToken").GetString()=="fixture-session");

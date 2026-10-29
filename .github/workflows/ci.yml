@@ -465,6 +465,8 @@ jobs:
             $process=Start-Process $installer -ArgumentList '/silent /install' -Wait -PassThru
             if ($process.ExitCode -notin @(0,3010)) { throw 'WEBVIEW_RUNTIME_INSTALL_FAILED' }
           }
+      - run: dotnet restore windows-agent/Uqp.Kiosk.Channel.Tests --locked-mode
+      - run: dotnet run --project windows-agent/Uqp.Kiosk.Channel.Tests --no-restore -- "${{ github.workspace }}"
       - run: dotnet restore windows-agent/Uqp.Kiosk.Agent.Tests --locked-mode
       - run: dotnet build windows-agent/Uqp.Kiosk.Agent.Tests --no-restore --configuration Release
       - name: Actual DPAPI, WebView2 F5, process/profile restart, isolation and purge (not OS reboot)

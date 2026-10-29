@@ -4,7 +4,7 @@
 
 ## 實際播放路徑
 
-Agent 從簽章單一 EXE 內嵌的原有 Client build 顯示 Dashboard；不是載入 HTTP 網頁。WebView2 的固定虛擬來源 `https://uqp-kiosk.invalid` 只由原生程序回應，沒有網站 HTTPS 建置需求、localhost listener、網頁可呼叫的 IPC、Host Object 或 WebMessage bridge。外部導航、子框架、彈窗、下載、權限、外部資源、Service Worker 與 DevTools 被拒絕。這不是供其他 Edge／Chrome 視窗使用的本機 HTTP 代理。
+Agent 從簽章單一 EXE 內嵌的原有 Client build 顯示 Dashboard；不是載入 HTTP 網頁。WebView2 的固定虛擬來源 `https://uqp-kiosk.invalid` 只由原生程序回應，沒有網站 HTTPS 建置需求、localhost listener、網頁可呼叫的 IPC、Host Object 或 WebMessage bridge。外部導航、子框架、彈窗、下載、權限、外部資源、Service Worker 與 DevTools 被拒絕；程序內清除 WEBVIEW2_* 環境覆寫，不能透過使用者環境加入 remote debugging／no-sandbox 或更換 runtime／profile。WebView2 registry policies 仍須由 OS 管理保護。這不是供其他 Edge／Chrome 視窗使用的本機 HTTP 代理。
 
 使用 .NET `SocketsHttpHandler`／`SslStream` 與 Node `https` 的 **TLS 1.3 優先／TLS 1.2 限 ECDHE＋AES-GCM、雙向憑證認證**，包在標準 HTTP CONNECT 中。只有不含憑證的 CONNECT 與 200 回應是明文；登入密碼、JWT、Device Token、API 路徑與患者回應全在 TLS 內。未自行設計加密、簽章或金鑰交換。沒有舊 TLS／弱 cipher fallback、redirect、TOFU 或 HTTP Token fallback。
 

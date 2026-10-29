@@ -27,6 +27,11 @@ public sealed class PlaybackForm:Form
     }
     async Task Initialize()
     {
+        // Never inherit a user environment that adds remote debugging, swaps the
+        // browser executable or redirects the profile. Enterprise OS policy must
+        // also protect WebView2 registry policies and the dedicated user account.
+        foreach(string name in Environment.GetEnvironmentVariables().Keys)
+            if(name.StartsWith("WEBVIEW2_",StringComparison.OrdinalIgnoreCase))Environment.SetEnvironmentVariable(name,null,EnvironmentVariableTarget.Process);
         var profile=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UQP","ManagedKiosk",session.Config.Digest,"webview");
         // No TCP listener, host object, web message or external browser bridge.
         var options=new CoreWebView2EnvironmentOptions("--disable-breakpad --disable-crash-reporter --disable-background-networking");

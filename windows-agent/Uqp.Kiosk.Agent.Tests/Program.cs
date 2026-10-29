@@ -53,6 +53,7 @@ internal static class Program
     }
     static int Probe(string file,string output,string control)
     {
+        Environment.SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS","--remote-debugging-port=39291 --no-sandbox",EnvironmentVariableTarget.Process);
         var config=AgentConfiguration.Load(file);var vault=new ProtectedVault(config);var session=new AgentSession(config,vault.Load()??throw new InvalidDataException(),vault);
         using var form=new PlaybackForm(session);bool finished=false,failed=false;
         form.Shown+=async(_,_)=>{
@@ -60,6 +61,7 @@ internal static class Program
                 var view=(WebView2)typeof(PlaybackForm).GetField("view",BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(form)!;
                 async Task WaitFor(Func<Task<bool>> predicate,int seconds=30){var until=DateTime.UtcNow.AddSeconds(seconds);while(DateTime.UtcNow<until){if(await predicate())return;await Task.Delay(100);}throw new TimeoutException();}
                 stage="WEBVIEW_READY";await WaitFor(async()=>view.CoreWebView2!=null&&view.Visible&&(JsonSerializer.Deserialize<string>(await view.ExecuteScriptAsync("document.body.innerText"))??"").Contains("合○Agent"));
+                Check(Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")==null);
                 stage="NO_SECRET_SURFACES";var surface=await view.ExecuteScriptAsync("JSON.stringify([document.documentElement.outerHTML,document.cookie,localStorage,sessionStorage,location.href])");Check(!surface.Contains(session.Enrollment.Token));
                 stage="F5";var navigated=new TaskCompletionSource();view.CoreWebView2.NavigationCompleted+=(_,_)=>navigated.TrySetResult();view.Reload();await navigated.Task.WaitAsync(TimeSpan.FromSeconds(30));await WaitFor(async()=>view.Visible&&(JsonSerializer.Deserialize<string>(await view.ExecuteScriptAsync("document.body.innerText"))??"").Contains("合○Agent"));
                 // A foreign top-level navigation is cancelled in the real control.

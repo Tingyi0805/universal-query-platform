@@ -6,7 +6,9 @@ public sealed record Placement(int ScreenNumber=1,int WindowX=0,int WindowY=0,in
 public sealed record AgentConfiguration(string ChannelEndpoint,string PublicPlaybackUrl,string ServerCertificateSha256,int DashboardId,int DeviceId,Placement Placement)
 {
     public const string UiOrigin="https://uqp-kiosk.invalid";
+    [System.Text.Json.Serialization.JsonIgnore]
     public string PublicOrigin=>new Uri(PublicPlaybackUrl).GetLeftPart(UriPartial.Authority);
+    [System.Text.Json.Serialization.JsonIgnore]
     public string DisplayPath=>$"/display/dashboards/{DashboardId}?deviceId={DeviceId}";
     public static AgentConfiguration Load(string file)
     {
@@ -21,6 +23,7 @@ public sealed record AgentConfiguration(string ChannelEndpoint,string PublicPlay
            !System.Text.RegularExpressions.Regex.IsMatch(ServerCertificateSha256,"^[A-F0-9]{64}$")||Placement.ScreenNumber<1||Placement.ScreenNumber>32||Placement.WindowWidth<200||Placement.WindowWidth>16384||Placement.WindowHeight<200||Placement.WindowHeight>16384)
             throw new InvalidDataException("MANAGED_CONFIGURATION_INVALID");
     }
+    [System.Text.Json.Serialization.JsonIgnore]
     public string Digest=>Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(this)));
     public bool IsDisplayUri(Uri uri)=>uri.AbsoluteUri==UiOrigin+DisplayPath;
 }
