@@ -152,6 +152,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     finally { if (current === epoch.current) setBusy(false); }
   }
   function handoff() {
+    if (window.location.protocol !== "https:") { setMessage("HTTP 安全播放尚未開放（Issue #77 BLOCKED）：受管理播放端與加密通道未完成，無法交付憑證。請勿在 HTTP 播放頁輸入 Token。"); return; }
     if (cleanup.current || handoffUsed) return;
     const credential = issued.current;
     if (!credential || !devices.some(d => d.id === credential.deviceId && deviceMayIssue(d))) { clearCredential(); return; }

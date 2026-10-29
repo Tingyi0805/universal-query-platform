@@ -125,7 +125,8 @@ export function DashboardDisplayPage() {
   const queryPreview = searchParams.get("queryPreview") === "1";
   const [previewAuthorized,setPreviewAuthorized] = useState(true);
   const deviceMode = window.location.pathname.startsWith("/display/dashboards/");
-  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode && !searchParams.has("deviceId") ? readDashboardToken(dashboardId) : null);
+  const transportBlocked = deviceMode && window.location.protocol !== "https:";
+  const [deviceToken, setDeviceToken] = useState<string | null>(() => deviceMode && !transportBlocked && !searchParams.has("deviceId") ? readDashboardToken(dashboardId) : null);
   const intendedDeviceId = Number(searchParams.get("deviceId"));
   const persistentCapable = deviceMode && window.location.protocol === "https:" && Number.isSafeInteger(intendedDeviceId) && intendedDeviceId > 0;
   const [restoringDevice,setRestoringDevice] = useState(false);
@@ -139,16 +140,17 @@ export function DashboardDisplayPage() {
   const [activationBusy, setActivationBusy] = useState(false);
   const activationAttempt = useRef(0);
   const [activationError, setActivationError] = useState("");
-  const [activationRequired, setActivationRequired] = useState(() => deviceMode && (searchParams.has("deviceId") || !readDashboardToken(dashboardId)));
+  const [activationRequired, setActivationRequired] = useState(() => deviceMode && (transportBlocked || searchParams.has("deviceId") || !readDashboardToken(dashboardId)));
   const handoffRequestId = useRef(dashboardHandoffNonce());
   useEffect(()=>{
+    if (transportBlocked) { forgetDashboardToken(dashboardId); return; }
     if (!deviceMode || deviceToken || readDashboardToken(dashboardId)) return;
     // Keep one document nonce across StrictMode effect setup/cleanup replay.
     if (!window.opener && searchParams.get("handoff") !== "1") return;
     return requestDashboardTokenHandoff(dashboardId, token => {
       setActivationError(""); setDeviceToken(token); setActivationRequired(false);
     }, () => setActivationError("安全交接未完成或已逾時。請保持管理頁開啟，重新核發並從管理頁開啟播放。"), handoffRequestId.current);
-  },[dashboardId,deviceMode,deviceToken]);
+  },[dashboardId,deviceMode,deviceToken,transportBlocked]);
   const { accessToken } = useAuth();
   const userRoute = !deviceMode && !queryPreview && !window.location.pathname.startsWith("/designer/");
   const [userMode, setUserMode] = useState<"LEGACY" | "QUERY_ONLY" | null>(null);
@@ -970,6 +972,7 @@ export function DashboardDisplayPage() {
 
   async function activateDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (transportBlocked) { clearDevicePlayback("HTTP 裝置播放尚未具備安全通道（BLOCKED）。"); return; }
     const token = activationInput.trim();
     if (!token || !Number.isInteger(dashboardId) || dashboardId <= 0) {
       setActivationError("請輸入有效的裝置 Token。");
@@ -1027,6 +1030,12 @@ export function DashboardDisplayPage() {
     <h1>預覽授權失效</h1><p>已停止預覽，請重新登入或請管理者確認權限。</p><Link to="/designer/dashboards">返回 Dashboard 管理</Link>
   </div></main>;
 
+  if (transportBlocked) return <main className="dashboard-display-screen"><div className="dashboard-display-error" role="alert">
+    <h1>HTTP 裝置播放尚未開放</h1>
+    <p>Issue #77：BLOCKED。受管理 Windows 播放端與經驗證的加密資料通道尚未完成；目前不提供 HTTP 播放或重新開機後自動恢復。</p>
+    <p>請勿在此連線輸入 Device Token。DPAPI 僅保護本機儲存，無法保護 HTTP 傳輸中的 Token 與患者資料。</p>
+  </div></main>;
+
   if (deviceMode && activationRequired) {
     return (
       <main className="dashboard-display-screen">
@@ -1036,7 +1045,6 @@ export function DashboardDisplayPage() {
           <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
             {persistentCapable ? <label><input type="checkbox" checked={persistDevice} onChange={e=>setPersistDevice(e.target.checked)}/>在此瀏覽器持久授權裝置 #{intendedDeviceId}（僅限受管理裝置；HTTPS 安全 Cookie）</label> : <p>目前僅支援本次頁面授權。持久授權須使用管理者提供的 HTTPS 裝置播放網址。</p>}
-            {window.location.protocol==="http:" && <p>HTTP 僅限信任的內網手動播放，Token 可能遭網路攔截；不提供重啟後自動恢復。請優先使用 HTTPS。</p>}
             <p>未啟用持久授權時，Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>
             <input id="dashboard-device-activation-token" type="password" autoComplete="off" spellCheck={false} required

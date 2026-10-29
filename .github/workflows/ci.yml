@@ -338,6 +338,36 @@ jobs:
       - name: Verify Windows PowerShell 5.1 launcher syntax and mock launch arguments
         shell: powershell
         run: .\tools\test-uqp-kiosk-launcher.ps1
+      - name: Evaluate DPAPI CurrentUser restore across processes and reject context/tamper
+        shell: powershell
+        run: .\tools\test-uqp-kiosk-dpapi.ps1
+
+  windows-playback-boundary:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci
+      - run: npm ci --prefix ../server --ignore-scripts
+      - name: Locate OpenSSL for ephemeral test certificate only
+        shell: pwsh
+        run: |
+          $openssl = Join-Path $env:ProgramFiles 'Git\usr\bin'
+          if (Test-Path (Join-Path $openssl 'openssl.exe')) { $openssl >> $env:GITHUB_PATH }
+          else { Get-Command openssl -ErrorAction Stop | Out-Null }
+      - run: npx playwright install chromium
+      - name: HTTP refusal, browser restart, TLS persistence and live denial regression
+        run: npx playwright test dashboard-http-expiry.spec.ts dashboard-kiosk.spec.ts dashboard-playback.spec.ts
 
   windows-node24-dependencies:
     runs-on: windows-latest

@@ -2,7 +2,8 @@ import { purgeDashboardDeviceSnapshots } from "./dashboardPageSnapshot.js";
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { getClientIp, normalizeIp } from "../../utils/clientIp.js";
+import { getClientIp } from "../../utils/clientIp.js";
+import { devicePlaybackTransportGuard, hasProtectedPlaybackTransport } from "./dashboardPlaybackTransport.js";
 import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 
 type Configuration = { origin?: string; key?: string; enabled: boolean; trustedProxies: string[] };
@@ -42,13 +43,14 @@ export function kioskCodec(origin: string, key: string) {
 }
 export function createKioskRouter(configuration: () => Configuration, deps: Dependencies) {
   const router = Router();
+  // Mounted before every existing device handler, including Legacy and cookies.
+  router.use("/device", devicePlaybackTransportGuard(() => configuration().trustedProxies));
   const name = (kind: Grant["kind"], deviceId: number) => `__Host-uqp-${kind}-${deviceId}`;
   const options = { httpOnly: true, secure: true, sameSite: "strict" as const, path: "/" };
   const clear = (res: Response, deviceId: number) => { for (const kind of ["enrollment", "session"] as const) res.clearCookie(name(kind,deviceId), options); };
   function secure(req: Request) {
     const config = configuration(), origin = kioskOrigin(config.origin);
-    const trusted = config.trustedProxies.map(normalizeIp).includes(normalizeIp(req.socket.remoteAddress));
-    const tls = (req.socket as import("node:tls").TLSSocket).encrypted === true || trusted && req.header("x-forwarded-proto") === "https";
+    const tls = hasProtectedPlaybackTransport(req, config.trustedProxies);
     // All cookie requests, including layout GETs, require an explicit same-origin marker.
     // A cross-origin form/image/navigation and CORS preflight can never carry these proofs.
     if (!config.enabled || !tls || req.header("host") !== new URL(origin).host || (req.header("origin") !== origin && !(req.method === "GET" && !req.header("origin") && (!req.header("sec-fetch-site") || req.header("sec-fetch-site") === "same-origin"))) ||
