@@ -36,7 +36,7 @@ export function createQuerySourceRouter(service: ReturnType<typeof createQuerySo
     try {
       const parsed = id.safeParse(req.params.id);
       const input = z.object({ expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),
-        sourceKey: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/), masks: z.record(z.unknown()) }).strict().safeParse(req.body);
+        sourceKey: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/), masks: z.record(z.string(), z.unknown()) }).strict().safeParse(req.body);
       if (!parsed.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
       res.json(await service.disclosure(parsed.data, req.authUser!.id, input.data));
     } catch (error) { failure(error, res, req.id); }
@@ -62,7 +62,7 @@ export function createQuerySourceRouter(service: ReturnType<typeof createQuerySo
     try {
       const parsed = id.safeParse(req.params.id);
       const input = z.object({ expectedVersion: z.string().regex(/^[a-f0-9]{64}$/),
-        queryDefinitionId: z.number().int().positive().safe(), parameters: z.record(z.unknown()),
+        queryDefinitionId: z.number().int().positive().safe(), parameters: z.record(z.string(), z.unknown()),
         refreshSeconds: z.number().int().min(5).max(3600), pageSize: z.number().int().min(1).max(100),
         pageSeconds: z.number().int().min(5).max(3600), maxRows: z.number().int().min(1).max(10000) }).strict().safeParse(req.body);
       if (!parsed.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);

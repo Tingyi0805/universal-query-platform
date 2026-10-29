@@ -11,7 +11,7 @@ export const querySourcePatchSchema = z.object({
     pageSize: z.number().int().min(1).max(100),
     pageSeconds: z.number().int().min(5).max(3600),
     maxRows: z.number().int().min(1).max(10000),
-    parameters: z.record(z.unknown()),
+    parameters: z.record(z.string(), z.unknown()),
     isEnabled: z.boolean(),
   }).strict()).max(7),
   removals: z.array(z.object({ sourceKey: key, id: z.number().int().positive().safe() }).strict()).max(8),

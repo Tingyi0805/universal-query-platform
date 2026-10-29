@@ -29,7 +29,7 @@ import { setQueryFavorite } from "./queryFavorite.repository.js";
 
 const idSchema = z.coerce.number().int().positive().safe();
 const executeBodySchema = z.object({
-  values: z.record(z.unknown()).default({}),
+  values: z.record(z.string(), z.unknown()).default({}),
 });
 
 function sendRuntimeError(res: any, error: unknown): boolean {

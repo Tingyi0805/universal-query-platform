@@ -173,7 +173,7 @@ const dashboardSchema = z.object({
   showClock: z.boolean().default(true),
   showPageNumber: z.boolean().default(true),
   showCountdown: z.boolean().default(true),
-  parameters: z.record(z.unknown()).refine((value) => {
+  parameters: z.record(z.string(), z.unknown()).refine((value) => {
     if (!validSourceColumnMasks(value.deviceSourceColumnMasks)) return false;
     const classifications = value.deviceColumnTypes;
     if (classifications !== undefined) {

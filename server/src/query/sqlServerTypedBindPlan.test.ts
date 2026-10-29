@@ -12,8 +12,9 @@ import type { DatasetParameterRecord } from "../modules/dataset/parameter.reposi
 
 const require = createRequire(import.meta.url);
 // Local serialization only: no driver connection or query is made.
-const tedious = require("tedious");
-const WritableBuffer = require("tedious/lib/tracking-buffer/writable-tracking-buffer.js");
+const driverRequire = createRequire(require.resolve("mssql"));
+const tedious = driverRequire("tedious");
+const WritableBuffer = driverRequire("tedious/lib/tracking-buffer/writable-tracking-buffer.js");
 const driverTypes = new Map<any, any>([
   [sql.Int, tedious.TYPES.Int], [sql.BigInt, tedious.TYPES.BigInt], [sql.Bit, tedious.TYPES.Bit],
   [sql.Float, tedious.TYPES.Float], [sql.Decimal, tedious.TYPES.Decimal], [sql.Date, tedious.TYPES.Date],

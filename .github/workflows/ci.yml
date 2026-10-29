@@ -15,8 +15,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: npm install
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=low
+      - run: npm audit --audit-level=low
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
@@ -30,13 +35,18 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-      - run: npm install
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=low
+      - run: npm audit --audit-level=low
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
       - name: Install synthetic kiosk API test dependencies (no database/native drivers)
-        run: npm install --prefix ../server --ignore-scripts
+        run: npm ci --prefix ../server --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
 
@@ -318,10 +328,80 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm install --global npm@12.2.1
       - name: Install offline generator dependencies without native database drivers
         working-directory: server
-        run: npm install --ignore-scripts
+        run: npm ci --ignore-scripts
       - name: Verify Windows PowerShell 5.1 launcher syntax and mock launch arguments
         shell: powershell
         run: .\tools\test-uqp-kiosk-launcher.ps1
+
+  windows-node24-dependencies:
+    runs-on: windows-latest
+    # Existing SQL/source SHA witnesses pin Git's LF bytes; do not rewrite them to CRLF.
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci
+      - name: Locate OpenSSL for synthetic credential tests
+        shell: powershell
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $uqp75OpenSsl = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $uqp75OpenSsl 'openssl.exe'))) { throw 'OPENSSL_TEST_PREREQUISITE_MISSING' }
+            $uqp75OpenSsl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - run: npm audit --omit=dev --audit-level=low
+      - run: npm audit --audit-level=low
+      - run: npm test
+      - run: npm run typecheck
+      - run: npm run build
+
+  dependency-sql-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci
+      - name: Start disposable SQL Server (no user databases or migrations)
+        shell: bash
+        run: |
+          set -euo pipefail
+          uqp75_password="D75!$(openssl rand -hex 20)Z"
+          echo "::add-mask::$uqp75_password"
+          echo "UQP75_SQL_PASSWORD=$uqp75_password" >> "$GITHUB_ENV"
+          docker run -d --rm --name uqp75-sql \
+            -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$uqp75_password" \
+            -p 127.0.0.1:14335:1433 mcr.microsoft.com/mssql/server:2022-latest >/dev/null
+      - name: Production adapter connection, typed binds and Excel round trip (SELECT only)
+        env:
+          UQP75_SQL_SCOPE: EPHEMERAL_CI_ONLY
+        run: node --import tsx src/dependencies/sqlServerEphemeral.ts
+      - name: Destroy disposable SQL Server
+        if: always()
+        shell: bash
+        run: docker rm -f uqp75-sql >/dev/null 2>&1 || true

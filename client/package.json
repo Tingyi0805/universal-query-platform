@@ -25,5 +25,10 @@
     "tsx": "^4.19.2",
     "@types/node": "^22.10.1",
     "@playwright/test": "^1.56.1"
-  }
+  },
+  "engines": {
+    "node": ">=24.15.0 <25",
+    "npm": ">=11 <13"
+  },
+  "packageManager": "npm@12.2.1"
 }

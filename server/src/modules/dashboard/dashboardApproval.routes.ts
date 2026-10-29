@@ -7,7 +7,7 @@ import { dashboardMaskModes } from "./dashboardDeviceMasking.js";
 import { createDashboardApprovalService, DashboardApprovalError } from "./dashboardApproval.service.js";
 
 export const approvalPatchSchema = z.object({ expectedVersion: z.string(), sourceKey: z.string().regex(/^[A-Za-z][A-Za-z0-9_]{0,63}$/),
-  upsert: z.record(z.enum(dashboardMaskModes)).refine(value => Object.keys(value).length <= 300).default({}),
+  upsert: z.record(z.string(), z.enum(dashboardMaskModes)).refine(value => Object.keys(value).length <= 300).default({}),
   remove: z.array(z.string().min(1).max(256)).max(300).default([]) }).strict()
   .refine(value => Object.keys(value.upsert).length + value.remove.length > 0);
 export function createDashboardApprovalRouter(service: ReturnType<typeof createDashboardApprovalService>) {

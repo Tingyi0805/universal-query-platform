@@ -11,7 +11,7 @@ import { prepareSqlServerTypedDescription, prepareSqlServerTypedRuntime } from "
 import { coerceRuntimeParameters } from "../modules/dataset/parameter.service.js";
 import type { DatasetParameterRecord } from "../modules/dataset/parameter.repository.js";
 
-const tedious = createRequire(import.meta.url)("tedious");
+const tedious = createRequire(createRequire(import.meta.url).resolve("mssql"))("tedious");
 const driverTypes = new Map<any, any>([
   [sql.Int, tedious.TYPES.Int], [sql.BigInt, tedious.TYPES.BigInt], [sql.Bit, tedious.TYPES.Bit],
   [sql.Float, tedious.TYPES.Float], [sql.Decimal, tedious.TYPES.Decimal], [sql.Date, tedious.TYPES.Date],

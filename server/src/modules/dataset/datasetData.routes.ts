@@ -20,7 +20,7 @@ export const defaultDatasetDataRouteDependencies = {
   candidate: datasetColumnCandidate, syncColumns: syncDatasetColumns,
 };
 const idSchema = z.coerce.number().int().positive().safe();
-const valuesSchema = { values: z.record(z.unknown()).default({}), maxRows: z.number().int().min(1).max(10000).optional() };
+const valuesSchema = { values: z.record(z.string(), z.unknown()).default({}), maxRows: z.number().int().min(1).max(10000).optional() };
 const savedSchema = z.object(valuesSchema).strict();
 const rawSchema = savedSchema.extend({ expectedDefinitionVersion: z.string().regex(/^[0-9a-f]{16}$/) });
 const candidateSchema = z.object({ ...valuesSchema, datasetId: idSchema.optional(), dataSourceId: idSchema,
