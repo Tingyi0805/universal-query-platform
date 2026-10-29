@@ -31,7 +31,7 @@ mTLS 邊界先以既有 `checkDashboardDisplayDevice`、Query-only mode／grant�
 
 原生端不把 Token 送進 renderer，只攔截該視窗自己的固定 Device API；原有 Cookie-session UI 使用非秘密的本機 lease 回覆，沒有把 HttpOnly Cookie 改成 JS Token。其他 API／管理者登入 API 不開放給 WebView。Server 原本 HTTPS Cookie Kiosk 完整保留。
 
-原生 watchdog 每 5 秒驗證，單次 8 秒 deadline；任何觀察到的拒絕／斷線／解密或 API 失敗會隱藏 clinical view、取消後續世代及清除頁面，既有 Client 期限／頁面離開清除仍生效。失效發現不是即時 server push；正常上線時最多約 13 秒觀察窗。重新整理只重驗原授權，不會核發新 Token。API／WebView 回應 no-store，Token 不進 localStorage／sessionStorage／DOM／BAT／URL／日誌或 Audit。Windows crash dump／帳號入侵仍屬前述 OS 管理界線。
+原生 watchdog 每 5 秒驗證，單次 8 秒 deadline；任何觀察到的拒絕／斷線／解密或 API 失敗會隱藏 clinical view、取消後續世代及清除頁面，既有 Client 期限／頁面離開清除仍生效。失效發現不是即時 server push；正常上線時最多約 13 秒觀察窗。網路／服務暫時不可用會每 5 秒以同一授權做唯讀重驗，包含登入時 API 尚未 ready 的情況；成功才重載畫面，不重新核發。到期／撤銷／來源與憑證等授權拒絕會鎖停，不因後續服務回復而自動復活；可由管理者明確處理。重新整理只重驗原授權，不會核發新 Token。API／WebView 回應 no-store，Token 不進 localStorage／sessionStorage／DOM／BAT／URL／日誌或 Audit。Windows crash dump／帳號入侵仍屬前述 OS 管理界線。
 
 ## Server 分離設定
 
@@ -70,7 +70,7 @@ Installer 只寫新 `%ProgramFiles%\UQPManagedKiosk\<hash>`，限制 ACL、驗�
 ## 驗收、回復與 BLOCKED
 
 - 自動化：Node 真實 CONNECT／TLS1.2／TLS1.3／mTLS；錯誤／缺少 client cert、弱 RSA CBC cipher、wrong pin／origin／device／路徑、過期 timestamp／重放、授權撤銷與待交付回應拒絕；.NET 對 Node 真實登入／核發／page／pin／撤銷與雙向 TCP relay 明文掃描。
-- Windows：真實 DPAPI／DACL／錯誤 machine／origin／竄改；真實 WebView2 F5、相同使用者的兩次程序／profile 啟動、外站導航拒絕、撤銷清除；檢查 DOM／URL／storage 沒有 Token。這些使用合成 API／憑證，不代表實際 DB／冷開機。
+- Windows：真實 DPAPI／DACL／錯誤 machine／origin／竄改；真實 WebView2 F5、相同使用者的兩次程序／profile 啟動、啟動服務未 ready／中途服務中斷的唯讀恢復、外站導航拒絕、撤銷清除且不自動復活；檢查 DOM／URL／storage 沒有 Token。這些使用合成 API／憑證，不代表實際 DB／冷開機。
 - **BLOCKED（不可宣稱已驗收）**：組織可信簽章與發行、真實 PKI／專用帳號／WDAC／代理原始 IP 設定、正式/指定測試 SQL 實機、Windows 登入 task 與實體冷開機／多螢幕。網站 HTTPS 可以延後；上述安全條件不能以裸 HTTP 替代。
 - 現機程序：在新隔離目錄及合成／去識別測試資料庫完成首次 native 登入 → F5 → 關閉所有 Agent 程序後 BAT 重開 → 登出登入 → Windows 冷開機登入；每步檢查逐頁 masking／Audit，再測 revoke、expiry、Token reissue、IP／mode／policy／Audit 失敗與網路中斷。明確記錄 physical reboot，而不是用程序重啟冒稱。
 - 回復：先停止該 `UQP.ManagedKiosk.<hash>` task／Agent，再由 IT 移除該 SID／URL 的 HKLM mapping 與該版本目錄或切回已驗證簽章版本；若 pin／配置改變須明確重新授權。清除 DPAPI 是本機解除註冊，不取代 Server revoke。保持網站 HTTP 患者播放拒絕，不回復成裸 Token。沒有 DB 回復或 Migration。

@@ -8,7 +8,7 @@ public sealed class PlaybackForm:Form
 {
     public string FailureCode{get;private set;}="NONE";
     readonly AgentSession session;readonly WebView2 view=new(){Dock=DockStyle.Fill};readonly System.Windows.Forms.Timer watchdog=new(){Interval=5000};
-    readonly CancellationTokenSource lifetime=new();bool stopped=true,checking;int generation;
+    readonly CancellationTokenSource lifetime=new();bool stopped=true,checking,retryAllowed;int generation;
     public PlaybackForm(AgentSession session,Placement? requestedPlacement=null)
     {
         this.session=session;Text=$"UQP 固定播放 — 裝置 {session.Config.DeviceId}";AutoScaleMode=AutoScaleMode.Dpi;
@@ -22,7 +22,7 @@ public sealed class PlaybackForm:Form
         var forget=new Button{Text="清除此裝置本機授權"};forget.Click+=(_,_)=>{if(MessageBox.Show(this,"清除後須由管理者再次授權。","UQP",MessageBoxButtons.OKCancel)==DialogResult.OK){session.Forget();Stop();Close();}};
         toolbar.Controls.Add(refresh);toolbar.Controls.Add(forget);toolbar.Controls.Add(new Label{AutoSize=true,Text="本機註冊至 "+session.Enrollment.EnrollmentExpiresAtUtc.ToString("u")+"；裝置續期不會延長此註冊。"});Controls.Add(view);Controls.Add(toolbar);
         Load+=async(_,_)=>{try{await Initialize();await Resume();watchdog.Start();}catch(Exception error){FailureCode="INITIALIZE_"+error.GetType().Name+"_"+unchecked((uint)error.HResult).ToString("X8");Stop();}};
-        watchdog.Tick+=async(_,_)=>{if(stopped||checking)return;checking=true;try{await session.Validate(lifetime.Token);}catch{Stop();}finally{checking=false;}};
+        watchdog.Tick+=async(_,_)=>{if(checking||stopped&&!retryAllowed)return;checking=true;try{if(stopped)await Resume();else await session.Validate(lifetime.Token);}catch(Exception error){Stop();retryAllowed=Retryable(error);}finally{checking=false;}};
         FormClosing+=(_,_)=>{watchdog.Stop();lifetime.Cancel();Stop();};FormClosed+=(_,_)=>{watchdog.Dispose();view.Dispose();session.Dispose();lifetime.Dispose();};
     }
     async Task Initialize()
@@ -46,16 +46,21 @@ public sealed class PlaybackForm:Form
     }
     async Task Resume()
     {
-        try{await session.Validate(lifetime.Token);stopped=false;++generation;view.CoreWebView2.Navigate(AgentConfiguration.UiOrigin+session.Config.DisplayPath);}
-        catch{Stop();}
+        try{await session.Validate(lifetime.Token);stopped=false;retryAllowed=false;++generation;view.CoreWebView2.Navigate(AgentConfiguration.UiOrigin+session.Config.DisplayPath);}
+        catch(Exception error){Stop();retryAllowed=Retryable(error);}
     }
+    static bool Retryable(Exception error)=>error is ChannelUnavailableException or TimeoutException or TaskCanceledException || error is HttpRequestException request && request.InnerException is not System.Security.Authentication.AuthenticationException;
     void Stop()
     {
-        stopped=true;++generation;view.Visible=false;
+        stopped=true;retryAllowed=false;++generation;if(IsDisposed||Disposing||view.IsDisposed)return;view.Visible=false;
         if(view.CoreWebView2!=null){view.CoreWebView2.Stop();view.CoreWebView2.NavigateToString("<!doctype html><html lang=zh-Hant><meta charset=utf-8><title>UQP 播放停止</title><h1>播放已停止，患者資料已清除</h1><p>請確認網路、裝置到期、註冊期限與管理權限，再按重新整理。到期或撤銷不會自動重新核發。</p></html>");}
     }
     const string SecurityHeaders="Cache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n";
-    void Reply(CoreWebView2WebResourceRequestedEventArgs e,int status,string type,byte[] body)=>e.Response=view.CoreWebView2.Environment.CreateWebResourceResponse(new MemoryStream(body,false),status,status==200?"OK":"Denied",SecurityHeaders+"Content-Type: "+type+"\r\n");
+    void Reply(CoreWebView2WebResourceRequestedEventArgs e,int status,string type,byte[] body)
+    {
+        if(IsDisposed||Disposing||view.IsDisposed||lifetime.IsCancellationRequested)return;
+        e.Response=view.CoreWebView2.Environment.CreateWebResourceResponse(new MemoryStream(body,false),status,status==200?"OK":"Denied",SecurityHeaders+"Content-Type: "+type+"\r\n");
+    }
     async Task<byte[]> ReadBody(Stream? source,int limit)
     {
         using var result=new MemoryStream();if(source==null)return Array.Empty<byte>();var buffer=new byte[4096];int count;
@@ -96,6 +101,6 @@ public sealed class PlaybackForm:Form
             var assembly=Assembly.GetExecutingAssembly();using var stream=assembly.GetManifestResourceStream(assembly.GetManifestResourceNames().Single(n=>n.Replace('\\','/')=="Ui/"+asset))??throw new InvalidDataException();using var contents=new MemoryStream();await stream.CopyToAsync(contents,lifetime.Token);
             var type=Path.GetExtension(asset) switch{".js"=>"text/javascript",".css"=>"text/css",".html"=>"text/html",".woff2"=>"font/woff2",".svg"=>"image/svg+xml",".png"=>"image/png",".jpg"=>"image/jpeg",".webp"=>"image/webp",_=>throw new InvalidDataException()};
             Reply(e,200,type+"; charset=utf-8",contents.ToArray());
-        }catch(Exception error){FailureCode="RESOURCE_"+error.GetType().Name+"_"+unchecked((uint)error.HResult).ToString("X8");if(!stopped&&attempt==generation)Stop();Reply(e,403,"application/json","{\"error\":{\"code\":\"MANAGED_KIOSK_DENIED\"}}"u8.ToArray());}
+        }catch(Exception error){FailureCode="RESOURCE_"+error.GetType().Name+"_"+unchecked((uint)error.HResult).ToString("X8");if(!stopped&&attempt==generation){Stop();retryAllowed=Retryable(error);}Reply(e,403,"application/json","{\"error\":{\"code\":\"MANAGED_KIOSK_DENIED\"}}"u8.ToArray());}
     }
 }

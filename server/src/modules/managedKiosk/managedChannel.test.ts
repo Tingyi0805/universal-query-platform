@@ -27,7 +27,7 @@ test("real CONNECT TLS 1.2/1.3 mTLS protects login, token and rows; closed route
  });
  const layout="/api/dashboards/device/1/layout",page="/api/dashboards/device/1/page";
  const login=await call("/api/auth/login",{method:"POST",body:{username:"manager",password:"fixture-secret"}});assert.equal(login.status,200);
- assert.equal((await call(layout)).status,200);
+ assert.equal((await call(layout)).status,200);f.state.unavailable=true;assert.equal((await call(layout)).status,503);f.state.unavailable=false;
  const nonce=randomUUID();assert.equal((await call(page,{method:"POST",body:{page:1},nonce})).status,200);assert.equal((await call(page,{method:"POST",body:{page:1},nonce})).status,401);
  for(const headers of [{origin:"http://evil.example"},{"x-uqp-public-origin":"http://evil.example"},{"x-uqp-agent-time":"1"},{"x-dashboard-device-token":"B".repeat(43)}] as Record<string,string>[])assert.equal((await call(layout,{headers})).status,401);
  for(const route of ["/api/dashboards/device/2/layout","/api/dashboards/device/1/preview","/api/admin","/api/dashboards/device/1/layout?x=1"])assert.equal((await call(route)).status,401);

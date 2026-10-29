@@ -9,10 +9,12 @@ using System.Text;
 using System.Text.Json;
 namespace Uqp.Kiosk.Agent;
 
+public sealed class ChannelDeniedException:Exception {}
+public sealed class ChannelUnavailableException:Exception {}
 public sealed record ChannelReply(HttpStatusCode Status,byte[] Body,DateTimeOffset PeerExpiry)
 {
     public JsonDocument Json()=>JsonDocument.Parse(Body);
-    public void RequireSuccess(){if((int)Status<200||(int)Status>299)throw new HttpRequestException("MANAGED_REQUEST_DENIED");}
+    public void RequireSuccess(){if((int)Status>=500)throw new ChannelUnavailableException();if((int)Status<200||(int)Status>299)throw new ChannelDeniedException();}
 }
 public sealed class ChannelClient:IDisposable
 {
@@ -60,7 +62,7 @@ public sealed class ChannelClient:IDisposable
         if(jwt!=null)request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",jwt);
         if(method==HttpMethod.Post){request.Content=new ByteArrayContent(body??"{}"u8.ToArray());request.Content.Headers.ContentType=new MediaTypeHeaderValue("application/json");}
         using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,cancel);
-        if(!response.Headers.TryGetValues("X-UQP-Agent-Request-Id",out var ids)||ids.Single()!=nonce||!response.Headers.TryGetValues("X-UQP-Agent-Enrollment-Expires",out var expiry)||!DateTimeOffset.TryParse(expiry.Single(),System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.RoundtripKind,out var deadline))throw new IOException("CHANNEL_PROOF_DENIED");
+        if(!response.Headers.TryGetValues("X-UQP-Agent-Request-Id",out var ids)||ids.Single()!=nonce||!response.Headers.TryGetValues("X-UQP-Agent-Enrollment-Expires",out var expiry)||!DateTimeOffset.TryParse(expiry.Single(),System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.RoundtripKind,out var deadline))throw new ChannelDeniedException();
         using var data=new MemoryStream();using var source=await response.Content.ReadAsStreamAsync(cancel);var buffer=new byte[8192];int count;
         while((count=await source.ReadAsync(buffer,cancel))>0){if(data.Length+count>16*1024*1024)throw new IOException("CHANNEL_RESPONSE_LIMIT");await data.WriteAsync(buffer.AsMemory(0,count),cancel);}
         return new ChannelReply(response.StatusCode,data.ToArray(),deadline);

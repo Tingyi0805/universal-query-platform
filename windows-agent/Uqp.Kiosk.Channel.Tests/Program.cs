@@ -24,7 +24,7 @@ try{
  using var control=new HttpClient();var controlUri=$"http://127.0.0.1:{setup.RootElement.GetProperty("controlPort").GetInt32()}";
  using(var state=JsonDocument.Parse(await control.GetStringAsync(controlUri)))Check(!state.RootElement.GetProperty("leaked").GetBoolean());
  using(var response=await control.PostAsync(controlUri,new StringContent("{\"revoked\":true}")))response.EnsureSuccessStatusCode();
- bool denied=false;try{await channel.Send(HttpMethod.Get,"/api/dashboards/device/1/layout",token:token);}catch(IOException){denied=true;}Check(denied);
+ bool denied=false;try{await channel.Send(HttpMethod.Get,"/api/dashboards/device/1/layout",token:token);}catch(ChannelDeniedException){denied=true;}Check(denied);
  var wrong=config with{ServerCertificateSha256=new string('A',64)};
  using var bad=new ChannelClient(wrong,pfx,"fixture-only");bool rejected=false;
  try{await bad.Send(HttpMethod.Post,"/api/auth/login","{}"u8.ToArray());}catch(HttpRequestException){rejected=true;}Check(rejected);

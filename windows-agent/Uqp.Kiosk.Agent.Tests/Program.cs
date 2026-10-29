@@ -35,18 +35,20 @@ internal static class Program
             denied=false;try{vault.Save(session.Enrollment with{Machine="other-machine"});}catch(InvalidDataException){denied=true;}Check(denied);
             var wrong=config with{PublicPlaybackUrl="http://different.example/display/dashboards/1?deviceId=7"};var wrongRoot=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"UQP","ManagedKiosk",wrong.Digest);Directory.CreateDirectory(wrongRoot);File.WriteAllBytes(Path.Combine(wrongRoot,"enrollment.dpapi"),cipher);
             denied=false;try{new ProtectedVault(wrong).Load();}catch(System.Security.Cryptography.CryptographicException){denied=true;}Check(denied);Directory.Delete(wrongRoot,true);
-            var control=$"http://127.0.0.1:{setup.RootElement.GetProperty("controlPort").GetInt32()}";
+            var control=$"http://127.0.0.1:{setup.RootElement.GetProperty("controlPort").GetInt32()}";using var client=new HttpClient();
             for(int i=0;i<2;i++){
-                stage="BROWSER_PROCESS_"+i;var output=Path.Combine(directory,"probe-"+i+".json");
+                stage="BROWSER_PROCESS_"+i;if(i==0){using var outage=await client.PostAsync(control,new StringContent("{\"unavailable\":true}"));outage.EnsureSuccessStatusCode();}var output=Path.Combine(directory,"probe-"+i+".json");
                 var start=new ProcessStartInfo(Environment.ProcessPath!){UseShellExecute=false};start.ArgumentList.Add("--probe");start.ArgumentList.Add(configFile);start.ArgumentList.Add(output);start.ArgumentList.Add(control);
-                using var probe=Process.Start(start)!;using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(90));await probe.WaitForExitAsync(timeout.Token);Check(probe.ExitCode==0);Check(File.ReadAllText(output)=="PASS");
+                using var probe=Process.Start(start)!;
+                if(i==0){var until=DateTime.UtcNow.AddSeconds(30);bool observed=false;while(DateTime.UtcNow<until){using var health=JsonDocument.Parse(await client.GetStringAsync(control));if(health.RootElement.GetProperty("unavailableChecks").GetInt32()>0){observed=true;break;}await Task.Delay(100);}Check(observed);using var online=await client.PostAsync(control,new StringContent("{\"unavailable\":false}"));online.EnsureSuccessStatusCode();}
+                using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(90));await probe.WaitForExitAsync(timeout.Token);Check(probe.ExitCode==0);Check(File.ReadAllText(output)=="PASS");
             }
-            using var client=new HttpClient();using var state=JsonDocument.Parse(await client.GetStringAsync(control));Check(state.RootElement.GetProperty("issued").GetInt32()==1);Check(!state.RootElement.GetProperty("leaked").GetBoolean());
+            using var state=JsonDocument.Parse(await client.GetStringAsync(control));Check(state.RootElement.GetProperty("issued").GetInt32()==1);Check(!state.RootElement.GetProperty("leaked").GetBoolean());
             using(var restored=await client.PostAsync(control,new StringContent("{\"revoked\":false}")))restored.EnsureSuccessStatusCode();
             stage="LOCAL_FORGET";session.Forget();Check(vault.Load()==null);denied=false;try{await session.Validate();}catch(InvalidDataException){denied=true;}Check(denied);
             Console.WriteLine("WINDOWS_DPAPI_ACL_MACHINE_ORIGIN_TAMPER_PASS");
             Console.WriteLine("WINDOWS_REAL_WEBVIEW_F5_PROCESS_PROFILE_RESTART_NO_TOKEN_DOM_STORAGE_URL_PASS");
-            Console.WriteLine("WINDOWS_WEBVIEW_FOREIGN_NAVIGATION_AND_REVOCATION_PURGE_PASS (not OS reboot acceptance)");
+            Console.WriteLine("WINDOWS_WEBVIEW_BOOT_OUTAGE_RECOVERY_FOREIGN_NAVIGATION_AND_REVOCATION_LATCH_PASS (not OS reboot acceptance)");
             return 0;
         }
         finally{child.Kill(true);await child.WaitForExitAsync();if(directory!=null)try{Directory.Delete(directory,true);}catch(IOException){}}
@@ -67,8 +69,14 @@ internal static class Program
                 // A foreign top-level navigation is cancelled in the real control.
                 stage="FOREIGN_NAVIGATION";view.CoreWebView2.Navigate("https://evil.invalid/");await Task.Delay(300);Check(view.Source.GetLeftPart(UriPartial.Authority)==AgentConfiguration.UiOrigin);
                 if(output.EndsWith("probe-1.json",StringComparison.Ordinal)){
-                    stage="REVOCATION_PURGE";using var client=new HttpClient();using var result=await client.PostAsync(control,new StringContent("{\"revoked\":true}"));result.EnsureSuccessStatusCode();
+                    stage="READ_ONLY_NETWORK_RECOVERY";using var client=new HttpClient();
+                    using(var outage=await client.PostAsync(control,new StringContent("{\"unavailable\":true}")))outage.EnsureSuccessStatusCode();
+                    await WaitFor(()=>Task.FromResult(!view.Visible),20);
+                    using(var online=await client.PostAsync(control,new StringContent("{\"unavailable\":false}")))online.EnsureSuccessStatusCode();
+                    await WaitFor(async()=>view.Visible&&(JsonSerializer.Deserialize<string>(await view.ExecuteScriptAsync("document.body.innerText"))??"").Contains("合○Agent"));
+                    stage="REVOCATION_PURGE";using var result=await client.PostAsync(control,new StringContent("{\"revoked\":true}"));result.EnsureSuccessStatusCode();
                     await WaitFor(()=>Task.FromResult(!view.Visible),20);Check(!view.Visible);
+                    using(var restored=await client.PostAsync(control,new StringContent("{\"revoked\":false}")))restored.EnsureSuccessStatusCode();await Task.Delay(5500);Check(!view.Visible);
                 }
                 File.WriteAllText(output,"PASS");finished=true;
             }catch{Console.WriteLine("WINDOWS_AGENT_PROBE_FAILED_STAGE="+stage+"_"+form.FailureCode);failed=true;}finally{form.Close();}

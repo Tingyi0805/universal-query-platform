@@ -23,13 +23,15 @@ export function channelConfiguration(file:string){
  const local=(p:string)=>readFileSync(path.resolve(path.dirname(file),p));
  return{...c,cert:local(c.serverCertificate),key:local(c.serverKey),ca:local(c.clientCa)};
 }
+export class ManagedAccessDenied extends Error {}
 export type VerifyManagedDevice=(peer:ManagedPeer,token:string,ip:string)=>Promise<void>;
 const target="uqp-kiosk.internal:443";
 export function attachManagedChannel(server:Server,file:string,application:RequestListener,verify:VerifyManagedDevice){
  const initial=channelConfiguration(file),ca=new X509Certificate(initial.ca),sockets=new Set<Socket>(),replays=new Map<string,number>();
  const tls=createTlsServer({cert:initial.cert,key:initial.key,ca:initial.ca,requestCert:true,rejectUnauthorized:true,minVersion:"TLSv1.2",maxVersion:"TLSv1.3",ciphers:"TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256:TLS_AES_128_GCM_SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256",honorCipherOrder:true,secureOptions:constants.SSL_OP_NO_TICKET|constants.SSL_OP_NO_RENEGOTIATION,handshakeTimeout:5000,headersTimeout:10000,requestTimeout:80000},async(req,res)=>{
-  let peer:ManagedPeer|undefined,playback=false;
-  const deny=(status=401)=>{if(res.headersSent){res.destroy();return;}res.getHeaderNames().forEach(k=>res.removeHeader(k));res.writeHead(status,{"content-type":"application/json","cache-control":"no-store"});res.end('{"error":{"code":"MANAGED_KIOSK_DENIED"}}');};
+  let peer:ManagedPeer|undefined,playback=false,validating=false,proof:string|undefined;
+  const denialStatus=(error:unknown)=>error instanceof ManagedAccessDenied?401:validating&&(!error||typeof error!=="object"||!("status" in error)||Number(error.status)>=500)?503:401;
+  const deny=(status=401)=>{if(res.headersSent){res.destroy();return;}res.getHeaderNames().forEach(k=>res.removeHeader(k));res.statusCode=status;res.setHeader("content-type","application/json");res.setHeader("cache-control","no-store");if(status===503&&proof&&peer){res.setHeader("X-UQP-Agent-Request-Id",proof);res.setHeader("X-UQP-Agent-Enrollment-Expires",peer.enrollmentExpiresAtUtc);}res.end(status===503?'{"error":{"code":"MANAGED_KIOSK_UNAVAILABLE"}}':'{"error":{"code":"MANAGED_KIOSK_DENIED"}}');};
   try{
    const socket=req.socket as TLSSocket,certificate=socket.getPeerCertificate(),now=Date.now();
    if(!socket.authorized||!["TLSv1.2","TLSv1.3"].includes(socket.getProtocol()??"")||!certificate.raw||now<Date.parse(certificate.valid_from)||now>=Date.parse(certificate.valid_to)||now<Date.parse(ca.validFrom)||now>=Date.parse(ca.validTo))throw new Error();
@@ -41,7 +43,7 @@ export function attachManagedChannel(server:Server,file:string,application:Reque
    const nonce=req.headers["x-uqp-agent-request-id"],stamp=Number(req.headers["x-uqp-agent-time"]);
    if(typeof nonce!=="string"||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(nonce)||!Number.isSafeInteger(stamp)||Math.abs(now-stamp)>30000)throw new Error();
    for(const[k,expiry]of replays)if(expiry<=now)replays.delete(k);
-   const replayKey=fingerprint+nonce;if(replays.has(replayKey)||replays.size>=10000)throw new Error();replays.set(replayKey,now+65000);
+   const replayKey=fingerprint+nonce;if(replays.has(replayKey)||replays.size>=10000)throw new Error();replays.set(replayKey,now+65000);proof=nonce;
    const route=req.url??"",id=peer.dashboardId,device=peer.deviceId;
    const management=req.method==="POST"&&route==="/api/auth/login"||req.method==="GET"&&route===`/api/dashboards/${id}/query-mode/v1`||req.method==="POST"&&route===`/api/dashboards/${id}/query-mode/v1/devices/${device}/credential`||req.method==="GET"&&route===`/api/dashboards/${id}/devices/${device}/playback-settings`;
    playback=req.method==="GET"&&route===`/api/dashboards/device/${id}/layout`||req.method==="POST"&&(route===`/api/dashboards/device/${id}/page`||new RegExp(`^/api/dashboards/device/${id}/data-sources/[A-Za-z][A-Za-z0-9_]{0,63}/page$`).test(route));
@@ -51,8 +53,8 @@ export function attachManagedChannel(server:Server,file:string,application:Reque
    // remains the IP used by every existing device, auth and audit handler.
    for(const name of Object.keys(req.headers))if(name.startsWith("x-forwarded-")||name.startsWith("x-uqp-kiosk")||["x-real-ip","cookie","x-uqp-device-id","x-uqp-expected-device-id"].includes(name))delete req.headers[name];
    const token=String(req.headers["x-dashboard-device-token"]??"");
-   const validate=async()=>{if(Date.now()>=Date.parse(certificate.valid_to)||Date.now()>=Date.parse(ca.validTo)||JSON.stringify(current())!==identity)throw new Error();if(playback){if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new Error();await verify(peer!,token,normalizeIp(socket.remoteAddress));}};
-   await validate();
+   const validate=async()=>{if(Date.now()>=Date.parse(certificate.valid_to)||Date.now()>=Date.parse(ca.validTo)||JSON.stringify(current())!==identity)throw new ManagedAccessDenied();if(playback){if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new ManagedAccessDenied();await verify(peer!,token,normalizeIp(socket.remoteAddress));}};
+   validating=true;await validate();
    // All allowed routes are bounded JSON. Revalidate before any response bytes,
    // including replies delayed by SQL/audit; never stream unvalidated patient rows.
    const end=res.end.bind(res),write=res.write.bind(res);let chunks:Buffer[]=[],size=0,ended=false;
@@ -62,10 +64,10 @@ export function attachManagedChannel(server:Server,file:string,application:Reque
    res.end=((value?:unknown,encoding?:BufferEncoding)=>{
     if(ended)return res;ended=true;
     try{chunk(value,encoding);}catch{res.destroy();return res;}
-    void validate().then(()=>{if(res.destroyed)return;res.setHeader("Cache-Control","no-store");res.setHeader("X-UQP-Agent-Request-Id",nonce);res.setHeader("X-UQP-Agent-Enrollment-Expires",peer!.enrollmentExpiresAtUtc);res.removeHeader("set-cookie");res.write=write;res.end=end;end(Buffer.concat(chunks));chunks=[];}).catch(()=>{res.end=end;chunks=[];deny();});return res;
+    void validate().then(()=>{if(res.destroyed)return;res.setHeader("Cache-Control","no-store");res.setHeader("X-UQP-Agent-Request-Id",nonce);res.setHeader("X-UQP-Agent-Enrollment-Expires",peer!.enrollmentExpiresAtUtc);res.removeHeader("set-cookie");res.write=write;res.end=end;end(Buffer.concat(chunks));chunks=[];}).catch(error=>{res.end=end;chunks=[];deny(denialStatus(error));});return res;
    }) as typeof res.end;
    application(req,res);
-  }catch{deny();}
+  }catch(error){deny(denialStatus(error));}
  });
  tls.on("tlsClientError",()=>{}); // Static failures; never log credentials/handshake bodies.
  const connect=(req:IncomingMessage,socket:Socket,head:Buffer)=>{
