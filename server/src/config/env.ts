@@ -32,6 +32,7 @@ const envSchema = z.object({
   DASHBOARD_QUERY_SOURCE_EXECUTION: envBoolean(false),
   DASHBOARD_PUBLIC_CLIENT_ORIGIN: optionalString,
   DASHBOARD_KIOSK_COOKIE_KEY: optionalString,
+  MANAGED_KIOSK_CONFIG: optionalString,
   DASHBOARD_QUERY_DEVICE_PLAYBACK: envBoolean(false),
   DATASET_SECURITY_SCOPE_MANAGEMENT: envBoolean(false),
   DATASET_PUBLIC_DISPLAY_MANAGEMENT: envBoolean(false),

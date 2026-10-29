@@ -405,3 +405,92 @@ jobs:
         if: always()
         shell: bash
         run: docker rm -f uqp75-sql >/dev/null 2>&1 || true
+
+  managed-channel-dotnet:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci --prefix server --ignore-scripts
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: windows-agent/global.json
+      - run: dotnet restore windows-agent/Uqp.Kiosk.Channel.Tests --locked-mode
+      - run: dotnet run --project windows-agent/Uqp.Kiosk.Channel.Tests --no-restore -- "${{ github.workspace }}"
+
+  windows-managed-agent:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+      - run: npm.cmd install --global npm@12.2.1
+      - run: npm ci --prefix client
+      - run: npm ci --prefix server --ignore-scripts
+      - run: npm run build --prefix client
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: windows-agent/global.json
+      - name: Locate OpenSSL for synthetic certificates only
+        shell: pwsh
+        run: |
+          $ssl=Join-Path $env:ProgramFiles 'Git\usr\bin'
+          if (Test-Path (Join-Path $ssl 'openssl.exe')) { $ssl >> $env:GITHUB_PATH }
+          else { Get-Command openssl -ErrorAction Stop | Out-Null }
+      - name: Install trusted Microsoft WebView2 runtime on disposable runner if absent
+        shell: pwsh
+        run: |
+          $runtime=Join-Path ${env:ProgramFiles(x86)} 'Microsoft\EdgeWebView\Application'
+          if (-not (Test-Path $runtime)) {
+            $installer=Join-Path $env:RUNNER_TEMP 'MicrosoftEdgeWebview2Setup.exe'
+            Invoke-WebRequest 'https://go.microsoft.com/fwlink/p/?LinkId=2124703' -OutFile $installer
+            $signature=Get-AuthenticodeSignature $installer
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'MICROSOFT_RUNTIME_SIGNATURE_REQUIRED' }
+            $process=Start-Process $installer -ArgumentList '/silent /install' -Wait -PassThru
+            if ($process.ExitCode -notin @(0,3010)) { throw 'WEBVIEW_RUNTIME_INSTALL_FAILED' }
+          }
+      - run: dotnet restore windows-agent/Uqp.Kiosk.Channel.Tests --locked-mode
+      - run: dotnet run --project windows-agent/Uqp.Kiosk.Channel.Tests --no-restore -- "${{ github.workspace }}"
+      - run: dotnet restore windows-agent/Uqp.Kiosk.Agent.Tests --locked-mode
+      - run: dotnet build windows-agent/Uqp.Kiosk.Agent.Tests --no-restore --configuration Release
+      - name: Actual DPAPI, WebView2 F5, process/profile restart, isolation and purge (not OS reboot)
+        run: dotnet run --project windows-agent/Uqp.Kiosk.Agent.Tests --no-build --configuration Release -- "${{ github.workspace }}"
+      - name: PowerShell installer parser (no install)
+        shell: powershell
+        run: .\windows-agent\tools\Test-Installer.ps1
+      - name: Publish executable candidate (unsigned; production installation remains blocked)
+        run: dotnet publish windows-agent/Uqp.Kiosk.Agent -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o windows-agent/artifacts/candidate
+      - name: Require zero reported NuGet vulnerabilities
+        shell: pwsh
+        run: |
+          $report=dotnet list windows-agent/Uqp.Kiosk.Agent package --vulnerable --include-transitive --format json
+          if ($LASTEXITCODE -ne 0) { throw 'NUGET_AUDIT_FAILED' }
+          $audit=$report | ConvertFrom-Json
+          foreach ($project in $audit.projects) { foreach ($framework in $project.frameworks) {
+            foreach ($package in @($framework.topLevelPackages)+@($framework.transitivePackages)) {
+              if ($package.vulnerabilities) { throw 'NUGET_VULNERABILITIES_REMAIN' }
+            }
+          }}
+          Write-Host 'NUGET_REPORTED_VULNERABILITIES_ZERO'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-managed-agent-UNSIGNED-acceptance-only
+          path: windows-agent/artifacts/candidate/Uqp.Kiosk.Agent.exe
+          if-no-files-found: error

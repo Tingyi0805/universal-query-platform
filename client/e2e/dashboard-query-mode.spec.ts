@@ -1,6 +1,6 @@
-import {test,expect,type Page} from "@playwright/test";
+import {test,expect,type Page} from "./support/securePlayback";
 const token="A".repeat(43),version="a".repeat(64);
-async function setup(page:Page){
+async function setup(page:Page,http=false){
   const state={disabled:false,ready:true,pending:false,missingPublicPolicy:false,expiry:null as string|null|undefined,archived:false,preflightDenied:false,mode:"LEGACY",revision:0,failStatus:0,revoked:false,writes:[] as {path:string;method:string;body:any}[],legacyExecutions:0,credentialSerial:0};
   await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic",user:{id:1,username:"synthetic",displayName:"測試",permissions:["DESIGN_QUERY","VIEW_QUERY","EXECUTE_QUERY"]}})));
   const primary={sourceKey:"PRIMARY",queryDefinitionId:20,parameters:{},refreshSeconds:5,pageSeconds:5,pageSize:1,maxRows:100};
@@ -34,7 +34,7 @@ async function setup(page:Page){
     await route.fulfill({json:{queryDefinitions:[],queries:[],devices:[],parameters:[],profiles:[]}});
   });
   page.on("dialog",dialog=>void dialog.accept());
-  await page.goto("/designer/dashboards");await page.getByRole("button",{name:"編輯",exact:true}).first().click();
+  await page.goto(http?"http://127.0.0.1:4173/designer/dashboards":"/designer/dashboards");await page.getByRole("button",{name:"編輯",exact:true}).first().click();
   await expect(page.getByText(/目前模式：LEGACY/)).toBeVisible();return state;
 }
 test("manual preflight, enable, credential handoff, reload waiting, revoke and disable",async({page})=>{
@@ -199,8 +199,8 @@ test("a handoff window without its manager reports failure instead of silently a
   await expect(page.getByText("合○測試", { exact: true })).toHaveCount(0);
 });
 
-async function issueOneTimeToken(page: Page) {
-  const state = await setup(page); state.mode = "QUERY_ONLY";
+async function issueOneTimeToken(page: Page,http=false) {
+  const state = await setup(page,http); state.mode = "QUERY_ONLY";
   await page.getByRole("button", { name: "重新載入播放狀態", exact: true }).click();
   await page.getByRole("button", { name: "核發／重新核發 合成平板", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "一次性 Device Token", exact: true })).toBeVisible();
@@ -260,7 +260,7 @@ test("closing requires reissue; the former Token cannot be reopened", async ({ p
 });
 for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 800 }]) test(`HTTP clipboard fallback and one-time dialog fit ${viewport.width}px playback management`, async ({ page }) => {
   await page.setViewportSize(viewport);
-  await issueOneTimeToken(page);
+  await issueOneTimeToken(page,true);
   await page.evaluate(() => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
     document.execCommand = command => command === "copy" && document.activeElement instanceof HTMLTextAreaElement &&
@@ -270,6 +270,8 @@ for (const viewport of [{ width: 390, height: 844 }, { width: 360, height: 800 }
   await expect(page.getByText(/已複製 Token，可貼至播放裝置/)).toBeVisible();
   const box = await page.getByRole("dialog", { name: "一次性 Device Token", exact: true }).boundingBox();
   expect(box!.width).toBeLessThanOrEqual(viewport.width); expect(box!.height).toBeLessThanOrEqual(viewport.height);
+  await page.getByRole("button",{name:"在此裝置開啟安全播放",exact:true}).click();
+  await expect(page.getByText(/HTTP 視窗不接受憑證交接/)).toBeVisible();expect(page.context().pages()).toHaveLength(1);
   await page.keyboard.press("Escape"); await expectTokenCleared(page);
 });
 test("clipboard denial provides manual copy guidance without losing the one-time display", async ({ page }) => {

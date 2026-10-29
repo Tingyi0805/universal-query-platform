@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "serverCertificate": "server.pem",
+  "serverKey": "server.key",
+  "clientCa": "client-ca.pem",
+  "peers": [{
+    "certificateSha256": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    "dashboardId": 1, "deviceId": 7,
+    "publicOrigin": "http://uqp-host.example",
+    "enrollmentExpiresAtUtc": "2026-12-31T00:00:00Z"
+  }]
+}

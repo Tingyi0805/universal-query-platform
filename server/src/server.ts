@@ -4,8 +4,15 @@ import { closePlatformDbPool } from "./config/database.js";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
 import { autoArchiveDashboardDevices } from "./modules/dashboard/dashboardDevice.repository.js";
+import {checkDashboardDisplayDevice} from "./modules/dashboard/dashboardDevice.repository.js";
+import {readDashboardQueryMode} from "./modules/dashboard/dashboardQueryMode.repository.js";
+import {queryExecution} from "./modules/dashboard/dashboard.routes.js";
+import {attachManagedChannel} from "./modules/managedKiosk/managedChannel.js";
+import {managedDeviceVerifier} from "./modules/managedKiosk/managedDevice.js";
 
 const server = createServer(app);
+const closeManagedChannel=env.MANAGED_KIOSK_CONFIG ? attachManagedChannel(server,env.MANAGED_KIOSK_CONFIG,app,
+  managedDeviceVerifier({check:checkDashboardDisplayDevice,mode:readDashboardQueryMode,inspect:queryExecution.inspect})) : ()=>{};
 
 server.listen(env.PORT, () => {
   logger.info({ port: env.PORT }, "Server started");
@@ -31,6 +38,7 @@ const shutdown = async (signal: string) => {
   if (shuttingDown) return;
   shuttingDown = true;
   clearInterval(archiveTimer);
+  closeManagedChannel();
 
   logger.info({ signal }, "Shutdown requested");
 

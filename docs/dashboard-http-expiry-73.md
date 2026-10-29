@@ -1,5 +1,7 @@
 # Issue 73: HTTP manual playback and expiry management
 
+> HTTP browser playback instructions below are superseded by [Windows Managed Kiosk Agent](windows-managed-kiosk-agent-77.md). Use the enrolled native Agent and its protected channel; ordinary HTTP pages no longer accept Device Tokens. Expiry management and HTTPS Kiosk remain supported.
+
 Based on PR #72 `e9d495a9421605d730bfc520517d1ba09fcac592`. Independent Draft; no production action, schema change, Migration or update package.
 
 ## HTTP now, HTTPS later
