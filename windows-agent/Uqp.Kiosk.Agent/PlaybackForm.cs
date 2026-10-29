@@ -74,7 +74,7 @@ public sealed class PlaybackForm:Form
     }
     async void Resource(object? sender,CoreWebView2WebResourceRequestedEventArgs e)
     {
-        using var deferred=e.GetDeferral();var attempt=generation;var resourceStage="ORIGIN";
+        using var deferred=e.GetDeferral();var attempt=generation;var resourceStage="ORIGIN_"+e.ResourceContext.ToString();
         try{
             var uri=new Uri(e.Request.Uri);
             if(uri.GetLeftPart(UriPartial.Authority)!=AgentConfiguration.UiOrigin||stopped)throw new InvalidDataException();

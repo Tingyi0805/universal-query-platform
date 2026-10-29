@@ -66,8 +66,6 @@ internal static class Program
                 Check(Environment.GetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")==null);
                 stage="NO_SECRET_SURFACES";var surface=await view.ExecuteScriptAsync("JSON.stringify([document.documentElement.outerHTML,document.cookie,localStorage,sessionStorage,location.href])");Check(!surface.Contains(session.Enrollment.Token));
                 stage="F5";var navigated=new TaskCompletionSource();view.CoreWebView2.NavigationCompleted+=(_,_)=>navigated.TrySetResult();view.Reload();await navigated.Task.WaitAsync(TimeSpan.FromSeconds(30));await WaitFor(async()=>view.Visible&&(JsonSerializer.Deserialize<string>(await view.ExecuteScriptAsync("document.body.innerText"))??"").Contains("合○Agent"));
-                // A foreign top-level navigation is cancelled in the real control.
-                stage="FOREIGN_NAVIGATION";view.CoreWebView2.Navigate("https://evil.invalid/");await Task.Delay(300);Check(view.Source.GetLeftPart(UriPartial.Authority)==AgentConfiguration.UiOrigin);
                 if(output.EndsWith("probe-1.json",StringComparison.Ordinal)){
                     stage="READ_ONLY_NETWORK_RECOVERY";using var client=new HttpClient();
                     using(var outage=await client.PostAsync(control,new StringContent("{\"unavailable\":true}")))outage.EnsureSuccessStatusCode();
@@ -78,6 +76,9 @@ internal static class Program
                     await WaitFor(()=>Task.FromResult(!view.Visible),20);Check(!view.Visible);
                     using(var restored=await client.PostAsync(control,new StringContent("{\"revoked\":false}")))restored.EnsureSuccessStatusCode();await Task.Delay(5500);Check(!view.Visible);
                 }
+                // Isolate an intentional foreign-origin security refusal from
+                // transient-outage recovery: a security refusal may lock playback.
+                stage="FOREIGN_NAVIGATION";view.CoreWebView2.Navigate("https://evil.invalid/");await Task.Delay(300);Check(view.Source.GetLeftPart(UriPartial.Authority)==AgentConfiguration.UiOrigin);
                 File.WriteAllText(output,"PASS");finished=true;
             }catch{Console.WriteLine("WINDOWS_AGENT_PROBE_FAILED_STAGE="+stage+"_"+form.FailureCode);failed=true;}finally{form.Close();}
         };
