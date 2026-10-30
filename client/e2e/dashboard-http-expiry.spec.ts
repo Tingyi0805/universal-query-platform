@@ -1,4 +1,6 @@
-import {test,expect} from "@playwright/test";
+import {test,expect,chromium,type BrowserContext} from "@playwright/test";
+import {mkdtemp,rm} from "node:fs/promises";
+import {tmpdir} from "node:os";
 import {spawn,type ChildProcess} from "node:child_process";
 import {request as requestHttp} from "node:http";
 import {request as requestHttps} from "node:https";
@@ -19,6 +21,16 @@ test("HTTP manual playback never enrolls; F5/new browser asks for Token; attempt
  const result=await page.evaluate(async token=>{const res=await fetch(`/api/dashboards/device/1/kiosk/enrollment`,{method:"POST",headers:{"content-type":"application/json","X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:7,token})});return res.status;},token);expect(result).toBe(401);expect(await context.cookies(origin())).toHaveLength(0);
  await page.reload();await expect(page.getByLabel("Device Token",{exact:true})).toBeVisible();await expect(page.getByText(/HTTP 僅限信任的內網手動播放/)).toBeVisible();await expect(page.getByRole("checkbox",{name:/持久授權/})).toHaveCount(0);await expect(page.getByText("合○播放",{exact:true})).toHaveCount(0);
  const other=await browser.newContext();try{const p=await other.newPage();await p.goto(`${origin()}/display/dashboards/1?deviceId=7`);await expect(p.getByLabel("Device Token",{exact:true})).toBeVisible();}finally{await other.close();}
+});
+test("HTTP real browser process restart with the same profile cannot silently restore a bearer Token",async()=>{
+ const dir=await mkdtemp(path.join(tmpdir(),"uqp-http-manual-80-"));let context:BrowserContext|undefined;
+ try{
+  const launch=()=>chromium.launchPersistentContext(dir,{headless:true,executablePath:process.env.CHROMIUM_PATH});
+  context=await launch();const first=await context.newPage();await activate(first);expect(await context.cookies(origin())).toHaveLength(0);
+  expect(await first.evaluate(()=>[document.cookie,...Object.values(localStorage),...Object.values(sessionStorage)].join(" "))).not.toContain(token);
+  await context.close();context=await launch();const restarted=await context.newPage();await restarted.goto(`${origin()}/display/dashboards/1?deviceId=7`);
+  await expect(restarted.getByLabel("Device Token",{exact:true})).toBeVisible();await expect(restarted.getByText("合○播放",{exact:true})).toHaveCount(0);expect(await context.cookies(origin())).toHaveLength(0);
+ }finally{await context?.close();await rm(dir,{recursive:true,force:true});}
 });
 for(const days of [30,8,7,1])test(`HTTP expiry ${days}d warning is generic and does not interrupt a valid stream`,async({page})=>{
  await state({expires:Date.now()+days*86400000});let delivered=0;page.on("response",r=>{if(new URL(r.url()).pathname.endsWith("/page")&&r.status()===200)delivered++;});await activate(page);

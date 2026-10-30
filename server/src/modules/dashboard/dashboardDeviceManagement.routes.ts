@@ -23,13 +23,20 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
   };
   router.get("/:id/device-management/v1/:deviceId/playback-link", async (req,res) => {
     try {
-      const c = context(req), deviceId = idSchema.parse(req.params.deviceId), snapshot = await service.read(c.id,c.actor);
+      const c = context(req), parsed = idSchema.safeParse(req.params.deviceId);
+      if (!parsed.success) throw new QuerySourceError("VALIDATION_ERROR",400);
+      const deviceId = parsed.data, snapshot = await service.read(c.id,c.actor);
       const device = snapshot.devices.find(d=>d.id===deviceId);
-      if (!device || !device.isActive || device.revokedAtUtc || device.archivedAtUtc) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
-      const url = manualPlaybackLink(env.DASHBOARD_PUBLIC_CLIENT_ORIGIN,c.id,deviceId);
-      const placement = device.placement ?? {browser:"edge",screenNumber:2,fullscreen:true,windowX:1920,windowY:0,windowWidth:1920,windowHeight:1080};
-      res.json({dashboardId:c.id,deviceId,url,bat:kioskLauncher(url,placement).bat});
-    } catch { res.status(409).json({error:{code:"KIOSK_LINK_UNAVAILABLE",message:"無法提供播放網址；請確認 HTTP／HTTPS 公開來源設定與裝置權限。"}}); }
+      if (!device) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+      if (!device.isActive || device.revokedAtUtc || device.archivedAtUtc || (device.expiresAtUtc !== null && (!Number.isFinite(Date.parse(device.expiresAtUtc)) || Date.parse(device.expiresAtUtc) <= Date.now()))) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE");
+      if (!env.DASHBOARD_PUBLIC_CLIENT_ORIGIN) throw new QuerySourceError("PLAYBACK_ORIGIN_REQUIRED",503);
+      let url: string;
+      try { url = manualPlaybackLink(env.DASHBOARD_PUBLIC_CLIENT_ORIGIN,c.id,deviceId); }
+      catch { throw new QuerySourceError("PLAYBACK_ORIGIN_INVALID",503); }
+      const placement = devicePlacementSchema.safeParse(device.placement ?? {browser:"edge",screenNumber:2,fullscreen:true,windowX:1920,windowY:0,windowWidth:1920,windowHeight:1080});
+      if (!placement.success) throw new QuerySourceError("PLAYBACK_PLACEMENT_INVALID");
+      res.json({dashboardId:c.id,deviceId,url,bat:kioskLauncher(url,placement.data).bat});
+    } catch (error) { failure(error,res,req.id); }
   });
   router.get("/:id/device-management/v1", async (req, res) => {
     try { const c = context(req); res.json(await service.read(c.id, c.actor)); }

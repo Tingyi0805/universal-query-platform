@@ -2,6 +2,7 @@ import { request as httpRequest } from "node:http";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { kioskFixture } from "./dashboardKiosk.testFixture.js";
 import { kioskCodec,kioskOrigin } from "./dashboardKiosk.routes.js";
 import { kioskLauncher,kioskPlaybackLink,manualPlaybackLink } from "./dashboardKioskLauncher.js";
@@ -60,12 +61,19 @@ test("authenticated revocation purges only the affected device snapshots; unauth
 test("playback link API preserves designer guard and service authorization; uses configured origin, no secrets",async t=>{
  const express=(await import("express")).default,{createServer}=await import("node:http"),jwt=(await import("jsonwebtoken")).default;
  const{createDeviceManagementRouter}=await import("./dashboardDeviceManagement.routes.js"),{env}=await import("../../config/env.js");const old=env.DASHBOARD_PUBLIC_CLIENT_ORIGIN;t.after(()=>{env.DASHBOARD_PUBLIC_CLIENT_ORIGIN=old;});env.DASHBOARD_PUBLIC_CLIENT_ORIGIN="https://hospital.example:8443";
- let reads=0,deny=false;const service={read:async()=>{reads++;if(deny)throw new Error("PRIVATE_SQL_TOKEN");return{devices:[{id:7,isActive:true,revokedAtUtc:null,archivedAtUtc:null,placement:{browser:"edge",screenNumber:1,fullscreen:true,windowX:0,windowY:0,windowWidth:1920,windowHeight:1080}}]};}} as unknown as Parameters<typeof createDeviceManagementRouter>[0];
+ let reads=0,deny=false,knownDeny=false;const device={id:7,isActive:true,expiresAtUtc:null as string|null,revokedAtUtc:null as string|null,archivedAtUtc:null as string|null,placement:{browser:"edge",screenNumber:1,fullscreen:true,windowX:0,windowY:0,windowWidth:1920,windowHeight:1080}};const service={read:async()=>{reads++;if(deny)throw new Error("PRIVATE_SQL_TOKEN");if(knownDeny)throw new QuerySourceError("FORBIDDEN",403);return{devices:[device]};}} as unknown as Parameters<typeof createDeviceManagementRouter>[0];
  const app=express();app.use((req,_res,next)=>{if(req.header("x-test-role"))req.authUser={id:1,username:"synthetic",displayName:"Synthetic",permissions:req.header("x-test-role")==="designer"?["DESIGN_QUERY"]:[]} as NonNullable<typeof req.authUser>;next();});app.use(createDeviceManagementRouter(service));const server=createServer(app);server.listen(0,"127.0.0.1");await once(server,"listening");t.after(()=>{server.closeAllConnections();server.close();});const port=(server.address() as import("node:net").AddressInfo).port;
  const call=(role?:string,id=7)=>fetch(`http://127.0.0.1:${port}/1/device-management/v1/${id}/playback-link`,{headers:{authorization:`Bearer ${jwt.sign({sub:"1",tokenVersion:3},"synthetic")}`,...(role?{"x-test-role":role}:{})}});
  assert.equal((await call()).status,403);assert.equal((await call("viewer")).status,403);assert.equal(reads,0);
  const r=await call("designer");assert.equal(r.status,200);const body=await r.json();assert.equal(body.url,"https://hospital.example:8443/display/dashboards/1?deviceId=7");assert(body.bat.startsWith("@echo off"));assert.equal(r.headers.get("cache-control"),"no-store");assert(!JSON.stringify(body).includes(grant.token));
- assert.equal((await call("designer",8)).status,409);deny=true;const failed=await call("designer");assert.equal(failed.status,409);assert(!JSON.stringify(await failed.json()).includes("PRIVATE"));deny=false;env.DASHBOARD_PUBLIC_CLIENT_ORIGIN="http://hospital.example";assert.equal((await call("designer")).status,200);
+ assert.equal((await call("designer",8)).status,404);assert.equal((await call("designer",0)).status,400);
+ deny=true;const failed=await call("designer");assert.equal(failed.status,503);assert(!JSON.stringify(await failed.json()).includes("PRIVATE"));deny=false;
+ knownDeny=true;assert.equal((await call("designer")).status,403);knownDeny=false;
+ for(const [origin,code] of [[undefined,"PLAYBACK_ORIGIN_REQUIRED"],["http://hospital.example/","PLAYBACK_ORIGIN_INVALID"],["http://user:PRIVATE@hospital.example","PLAYBACK_ORIGIN_INVALID"]]){env.DASHBOARD_PUBLIC_CLIENT_ORIGIN=origin;const res=await call("designer");assert.equal(res.status,503);const body=await res.json();assert.equal(body.error.code,code);assert(!JSON.stringify(body).includes("PRIVATE"));}
+ env.DASHBOARD_PUBLIC_CLIENT_ORIGIN="http://hospital.example";assert.equal((await call("designer")).status,200);
+ device.placement.windowWidth=0;const badPlacement=await call("designer");assert.equal(badPlacement.status,409);assert.equal((await badPlacement.json()).error.code,"PLAYBACK_PLACEMENT_INVALID");device.placement.windowWidth=1920;
+ for(const change of [{isActive:false},{revokedAtUtc:"2020-01-01T00:00:00Z"},{archivedAtUtc:"2020-01-01T00:00:00Z"},{expiresAtUtc:"2020-01-01T00:00:00Z"},{expiresAtUtc:"invalid"}]){const previous={...device};Object.assign(device,change);const res=await call("designer");assert.equal(res.status,409);assert.equal((await res.json()).error.code,"DASHBOARD_DEVICE_NOT_EDITABLE");Object.assign(device,previous);}
+ device.expiresAtUtc="2099-01-01T00:00:00Z";assert.equal((await call("designer")).status,200);
 });
 
 for(const origin of ["http://hospital.example:8080","https://hospital.example:8443"])test(`configured manual URL/BAT ${origin} contains no authority and keeps secure-cookie origin strict`,()=>{
