@@ -2,7 +2,7 @@ import { purgeDashboardDeviceSnapshots } from "./dashboardPageSnapshot.js";
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import { z } from "zod";
-import { getClientIp, normalizeIp } from "../../utils/clientIp.js";
+import { getClientIp, requestHost, requestNetwork } from "../../utils/clientIp.js";
 import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 
 type Configuration = { origin?: string; key?: string; enabled: boolean; trustedProxies: string[] };
@@ -47,11 +47,10 @@ export function createKioskRouter(configuration: () => Configuration, deps: Depe
   const clear = (res: Response, deviceId: number) => { for (const kind of ["enrollment", "session"] as const) res.clearCookie(name(kind,deviceId), options); };
   function secure(req: Request) {
     const config = configuration(), origin = kioskOrigin(config.origin);
-    const trusted = config.trustedProxies.map(normalizeIp).includes(normalizeIp(req.socket.remoteAddress));
-    const tls = (req.socket as import("node:tls").TLSSocket).encrypted === true || trusted && req.header("x-forwarded-proto") === "https";
+    const network = requestNetwork(req,config.trustedProxies);
     // All cookie requests, including layout GETs, require an explicit same-origin marker.
     // A cross-origin form/image/navigation and CORS preflight can never carry these proofs.
-    if (!config.enabled || !tls || req.header("host") !== new URL(origin).host || (req.header("origin") !== origin && !(req.method === "GET" && !req.header("origin") && (!req.header("sec-fetch-site") || req.header("sec-fetch-site") === "same-origin"))) ||
+    if (!config.enabled || !network.valid || !network.secure || requestHost(req,config.trustedProxies) !== new URL(origin).host || (req.header("origin") !== origin && !(req.method === "GET" && !req.header("origin") && (!req.header("sec-fetch-site") || req.header("sec-fetch-site") === "same-origin"))) ||
       req.header("x-uqp-kiosk") !== "1" || req.header("sec-fetch-site") && req.header("sec-fetch-site") !== "same-origin" ||
       req.method === "POST" && !req.is("application/json")) throw new Error("KIOSK_SECURE_ORIGIN_REQUIRED");
     return kioskCodec(origin, config.key ?? "");

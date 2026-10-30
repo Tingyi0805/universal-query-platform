@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
+import { validateProxyRequest } from "./utils/clientIp.js";
 import pinoHttpModule from "pino-http";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
@@ -31,6 +32,7 @@ export const app = express();
 
 app.disable("x-powered-by");
 app.use(helmet());
+app.use(validateProxyRequest);
 app.use(
   cors({
     origin(origin, callback) {

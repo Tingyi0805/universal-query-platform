@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- UQP site only: copy to the NEW client/dist IIS root after following the
+     deployment document. Requires ARR proxy enabled and site-scoped permission
+     to overwrite the three HTTP_X_FORWARDED_* variables. No global ARR edits. -->
+<configuration>
+  <system.webServer>
+    <directoryBrowse enabled="false" />
+    <httpErrors existingResponse="PassThrough" />
+    <caching enabled="false" enableKernelCache="false" />
+    <httpProtocol>
+      <customHeaders>
+        <remove name="X-Powered-By" />
+        <remove name="Strict-Transport-Security" />
+        <add name="Strict-Transport-Security" value="max-age=31536000" />
+        <remove name="Cache-Control" />
+        <add name="Cache-Control" value="no-store" />
+        <remove name="X-Content-Type-Options" />
+        <add name="X-Content-Type-Options" value="nosniff" />
+        <remove name="Referrer-Policy" />
+        <add name="Referrer-Policy" value="no-referrer" />
+        <remove name="Content-Security-Policy" />
+        <add name="Content-Security-Policy" value="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" />
+      </customHeaders>
+    </httpProtocol>
+    <rewrite>
+      <rules>
+        <clear />
+        <rule name="UQP reject unexpected public Host" stopProcessing="true">
+          <match url=".*" />
+          <conditions><add input="{HTTP_HOST}" pattern="^uqp\.tjci\.org\.tw(?::443)?$" negate="true" /></conditions>
+          <action type="CustomResponse" statusCode="400" statusReason="Bad Request" statusDescription="Unexpected Host" />
+        </rule>
+        <rule name="UQP require external HTTPS" stopProcessing="true">
+          <match url=".*" />
+          <conditions><add input="{HTTPS}" pattern="^ON$" negate="true" /></conditions>
+          <action type="CustomResponse" statusCode="403" statusReason="Forbidden" statusDescription="HTTPS required" />
+        </rule>
+        <rule name="UQP API loopback proxy" stopProcessing="true">
+          <match url="^api(?:/(.*))?$" />
+          <serverVariables>
+            <set name="HTTP_X_FORWARDED_PROTO" value="https" replace="true" />
+            <set name="HTTP_X_FORWARDED_HOST" value="uqp.tjci.org.tw" replace="true" />
+            <set name="HTTP_X_FORWARDED_FOR" value="{REMOTE_ADDR}" replace="true" />
+          </serverVariables>
+          <action type="Rewrite" url="http://127.0.0.1:3200/api/{R:1}" appendQueryString="true" />
+        </rule>
+        <rule name="UQP SPA navigation" stopProcessing="true">
+          <match url="^(?:display|designer|admin|account|dashboards|queries|login|setup)(?:/.*)?$" />
+          <conditions logicalGrouping="MatchAll">
+            <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="true" />
+            <add input="{REQUEST_FILENAME}" matchType="IsDirectory" negate="true" />
+          </conditions>
+          <action type="Rewrite" url="/index.html" />
+        </rule>
+      </rules>
+    </rewrite>
+    <defaultDocument><files><clear /><add value="index.html" /></files></defaultDocument>
+  </system.webServer>
+</configuration>

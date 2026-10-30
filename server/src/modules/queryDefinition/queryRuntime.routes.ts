@@ -1,3 +1,4 @@
+import { getClientIp } from "../../utils/clientIp.js";
 import { finalizeDeliveryAudit } from "../audit/deliveryAudit.repository.js";
 import { safeAuditErrorCode, withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
 import { Router } from "express";
@@ -225,7 +226,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
           eventType: format === "json" ? "QUERY_EXECUTE" : format === "csv" ? "QUERY_EXPORT_CSV" : "QUERY_EXPORT_EXCEL",
           userId: context.actor.userId, queryDefinitionId: query.id, datasetId: query.datasetId,
           // Bind values can contain patient identifiers; standard usage audit stores no raw binds.
-          parameters: null, ipAddress: req.ip, userAgent: req.get("user-agent") ?? null,
+          parameters: null, ipAddress: getClientIp(req), userAgent: req.get("user-agent") ?? null,
         });
         if (!Number.isSafeInteger(auditId) || Number(auditId) <= 0) throw new QueryDeliveryError("QUERY_AUDIT_REQUIRED", 503);
         await context.revalidate();

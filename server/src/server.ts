@@ -7,7 +7,7 @@ import { autoArchiveDashboardDevices } from "./modules/dashboard/dashboardDevice
 
 const server = createServer(app);
 
-server.listen(env.PORT, () => {
+server.listen(env.PORT, env.LISTEN_HOST, () => {
   logger.info({ port: env.PORT }, "Server started");
 });
 

@@ -1,5 +1,9 @@
 # Offline Windows parser/argument verification only; does not start a browser or touch UQP.
 $ErrorActionPreference = 'Stop'
+$iisTemplate = Join-Path $PSScriptRoot 'iis/web.config.example'
+[xml]$iisConfig = Get-Content -LiteralPath $iisTemplate -Raw
+if ($iisConfig.configuration.'system.webServer'.rewrite.rules.rule.Count -ne 4) { throw 'IIS_TEMPLATE_RULES_INVALID' }
+Write-Host 'IIS_TEMPLATE_XML_PARSE_PASS (not live IIS/ARR acceptance)'
 Push-Location (Join-Path $PSScriptRoot '../server')
 try {
   $output = Join-Path $env:TEMP ('uqp-kiosk-test-' + [guid]::NewGuid().ToString('N') + '.json')

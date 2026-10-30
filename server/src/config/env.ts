@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { isIP } from "node:net";
 
 const optionalString = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
@@ -21,12 +22,13 @@ const envBoolean = (defaultValue: boolean) =>
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  LISTEN_HOST: z.string().refine(value => isIP(value) !== 0).default("0.0.0.0"),
   CLIENT_ORIGIN: z.string().default("http://localhost:5173"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   PLATFORM_TIME_ZONE: z.string().default("Asia/Taipei"),
 
   TRUST_PROXY_ENABLED: envBoolean(false),
-  TRUST_PROXY_ADDRESSES: z.string().default("127.0.0.1,::1"),
+  TRUST_PROXY_ADDRESSES: z.string().refine(value => value.split(",").map(v => v.trim()).filter(Boolean).every(v => isIP(v) !== 0 && !v.includes("%"))).default("127.0.0.1,::1"),
   CLIENT_IP_DIAGNOSTICS: envBoolean(false),
   DASHBOARD_QUERY_SOURCE_MANAGEMENT: envBoolean(false),
   DASHBOARD_QUERY_SOURCE_EXECUTION: envBoolean(false),
