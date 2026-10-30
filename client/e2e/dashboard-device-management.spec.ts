@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const initialVersion = "a".repeat(64);
 async function setup(page: Page) {
-  const state = { alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
+  const state = { linkDelay:0,linkCode:"",linkStatus:503,linkReads:0,alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
     writes: [] as { path: string; method: string; body: any }[], reads: 0, oldWrites: 0,
     devices: [{ id: 7, dashboardId: 1, deviceName: "合成裝置", isActive: true, createdByUserId: 2, sharedWorkstationId: 3,
       enforceIpRestriction: true, allowedIp: "192.0.2.1" as string | null, allowedCidr: null, expiresAtUtc: null as string | null,
@@ -14,7 +14,7 @@ async function setup(page: Page) {
       if(state.alertFail){await route.fulfill({status:503,json:{error:{code:"PRIVATE_DIAGNOSTIC"}}});return;}
       await route.fulfill({json:{days:30,asOfUtc:new Date().toISOString(),devices:state.devices.filter(d=>d.expiresAtUtc!==null).map(d=>({...d,daysRemaining:Math.ceil((Date.parse(d.expiresAtUtc!)-Date.now())/86400000)}))}});return;
     }
-    if(path.endsWith("/playback-link")){const deviceId=Number(path.split("/").at(-2));await route.fulfill({json:{dashboardId:1,deviceId,url:state.linkUrl.replace("deviceId=7",`deviceId=${deviceId}`),bat:"@echo off\r\nREM synthetic public URL only\r\n"}});return;}
+    if(path.endsWith("/playback-link")){state.linkReads++;if(state.linkDelay)await new Promise(resolve=>setTimeout(resolve,state.linkDelay));if(state.linkCode){await route.fulfill({status:state.linkStatus,json:{error:{code:state.linkCode,message:"PRIVATE_SQL_TOKEN"}}});return;}const deviceId=Number(path.split("/").at(-2));await route.fulfill({json:{dashboardId:1,deviceId,url:state.linkUrl.replace("deviceId=7",`deviceId=${deviceId}`),bat:"@echo off\r\nREM synthetic public URL only\r\n"}});return;}
     if (path.includes("/device-management/v1")) {
       const version = () => state.revision === 0 ? initialVersion : String(state.revision).repeat(64);
       if (req.method() === "GET") state.reads++;
@@ -126,8 +126,56 @@ test("saved settings automatically show configured device URL with copy/open/BAT
  const downloadPromise=page.waitForEvent("download");await panel.getByRole("button",{name:"下載 Windows BAT",exact:true}).click();expect((await downloadPromise).suggestedFilename()).toBe("UQP-device-7.bat");
  expect(state.writes).toHaveLength(1);expect(state.oldWrites).toBe(0);
 });
+for(const [code,status,text] of [
+ ["PLAYBACK_ORIGIN_REQUIRED",503,"尚未設定播放網址"],
+ ["PLAYBACK_ORIGIN_INVALID",503,"播放網址設定不正確"],
+ ["PLAYBACK_PLACEMENT_INVALID",409,"播放位置設定無效"],
+ ["DASHBOARD_DEVICE_NOT_EDITABLE",409,"裝置已失效"],
+ ["FORBIDDEN",403,"無權限取得播放網址"],
+ ["QUERY_SOURCE_STORAGE_UNAVAILABLE",503,"播放網址暫不可用"],
+] as const)test(`playback URL failure ${code} is adjacent, actionable and hides private diagnostics`,async({page})=>{
+ const {state,panel}=await setup(page);state.linkCode=code;state.linkStatus=status;
+ await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByRole("alert")).toContainText(text);
+ await expect(panel).not.toContainText("PRIVATE_SQL_TOKEN");await expect(panel.getByRole("link",{name:"開啟播放網址"})).toHaveCount(0);
+ if(code.startsWith("PLAYBACK_ORIGIN"))await expect(panel.getByRole("alert")).toContainText("DASHBOARD_PUBLIC_CLIENT_ORIGIN");
+ state.linkCode="";await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByRole("textbox",{name:"裝置 7 播放網址",exact:true})).toHaveValue(state.linkUrl);expect(state.writes).toHaveLength(0);
+});
+test("playback URL request shows progress, suppresses duplicate clicks and discards stale links on invalidation",async({page})=>{
+ const{state,panel}=await setup(page);state.linkDelay=700;
+ const button=panel.getByRole("button",{name:"顯示 合成裝置 播放網址"});await button.click();await expect(button).toBeDisabled();await expect(button).toHaveAttribute("aria-busy","true");await expect(panel.getByText("正在產生播放網址…",{exact:true})).toBeVisible();
+ await expect(panel.getByRole("textbox",{name:"裝置 7 播放網址",exact:true})).toHaveValue(state.linkUrl);expect(state.linkReads).toBe(1);
+ await button.click();await page.evaluate(()=>window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId:1}})));
+ await expect(panel.getByRole("textbox",{name:"裝置 7 播放網址",exact:true})).toHaveCount(0);
+ await page.waitForTimeout(900);await expect(panel.getByRole("link",{name:"開啟播放網址"})).toHaveCount(0);await expect(button).toBeEnabled();
+});
+test("save succeeds independently of missing playback origin; administrator sees a repairable error",async({page})=>{
+ const{state,panel}=await setup(page);state.linkCode="PLAYBACK_ORIGIN_REQUIRED";
+ await panel.getByRole("button",{name:"建立未授權裝置",exact:true}).click();await panel.getByLabel("裝置名稱",{exact:true}).fill("待設定來源裝置");await panel.getByRole("button",{name:"確認保存裝置設定"}).click();
+ await expect(panel.getByText(/裝置設定已保存；未核發憑證/)).toBeVisible();await expect(panel.getByRole("alert")).toContainText("DASHBOARD_PUBLIC_CLIENT_ORIGIN");expect(state.writes).toHaveLength(1);await expect(panel.getByRole("link",{name:"開啟播放網址"})).toHaveCount(0);
+});
+test("clipboard denial falls back to public field; failed fallback explains manual copy",async({page})=>{
+ const{panel}=await setup(page);await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByRole("link",{name:"開啟播放網址"})).toBeVisible();
+ await page.evaluate(()=>{Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:()=>Promise.reject(new Error("denied"))}});document.execCommand=()=>true;});
+ await panel.getByRole("button",{name:"複製播放網址",exact:true}).click();await expect(panel.getByText("已複製播放網址。",{exact:true})).toBeVisible();
+ await page.evaluate(()=>{document.execCommand=()=>false;});await panel.getByRole("button",{name:"複製播放網址",exact:true}).click();await expect(panel.getByRole("alert")).toContainText("請選取播放網址手動複製");
+});
+test("opening configured public URL creates an isolated new window",async({page})=>{
+ const{panel}=await setup(page);await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByRole("link",{name:"開啟播放網址"})).toBeVisible();
+ await page.context().route("https://hospital.example:8443/**",route=>route.fulfill({contentType:"text/html",body:"<p>Synthetic public playback</p>"}));
+ const opened=page.waitForEvent("popup");await panel.getByRole("link",{name:"開啟播放網址"}).click();const popup=await opened;await popup.waitForLoadState();expect(await popup.evaluate(()=>window.opener===null)).toBe(true);await expect(popup.getByText("Synthetic public playback")).toBeVisible();await popup.close();
+});
+test("stalled playback URL request reaches a visible deadline and allows retry",async({page})=>{
+ const{panel}=await setup(page);await page.clock.install();let release!:()=>void;const gate=new Promise<void>(resolve=>{release=resolve;});
+ const match="**/api/dashboards/1/device-management/v1/7/playback-link";
+ await page.route(match,async route=>{await gate;await route.abort().catch(()=>{});});
+ try{
+  const request=page.waitForRequest(r=>r.url().endsWith("/7/playback-link"));const button=panel.getByRole("button",{name:"顯示 合成裝置 播放網址"});await button.click();await request;
+  await expect(button).toBeDisabled();await page.clock.fastForward(15001);await expect(panel.getByRole("alert")).toContainText("連線逾時");await expect(button).toBeEnabled();
+ }finally{release();await page.unroute(match);}
+ await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByRole("link",{name:"開啟播放網址"})).toBeVisible();
+});
 for(const url of ["https://hospital.example/display/dashboards/2?deviceId=7","https://hospital.example/display/dashboards/1?deviceId=7&token=secret"])test(`invalid playback link is not shown: ${url}`,async({page})=>{
- const {state,panel}=await setup(page);state.linkUrl=url;await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByText(/播放網址暫不可用/)).toBeVisible();await expect(panel.getByRole("link",{name:"開啟播放網址"})).toHaveCount(0);expect(state.writes).toHaveLength(0);
+ const {state,panel}=await setup(page);state.linkUrl=url;await panel.getByRole("button",{name:"顯示 合成裝置 播放網址"}).click();await expect(panel.getByText(/播放網址回應格式不正確/)).toBeVisible();await expect(panel.getByRole("link",{name:"開啟播放網址"})).toHaveCount(0);expect(state.writes).toHaveLength(0);
 });
 
 test("30/7/0 expiry reminders use existing alert API, no-expiry is explicit, renewal preserves token",async({page})=>{

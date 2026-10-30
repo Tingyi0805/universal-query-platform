@@ -25,6 +25,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Measure tracked source and clean Server build bytes
+        run: node ../tools/measure-browser-build.mjs
 
   client:
     runs-on: ubuntu-latest
@@ -45,6 +47,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Measure tracked source and Client build bytes
+        run: node ../tools/measure-browser-build.mjs
       - name: Install synthetic kiosk API test dependencies (no database/native drivers)
         run: npm ci --prefix ../server --ignore-scripts
       - run: npx playwright install --with-deps chromium
@@ -234,7 +238,7 @@ jobs:
           Copy-Item server/dist release/payload/server/dist -Recurse
           Copy-Item server/package.json release/payload/server/
           Copy-Item server/src release/payload/server/src -Recurse
-          Copy-Item server/tsconfig.json release/payload/server/
+          Copy-Item server/tsconfig.json,server/tsconfig.build.json release/payload/server/
           Copy-Item client/dist release/payload/client/dist -Recurse
           Copy-Item client/package.json,client/index.html,client/vite.config.ts,client/tsconfig.json,client/tsconfig.app.json,client/tsconfig.node.json,client/tsconfig.e2e.json release/payload/client/
           Copy-Item client/src release/payload/client/src -Recurse

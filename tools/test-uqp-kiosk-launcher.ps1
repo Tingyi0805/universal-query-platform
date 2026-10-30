@@ -32,6 +32,21 @@ writeFileSync(process.argv[2],JSON.stringify(variants));
       $arguments = $script:CapturedLaunch.Arguments -join ' '
       if ($arguments -notlike '*--user-data-dir=*' -or $arguments -notlike '*--window-size=1400,800*' -or $arguments -notmatch '--app=https?://hospital\.example/display/dashboards/1\?deviceId=7') { throw 'KIOSK_ARGUMENTS_INVALID' }
       if ($arguments -match '(?i)token|incognito|inprivate|--kiosk') { throw 'KIOSK_FORBIDDEN_ARGUMENT' }
+      $firstScreen = @([System.Windows.Forms.Screen]::AllScreens | Sort-Object DeviceName)[0]
+      $expectedX = -2000; $expectedY = 100
+      if (-not $firstScreen.Bounds.Contains($expectedX, $expectedY)) { $expectedX = $firstScreen.Bounds.X; $expectedY = $firstScreen.Bounds.Y }
+      if ($arguments -notlike "*--window-position=$expectedX,$expectedY*") { throw 'KIOSK_SCREEN_COORDINATE_FALLBACK_FAILED' }
+      if (($arguments.Contains('--start-fullscreen')) -ne ($variant.script.Contains("'--start-fullscreen'"))) { throw 'KIOSK_FULLSCREEN_NOT_PRESERVED' }
+      $expectedBrowser = if ($variant.script.Contains('msedge.exe')) { 'msedge.exe' } else { 'chrome.exe' }
+      if (-not $script:CapturedLaunch.FilePath.EndsWith($expectedBrowser)) { throw 'KIOSK_BROWSER_NOT_PRESERVED' }
+      Remove-Item Function:Test-Path, Function:Start-Process -ErrorAction SilentlyContinue
+      # A missing browser must fail visibly rather than fall back to a different one.
+      $script:CapturedLaunch = $null
+      function Test-Path { param($LiteralPath) return $false }
+      function Start-Process { param($FilePath, $ArgumentList) $script:CapturedLaunch = $true }
+      $denied = $false
+      try { & ([scriptblock]::Create($variant.script)) } catch { if ($_.Exception.Message -ne 'Configured browser is not installed') { throw }; $denied = $true }
+      if (-not $denied -or $script:CapturedLaunch) { throw 'KIOSK_MISSING_BROWSER_MUST_STOP' }
       Remove-Item Function:Test-Path, Function:Start-Process -ErrorAction SilentlyContinue
     }
     Write-Host 'KIOSK_WINDOWS_POWERSHELL_SYNTAX_AND_ARGUMENTS_PASS (mock launch; no physical browser/reboot acceptance)'

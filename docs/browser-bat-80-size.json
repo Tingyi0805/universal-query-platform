@@ -1,0 +1,486 @@
+{
+  "baselineCommit": "8d40fadaf4811a37ccbf9641689ece82d8728b72",
+  "measurement": "Linux LF checkout; Node 24.15.0 / npm 12.2.1; uncompressed regular file bytes, excluding node_modules and Git; tracked bytes include this report",
+  "tracked": {
+    "before": {
+      "files": 581,
+      "bytes": 4462838
+    },
+    "after": {
+      "files": 585,
+      "bytes": 4496786
+    },
+    "byteDelta": 33948
+  },
+  "builds": {
+    "server": {
+      "before": {
+        "files": 295,
+        "bytes": 2333716
+      },
+      "after": {
+        "files": 192,
+        "bytes": 1410725
+      },
+      "byteDelta": -922991
+    },
+    "client": {
+      "before": {
+        "files": 3,
+        "bytes": 678134
+      },
+      "after": {
+        "files": 3,
+        "bytes": 680398
+      },
+      "byteDelta": 2264
+    }
+  },
+  "trackedFileDeletions": [],
+  "removedDeploymentOutputs": [
+    {
+      "path": "server/dist/dependencies/dependencyContracts.test.js",
+      "bytes": 13971
+    },
+    {
+      "path": "server/dist/dependencies/zod4Contracts.test.js",
+      "bytes": 3714
+    },
+    {
+      "path": "server/dist/config/logger.test.js",
+      "bytes": 1223
+    },
+    {
+      "path": "server/dist/scripts/installDataset925.test.js",
+      "bytes": 3116
+    },
+    {
+      "path": "server/dist/scripts/securityAcceptancePlan.test.js",
+      "bytes": 12602
+    },
+    {
+      "path": "server/dist/scripts/securityAcceptanceRehearsal.test.js",
+      "bytes": 3449
+    },
+    {
+      "path": "server/dist/scripts/installDataset924.test.js",
+      "bytes": 4422
+    },
+    {
+      "path": "server/dist/scripts/securityAcceptanceIsolation.test.js",
+      "bytes": 1987
+    },
+    {
+      "path": "server/dist/scripts/dashboardMigrations.test.js",
+      "bytes": 1774
+    },
+    {
+      "path": "server/dist/scripts/securityAcceptanceManifest.test.js",
+      "bytes": 2512
+    },
+    {
+      "path": "server/dist/scripts/installDataset923.test.js",
+      "bytes": 3112
+    },
+    {
+      "path": "server/dist/scripts/securityAcceptanceEvidence.test.js",
+      "bytes": 3322
+    },
+    {
+      "path": "server/dist/middleware/safeErrorDiagnostic.test.js",
+      "bytes": 6263
+    },
+    {
+      "path": "server/dist/middleware/errorHandler.test.js",
+      "bytes": 1692
+    },
+    {
+      "path": "server/dist/query/queryDescription.test.js",
+      "bytes": 7056
+    },
+    {
+      "path": "server/dist/query/selectOnlySql.test.js",
+      "bytes": 917
+    },
+    {
+      "path": "server/dist/query/sqlServerTypedParameterNormalizer.test.js",
+      "bytes": 17365
+    },
+    {
+      "path": "server/dist/query/sqlServerTypedBindPlan.test.js",
+      "bytes": 21445
+    },
+    {
+      "path": "server/dist/query/queryCompiler.test.js",
+      "bytes": 3238
+    },
+    {
+      "path": "server/dist/modules/auth/pinRateLimit.test.js",
+      "bytes": 1051
+    },
+    {
+      "path": "server/dist/modules/auth/quickPin.service.test.js",
+      "bytes": 1469
+    },
+    {
+      "path": "server/dist/modules/auth/workstationCredential.service.test.js",
+      "bytes": 1964
+    },
+    {
+      "path": "server/dist/modules/auth/auth.middleware.test.js",
+      "bytes": 1798
+    },
+    {
+      "path": "server/dist/modules/auth/quickPin.mutation.test.js",
+      "bytes": 6673
+    },
+    {
+      "path": "server/dist/modules/securityContract/securityContractMigration.test.js",
+      "bytes": 2657
+    },
+    {
+      "path": "server/dist/modules/securityContract/securityContract.repository.test.js",
+      "bytes": 8923
+    },
+    {
+      "path": "server/dist/modules/securityContract/securityContract.test.js",
+      "bytes": 2189
+    },
+    {
+      "path": "server/dist/modules/datasource/versionFoundationMigration.test.js",
+      "bytes": 4380
+    },
+    {
+      "path": "server/dist/modules/datasource/versionFoundation.test.js",
+      "bytes": 15869
+    },
+    {
+      "path": "server/dist/modules/version/datasetVersionRestore.test.js",
+      "bytes": 10970
+    },
+    {
+      "path": "server/dist/modules/audit/deliveryAudit.repository.test.js",
+      "bytes": 2526
+    },
+    {
+      "path": "server/dist/modules/audit/patientDisclosure.service.test.js",
+      "bytes": 2091
+    },
+    {
+      "path": "server/dist/modules/audit/dashboardPatientDisclosure.test.js",
+      "bytes": 1882
+    },
+    {
+      "path": "server/dist/modules/audit/patientIdentityHmac.test.js",
+      "bytes": 1496
+    },
+    {
+      "path": "server/dist/modules/audit/patientAuditKeyring.test.js",
+      "bytes": 1318
+    },
+    {
+      "path": "server/dist/modules/admin/quickPinPolicy.repository.test.js",
+      "bytes": 1954
+    },
+    {
+      "path": "server/dist/modules/admin/workstationMigration.test.js",
+      "bytes": 1036
+    },
+    {
+      "path": "server/dist/modules/admin/workstationManagement.repository.test.js",
+      "bytes": 11078
+    },
+    {
+      "path": "server/dist/modules/admin/workstationManagement.test.js",
+      "bytes": 2321
+    },
+    {
+      "path": "server/dist/modules/admin/workstationManagement.routes.test.js",
+      "bytes": 3711
+    },
+    {
+      "path": "server/dist/modules/queryDefinition/queryDelivery.routes.test.js",
+      "bytes": 20817
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardApproval.test.js",
+      "bytes": 14451
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardTransition.test.js",
+      "bytes": 33388
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardPreview.routes.test.js",
+      "bytes": 10477
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardSecurityFailure.test.js",
+      "bytes": 1110
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardWidgetSource.test.js",
+      "bytes": 1410
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardQuerySources.test.js",
+      "bytes": 38791
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardDataSource.schema.test.js",
+      "bytes": 1088
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardKiosk.test.js",
+      "bytes": 14369
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardDevicePage.routes.test.js",
+      "bytes": 17077
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardKiosk.testFixture.js",
+      "bytes": 5974
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardDeviceManagement.test.js",
+      "bytes": 31418
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardQuerySourceMigration.test.js",
+      "bytes": 6985
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardPageSnapshot.test.js",
+      "bytes": 2490
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardQueryExecutor.test.js",
+      "bytes": 1950
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardManagedCreation.test.js",
+      "bytes": 599
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardOr001Contract.test.js",
+      "bytes": 1416
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardQueryMode.test.js",
+      "bytes": 16388
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardApproval.repository.test.js",
+      "bytes": 15980
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardQuerySourceExecution.test.js",
+      "bytes": 67150
+    },
+    {
+      "path": "server/dist/modules/dashboard/dashboardDeviceMasking.test.js",
+      "bytes": 11143
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetVersionRestore.routes.test.js",
+      "bytes": 4842
+    },
+    {
+      "path": "server/dist/modules/dataset/canonicalSnapshotDigest.test.js",
+      "bytes": 16800
+    },
+    {
+      "path": "server/dist/modules/dataset/nativeTypeWriteInventoryV3.test.js",
+      "bytes": 28198
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetColumnCandidate.test.js",
+      "bytes": 6602
+    },
+    {
+      "path": "server/dist/modules/dataset/sqlServerSourceFence.test.js",
+      "bytes": 5437
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetScopeManagement.routes.test.js",
+      "bytes": 3621
+    },
+    {
+      "path": "server/dist/modules/dataset/patientAuditConfig.test.js",
+      "bytes": 12630
+    },
+    {
+      "path": "server/dist/modules/dataset/nativeTypeReview.test.js",
+      "bytes": 27683
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetScopeManagement.test.js",
+      "bytes": 10550
+    },
+    {
+      "path": "server/dist/modules/dataset/dateParameter.test.js",
+      "bytes": 2738
+    },
+    {
+      "path": "server/dist/modules/dataset/nativeTypeAcquisitionPrototype.test.js",
+      "bytes": 29148
+    },
+    {
+      "path": "server/dist/modules/dataset/parameter.repository.test.js",
+      "bytes": 6851
+    },
+    {
+      "path": "server/dist/modules/dataset/dataset.service.test.js",
+      "bytes": 9035
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetFilterUpdate.test.js",
+      "bytes": 11722
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetPublicDisplayWriter.test.js",
+      "bytes": 2712
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetMaskTemplate.test.js",
+      "bytes": 1643
+    },
+    {
+      "path": "server/dist/modules/dataset/parameter.routes.test.js",
+      "bytes": 4534
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetDeliveryPolicyMigration.test.js",
+      "bytes": 2075
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetDisplaySchema925Counts.test.js",
+      "bytes": 1576
+    },
+    {
+      "path": "server/dist/modules/dataset/parameter.service.test.js",
+      "bytes": 2873
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetPublicDisplay.routes.test.js",
+      "bytes": 3752
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetPublicDisplayConfirmation.test.js",
+      "bytes": 2659
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetUnifiedMasking.test.js",
+      "bytes": 8212
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetPublicDisplay.repository.test.js",
+      "bytes": 5346
+    },
+    {
+      "path": "server/dist/modules/dataset/nativeTypeWriterLocks.test.js",
+      "bytes": 19272
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetLegacyMaskConversion.test.js",
+      "bytes": 8667
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetData.routes.test.js",
+      "bytes": 28697
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetAuditOnlyPolicy.test.js",
+      "bytes": 814
+    },
+    {
+      "path": "server/dist/modules/dataset/nativeTypeDecisionAudit.test.js",
+      "bytes": 21400
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetMetadata923F1a.test.js",
+      "bytes": 2528
+    },
+    {
+      "path": "server/dist/modules/dataset/column.repository.test.js",
+      "bytes": 7425
+    },
+    {
+      "path": "server/dist/modules/dataset/savedDatasetMetadataCollection.test.js",
+      "bytes": 13554
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetDeliveryPolicy.repository.test.js",
+      "bytes": 9368
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetDeliveryPolicy.test.js",
+      "bytes": 9946
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetPublicDisplayPolicy.test.js",
+      "bytes": 3951
+    },
+    {
+      "path": "server/dist/modules/dataset/patientAuditPreview.test.js",
+      "bytes": 2076
+    },
+    {
+      "path": "server/dist/modules/dataset/nativeTypeMutationReservationV2.test.js",
+      "bytes": 28141
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetFilterProof.test.js",
+      "bytes": 4992
+    },
+    {
+      "path": "server/dist/modules/dataset/datasetMetadata923Catalog.test.js",
+      "bytes": 14468
+    },
+    {
+      "path": "server/dist/modules/datasource/adapters/sqlServerDateBinds.test.js",
+      "bytes": 2004
+    },
+    {
+      "path": "server/dist/modules/datasource/adapters/queryDescription.test.js",
+      "bytes": 16397
+    },
+    {
+      "path": "server/dist/modules/datasource/adapters/oracleAdapter.test.js",
+      "bytes": 3728
+    }
+  ],
+  "deploymentCleanupReason": "All removed compiled files are *.test.js or *.testFixture.js with no production import. Original tests remain tracked and run/typecheck. All non-test baseline deployment outputs remain.",
+  "ignoredWorkspaceCleanup": {
+    "notPartOfTrackedOrBuildBaseline": true,
+    "directories": [
+      {
+        "path": "client/dist",
+        "files": 3,
+        "bytes": 679357
+      },
+      {
+        "path": "server/dist",
+        "files": 302,
+        "bytes": 2363594
+      },
+      {
+        "path": "client/test-results",
+        "files": 1,
+        "bytes": 45
+      },
+      {
+        "path": "client/playwright-report",
+        "files": 0,
+        "bytes": 0
+      },
+      {
+        "path": "windows-agent",
+        "files": 464,
+        "bytes": 269207152
+      }
+    ],
+    "reason": "Discarded generated leftovers before clean PR76 baseline build; no tracked source deleted. The windows-agent directory contained only ignored build/restore artifacts from the previous checkout, not an Agent source tree in this branch."
+  }
+}

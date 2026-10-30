@@ -19,21 +19,49 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   const [now,setNow]=useState(Date.now());const serverOffset=useRef(0);
   type PlaybackLink = {dashboardId:number;deviceId:number;url:string;bat:string};
   const [links,setLinks] = useState<Record<number,PlaybackLink>>({});
-  const [linkMessage,setLinkMessage] = useState("");
-  async function playbackLink(deviceId:number) {
-    const current=sequence.current;
-    try {
-      const value=await apiRequest<PlaybackLink>(`${base}/${deviceId}/playback-link`,{},accessToken), url=new URL(value.url);
-      if (value.dashboardId!==dashboardId || value.deviceId!==deviceId || !["http:","https:"].includes(url.protocol) || url.username || url.password || url.hash || url.pathname!==`/display/dashboards/${dashboardId}` || url.search!==`?deviceId=${deviceId}` || typeof value.bat!=="string" || !value.bat.startsWith("@echo off")) throw new Error("KIOSK_LINK_INVALID");
-      if(current===sequence.current) {setLinks(previous=>({...previous,[deviceId]:value}));setLinkMessage("播放網址已產生；網址本身不授權，請在目標裝置的瀏覽器設定檔首次輸入 Token。");}
-    } catch {if(current===sequence.current)setLinkMessage("播放網址暫不可用，請確認 HTTP／HTTPS 公開來源設定及裝置狀態。");}
+  const [linkStatus,setLinkStatus] = useState<Record<number,{busy:boolean;error:boolean;message:string}>>({});
+  const linkRequests = useRef(new Map<number,AbortController>());
+  function clearLinks() {
+    for (const request of linkRequests.current.values()) request.abort();
+    linkRequests.current.clear(); setLinks({}); setLinkStatus({});
   }
-  async function copyLink(value:string,field:HTMLInputElement|null) {try {
-    if(navigator.clipboard?.writeText)await navigator.clipboard.writeText(value);
-    else {if(!field)throw new Error("COPY_UNAVAILABLE");field.focus();field.select();if(!document.execCommand("copy"))throw new Error("COPY_UNAVAILABLE");}setLinkMessage("已複製播放網址。");}catch{setLinkMessage("無法自動複製，請選取播放網址手動複製。");}}
+  function linkNotice(deviceId:number,message:string,error=false,busy=false) {
+    setLinkStatus(previous=>({...previous,[deviceId]:{busy,error,message}}));
+  }
+  function linkError(error:unknown) {
+    const code=(error as {code?:string})?.code;
+    if(code==="PLAYBACK_ORIGIN_REQUIRED")return "尚未設定播放網址：請管理員在 Server 設定 DASHBOARD_PUBLIC_CLIENT_ORIGIN 為播放裝置可連線的 HTTP／HTTPS 來源（含必要連接埠），再重新啟動 Server。";
+    if(code==="PLAYBACK_ORIGIN_INVALID")return "播放網址設定不正確：DASHBOARD_PUBLIC_CLIENT_ORIGIN 僅能包含 HTTP／HTTPS 協定、主機及必要連接埠，不得含結尾斜線、路徑、帳密或查詢參數；修正後重新啟動 Server。";
+    if(code==="PLAYBACK_PLACEMENT_INVALID")return "播放位置設定無效，請重新載入並修正螢幕、座標及視窗尺寸後保存。";
+    if(code==="DASHBOARD_DEVICE_NOT_FOUND"||code==="DASHBOARD_DEVICE_NOT_EDITABLE")return "裝置已失效、到期或不存在；請重新載入裝置設定確認，不會恢復舊授權。";
+    if((error as {status?:number})?.status===403)return "無權限取得播放網址；請確認 Dashboard、Query 與裝置管理權限。";
+    if(code==="KIOSK_LINK_INVALID")return "播放網址回應格式不正確，已拒絕顯示網址及 BAT；請管理員確認前後端版本與公開來源設定。";
+    return "播放網址暫不可用：連線逾時或服務未完成要求，請確認網路與 Server 狀態後重試。";
+  }
+  async function playbackLink(deviceId:number) {
+    if(linkRequests.current.has(deviceId))return;
+    const current=sequence.current;
+    const controller=new AbortController();linkRequests.current.set(deviceId,controller);
+    const timer=setTimeout(()=>controller.abort(),15000);
+    setLinks(previous=>{const next={...previous};delete next[deviceId];return next;});
+    linkNotice(deviceId,"正在產生播放網址…",false,true);
+    try {
+      const value=await apiRequest<PlaybackLink>(`${base}/${deviceId}/playback-link`,{signal:controller.signal},accessToken);
+      let url: URL;try {url=new URL(value.url);}catch{throw new Error("KIOSK_LINK_INVALID");}
+      if (value.dashboardId!==dashboardId || value.deviceId!==deviceId || !["http:","https:"].includes(url.protocol) || url.username || url.password || url.hash || url.pathname!==`/display/dashboards/${dashboardId}` || url.search!==`?deviceId=${deviceId}` || typeof value.bat!=="string" || !value.bat.startsWith("@echo off")) throw new Error("KIOSK_LINK_INVALID");
+      if(current===sequence.current && linkRequests.current.get(deviceId)===controller) {setLinks(previous=>({...previous,[deviceId]:value}));linkNotice(deviceId,"播放網址已產生；網址本身不授權，請在目標裝置的瀏覽器設定檔首次輸入 Token。");}
+    } catch(error) {if(current===sequence.current && linkRequests.current.get(deviceId)===controller)linkNotice(deviceId,linkError(error instanceof Error && error.message==="KIOSK_LINK_INVALID"?{code:"KIOSK_LINK_INVALID"}:error),true);}
+    finally {clearTimeout(timer);if(linkRequests.current.get(deviceId)===controller)linkRequests.current.delete(deviceId);}
+  }
+  async function copyLink(deviceId:number,value:string,field:HTMLInputElement|null) {try {
+    let copied=false;try{if(navigator.clipboard?.writeText){await navigator.clipboard.writeText(value);copied=true;}}catch{/* HTTP or denied clipboard: use the visible public URL field. */}
+    if(!copied){if(!field)throw new Error("COPY_UNAVAILABLE");field.focus();field.select();if(!document.execCommand("copy"))throw new Error("COPY_UNAVAILABLE");}linkNotice(deviceId,"已複製播放網址。");}catch{linkNotice(deviceId,"無法自動複製，請選取播放網址手動複製。",true);}}
   function downloadLauncher(value:PlaybackLink) {
+    try {
     const url=URL.createObjectURL(new Blob([value.bat],{type:"application/octet-stream"}));
     const a=document.createElement("a");a.href=url;a.download=`UQP-device-${value.deviceId}.bat`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+    linkNotice(value.deviceId,"BAT 已交由瀏覽器下載；請確認下載清單。");
+    } catch {linkNotice(value.deviceId,"無法下載 BAT，請確認瀏覽器下載權限後重試。",true);}
   }
   const sequence = useRef(0), base = `/dashboards/${dashboardId}/device-management/v1`;
   function trusted(value: Snapshot) {
@@ -49,7 +77,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   }
   async function load(discard = false) {
     if (discard && draft && !window.confirm("重新載入會捨棄本區裝置草稿，確定繼續？")) return;
-    const read = ++sequence.current; setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
+    const read = ++sequence.current; clearLinks(); setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
     try {
       const [metadata,reminders]=await Promise.allSettled([apiRequest<Snapshot>(base,{},accessToken),apiRequest<{asOfUtc?:string;devices:{id:number;dashboardId:number;expiresAtUtc:string|null}[]}>("/dashboards/device-alerts?days=30",{},accessToken)]);
       if(metadata.status!=="fulfilled")throw metadata.reason;
@@ -67,11 +95,11 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     finally { if (read === sequence.current) setBusy(false); }
   }
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()+serverOffset.current),60000);return()=>clearInterval(timer);},[]);
-  useEffect(() => { setSnapshot(null); setDraft(null); setLinks({}); void load(); return () => { ++sequence.current; }; }, [dashboardId, accessToken]);
+  useEffect(() => { setSnapshot(null); setDraft(null); void load(); return () => { ++sequence.current;for(const request of linkRequests.current.values())request.abort();linkRequests.current.clear(); }; }, [dashboardId, accessToken]);
   useEffect(() => {
     const changed = (event: Event) => {
       if ((event as CustomEvent).detail?.dashboardId !== dashboardId) return;
-      ++sequence.current; setBusy(false); setVersion(null); setMessage("Dashboard 或裝置授權狀態已變更；草稿已保留，請明確重新載入。");
+      ++sequence.current; clearLinks(); setBusy(false); setVersion(null); setMessage("Dashboard 或裝置授權狀態已變更；草稿已保留，請明確重新載入。");
     };
     window.addEventListener("uqp.dashboard.configuration.changed", changed);
     return () => window.removeEventListener("uqp.dashboard.configuration.changed", changed);
@@ -125,17 +153,17 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
       <button type="button" disabled={busy||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
       <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
-      {deviceMayIssue(device) && <button type="button" onClick={()=>void playbackLink(device.id)}>顯示 {device.deviceName} 播放網址</button>}
-      {links[device.id] && deviceMayIssue(device) && <div aria-label={`裝置 ${device.id} 播放網址`}>
+      {deviceMayIssue(device,now) && <button type="button" disabled={busy||linkStatus[device.id]?.busy} aria-busy={linkStatus[device.id]?.busy??false} onClick={()=>void playbackLink(device.id)}>顯示 {device.deviceName} 播放網址</button>}
+      {linkStatus[device.id] && <p role={linkStatus[device.id]!.error?"alert":"status"}>{linkStatus[device.id]!.message}</p>}
+      {links[device.id] && deviceMayIssue(device,now) && <div aria-label={`裝置 ${device.id} 播放網址`}>
         <input aria-label={`裝置 ${device.id} 播放網址`} readOnly value={links[device.id]!.url} onFocus={e=>e.currentTarget.select()}/>
-        <button type="button" onClick={e=>void copyLink(links[device.id]!.url,e.currentTarget.parentElement?.querySelector("input")??null)}>複製播放網址</button>
+        <button type="button" onClick={e=>void copyLink(device.id,links[device.id]!.url,e.currentTarget.parentElement?.querySelector("input")??null)}>複製播放網址</button>
         <a href={links[device.id]!.url} target="_blank" rel="noopener noreferrer">開啟播放網址</a>
         <button type="button" onClick={()=>downloadLauncher(links[device.id]!)}>下載 Windows BAT</button>
         {links[device.id]!.url.startsWith("http:") && <p>HTTP 僅供手動播放；重整、關閉或重啟後須再次輸入 Token，不支援持久授權。HTTP 無法保護傳輸中的 Token。</p>}
         <p>BAT 使用獨立且固定的瀏覽器設定檔；首次請從 BAT 開啟並輸入 Token。指定螢幕依 Windows DeviceName 排序，非顯示設定編號；座標為桌面絕對座標。</p>
       </div>}
     </li>)}</ul>
-    {linkMessage && <p role="status">{linkMessage}</p>}
     {renewId!==null && <fieldset disabled={busy} aria-label="安全續期"><legend>安全續期裝置 {renewId}</legend>
       <label>延長天數<input aria-label="延長天數" type="number" min={1} max={365} value={renewDays} onChange={e=>setRenewDays(Number(e.target.value))}/></label>
       <p>僅限尚未到期且授權有效的裝置；延長後的到期日最多為目前時間起 365 天。</p>
