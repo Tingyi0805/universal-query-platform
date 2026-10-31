@@ -1,3 +1,4 @@
+import { requireDeviceLifecycleSchema } from "./dashboardDeviceLifecycleSchema.js";
 import {dashboardSecurityFailure} from "./dashboardSecurityFailure.js";
 import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
 import sql from "mssql";
@@ -98,11 +99,7 @@ return createQuerySourceStore({ ...deps,
         if (result.rowsAffected[0] !== 1) throw new QuerySourceError("QUERY_DEVICE_CREDENTIAL_CONFLICT");
       },
       async revokeDevice(id, deviceId) {
-        const result = await scoped(id).input("deviceId", sql.BigInt, deviceId).query(`UPDATE uqp.DashboardDisplayDevice
-          SET IsActive=0,RevokedAtUtc=SYSUTCDATETIME(),QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL,
-          TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2)
-          WHERE DashboardId=@id AND Id=@deviceId AND IsActive=1`);
-        if (result.rowsAffected[0] !== 1) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+        await revokeDashboardQueryDevice(id, deviceId, request());
       },
       async revokeAudit(userId,id,deviceId) {
         await writeAuditEvent({eventType:"DASHBOARD_QUERY_DEVICE_REVOKED",userId,parameters:{dashboardId:id,deviceId}},transaction);
@@ -123,3 +120,19 @@ return createQuerySourceStore({ ...deps,
 });
 }
 export const queryModeStore=createQueryModeStore();
+
+
+/** Permanent revocation also accepts suspended devices; absent 926 retains legacy SQL. */
+export async function revokeDashboardQueryDevice(id: number, deviceId: number, request: sql.Request) {
+  const columns = (await request.query(`SELECT COL_LENGTH('uqp.DashboardDisplayDevice','SuspendedAtUtc') AS Suspended,
+    COL_LENGTH('uqp.DashboardDisplayDevice','ReenrollmentRequired') AS Pending`)).recordset[0];
+  const lifecycle = columns?.Suspended != null || columns?.Pending != null;
+  if (lifecycle) await requireDeviceLifecycleSchema(request);
+  const result = await request.input("id",sql.BigInt,id).input("deviceId",sql.BigInt,deviceId).query(`UPDATE uqp.DashboardDisplayDevice
+    SET IsActive=0,RevokedAtUtc=SYSUTCDATETIME(),QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL,
+      ${lifecycle ? "SuspendedAtUtc=NULL,ReenrollmentRequired=NULL," : ""}
+      TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2)
+    WHERE DashboardId=@id AND Id=@deviceId AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL
+      ${lifecycle ? "" : "AND IsActive=1"}`);
+  if (result.rowsAffected[0] !== 1) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+}

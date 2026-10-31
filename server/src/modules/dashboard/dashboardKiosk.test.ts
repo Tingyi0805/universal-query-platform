@@ -100,3 +100,18 @@ for(const origin of ["http://hospital.example:8080","https://hospital.example:84
  const url=manualPlaybackLink(origin,1,7),{bat,script}=kioskLauncher(url,{browser:"edge",screenNumber:1,fullscreen:true,windowX:0,windowY:0,windowWidth:1920,windowHeight:1080});assert.equal(url,`${origin}/display/dashboards/1?deviceId=7`);assert(script.includes(`--app=${url}`));assert(!bat.includes(grant.token));if(origin.startsWith("http:")){assert.match(bat,/HTTP manual playback only/);assert.throws(()=>kioskOrigin(origin));}
 });
 for(const origin of [undefined,"http://user:secret@host.test","http://host.test/","http://host.test/path","http://host.test?token=x","javascript:alert(1)","https://host.test#x"])test(`manual URL rejects ${origin}`,()=>assert.throws(()=>manualPlaybackLink(origin,1,7)));
+
+
+test("D2-A pre-suspend persistent and session cookies never recover after restore pending",async t=>{
+ const f=await setup(t),jar=cookies(await f.enroll()),oldToken=f.state.token;
+ for(const marker of [{SuspendedAtUtc:"2026-10-31T00:00:00Z",ReenrollmentRequired:true},{SuspendedAtUtc:null,ReenrollmentRequired:true}]){
+  Object.assign(f.state,marker);
+  for(const [path,method,body] of [["kiosk/session","POST",{deviceId:7}],["layout","GET",undefined],["page","POST",{page:1}]] as const){
+   assert.equal((await f.request(path,body,{cookie:jar,"x-uqp-device-id":"7"},method)).status,401);
+  }
+  assert.equal((await f.request("kiosk/enrollment",{deviceId:7,token:oldToken})).status,401);
+ }
+ f.state.token="B".repeat(43);
+ assert.equal((await f.request("kiosk/session",{deviceId:7},{cookie:jar})).status,401);
+ assert.equal(f.state.delivered,0);
+});

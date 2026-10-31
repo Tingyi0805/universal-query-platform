@@ -21,6 +21,18 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
     if (!payload || typeof payload === "string" || Number(payload.sub) !== req.authUser!.id || !Number.isSafeInteger(payload.tokenVersion) || payload.tokenVersion < 1) throw new QuerySourceError("INVALID_TOKEN", 401);
     return { id: id.data, actor: { userId: req.authUser!.id, tokenVersion: Number(payload.tokenVersion), ...auditRequestContext(req) } };
   };
+  router.get("/:id/device-management/v1/lifecycle", async (req, res) => {
+    try { const c = context(req); res.json(await service.safetyRead(c.id, c.actor)); }
+    catch (error) { failure(error, res, req.id); }
+  });
+  for (const operation of ["suspend", "restore"] as const) router.post(`/:id/device-management/v1/:deviceId/${operation}`, async (req, res) => {
+    try {
+      const c = context(req), deviceId = idSchema.safeParse(req.params.deviceId);
+      const input = z.object(confirmed).strict().safeParse(req.body);
+      if (!deviceId.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
+      res.json(await service[operation](c.id, deviceId.data, c.actor, input.data));
+    } catch (error) { failure(error, res, req.id); }
+  });
   router.get("/:id/device-management/v1/:deviceId/playback-link", async (req,res) => {
     try {
       const c = context(req), parsed = idSchema.safeParse(req.params.deviceId);
