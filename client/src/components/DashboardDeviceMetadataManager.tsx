@@ -1,3 +1,5 @@
+import { useAuth } from "../auth/AuthContext";
+import { lifecycleActions, lifecycleConfirmation, lifecycleLabels, lifecycleStatus, type LifecycleAction, type LifecycleDevice } from "../dashboard/deviceLifecycle";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
 import "./DashboardDeviceMetadataManager.css";
 import { useEffect, useRef, useState } from "react";
@@ -10,6 +12,57 @@ type Snapshot = { dashboardId: number; version: string; canCreate: boolean; devi
 const empty: Metadata = { deviceName: "", enforceIpRestriction: false, allowedIp: null, allowedCidr: null, expiresAtUtc: null };
 const defaultPlacement: PlaybackPlacement = { browser: "edge", screenNumber: 2, fullscreen: true, windowX: 1920, windowY: 0, windowWidth: 1920, windowHeight: 1080 };
 export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
+  const { hasPermission } = useAuth();
+  const design = hasPermission("DESIGN_QUERY"), execute = hasPermission("EXECUTE_QUERY");
+  const [lifecycle, setLifecycle] = useState<Snapshot | null>(null), [lifecycleVersion, setLifecycleVersion] = useState<string | null>(null);
+  const [lifecycleMessage, setLifecycleMessage] = useState("");
+  const [issuedId, setIssuedId] = useState<number | null>(null), [copyMessage, setCopyMessage] = useState("");
+  const secret = useRef<string | null>(null), tokenField = useRef<HTMLTextAreaElement>(null), tokenDialog = useRef<HTMLDialogElement>(null);
+  const mutation = useRef(false);
+  function clearToken() {
+    secret.current = null;
+    if (tokenField.current) { tokenField.current.value = ""; tokenField.current.defaultValue = ""; tokenField.current.textContent = ""; }
+    if (tokenDialog.current?.open) tokenDialog.current.close();
+    setIssuedId(null); setCopyMessage("");
+  }
+  async function copyToken() {
+    const token = secret.current;
+    if (!token || !tokenDialog.current?.open) return;
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(token);
+      else { tokenField.current?.select(); if (!document.execCommand("copy")) throw new Error(); }
+      if (secret.current === token) setCopyMessage("已複製 Token。");
+    } catch { if (secret.current === token) setCopyMessage("無法自動複製，請選取 Token 手動複製。"); }
+  }
+  useEffect(() => { if (issuedId !== null) tokenDialog.current?.showModal(); }, [issuedId]);
+  useEffect(() => {
+    const hide = () => { ++sequence.current; setVersion(null); setLifecycleVersion(null); setBusy(false); clearToken(); };
+    window.addEventListener("pagehide", hide);
+    return () => { window.removeEventListener("pagehide", hide); clearToken(); };
+  }, [dashboardId, accessToken]);
+  async function lifecycleWrite(device: Device, action: LifecycleAction) {
+    if (mutation.current || busy || !lifecycleVersion || !lifecycleActions(device as LifecycleDevice, design, execute, now).includes(action) || !window.confirm(lifecycleConfirmation(action, device.deviceName))) return;
+    mutation.current = true;
+    const read = ++sequence.current, expectedVersion = lifecycleVersion;
+    clearToken(); clearLinks(); setBusy(true); setLifecycleMessage(""); setVersion(null); setLifecycleVersion(null);
+    try {
+      const result = await apiRequest<Snapshot & { deviceId: number; token?: string; credentialIssued: boolean; reenrollmentRequired?: boolean; deviceCredentialsInvalidated?: boolean }>(`${base}/${device.id}/${action}`, { method: "POST", body: JSON.stringify({ expectedVersion, confirmed: true }) }, accessToken);
+      if (read !== sequence.current) return;
+      if (result.dashboardId !== dashboardId || result.deviceId !== device.id || !/^[a-f0-9]{64}$/.test(result.version)) throw new Error("DEVICE_RESULT_INVALID");
+      if (action !== "credential") {
+        const value = trustedLifecycle(result);
+        if (result.credentialIssued !== false || result.deviceCredentialsInvalidated !== true) throw new Error("DEVICE_RESULT_INVALID");
+        const updated = value.devices.find(d => d.id === device.id);
+        if (!updated || (action === "restore" && (!updated.isActive || updated.suspendedAtUtc !== null || updated.reenrollmentRequired !== true))) throw new Error("DEVICE_RESULT_INVALID");
+        setLifecycle(value);
+      } else if (result.credentialIssued !== true || result.reenrollmentRequired !== true || typeof result.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(result.token)) throw new Error("CREDENTIAL_INVALID");
+      window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "device-lifecycle" } }));
+      if (action === "credential") { secret.current = result.token!; setIssuedId(device.id); }
+      setLifecycleMessage(action === "restore" || action === "credential" ? "待重新授權：請在原 BAT 專用瀏覽器勾選「使用恢復後的新 Token 重新授權」並輸入新 Token，完成 Enrollment 後才可播放。請重新載入確認狀態。" : `${lifecycleLabels[action]}已完成；請重新載入後再操作。`);
+    } catch (error) {
+      if (read === sequence.current) { clearToken(); setLifecycleMessage(`${dashboardOperationError(error)} 請重新載入後再次確認，不會自動重送；若核發回應遺失，無法讀回該 Token。`); }
+    } finally { mutation.current = false; if (read === sequence.current) setBusy(false); }
+  }
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null), [version, setVersion] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ deviceId: number | null; operation: "metadata" | "placement" } | null>(null);
   const [metadata, setMetadata] = useState<Metadata>(empty), [placement, setPlacement] = useState(defaultPlacement);
@@ -75,11 +128,21 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     }
     return value;
   }
+  function trustedLifecycle(value: Snapshot) {
+    trusted(value);
+    for (const d of value.devices) {
+      if (!(d.suspendedAtUtc === null || typeof d.suspendedAtUtc === "string" && Number.isFinite(Date.parse(d.suspendedAtUtc))) || ![null, true, false].includes(d.reenrollmentRequired as null | boolean)) throw new Error("LIFECYCLE_INVALID");
+    }
+    return value;
+  }
   async function load(discard = false) {
     if (discard && draft && !window.confirm("重新載入會捨棄本區裝置草稿，確定繼續？")) return;
-    const read = ++sequence.current; clearLinks(); setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
+    const read = ++sequence.current; clearToken(); setLifecycleVersion(null); setLifecycle(null); setLifecycleMessage(""); clearLinks(); setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
     try {
-      const [metadata,reminders]=await Promise.allSettled([apiRequest<Snapshot>(base,{},accessToken),apiRequest<{asOfUtc?:string;devices:{id:number;dashboardId:number;expiresAtUtc:string|null}[]}>("/dashboards/device-alerts?days=30",{},accessToken)]);
+      const [metadata,reminders,safety]=await Promise.allSettled([apiRequest<Snapshot>(base,{},accessToken),apiRequest<{asOfUtc?:string;devices:{id:number;dashboardId:number;expiresAtUtc:string|null}[]}>("/dashboards/device-alerts?days=30",{},accessToken),apiRequest<Snapshot>(`${base}/lifecycle`,{},accessToken)]);
+      if (read !== sequence.current) return;
+      if (safety.status === "fulfilled") { try { const safe = trustedLifecycle(safety.value); setLifecycle(safe); if (design) setLifecycleVersion(safe.version); } catch { setLifecycleMessage("生命週期回應無效，管理操作已停用。"); } }
+      else setLifecycleMessage(dashboardOperationError(safety.reason));
       if(metadata.status!=="fulfilled")throw metadata.reason;
       const value=trusted(metadata.value);
       if(read!==sequence.current)return;
@@ -94,12 +157,15 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     } catch (error) { if (read === sequence.current) setMessage(dashboardOperationError(error)); }
     finally { if (read === sequence.current) setBusy(false); }
   }
+  useEffect(() => {
+    if (issuedId !== null && lifecycle?.devices.some(d => d.id === issuedId && d.expiresAtUtc !== null && Date.parse(d.expiresAtUtc ?? "") <= now)) clearToken();
+  }, [issuedId, lifecycle, now]);
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()+serverOffset.current),60000);return()=>clearInterval(timer);},[]);
   useEffect(() => { setSnapshot(null); setDraft(null); void load(); return () => { ++sequence.current;for(const request of linkRequests.current.values())request.abort();linkRequests.current.clear(); }; }, [dashboardId, accessToken]);
   useEffect(() => {
     const changed = (event: Event) => {
       if ((event as CustomEvent).detail?.dashboardId !== dashboardId) return;
-      ++sequence.current; clearLinks(); setBusy(false); setVersion(null); setMessage("Dashboard 或裝置授權狀態已變更；草稿已保留，請明確重新載入。");
+      ++sequence.current; clearLinks(); clearToken(); setBusy(false); setVersion(null); setLifecycleVersion(null); setMessage("Dashboard 或裝置授權狀態已變更；草稿已保留，請明確重新載入。");
     };
     window.addEventListener("uqp.dashboard.configuration.changed", changed);
     return () => window.removeEventListener("uqp.dashboard.configuration.changed", changed);
@@ -111,22 +177,22 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     setPlacement(device?.placement ?? defaultPlacement); setMessage("");
   }
   async function renew() {
-    if(busy||!version||renewId===null||!Number.isInteger(renewDays)||renewDays<1||renewDays>365||!window.confirm(`確認延長裝置 ${renewId} 的到期日 ${renewDays} 天？最遠不得超過目前時間 365 天，不重新核發 Token；已失效授權不會恢復。`))return;
-    const read=++sequence.current;setBusy(true);setMessage("");
+    if(busy||!design||!execute||!version||renewId===null||!Number.isInteger(renewDays)||renewDays<1||renewDays>365||!window.confirm(`確認延長裝置 ${renewId} 的到期日 ${renewDays} 天？最遠不得超過目前時間 365 天，不重新核發 Token；已失效授權不會恢復。`))return;
+    const read=++sequence.current;setLifecycleVersion(null);clearToken();setBusy(true);setMessage("");
     try{
       const result=await apiRequest<Snapshot&{deviceId:number;credentialIssued:boolean;deviceCredentialsInvalidated:boolean}>(`${base}/${renewId}/renew`,{method:"POST",body:JSON.stringify({expectedVersion:version,confirmed:true,days:renewDays})},accessToken);
       if(read!==sequence.current)return;
       const value=trusted(result);
       if(result.deviceId!==renewId||result.credentialIssued!==false||result.deviceCredentialsInvalidated!==false)throw new Error("RENEWAL_INVALID");
-      setSnapshot(value);setVersion(null);setRenewId(null);setAlerts(null);
+      setSnapshot(value);setLifecycle(null);setVersion(null);setRenewId(null);setAlerts(null);
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId,origin:"device-management"}}));
       setMessage("裝置已安全續期；未重新核發 Token。請重新載入確認到期提醒；HTTPS 既有持久授權仍受原登錄期限限制。");
     }catch(error){if(read===sequence.current){setVersion(null);setMessage(`${dashboardOperationError(error)} 續期未完成，請明確重新載入，不會自動重試。`);}}
     finally{if(read===sequence.current)setBusy(false);}
   }
   async function save() {
-    if (busy || !draft || !version || !window.confirm(draft.operation === "placement" ? "保存播放位置？此操作不改動患者資料權限。" : "保存裝置設定？不核發憑證；既有裝置的舊憑證將失效，須明確重新授權。")) return;
-    const read = ++sequence.current; setBusy(true); setMessage("");
+    if (busy || !design || !execute || !draft || !version || !window.confirm(draft.operation === "placement" ? "保存播放位置？此操作不改動患者資料權限。" : "保存裝置設定？不核發憑證；既有裝置的舊憑證將失效，須明確重新授權。")) return;
+    const read = ++sequence.current; setLifecycleVersion(null); clearToken(); setBusy(true); setMessage("");
     try {
       const path = draft.deviceId === null ? base : `${base}/${draft.deviceId}/${draft.operation}`;
       const result = await apiRequest<Snapshot & { deviceId: number; credentialIssued?: boolean; deviceCredentialsInvalidated?: boolean }>(path, { method: draft.deviceId === null ? "POST" : "PUT", body: JSON.stringify({ expectedVersion: version, confirmed: true, ...(draft.operation === "metadata" ? { metadata } : { placement }) }) }, accessToken);
@@ -134,7 +200,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
       const value = trusted(result);
       if (!Number.isSafeInteger(result.deviceId) || (draft.deviceId !== null && result.deviceId !== draft.deviceId) ||
         (draft.deviceId === null ? result.credentialIssued !== false : result.deviceCredentialsInvalidated !== (draft.operation === "metadata"))) throw new Error("DEVICE_RESULT_INVALID");
-      setSnapshot(value); setDraft(null); setVersion(null);
+      setSnapshot(value); setLifecycle(null); setDraft(null); setVersion(null);
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "device-management" } }));
       void playbackLink(result.deviceId);
       setMessage(draft.operation === "placement" ? "播放位置已保存；資料授權與遮蔽政策未變更。請重新載入後再編輯。" : "裝置設定已保存；未核發憑證，既有裝置須明確重新授權。請重新載入後再編輯。");
@@ -143,16 +209,22 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   }
   return <section className="uqp-device-manager" aria-label="版本化裝置基本管理">
     <h3>裝置建立與基本設定</h3>
-    <p>新建僅保存 metadata，委派者固定為目前操作人員，不會取得播放權限。名稱／IP／到期修改會使舊憑證失效；已失效裝置不可在此恢復。工作站換綁與封存仍為唯讀。</p>
+    <p>新建僅保存 metadata，委派者固定為目前操作人員，不會取得播放權限。名稱／IP／到期修改會使舊憑證失效；已失效裝置不可在此恢復。工作站換綁仍為唯讀；生命週期操作以安全快照及後端重新驗證為準。</p>
     {alerts && <p role="status">到期提醒：30 天內 {alerts.due30} 台；7 天內 {alerts.due7} 台；已到期 {alerts.expired} 台。</p>}
     {alertMessage && <p role="status">{alertMessage}</p>}
     <button type="button" disabled={busy} onClick={() => void load(true)}>重新載入裝置設定</button>
-    <button type="button" disabled={busy || !version || !snapshot?.canCreate} onClick={() => edit(null, "metadata")}>建立未授權裝置</button>
-    <ul>{snapshot?.devices.map(device => <li key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
+    <button type="button" disabled={busy || !version || !design || !execute || !snapshot?.canCreate} onClick={() => edit(null, "metadata")}>建立未授權裝置</button>
+    <p>啟用設定不代表正常播放；無法驗證表示管理快照未提供即時播放授權證據。恢復或核發後，須在原 BAT 專用瀏覽器勾選「使用恢復後的新 Token 重新授權」並輸入新 Token，完成 Enrollment 後才可播放。</p>
+    {lifecycleMessage && <p role="status">{lifecycleMessage}</p>}
+    <ul>{(lifecycle ?? snapshot)?.devices.map(device => <li key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
+      {lifecycle && <div aria-label={`裝置 ${device.id} 生命週期`}>
+        <span>狀態：{lifecycleStatus(device as LifecycleDevice, now)}</span>
+        {lifecycleActions(device as LifecycleDevice, design, execute, now).map(action => <button key={action} type="button" disabled={busy || !lifecycleVersion || !!draft || renewId !== null} onClick={() => void lifecycleWrite(device, action)}>{lifecycleLabels[action]} {device.deviceName}</button>)}
+      </div>}
       <span>；到期：{device.expiresAtUtc??"未設定到期日"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</span>
-      <button type="button" disabled={busy||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>
-      <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
-      <button type="button" disabled={busy || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
+      <button type="button" disabled={busy||!design||!execute||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>
+      <button type="button" disabled={busy || !design || !execute || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
+      <button type="button" disabled={busy || !design || !execute || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
       {deviceMayIssue(device,now) && <button type="button" disabled={busy||linkStatus[device.id]?.busy} aria-busy={linkStatus[device.id]?.busy??false} onClick={()=>void playbackLink(device.id)}>顯示 {device.deviceName} 播放網址</button>}
       {linkStatus[device.id] && <p role={linkStatus[device.id]!.error?"alert":"status"}>{linkStatus[device.id]!.message}</p>}
       {links[device.id] && deviceMayIssue(device,now) && <div aria-label={`裝置 ${device.id} 播放網址`}>
@@ -184,6 +256,14 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
       </div>}
       <div className="uqp-device-actions"><button type="button" disabled={!version || (draft.operation === "metadata" && !metadata.deviceName.trim())} onClick={() => void save()}>確認保存裝置設定</button></div>
     </fieldset>}
+    {issuedId !== null && <dialog ref={tokenDialog} aria-label="一次性新 Token" onCancel={e => { e.preventDefault(); clearToken(); }} onClose={clearToken}>
+      <h3>一次性新 Token</h3><p>裝置 {issuedId} 待重新授權。新 Token 只顯示一次；關閉後無法從歷史重新讀取。</p>
+      <p>請使用原 BAT 專用瀏覽器勾選「使用恢復後的新 Token 重新授權」並輸入新 Token，完成 Enrollment 後才可播放。</p>
+      <textarea aria-label="新 Token（僅顯示一次）" ref={tokenField} readOnly defaultValue={secret.current ?? ""}/>
+      <button type="button" onClick={() => void copyToken()}>複製新 Token</button>
+      <button type="button" onClick={clearToken}>關閉並清除新 Token</button>
+      {copyMessage && <p role="status">{copyMessage}</p>}
+    </dialog>}
     {message && <p role="status">{message}</p>}
   </section>;
 }

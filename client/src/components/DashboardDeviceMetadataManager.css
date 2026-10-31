@@ -15,3 +15,6 @@
 .uqp-device-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
 .uqp-device-actions button { min-height: 42px; padding: 8px 18px; max-width: 100%; white-space: normal; }
 @media (max-width: 600px) { .uqp-device-fields { grid-template-columns: minmax(0,1fr); } .uqp-device-actions button { width: 100%; } }
+.uqp-device-manager dialog { width: min(560px, calc(100vw - 48px)); max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.uqp-device-manager dialog textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.uqp-device-manager dialog button { margin: 8px 8px 0 0; white-space: normal; }

@@ -1,8 +1,9 @@
+import { lifecycleStatus } from "./deviceLifecycle";
 import { managementError } from "./querySourceManagement";
 export type DashboardMode = { mode: "LEGACY" | "QUERY_ONLY" | "QUERY_ONLY_DISABLED"; modeVersion: number; version: string };
 export type Check = { ok: boolean; code: string | null };
 export type Preflight = DashboardMode & { ready: boolean; sourceCount: number; pendingCount: number; checks: (Check & { name: string })[]; queries: (Check & { sourceKey: string })[]; delegators: (Check & { deviceId: number })[] };
-export type ManagedDevice = { id: number; deviceName: string; isActive: boolean; isArchived?: boolean; archivedAtUtc?: string | null; revokedAtUtc?: string | null; expiresAtUtc?: string | null; createdByUserId?: number; enforceIpRestriction?: boolean; allowedIp?: string | null; allowedCidr?: string | null; queryModeGrantVersion?: number | null; delegatorTokenVersion?: number | null };
+export type ManagedDevice = { suspendedAtUtc?: string | null; reenrollmentRequired?: boolean | null; id: number; deviceName: string; isActive: boolean; isArchived?: boolean; archivedAtUtc?: string | null; revokedAtUtc?: string | null; expiresAtUtc?: string | null; createdByUserId?: number; enforceIpRestriction?: boolean; allowedIp?: string | null; allowedCidr?: string | null; queryModeGrantVersion?: number | null; delegatorTokenVersion?: number | null };
 export function dashboardMode(value: DashboardMode): DashboardMode {
   if (!value || !["LEGACY", "QUERY_ONLY", "QUERY_ONLY_DISABLED"].includes(value.mode) || typeof value.version !== "string" || !/^[a-f0-9]{64}$/.test(value.version) || !Number.isSafeInteger(value.modeVersion) || value.modeVersion < 0) throw new Error("MODE_INVALID");
   return value;
@@ -28,6 +29,7 @@ export function deviceMayIssue(device: ManagedDevice, now = Date.now()) {
 }
 export function deviceStatus(device: ManagedDevice, now = Date.now()) {
   if (deviceArchived(device)) return "已封存（裝置，不代表 Dashboard 退役）";
+  if (device.suspendedAtUtc !== undefined || device.reenrollmentRequired !== undefined) return lifecycleStatus({ ...device, suspendedAtUtc: device.suspendedAtUtc ?? null, reenrollmentRequired: device.reenrollmentRequired ?? null }, now);
   if (device.revokedAtUtc || !device.isActive) return "停用／撤銷；不能藉重新整理恢復";
   if (device.expiresAtUtc !== null && (!device.expiresAtUtc || !Number.isFinite(Date.parse(device.expiresAtUtc)))) return "到期證據未知；禁止核發";
   if (!deviceMayIssue(device, now)) return "依本機時間已到期；後端仍會重驗";

@@ -1,13 +1,13 @@
 import { test, expect, type Page } from "@playwright/test";
 const initialVersion = "a".repeat(64);
-async function setup(page: Page) {
-  const state = { linkDelay:0,linkCode:"",linkStatus:503,linkReads:0,alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
+async function setup(page: Page, execute = true) {
+  const state = { safetyOnly: false, lifecycleFail: false, tokenDelay: 0, malformedToken: false, linkDelay:0,linkCode:"",linkStatus:503,linkReads:0,alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
     writes: [] as { path: string; method: string; body: any }[], reads: 0, oldWrites: 0,
     devices: [{ id: 7, dashboardId: 1, deviceName: "合成裝置", isActive: true, createdByUserId: 2, sharedWorkstationId: 3,
       enforceIpRestriction: true, allowedIp: "192.0.2.1" as string | null, allowedCidr: null, expiresAtUtc: null as string | null,
-      revokedAtUtc: null as string | null, archivedAtUtc: null as string | null, queryModeGrantVersion: null, delegatorTokenVersion: null,
+      suspendedAtUtc: null as string | null, reenrollmentRequired: null as boolean | null, revokedAtUtc: null as string | null, archivedAtUtc: null as string | null, queryModeGrantVersion: null, delegatorTokenVersion: null,
       placement: { browser: "chrome", screenNumber: 3, fullscreen: false, windowX: -2000, windowY: 100, windowWidth: 1200, windowHeight: 800 } }] };
-  await page.addInitScript(() => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY", "VIEW_QUERY", "EXECUTE_QUERY"] } })));
+  await page.addInitScript((execute) => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY", "VIEW_QUERY", ...(execute ? ["EXECUTE_QUERY"] : [])] } })), execute);
   await page.context().route(url => url.pathname.startsWith("/api/"), async route => {
     const req = route.request(), path = new URL(req.url()).pathname;
     if(path.endsWith("/device-alerts")){
@@ -18,19 +18,33 @@ async function setup(page: Page) {
     if (path.includes("/device-management/v1")) {
       const version = () => state.revision === 0 ? initialVersion : String(state.revision).repeat(64);
       if (req.method() === "GET") state.reads++;
-      else state.writes.push({ path, method: req.method(), body: req.postDataJSON() });
+      if ((state.safetyOnly && path.endsWith("/v1")) || (state.lifecycleFail && path.endsWith("/lifecycle"))) { await route.fulfill({status:state.safetyOnly?403:503,json:{error:{code:"FORBIDDEN",message:"PRIVATE STORAGE DETAIL"}}}); return; }
+      if (req.method() !== "GET") state.writes.push({ path, method: req.method(), body: req.postDataJSON() });
       if (state.flag || (req.method() !== "GET" && state.failStatus)) { const status = state.flag ? 404 : state.failStatus; await route.fulfill({ status, json: { error: { code: state.flag ? "QUERY_SOURCE_MANAGEMENT_DISABLED" : status === 409 ? "DASHBOARD_DEVICE_VERSION_CONFLICT" : status === 403 ? "FORBIDDEN" : "QUERY_SOURCE_STORAGE_UNAVAILABLE", message: "PRIVATE STORAGE DETAIL" } } }); return; }
       let extra = {};
       if (req.method() !== "GET") {
         const body = req.postDataJSON();
         if (body.expectedVersion !== version() || body.confirmed !== true) { await route.fulfill({ status: 409, json: { error: { code: "DASHBOARD_DEVICE_VERSION_CONFLICT" } } }); return; }
-        if(path.endsWith("/renew")){state.devices[0]!.expiresAtUtc=new Date(Date.parse(state.devices[0]!.expiresAtUtc!)+body.days*86400000).toISOString();extra={deviceId:7,credentialIssued:false,deviceCredentialsInvalidated:false};}
+        if (/\/(suspend|restore|credential|revoke|archive)$/.test(path)) {
+          const d = state.devices[0]!;
+          if (path.endsWith("/suspend")) { d.isActive = false; d.suspendedAtUtc = "2026-10-30T00:00:00Z"; d.reenrollmentRequired = true; }
+          if (path.endsWith("/restore")) { d.isActive = true; d.suspendedAtUtc = null; d.reenrollmentRequired = true; }
+          if (path.endsWith("/revoke")) { state.revoked = true; d.isActive = false; d.suspendedAtUtc = null; d.reenrollmentRequired = null; }
+          if (path.endsWith("/archive")) state.archived = true;
+          if (path.endsWith("/credential")) {
+            state.revision++;
+            if (state.tokenDelay) await new Promise(r => setTimeout(r, state.tokenDelay));
+            await route.fulfill({json:{dashboardId:1,deviceId:7,version:version(),token:state.malformedToken?"invalid":"L".repeat(43),credentialIssued:true,reenrollmentRequired:true}}); return;
+          }
+          extra={deviceId:7,credentialIssued:false,deviceCredentialsInvalidated:true};
+        }
+        else if(path.endsWith("/renew")){state.devices[0]!.expiresAtUtc=new Date(Date.parse(state.devices[0]!.expiresAtUtc!)+body.days*86400000).toISOString();extra={deviceId:7,credentialIssued:false,deviceCredentialsInvalidated:false};}
         else if (req.method() === "POST") { state.devices.push({ ...state.devices[0]!, ...body.metadata, id: 8, sharedWorkstationId: null, createdByUserId: 1 }); extra = { deviceId: 8, credentialIssued: false }; }
         else if (path.endsWith("/metadata")) { Object.assign(state.devices[0]!, body.metadata); extra = { deviceId: 7, deviceCredentialsInvalidated: true }; }
         else { state.devices[0]!.placement = body.placement; extra = { deviceId: 7, deviceCredentialsInvalidated: false }; }
         state.revision++;
       }
-      await route.fulfill({ json: { dashboardId: 1, version: version(), canCreate: state.createAllowed, devices: state.devices.map(d => ({ ...d, isActive: !state.revoked, revokedAtUtc: state.revoked ? "2020-01-01T00:00:00Z" : null, archivedAtUtc: state.archived ? "2020-01-01T00:00:00Z" : null, expiresAtUtc: state.expired ? "2000-01-01T00:00:00Z" : d.expiresAtUtc })), ...extra } }); return;
+      await route.fulfill({ json: { dashboardId: 1, version: version(), canCreate: state.createAllowed, devices: state.devices.map(d => ({ ...d, isActive: !state.revoked && d.isActive, revokedAtUtc: state.revoked ? "2020-01-01T00:00:00Z" : null, archivedAtUtc: state.archived ? "2020-01-01T00:00:00Z" : null, expiresAtUtc: state.expired ? "2000-01-01T00:00:00Z" : d.expiresAtUtc })), ...extra } }); return;
     }
     if (req.method() !== "GET" && path.includes("/devices")) state.oldWrites++;
     if (path.endsWith("/query-mode/v1")) { await route.fulfill({ status: 404, json: { error: { code: "QUERY_DEVICE_PLAYBACK_DISABLED" } } }); return; }
@@ -45,7 +59,7 @@ async function setup(page: Page) {
   page.on("dialog", dialog => void dialog.accept());
   await page.goto("/designer/dashboards"); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
   const panel = page.getByRole("region", { name: "版本化裝置基本管理" });
-  await expect(panel.getByRole("button", { name: "建立未授權裝置", exact: true })).toBeEnabled();
+  await expect(panel.getByRole("button", { name: execute ? "建立未授權裝置" : "暫停 合成裝置", exact: true })).toBeEnabled();
   return { state, panel };
 }
 test("create metadata-only device while playback flag is off; explicit delegator, no credential or Legacy fallback", async ({ page }) => {
@@ -198,3 +212,117 @@ test("HTTP manual URL copies with visible-field fallback and makes persistence l
  await expect(panel.getByText(/HTTP 僅供手動播放/)).toBeVisible();await panel.getByRole("button",{name:"複製播放網址",exact:true}).click();await expect(panel.getByText("已複製播放網址。",{exact:true})).toBeVisible();expect(await panel.getByRole("textbox",{name:"裝置 7 播放網址",exact:true}).evaluate((el:HTMLInputElement)=>el.selectionEnd!-el.selectionStart!)).toBe(state.linkUrl.length);
 });
 test("reminder read failure is explicit and never presented as zero expiring devices",async({page})=>{const{state,panel}=await setup(page);state.alertFail=true;await panel.getByRole("button",{name:"重新載入裝置設定"}).click();await expect(panel.getByText(/到期提醒暫時無法讀取/)).toBeVisible();await expect(panel.getByText(/到期提醒：30 天內/)).toHaveCount(0);expect(state.writes).toHaveLength(0);});
+
+test("lifecycle pause confirmation, restore pending, credential once and archive use complete versions", async ({page}) => {
+  const {state,panel}=await setup(page);
+  const lifecycle=panel.getByLabel("裝置 7 生命週期");
+  await expect(lifecycle).toContainText("啟用設定／無法驗證播放授權");
+  page.removeAllListeners("dialog");
+  page.once("dialog", d=>{expect(d.message()).toContain("舊 Token");void d.dismiss();});
+  await lifecycle.getByRole("button",{name:"暫停 合成裝置",exact:true}).click(); expect(state.writes).toHaveLength(0);
+  page.on("dialog",d=>void d.accept());
+  await lifecycle.getByRole("button",{name:"暫停 合成裝置",exact:true}).click();
+  await expect(lifecycle).toContainText("已暫停");
+  expect(state.writes[0]!.body).toEqual({expectedVersion:initialVersion,confirmed:true});
+  await expect(lifecycle.getByRole("button",{name:"恢復 合成裝置",exact:true})).toBeDisabled();
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await lifecycle.getByRole("button",{name:"恢復 合成裝置",exact:true}).click();
+  await expect(lifecycle).toContainText("待重新授權");
+  await expect(lifecycle).not.toContainText("啟用設定");
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await lifecycle.getByRole("button",{name:"核發新 Token 合成裝置",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"一次性新 Token"});
+  await expect(dialog.getByLabel("新 Token（僅顯示一次）")).toHaveValue("L".repeat(43));
+  await expect(dialog).toContainText("原 BAT 專用瀏覽器");
+  await page.evaluate(()=>Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async(value:string)=>{(window as any).__copied=value;}}}));
+  await dialog.getByRole("button",{name:"複製新 Token",exact:true}).click();
+  await expect(dialog).toContainText("已複製 Token");
+  expect(await page.evaluate(()=>(window as any).__copied)).toBe("L".repeat(43));
+  expect(await page.evaluate(()=>[...Object.values(localStorage),...Object.values(sessionStorage)].join(" "))).not.toContain("L".repeat(43));
+  expect(page.url()).not.toContain("L".repeat(43));
+  await dialog.getByRole("button",{name:"關閉並清除新 Token"}).click();
+  expect(await page.locator("body").innerHTML()).not.toContain("L".repeat(43));
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await expect(page.getByLabel("新 Token（僅顯示一次）")).toHaveCount(0);
+  page.removeAllListeners("dialog");
+  page.once("dialog",d=>{expect(d.message()).toContain("原 Token 不可恢復");void d.dismiss();});
+  await lifecycle.getByRole("button",{name:"永久撤銷 合成裝置",exact:true}).click();
+  expect(state.writes).toHaveLength(3);
+  page.on("dialog",d=>void d.accept());
+  await lifecycle.getByRole("button",{name:"永久撤銷 合成裝置",exact:true}).click();
+  await expect(lifecycle).toContainText("已撤銷（永久）");
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await lifecycle.getByRole("button",{name:"封存 合成裝置",exact:true}).click();
+  await expect(lifecycle).toContainText("已封存");
+  await expect(lifecycle.getByRole("button")).toHaveCount(0);
+  expect(state.writes.map(w=>w.path.split("/").at(-1))).toEqual(["suspend","restore","credential","revoke","archive"]);
+  expect(state.writes.every((w,i)=>w.method==="POST"&&w.body.confirmed===true&&w.body.expectedVersion===(i===0?initialVersion:String(i).repeat(64)))).toBe(true);
+});
+for (const status of [401,403,409,503]) test(`lifecycle ${status} invalidates version without retry or private error text`,async({page})=>{
+  const {state,panel}=await setup(page);state.failStatus=status;
+  await panel.getByRole("button",{name:"暫停 合成裝置",exact:true}).click();
+  await expect(panel).toContainText("請重新載入後再次確認，不會自動重送");
+  await expect(panel.getByRole("button",{name:"暫停 合成裝置",exact:true})).toBeDisabled();
+  expect(state.writes).toHaveLength(1);await expect(panel).not.toContainText("PRIVATE STORAGE DETAIL");
+  state.failStatus=0;await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await panel.getByRole("button",{name:"暫停 合成裝置",exact:true}).click();
+  await expect(panel.getByLabel("裝置 7 生命週期")).toContainText("已暫停");expect(state.writes).toHaveLength(2);
+});
+test("DESIGN_QUERY safety read works when full Query ACL read is denied",async({page})=>{
+  const {state,panel}=await setup(page,false);state.safetyOnly=true;
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await expect(panel.getByRole("button",{name:"暫停 合成裝置",exact:true})).toBeEnabled();
+  await panel.getByRole("button",{name:"暫停 合成裝置",exact:true}).click();
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await expect(panel.getByRole("button",{name:"恢復 合成裝置",exact:true})).toHaveCount(0);
+  await expect(panel.getByRole("button",{name:"核發新 Token 合成裝置",exact:true})).toHaveCount(0);
+  await expect(panel.getByRole("button",{name:"永久撤銷 合成裝置",exact:true})).toBeEnabled();
+});
+for(const event of ["pagehide","configuration"] as const) test(`one-time Token clears on ${event} and stale credential response is ignored`,async({page})=>{
+  const {state,panel}=await setup(page);state.devices[0]!.reenrollmentRequired=true;
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await panel.getByRole("button",{name:"核發新 Token 合成裝置",exact:true}).click();
+  await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toBeVisible();
+  await page.evaluate(event=>window.dispatchEvent(event==="pagehide"?new Event("pagehide"):new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId:1}})),event);
+  await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toHaveCount(0);
+  expect(await page.locator("body").innerHTML()).not.toContain("L".repeat(43));
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();state.tokenDelay=300;
+  await panel.getByRole("button",{name:"核發新 Token 合成裝置",exact:true}).click();
+  await page.evaluate(()=>window.dispatchEvent(new Event("pagehide")));
+  await page.waitForTimeout(400);await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toHaveCount(0);
+});
+test("missing lifecycle schema offers no fallback write; malformed credential never displays",async({page})=>{
+  const {state,panel}=await setup(page);state.lifecycleFail=true;
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await expect(panel.getByRole("button",{name:"暫停 合成裝置",exact:true})).toHaveCount(0);expect(state.writes).toHaveLength(0);
+  state.lifecycleFail=false;state.devices[0]!.reenrollmentRequired=true;state.malformedToken=true;
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await panel.getByRole("button",{name:"核發新 Token 合成裝置",exact:true}).click();
+  await expect(panel).toContainText("不會自動重送");await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toHaveCount(0);
+});
+for (const close of ["escape","navigation","reload"] as const) test(`lifecycle Token cannot be recovered after ${close}`,async({page})=>{
+  const {state,panel}=await setup(page);state.devices[0]!.reenrollmentRequired=true;
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await panel.getByRole("button",{name:"核發新 Token 合成裝置",exact:true}).click();
+  await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toBeVisible();
+  if(close==="escape") await page.keyboard.press("Escape");
+  else if(close==="navigation") await page.goto("/dashboards");
+  else await page.reload();
+  await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toHaveCount(0);
+  expect(await page.locator("body").innerHTML()).not.toContain("L".repeat(43));
+  expect(state.writes.filter(w=>w.path.endsWith("/credential"))).toHaveLength(1);
+});
+test("360px lifecycle dialog and denied clipboard preserve one-time manual copy",async({page})=>{
+  await page.setViewportSize({width:360,height:800});
+  const {state,panel}=await setup(page);state.devices[0]!.reenrollmentRequired=true;
+  await page.evaluate(()=>{Object.defineProperty(navigator,"clipboard",{configurable:true,value:{writeText:async()=>{throw new Error("denied");}}});});
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+  await panel.getByRole("button",{name:"核發新 Token 合成裝置",exact:true}).click();
+  const dialog=page.getByRole("dialog",{name:"一次性新 Token"});
+  await dialog.getByRole("button",{name:"複製新 Token",exact:true}).click();
+  await expect(dialog).toContainText("無法自動複製，請選取 Token 手動複製");
+  await expect(dialog.getByLabel("新 Token（僅顯示一次）")).toHaveValue("L".repeat(43));
+  const box=await dialog.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(360);
+  await dialog.getByRole("button",{name:"關閉並清除新 Token"}).click();
+  expect(await page.locator("body").innerHTML()).not.toContain("L".repeat(43));
+});

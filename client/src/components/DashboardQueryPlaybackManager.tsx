@@ -1,14 +1,16 @@
+import { useAuth } from "../auth/AuthContext";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
 import { DashboardDeviceMetadataManager } from "./DashboardDeviceMetadataManager";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { trustedConfiguration, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
-import { playbackPlacement, type PlaybackPlacement, dashboardMode, dashboardPreflight, dashboardOperationError, deviceArchived, deviceMayIssue, deviceStatus, type DashboardMode, type Preflight, type Check, type ManagedDevice } from "../dashboard/managementStatus";
+import { playbackPlacement, type PlaybackPlacement, dashboardMode, dashboardPreflight, dashboardOperationError, deviceMayIssue, deviceStatus, type DashboardMode, type Preflight, type Check, type ManagedDevice } from "../dashboard/managementStatus";
 import { forgetDashboardToken, prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { DashboardLegacyDisable } from "./DashboardLegacyDisable";
 const labels: Record<string, string> = { inactive: "停用狀態", capacity: "含 PRIMARY 最多 8 個來源", primaryConversion: "PRIMARY 資料來源已完成轉換", bindings: "來源已轉換與識別有效", references: "元件來源引用", devices: "有效裝置綁定" };
 export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
+  const { hasPermission } = useAuth();
   const [mode, setMode] = useState<DashboardMode | null>(null), [configuration, setConfiguration] = useState<QuerySourceConfiguration | null>(null);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [devices, setDevices] = useState<ManagedDevice[]>([]), [busy, setBusy] = useState(false), [message, setMessage] = useState("");
@@ -101,7 +103,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     if (issued.current && !devices.some(device => device.id === issued.current!.deviceId && deviceMayIssue(device, now))) clearCredential();
   }, [devices, now]);
   const canActivate = readMessages.length === 0 && !!mode && !!configuration?.editable && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
-  const canIssue = (device: ManagedDevice, time = Date.now()) => readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && deviceMayIssue(device, time);
+  const canIssue = (device: ManagedDevice, time = Date.now()) => hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time);
   function failed(error: unknown) { clearCredential(); setPreflight(null); setMode(null); setMessage(dashboardOperationError(error)); }
   async function check() {
     if (busy || !mode) return;
@@ -124,20 +126,15 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     } catch (error) { if (current === epoch.current) failed(error); }
     finally { if (current === epoch.current) setBusy(false); }
   }
-  async function credential(device: ManagedDevice, revoke = false) {
-    if (busy || !mode || (!revoke && !canIssue(device)) || !window.confirm(revoke ? `撤銷裝置「${device.deviceName}」？不能透過重新整理恢復原憑證。` : `明確重新授權「${device.deviceName}」？舊憑證立即失效；新 Token 僅顯示一次，請於關閉前複製。`)) return;
+  async function credential(device: ManagedDevice) {
+    if (busy || !mode || !canIssue(device) || !window.confirm(`明確重新授權「${device.deviceName}」？舊憑證立即失效；新 Token 僅顯示一次，請於關閉前複製。`)) return;
     const current = epoch.current; clearCredential(); setBusy(true); setMessage("");
     try {
-      const result = await apiRequest<{ token?: string; device?: { id: number; dashboardId: number }; deviceId?: number; revoked?: boolean }>(`${base}/devices/${device.id}/credential`, { method: revoke ? "DELETE" : "POST", body: JSON.stringify({ expectedVersion: mode.version }) }, accessToken);
+      const result = await apiRequest<{ token?: string; device?: { id: number; dashboardId: number }; deviceId?: number; revoked?: boolean }>(`${base}/devices/${device.id}/credential`, { method: "POST", body: JSON.stringify({ expectedVersion: mode.version }) }, accessToken);
       if (current !== epoch.current) return;
-      if (revoke) {
-        if (result.deviceId !== device.id || result.revoked !== true) throw new Error("REVOKE_INVALID");
-        setDevices(previous => previous.map(d => d.id === device.id ? { ...d, isActive: false } : d)); setMessage("裝置已撤銷，請勿重用原憑證。");
-      } else {
-        if (result.device?.id !== device.id || result.device.dashboardId !== dashboardId || typeof result.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(result.token)) throw new Error("CREDENTIAL_INVALID");
-        issued.current = { deviceId: device.id, token: result.token }; setIssuedDeviceId(device.id);
-        setMessage("核發成功；請在此一次性視窗複製 Token，於播放裝置手動輸入。");
-      }
+      if (result.device?.id !== device.id || result.device.dashboardId !== dashboardId || typeof result.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(result.token)) throw new Error("CREDENTIAL_INVALID");
+      issued.current = { deviceId: device.id, token: result.token }; setIssuedDeviceId(device.id);
+      setMessage("核發成功；請在此一次性視窗複製 Token，於播放裝置手動輸入。");
       setPreflight(null);
     } catch (error) { if (current === epoch.current) failed(error); }
     finally { if (current === epoch.current) setBusy(false); }
@@ -184,7 +181,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{devices.map(device => <tr key={device.id}>
       <td>{device.deviceName}（ID {device.id}）</td><td>{deviceStatus(device, now)}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc??"尚未提供"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
       <td><button type="button" disabled={busy} onClick={() => void readPlacement(device.id)}>檢視 {device.deviceName} 播放位置（唯讀）</button><button type="button" disabled={busy || !canIssue(device, now)} onClick={() => void credential(device)}>核發／重新核發 {device.deviceName}</button>
-      <button type="button" disabled={busy || !mode || mode.mode === "LEGACY" || !device.isActive || deviceArchived(device)} onClick={() => void credential(device, true)}>撤銷 {device.deviceName}</button></td>
+      <span>暫停、永久撤銷與封存請使用上方版本化裝置管理區。</span></td>
     </tr>)}</tbody></table>
     {placement && <p role="status">裝置 {placement.deviceId} 已保存播放位置（唯讀）：{placement.settings.browser}，螢幕 {placement.settings.screenNumber}，{placement.settings.fullscreen ? "全螢幕" : "視窗"}，位置 {placement.settings.windowX}／{placement.settings.windowY}，尺寸 {placement.settings.windowWidth}×{placement.settings.windowHeight}。修改須先補齊版本化安全 API。</p>}
     {issuedDeviceId !== null && issued.current && <dialog ref={tokenDialog} aria-labelledby="issued-device-token-title"
