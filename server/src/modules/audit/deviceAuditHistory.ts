@@ -57,8 +57,8 @@ export function deviceHistorySql(source:"LIVE"|"ARCHIVE") {
  AND (@endUtc IS NULL OR a.CreatedAtUtc<@endUtc)
  AND (@username=N'' OR ${archive?"a":"u"}.Username LIKE @usernamePattern ESCAPE N'\\');
  SELECT COUNT_BIG(*) AS Total FROM #DeviceHistory;
- SELECT CONVERT(varchar(20),Id) AS Id,CreatedAtUtc,EventType,Status,Username,DisplayName,ErrorCode FROM #DeviceHistory
- ORDER BY CreatedAtUtc DESC,Id DESC OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
+ SELECT CONVERT(varchar(20),h.Id) AS Id,h.CreatedAtUtc,h.EventType,h.Status,h.Username,h.DisplayName,h.ErrorCode FROM #DeviceHistory h
+ ORDER BY h.CreatedAtUtc DESC,h.Id DESC OFFSET @offset ROWS FETCH NEXT @pageSize ROWS ONLY;
  DROP TABLE #DeviceHistory;`;
 }
 export async function readDeviceAuditHistory(request:sql.Request,id:number,deviceId:number,q:DeviceHistoryQuery):Promise<DeviceHistoryResult>{
