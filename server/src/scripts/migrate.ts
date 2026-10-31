@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import sql from "mssql";
 import { getPlatformDbPool, closePlatformDbPool } from "../config/database.js";
 import { logger } from "../config/logger.js";
+import { deviceLifecycleSchemaSql } from "../modules/dashboard/dashboardDeviceLifecycleSchema.js";
 
 const migrationsDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -19,6 +20,10 @@ function splitBatches(script: string): string[] {
 
 
 const manuallyVerifiableMigrations: Record<string, string> = {
+  "926_dashboard_device_lifecycle.sql": `BEGIN TRY
+    ${deviceLifecycleSchemaSql}
+    SELECT 1 AS IsComplete;
+  END TRY BEGIN CATCH SELECT 0 AS IsComplete; END CATCH;`,
   "900_dashboard_device_archive.sql": `
     SELECT CASE WHEN
       COL_LENGTH('uqp.DashboardDisplayDevice','ArchivedAtUtc') IS NOT NULL

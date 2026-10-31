@@ -4,6 +4,7 @@ import sql from "mssql";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { getPlatformDbPool } from "../../config/database.js";
 import { matchesIpRestriction, normalizeClientIp } from "./dashboardDeviceIp.js";
+import { deviceLifecycleBlocksPlayback } from "./dashboardDeviceLifecycle.js";
 
 async function requirePool() {
   const pool = await getPlatformDbPool();
@@ -137,16 +138,18 @@ export async function updateDashboardDisplayDeviceSettings(input: {
     .input("allowedIp", sql.NVarChar(64), input.enforceIpRestriction ? input.allowedIp?.trim() || null : null)
     .input("allowedCidr", sql.NVarChar(64), input.enforceIpRestriction ? input.allowedCidr?.trim() || null : null)
     .query(`
+      DECLARE @ChangedDevice TABLE(Id BIGINT);
       UPDATE uqp.DashboardDisplayDevice
       SET DeviceName=@deviceName,
           EnforceIpRestriction=@enforceIpRestriction,
           AllowedIp=@allowedIp,
           AllowedCidr=@allowedCidr
-      OUTPUT INSERTED.*
+      OUTPUT INSERTED.Id INTO @ChangedDevice
       WHERE Id=@deviceId
         AND DashboardId=@dashboardId
         AND IsActive=1
-        AND ArchivedAtUtc IS NULL
+        AND ArchivedAtUtc IS NULL;
+      SELECT d.* FROM uqp.DashboardDisplayDevice d INNER JOIN @ChangedDevice c ON c.Id=d.Id
     `);
 
   if (!result.recordset[0]) {
@@ -175,13 +178,15 @@ export async function reissueDashboardDisplayDeviceToken(
     .input("deviceId", sql.BigInt, deviceId)
     .input("tokenHash", sql.Char(64), tokenHash)
     .query(`
+      DECLARE @ChangedDevice TABLE(Id BIGINT);
       UPDATE uqp.DashboardDisplayDevice
       SET TokenHash=@tokenHash,
           LastUsedAtUtc=NULL
-      OUTPUT INSERTED.*
+      OUTPUT INSERTED.Id INTO @ChangedDevice
       WHERE Id=@deviceId
         AND DashboardId=@dashboardId
-        AND IsActive=1
+        AND IsActive=1;
+      SELECT d.* FROM uqp.DashboardDisplayDevice d INNER JOIN @ChangedDevice c ON c.Id=d.Id
     `);
 
   if (!result.recordset[0]) {
@@ -207,6 +212,7 @@ export async function renewDashboardDisplayDevice(
     .input("deviceId", sql.BigInt, deviceId)
     .input("extendDays", sql.Int, extendDays)
     .query(`
+      DECLARE @ChangedDevice TABLE(Id BIGINT);
       UPDATE uqp.DashboardDisplayDevice
       SET ExpiresAtUtc=DATEADD(
             DAY,
@@ -217,12 +223,13 @@ export async function renewDashboardDisplayDevice(
               ELSE SYSUTCDATETIME()
             END
           )
-      OUTPUT INSERTED.*
+      OUTPUT INSERTED.Id INTO @ChangedDevice
       WHERE Id=@deviceId
         AND DashboardId=@dashboardId
         AND IsActive=1 AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL
         AND ExpiresAtUtc IS NOT NULL AND ExpiresAtUtc>SYSUTCDATETIME()
-        AND DATEADD(DAY,@extendDays,ExpiresAtUtc)<=DATEADD(DAY,365,SYSUTCDATETIME())
+        AND DATEADD(DAY,@extendDays,ExpiresAtUtc)<=DATEADD(DAY,365,SYSUTCDATETIME());
+      SELECT d.* FROM uqp.DashboardDisplayDevice d INNER JOIN @ChangedDevice c ON c.Id=d.Id
     `);
 
   if (!result.recordset[0]) {
@@ -271,6 +278,7 @@ export async function checkDashboardDisplayDevice(
 
   const row = result.recordset[0];
   if (!row) return { status: "INVALID_TOKEN" as const };
+  if (deviceLifecycleBlocksPlayback(row)) return { status: "DISABLED" as const };
   if (!Boolean(row.IsActive) || row.RevokedAtUtc != null || row.ArchivedAtUtc != null) return { status: "DISABLED" as const };
   if (row.ExpiresAtUtc != null && new Date(row.ExpiresAtUtc).getTime() <= Date.now()) return { status: "EXPIRED" as const };
 

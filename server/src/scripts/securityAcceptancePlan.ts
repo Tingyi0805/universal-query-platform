@@ -14,7 +14,7 @@ export const prerequisites: Record<number, number[]> = {
   906: [], 907: [3], 908: [906], 909: [25, 906], 910: [3, 6],
   911: [910], 912: [910], 913: [3, 20], 914: [913], 915: [912, 914],
   916: [1, 6, 25, 902, 904, 906, 915], 917: [5, 20, 914], 918: [25, 917],
-  919: [3, 6, 7, 907, 910, 913], 920: [3, 907, 910, 919], 921: [2, 3, 4, 9, 10, 13, 920],
+  919: [3, 6, 7, 907, 910, 913], 920: [3, 907, 910, 919], 921: [2, 3, 4, 9, 10, 13, 920], 926: [25, 900, 918],
 };
 export const migrationsDirectory = fileURLToPath(new URL("../../../database/migrations/", import.meta.url));
 export const acceptanceDirectory = fileURLToPath(new URL("../../../database/acceptance/", import.meta.url));
