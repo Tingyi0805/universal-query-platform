@@ -8,6 +8,13 @@ async function setup(page:Page){
     const req=route.request(),path=new URL(req.url()).pathname;
     if(req.method()!=="GET")state.writes.push({path,method:req.method(),body:req.postDataJSON()});
     if(state.disabled && path.includes("/query-mode/v1")){await route.fulfill({status:404,json:{error:{code:"QUERY_DEVICE_PLAYBACK_DISABLED",message:"SQL SECRET TOKEN"}}});return;}
+    if(path.endsWith("/device-management/v1/list")) {
+      await route.fulfill({json:{items:[{id:7,dashboardId:1,deviceName:"合成平板",isActive:!state.revoked,createdByUserId:1,sharedWorkstationId:null,enforceIpRestriction:false,allowedIp:null,allowedCidr:null,expiresAtUtc:state.expiry??null,suspendedAtUtc:null,reenrollmentRequired:null,revokedAtUtc:state.revoked?"2026-10-20T00:00:00Z":null,archivedAtUtc:state.archived?"2026-10-20T00:00:00Z":null,status:state.archived?"ARCHIVED":state.revoked?"REVOKED":"UNVERIFIED"}],total:1,page:1,pageSize:20,snapshot:"list-query-mode",asOfUtc:"2026-10-31T00:00:00Z",validUntilUtc:"2026-10-31T00:05:00Z",sort:"ID_ASC",consistency:"CONTENT_CHECKED_UNTIL_EXPIRY",writeVersionIncluded:false}});return;
+    }
+    if(path.includes("/device-management/v1")) {
+      if(path.endsWith("/revoke")) state.revoked=true;
+      await route.fulfill({json:{dashboardId:1,version,canCreate:false,devices:[{id:7,dashboardId:1,deviceName:"合成平板",isActive:!state.revoked,createdByUserId:1,sharedWorkstationId:null,enforceIpRestriction:false,allowedIp:null,allowedCidr:null,expiresAtUtc:state.expiry ?? null,suspendedAtUtc:null,reenrollmentRequired:null,revokedAtUtc:state.revoked?"2026-10-20T00:00:00Z":null,archivedAtUtc:state.archived?"2026-10-20T00:00:00Z":null,placement:null}],...(path.endsWith("/revoke")?{deviceId:7,credentialIssued:false,deviceCredentialsInvalidated:true}:{})}});return;
+    }
     if(path.endsWith("/preflight")){
       if(state.preflightDenied){await route.fulfill({status:403,json:{error:{code:"FORBIDDEN",message:"SQL SECRET TOKEN"}}});return;}
       await route.fulfill({json:{mode:state.mode,modeVersion:state.revision,version,ready:state.ready&&!state.pending&&!state.missingPublicPolicy,sourceCount:state.pending?2:1,pendingCount:state.pending?1:0,
@@ -53,9 +60,11 @@ test("manual preflight, enable, credential handoff, reload waiting, revoke and d
   await expect(popup.getByText("合○測試",{exact:true})).toBeVisible();expect(popup.url()).not.toContain(token);expect(new URL(popup.url()).pathname).toBe("/display/dashboards/1");
   await popup.reload();await expect(popup.getByLabel("Device Token",{exact:true})).toBeVisible();await expect(popup.getByText("合○測試",{exact:true})).toHaveCount(0);
   await page.getByRole("button",{name:"關閉並清除 Token",exact:true}).click();
-  await page.getByRole("button",{name:"撤銷 合成平板",exact:true}).click();
-  await expect(page.getByText("裝置已撤銷，請勿重用原憑證。")).toBeVisible();
+  await page.getByRole("button",{name:"重新載入裝置設定",exact:true}).click();
+  await page.getByRole("button",{name:"永久撤銷 合成平板",exact:true}).click();
+  await expect(page.getByText("永久撤銷已完成；請重新載入後再操作。")).toBeVisible();
   await expect(page.getByRole("button",{name:"顯示本次憑證",exact:true})).toHaveCount(0);
+  await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
   await page.getByRole("button",{name:"停用 Query-only",exact:true}).click();await expect(page.getByText(/目前模式：QUERY_ONLY_DISABLED/)).toBeVisible();
   expect(state.writes.filter(item=>item.path.includes("query-mode/v1")).every(item=>item.body.expectedVersion===version)).toBe(true);
 });
@@ -88,8 +97,9 @@ test("expiry, archive and missing expiry evidence deny issuance without changing
     await expect(page.getByText(/目前模式：QUERY_ONLY/)).toBeVisible();
   }
   state.archived = true; state.expiry = null; await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
-  await expect(page.getByText("已封存（裝置，不代表 Dashboard 退役）",{exact:true})).toBeVisible();
-  await expect(page.getByRole("button",{name:"撤銷 合成平板",exact:true})).toBeDisabled(); expect(state.writes).toHaveLength(0);
+  await expect(page.getByLabel("裝置 7 生命週期")).toContainText("已封存");
+  await page.getByRole("button",{name:"重新載入裝置設定",exact:true}).click();
+  await expect(page.getByRole("button",{name:"永久撤銷 合成平板",exact:true})).toHaveCount(0); expect(state.writes).toHaveLength(0);
 });
 test("pending sources and missing Dataset public policy cannot become activation evidence", async ({page}) => {
   const state = await setup(page); state.pending = true; state.missingPublicPolicy = true;
@@ -113,7 +123,8 @@ test("configuration refresh clears the one-time credential and revoked devices r
   await page.evaluate(() => window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId: 1, origin: "external" } })));
   await expect(page.getByRole("button",{name:"關閉並清除 Token",exact:true})).toHaveCount(0);
   expect(await page.locator("body").innerHTML()).not.toContain(token);
-  await page.getByRole("button",{name:"撤銷 合成平板",exact:true}).click(); await expect(page.getByText("裝置已撤銷，請勿重用原憑證。")).toBeVisible();
+  await page.getByRole("button",{name:"重新載入裝置設定",exact:true}).click();
+  await page.getByRole("button",{name:"永久撤銷 合成平板",exact:true}).click(); await expect(page.getByText("永久撤銷已完成；請重新載入後再操作。")).toBeVisible();
   await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await expect(page.getByRole("button",{name:"核發／重新核發 合成平板",exact:true})).toBeDisabled();
   const storage=await page.evaluate(()=>[...Object.values(localStorage),...Object.values(sessionStorage)].join(" ")); expect(storage).not.toContain(token);
   expect(state.writes.filter(w=>w.path.endsWith("/credential")&&w.method==="POST")).toHaveLength(1);

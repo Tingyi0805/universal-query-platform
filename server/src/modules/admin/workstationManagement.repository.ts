@@ -1,3 +1,4 @@
+import { devicePendingInvalidationClause } from "../dashboard/dashboardDeviceCredentialWriters.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { listSharedWorkstations } from "./sharedWorkstation.repository.js";
@@ -86,6 +87,7 @@ export function createWorkstationManagementRepository(deps: ManagementDeps) {
     id: number,
     disableDevices = true,
   ) {
+    const lifecycleClause=disableDevices?await devicePendingInvalidationClause(deps.request(tx),true):"";
     await deps.request(tx).input("id", sql.BigInt, id).query(`
       UPDATE uqp.SharedWorkstation SET CredentialVersion=CredentialVersion+1,PinLoginEnabled=0,UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@id;
       UPDATE uqp.SharedWorkstationCredential SET IsRevoked=1,RevokedAtUtc=SYSUTCDATETIME() WHERE WorkstationId=@id AND IsRevoked=0;
@@ -93,8 +95,8 @@ export function createWorkstationManagementRepository(deps: ManagementDeps) {
       ${
         disableDevices
           ? `UPDATE uqp.DashboardDisplayDevice SET IsActive=0,RevokedAtUtc=SYSUTCDATETIME(),
-        TokenHash=CONVERT(VARCHAR(64),HASHBYTES('SHA2_256',CONVERT(VARBINARY(16),NEWID())),2)
-        WHERE SharedWorkstationId=@id;`
+        ${lifecycleClause}TokenHash=CONVERT(VARCHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2)
+        WHERE SharedWorkstationId=@id AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL;`
           : ""
       }`);
   }

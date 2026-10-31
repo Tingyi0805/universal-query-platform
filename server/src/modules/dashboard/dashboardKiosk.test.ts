@@ -3,13 +3,14 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
+import { env } from "../../config/env.js";
 import { kioskFixture } from "./dashboardKiosk.testFixture.js";
 import { kioskCodec,kioskOrigin } from "./dashboardKiosk.routes.js";
 import { kioskLauncher,kioskPlaybackLink,manualPlaybackLink } from "./dashboardKioskLauncher.js";
 async function setup(t: import("node:test").TestContext) {
  const f=kioskFixture();f.server.listen(0,"127.0.0.1");await once(f.server,"listening");t.after(()=>{f.server.closeAllConnections();f.server.close();});const address=f.server.address() as import("node:net").AddressInfo;
  const request=(path:string,body:unknown={deviceId:7},headers:Record<string,string>={},method="POST")=>new Promise<Response>((resolve,reject)=>{
-  const req=httpRequest(`http://127.0.0.1:${address.port}/api/dashboards/device/1/${path}`,{method,headers:{host:"kiosk.test",origin:"https://kiosk.test","content-type":"application/json","x-uqp-kiosk":"1","x-forwarded-proto":"https","sec-fetch-site":"same-origin",...headers}},res=>{
+  const req=httpRequest(`http://127.0.0.1:${address.port}/api/dashboards/device/1/${path}`,{method,headers:{host:"kiosk.test",origin:"https://kiosk.test","content-type":"application/json","x-uqp-kiosk":"1","x-forwarded-proto":"https","x-forwarded-for":"127.0.0.1","sec-fetch-site":"same-origin",...headers}},res=>{
    const parts:Buffer[]=[];res.on("data",data=>parts.push(data));res.on("end",()=>{const h=new Headers();for(let i=0;i<res.rawHeaders.length;i+=2)h.append(res.rawHeaders[i]!,res.rawHeaders[i+1]!);resolve(new Response(Buffer.concat(parts),{status:res.statusCode,headers:h}));});
   });req.on("error",reject);req.end(method==="POST"?JSON.stringify(body):undefined);
  });
@@ -44,6 +45,25 @@ test("wrong device, duplicate cookie, mixed token and expired session fail close
 });
 test("explicit forget removes cookies without reissue or revocation",async t=>{const f=await setup(t),r=await f.request("kiosk/forget",{deviceId:7},{cookie:cookies(await f.enroll())});assert.equal(r.status,200);assert.equal(r.headers.getSetCookie().length,2);assert(!f.state.revoked);});
 test("device expiry caps persistent and short cookie lifetime",async t=>{const f=await setup(t);f.state.expires=Date.now()+10000;const r=await f.enroll();assert.equal(r.status,200);assert((await r.json()).authorizationExpiresAt<=f.state.expires);const value=cookies(r).split("; ")[0]!.split("=")[1]!;assert.equal(kioskCodec(f.config.origin,f.config.key).open(value,"enrollment",1,7).expires,f.state.expires);});
+test("ARR trust/IP ACL/patient Audit agree; forwarded Host is pinned to the public origin",async t=>{
+ const old={enabled:env.TRUST_PROXY_ENABLED,addresses:env.TRUSTED_PROXY_ADDRESSES};t.after(()=>{env.TRUST_PROXY_ENABLED=old.enabled;env.TRUSTED_PROXY_ADDRESSES=old.addresses;});
+ env.TRUST_PROXY_ENABLED=true;env.TRUSTED_PROXY_ADDRESSES=["127.0.0.1","::1"];
+ const f=await setup(t);f.state.requiredIp="2001:db8::7";
+ const forwarded={"x-forwarded-for":"192.0.2.99, [2001:0DB8::7]:60000","x-forwarded-host":"kiosk.test",host:"127.0.0.1:3200"};
+ const enrolled=await f.request("kiosk/enrollment",{deviceId:7,token:f.state.token},forwarded);assert.equal(enrolled.status,200);assert.equal(f.state.seenIp,"2001:db8::7");
+ const page=await f.request("page",{page:1},{...forwarded,cookie:cookies(enrolled),"x-uqp-device-id":"7"});assert.equal(page.status,200);assert.equal(f.state.patientAuditIp,"2001:db8::7");
+ const delivered=f.state.delivered;
+ const fakeHost=await f.request("kiosk/session",{deviceId:7},{...forwarded,"x-forwarded-host":"evil.test",cookie:cookies(enrolled)});assert.equal(fakeHost.status,401);
+ const wrongIp=await f.request("page",{page:1},{...forwarded,"x-forwarded-for":"2001:db8::7, 203.0.113.5:50000",cookie:cookies(enrolled),"x-uqp-device-id":"7"});assert.equal(wrongIp.status,401);assert.equal(f.state.delivered,delivered);
+});
+test("365-day enrollment ceiling is fixed; device renewal and session restore cannot extend it",async t=>{
+ const f=await setup(t),start=Date.now();f.state.expires=null;const result=await f.enroll();assert.equal(result.status,200);
+ const jar=cookies(result),enrollment=jar.split("; ")[0]!.split("=")[1]!,grant=kioskCodec(f.config.origin,f.config.key).open(enrollment,"enrollment",1,7);
+ assert(grant.expires>=start+365*86400000&&grant.expires<=Date.now()+365*86400000);
+ const restored=await f.request("kiosk/session",{deviceId:7},{cookie:jar});assert.equal(restored.status,200);assert.equal(restored.headers.getSetCookie().length,1);assert.match(restored.headers.getSetCookie()[0]!,/^__Host-uqp-session-/);
+ f.state.expires=Date.now()+10000;const short=await f.enroll(),shortJar=cookies(short),originalExpiry=f.state.expires;f.state.expires=Date.now()+365*86400000;
+ const renewed=await f.request("kiosk/session",{deviceId:7},{cookie:shortJar});assert.equal(renewed.status,200);assert((await renewed.json()).authorizationExpiresAt<=originalExpiry);assert.equal(renewed.headers.getSetCookie().length,1);
+});
 for(const origin of [undefined,"http://hospital.test","https://hospital.test/","https://user:pass@hospital.test","https://hospital.test/path","https://hospital.test?token=x"])test(`URL refuses ${origin}`,()=>assert.throws(()=>kioskOrigin(origin)));
 for(const browser of ["edge","chrome"] as const)for(const fullscreen of [true,false])test(`launcher ${browser} fullscreen=${fullscreen}`,()=>{
  const url=kioskPlaybackLink("https://hospital.test:8443",1,7);assert.equal(url,"https://hospital.test:8443/display/dashboards/1?deviceId=7");const{bat,script}=kioskLauncher(url,{browser,screenNumber:3,fullscreen,windowX:-2000,windowY:100,windowWidth:1400,windowHeight:800});assert.equal(Buffer.from(bat.match(/-EncodedCommand (\S+)/)![1]!,"base64").toString("utf16le"),script);
@@ -80,3 +100,18 @@ for(const origin of ["http://hospital.example:8080","https://hospital.example:84
  const url=manualPlaybackLink(origin,1,7),{bat,script}=kioskLauncher(url,{browser:"edge",screenNumber:1,fullscreen:true,windowX:0,windowY:0,windowWidth:1920,windowHeight:1080});assert.equal(url,`${origin}/display/dashboards/1?deviceId=7`);assert(script.includes(`--app=${url}`));assert(!bat.includes(grant.token));if(origin.startsWith("http:")){assert.match(bat,/HTTP manual playback only/);assert.throws(()=>kioskOrigin(origin));}
 });
 for(const origin of [undefined,"http://user:secret@host.test","http://host.test/","http://host.test/path","http://host.test?token=x","javascript:alert(1)","https://host.test#x"])test(`manual URL rejects ${origin}`,()=>assert.throws(()=>manualPlaybackLink(origin,1,7)));
+
+
+test("D2-A pre-suspend persistent and session cookies never recover after restore pending",async t=>{
+ const f=await setup(t),jar=cookies(await f.enroll()),oldToken=f.state.token;
+ for(const marker of [{SuspendedAtUtc:"2026-10-31T00:00:00Z",ReenrollmentRequired:true},{SuspendedAtUtc:null,ReenrollmentRequired:true}]){
+  Object.assign(f.state,marker);
+  for(const [path,method,body] of [["kiosk/session","POST",{deviceId:7}],["layout","GET",undefined],["page","POST",{page:1}]] as const){
+   assert.equal((await f.request(path,body,{cookie:jar,"x-uqp-device-id":"7"},method)).status,401);
+  }
+  assert.equal((await f.request("kiosk/enrollment",{deviceId:7,token:oldToken})).status,401);
+ }
+ f.state.token="B".repeat(43);
+ assert.equal((await f.request("kiosk/session",{deviceId:7},{cookie:jar})).status,401);
+ assert.equal(f.state.delivered,0);
+});

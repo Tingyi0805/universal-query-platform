@@ -412,5 +412,15 @@
       13,
       920
     ]
+  },
+  {
+    "id": 926,
+    "file": "926_dashboard_device_lifecycle.sql",
+    "sha256": "f2d17b2a24963860e646a620f9548b22ff6a1a296e077071e8fb50237c8cfd43",
+    "requires": [
+      25,
+      900,
+      918
+    ]
   }
 ]

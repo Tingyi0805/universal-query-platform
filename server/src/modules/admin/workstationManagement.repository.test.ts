@@ -4,7 +4,7 @@ import sql from "mssql";
 import { createWorkstationManagementRepository } from "./workstationManagement.repository.js";
 function fixture() {
   const state = {
-    ready: true,
+    ready: true, lifecycle: false,
     failOn: "",
     queries: [] as { text: string; values: Record<string, unknown> }[],
     begins: 0,
@@ -47,6 +47,7 @@ function fixture() {
         const db = inTx ? staged : state.database;
         if (text.includes("AS Ready"))
           return { recordset: [{ Ready: state.ready ? 1 : 0 }] };
+        if (text.includes("AS Suspended,")) return {recordset:[{Suspended:state.lifecycle?8:null,Pending:state.lifecycle?1:null}]};
         if (text.includes("sp_getapplock")) return { recordset: [] };
         if (text.startsWith("SELECT * FROM uqp.SharedWorkstation"))
           return { recordset: [{ ...db.station, Id: values.id }] };
@@ -297,4 +298,12 @@ test("grant read returns current metadata and version using only SELECT without 
   assert.equal(result.expectedVersion,4);assert.equal(result.workstation.id,1);assert.equal(result.workstation.isActive,true);
   assert.deepEqual(result.userIds,[1]);assert.equal(f.state.begins,0);
   assert.ok(f.state.queries.every(q=>q.text.trim().startsWith("SELECT")));
+});
+
+
+test("lifecycle workstation revocation clears proof/grants, rotates hash and never rewrites terminal times",async()=>{
+ const f=fixture();f.state.lifecycle=true;await f.repo.retire(1,4,5);
+ const sql=f.state.queries.find(q=>q.text.includes("UPDATE uqp.DashboardDisplayDevice"))!.text;
+ assert.match(sql,/SuspendedAtUtc=NULL,ReenrollmentRequired=NULL,QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL/);
+ assert.match(sql,/CRYPT_GEN_RANDOM\(32\)/);assert.match(sql,/RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL/);assert.equal(f.state.commits,1);
 });

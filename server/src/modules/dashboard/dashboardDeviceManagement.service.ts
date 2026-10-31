@@ -1,3 +1,6 @@
+import { deviceHistoryQuery, type DeviceHistoryQuery, type DeviceHistoryResult } from "../audit/deviceAuditHistory.js";
+import { createDeviceListReader, type DeviceListQuery, type ListRead } from "./dashboardDeviceList.js";
+import { assertDeviceLifecycleTransition, type DeviceLifecycleRecord } from "./dashboardDeviceLifecycle.js";
 import { createHash } from "node:crypto";
 import { dashboardQueryParameters } from "./dashboardDeviceMasking.js";
 import { QuerySourceError, sourceVersion, type SourceState, type SourceTransaction } from "./dashboardQuerySources.service.js";
@@ -5,34 +8,44 @@ import { deviceMetadataSchema, devicePlacementSchema, deviceRenewalSchema, type 
 
 export type DeviceActor = { userId: number; tokenVersion: number; ipAddress?: string | null; userAgent?: string | null };
 export type DeviceRecord = DeviceMetadata & { id: number; dashboardId: number; createdByUserId: number; sharedWorkstationId: number | null;
-  isActive: boolean; revokedAtUtc: string | null; archivedAtUtc: string | null; queryModeGrantVersion: number | null;
+  isActive: boolean; suspendedAtUtc: string | null; reenrollmentRequired: boolean | null; revokedAtUtc: string | null; archivedAtUtc: string | null; queryModeGrantVersion: number | null;
   delegatorTokenVersion: number | null; credentialFingerprint: string; placement: DevicePlacement | null };
 export interface DeviceManagementTransaction extends SourceTransaction {
+  history?(id:number, deviceId:number, actor:DeviceActor, query:DeviceHistoryQuery):Promise<DeviceHistoryResult>;
+  listDevices?(id:number, query:DeviceListQuery, asOf:string|null):Promise<ListRead & {asOfUtc:string}>;
+  credentialOwner(device: DeviceRecord): Promise<number>;
+  credentialPolicy(datasetId: number): Promise<void>;
+  writeCredential(id: number, deviceId: number, action: "ISSUE" | "ENROLL", hash: string, modeVersion: number, ownerVersion: number): Promise<string>;
+  lifecycleReady(): Promise<void>;
+  lifecycleDevice(id: number, deviceId: number, action: "SUSPEND" | "RESTORE" | "REVOKE" | "ARCHIVE", userId?: number): Promise<string>;
   securityReady(): Promise<void>;
-  actor(actor: DeviceActor): Promise<void>;
+  actor(actor: DeviceActor, safety?: boolean): Promise<void>;
   evidence(id: number): Promise<string>;
   records(id: number): Promise<DeviceRecord[]>;
   delegation(device: DeviceRecord, modeVersion?: number): Promise<void>;
   createDevice(id: number, ownerId: number, metadata: DeviceMetadata): Promise<number>;
-  updateMetadata(id: number, deviceId: number, metadata: DeviceMetadata): Promise<void>;
+  updateMetadata(id: number, deviceId: number, metadata: DeviceMetadata, managed?: boolean): Promise<void>;
   updatePlacement(id: number, deviceId: number, placement: DevicePlacement): Promise<void>;
   renewDevice(id: number, deviceId: number, days: number): Promise<string>;
   touch(id: number): Promise<void>;
-  deviceAudit(id: number, actor: DeviceActor, action: "CREATED" | "METADATA_UPDATED" | "PLACEMENT_UPDATED" | "RENEWED", deviceId: number, invalidated: boolean, renewal?: { extendDays: number; previousExpiresAtUtc: string; expiresAtUtc: string }): Promise<void>;
+  deviceAudit(id: number, actor: DeviceActor, action: "CREATED" | "METADATA_UPDATED" | "PLACEMENT_UPDATED" | "RENEWED" | "SUSPENDED" | "RESTORED_PENDING" | "TOKEN_ISSUED_PENDING" | "ENROLLED" | "REVOKED" | "ARCHIVED", deviceId: number, invalidated: boolean, renewal?: { extendDays: number; previousExpiresAtUtc: string; expiresAtUtc: string }): Promise<void>;
 }
 export interface DeviceManagementStore { transaction<T>(work: (tx: DeviceManagementTransaction) => Promise<T>): Promise<T> }
+export const deviceManagementVersion = (state: SourceState, evidence: string, devices: DeviceRecord[]) =>
+  createHash("sha256").update(JSON.stringify([sourceVersion(state), evidence, devices])).digest("hex");
 export function createDeviceManagementService(store: DeviceManagementStore, enabled: () => boolean) {
   const snapshot = async (tx: DeviceManagementTransaction, id: number) => {
     const state = await tx.readState(id), evidence = await tx.evidence(id), devices = await tx.records(id);
     if (!/^[a-f0-9]{64}$/.test(evidence)) throw new QuerySourceError("SECURITY_SCHEMA_REQUIRED", 503);
-    const version = createHash("sha256").update(JSON.stringify([sourceVersion(state), evidence, devices])).digest("hex");
+    const version = deviceManagementVersion(state, evidence, devices);
     return { state, devices, version };
   };
-  const run = async <T>(id: number, actor: DeviceActor, work: (tx: DeviceManagementTransaction, current: Awaited<ReturnType<typeof snapshot>>) => Promise<T>) => {
+  const run = async <T>(id: number, actor: DeviceActor, work: (tx: DeviceManagementTransaction, current: Awaited<ReturnType<typeof snapshot>>) => Promise<T>, lifecycle = false, safety = false) => {
     if (!enabled()) throw new QuerySourceError("QUERY_SOURCE_MANAGEMENT_DISABLED", 404);
     return store.transaction(async tx => {
       if (!await tx.schemaReady()) throw new QuerySourceError("QUERY_SOURCE_SCHEMA_REQUIRED", 503);
-      await tx.securityReady(); await tx.actor(actor);
+      await tx.securityReady(); await tx.actor(actor, safety);
+      if (lifecycle) await tx.lifecycleReady();
       const current = await snapshot(tx, id);
       if (!["LEGACY", "QUERY_ONLY", "QUERY_ONLY_DISABLED"].includes(current.state.dashboard.mode ?? "")) throw new QuerySourceError("QUERY_MODE_INVALID", 503);
       return work(tx, current);
@@ -59,7 +72,46 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
       throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE");
     return device;
   };
+  const lifecycle = (action: "SUSPEND" | "RESTORE" | "REVOKE" | "ARCHIVE", id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => run(id, actor, async (tx, current) => {
+    validate(current, input);
+    const device = current.devices.find(d => d.id === deviceId);
+    if (!device) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND", 404);
+    if (action === "RESTORE") {
+      await queries(tx, current.state, actor.userId);
+      await tx.delegation(device);
+      await queries(tx, current.state, device.createdByUserId);
+    }
+    const eventTime = await tx.lifecycleDevice(id, deviceId, action, actor.userId);
+    const after = await snapshot(tx, id), updated = after.devices.find(d => d.id === deviceId)!;
+    const record = (d: DeviceRecord): DeviceLifecycleRecord => ({ id: d.id, dashboardId: d.dashboardId, isActive: d.isActive,
+      suspendedAtUtc: d.suspendedAtUtc, reenrollmentRequired: d.reenrollmentRequired, revokedAtUtc: d.revokedAtUtc,
+      archivedAtUtc: d.archivedAtUtc, expiresAtUtc: d.expiresAtUtc, tokenHash: d.credentialFingerprint,
+      queryModeGrantVersion: d.queryModeGrantVersion, delegatorTokenVersion: d.delegatorTokenVersion });
+    // Fingerprints preserve hash equality without exposing the private stored hash.
+    try { assertDeviceLifecycleTransition(record(device), record(updated), action, Date.parse(eventTime)); }
+    catch { throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE"); }
+    await tx.touch(id);
+    await tx.deviceAudit(id, actor, ({ SUSPEND: "SUSPENDED", RESTORE: "RESTORED_PENDING", REVOKE: "REVOKED", ARCHIVE: "ARCHIVED" } as const)[action], deviceId, true);
+    return { ...project(await snapshot(tx, id)), deviceId, credentialIssued: false, deviceCredentialsInvalidated: true };
+  }, true, action !== "RESTORE");
   return {
+    list: createDeviceListReader(store, enabled),
+    history: async(id:number,deviceId:number,actor:DeviceActor,input:unknown)=>{
+      const parsed=deviceHistoryQuery.safeParse(input);
+      if(!parsed.success)throw new QuerySourceError("VALIDATION_ERROR",400);
+      if(!enabled())throw new QuerySourceError("QUERY_SOURCE_MANAGEMENT_DISABLED",404);
+      return store.transaction(async tx=>{
+        if(!await tx.schemaReady())throw new QuerySourceError("QUERY_SOURCE_SCHEMA_REQUIRED",503);
+        await tx.securityReady();await tx.actor(actor,true);
+        if(!tx.history)throw new QuerySourceError("DEVICE_HISTORY_UNAVAILABLE",503);
+        return tx.history(id,deviceId,actor,parsed.data);
+      });
+    },
+    safetyRead: (id: number, actor: DeviceActor) => run(id, actor, async (_tx, current) => project(current), true, true),
+    revoke: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("REVOKE", id, deviceId, actor, input),
+    archive: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("ARCHIVE", id, deviceId, actor, input),
+    suspend: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("SUSPEND", id, deviceId, actor, input),
+    restore: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("RESTORE", id, deviceId, actor, input),
     read: (id: number, actor: DeviceActor) => run(id, actor, async (tx, current) => {
       await queries(tx, current.state, actor.userId); return project(current);
     }),
@@ -79,7 +131,7 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
       if (!parsed.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
       const device = target(current.devices, deviceId);
       await queries(tx, current.state, actor.userId); await tx.delegation(device); await queries(tx, current.state, device.createdByUserId);
-      await tx.updateMetadata(id, deviceId, parsed.data);
+      await tx.updateMetadata(id, deviceId, parsed.data, device.reenrollmentRequired !== null);
       await tx.touch(id); await tx.deviceAudit(id, actor, "METADATA_UPDATED", deviceId, true);
       return { ...project(await snapshot(tx, id)), deviceId, deviceCredentialsInvalidated: true };
     }),

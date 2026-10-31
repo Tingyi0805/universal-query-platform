@@ -6,6 +6,50 @@ on:
   pull_request:
 
 jobs:
+  device-lifecycle-d1-sql:
+    strategy:
+      fail-fast: false
+      matrix:
+        sql: [2019, 2022]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci --ignore-scripts
+      - name: Create dedicated D1 disposable SQL instance
+        shell: bash
+        run: |
+          set -euo pipefail
+          uqp_d1_name="uqp-d1-$(openssl rand -hex 6)"
+          uqp_d1_password="D1!$(openssl rand -hex 22)Z"
+          echo "::add-mask::$uqp_d1_password"
+          echo "UQP_D1_CONTAINER_NAME=$uqp_d1_name" >> "$GITHUB_ENV"
+          echo "UQP_D1_SQL_PASSWORD=$uqp_d1_password" >> "$GITHUB_ENV"
+          docker run -d --rm --name "$uqp_d1_name" --hostname "$uqp_d1_name" \
+            --label uqp.d1.disposable=true -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$uqp_d1_password" \
+            -p 127.0.0.1:14336:1433 mcr.microsoft.com/mssql/server:${{ matrix.sql }}-latest >/dev/null
+          docker inspect --format '{{.Id}} {{.Config.Hostname}} {{.Config.Image}} {{index .Config.Labels "uqp.d1.disposable"}}' "$uqp_d1_name"
+      - name: Verify D1 and D3 production writers in disposable synthetic SQL DB
+        env:
+          UQP_D1_SCOPE: DISPOSABLE_ONLY
+        run: node --import tsx src/scripts/deviceLifecycle926Acceptance.ts
+      - name: Destroy only the D1 disposable instance
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${UQP_D1_CONTAINER_NAME:-}" =~ ^uqp-d1-[a-f0-9]{12}$ ]]; then
+            docker rm -f "$UQP_D1_CONTAINER_NAME" >/dev/null 2>&1 || true
+          fi
+
   server:
     runs-on: ubuntu-latest
     defaults:
@@ -25,6 +69,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Validate offline SQL Schema usage inventory
+        run: node ../tools/validate-database-schema-inventory.mjs
       - name: Measure tracked source and clean Server build bytes
         run: node ../tools/measure-browser-build.mjs
 

@@ -15,3 +15,27 @@
 .uqp-device-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
 .uqp-device-actions button { min-height: 42px; padding: 8px 18px; max-width: 100%; white-space: normal; }
 @media (max-width: 600px) { .uqp-device-fields { grid-template-columns: minmax(0,1fr); } .uqp-device-actions button { width: 100%; } }
+.uqp-device-manager dialog { width: min(560px, calc(100vw - 48px)); max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.uqp-device-manager dialog textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.uqp-device-manager dialog button { margin: 8px 8px 0 0; white-space: normal; }
+.uqp-expiry-input { min-width: 0; display: grid; gap: 7px; }
+.uqp-expiry-row { display: flex; gap: 8px; align-items: center; }
+.uqp-expiry-row > input { flex: 1; min-width: 0; }
+.uqp-expiry-input input, .uqp-expiry-input select, .uqp-expiry-input button { min-height: 44px; padding: 8px; font: inherit; box-sizing: border-box; }
+.uqp-expiry-input dialog label { display: grid; gap: 6px; margin: 12px 0; }
+.uqp-device-list-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; min-width: 0; }
+.uqp-device-list-tools label { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
+.uqp-device-list-tools input, .uqp-device-list-tools select, .uqp-device-list-tools button { min-height: 44px; padding: 8px; font: inherit; max-width: 100%; box-sizing: border-box; }
+.uqp-device-list-tools input { width: min(260px, 100%); }
+.uqp-device-manager dialog.uqp-device-history { width: min(960px, calc(100vw - 32px)); max-height: 90vh; overflow: auto; }
+.uqp-device-history .audit-filter { flex-wrap: wrap; }
+.uqp-device-history .audit-filter label { min-width: min(160px, 100%); max-width: 100%; }
+.uqp-device-history input, .uqp-device-history select, .uqp-device-history button, .uqp-device-manager summary { min-height: 44px; padding: 8px; box-sizing: border-box; font: inherit; }
+.uqp-device-history .history-table { width: 100%; table-layout: fixed; }
+.uqp-device-history .history-table td { overflow-wrap: anywhere; white-space: normal; }
+@media (max-width: 640px) {
+ .uqp-device-history .history-table, .uqp-device-history .history-table tbody, .uqp-device-history .history-table tr, .uqp-device-history .history-table td { display: block; width: 100%; box-sizing: border-box; }
+ .uqp-device-history .history-table thead { display: none; }
+ .uqp-device-history .history-table tr { border-bottom: 1px solid #dde5f0; padding: 8px 0; }
+ .uqp-device-history .history-table td::before { content: attr(data-label) "："; font-weight: 700; }
+}

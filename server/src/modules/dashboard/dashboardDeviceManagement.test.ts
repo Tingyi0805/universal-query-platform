@@ -1,3 +1,5 @@
+import { deviceManagementFixture as fixture } from "./dashboardDeviceManagement.testFixture.js";
+import { revokeDashboardQueryDevice } from "./dashboardQueryMode.repository.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { serialize, deserialize } from "node:v8";
@@ -7,91 +9,12 @@ import jwt from "jsonwebtoken";
 import sql from "mssql";
 import { env } from "../../config/env.js";
 import { createAuthenticateJwt } from "../auth/auth.middleware.js";
-import { SecurityContractError } from "../securityContract/securityContract.js";
-import { createDeviceManagementStore, defaultDeviceManagementDependencies } from "./dashboardDeviceManagement.repository.js";
-import { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
 import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
 import { deviceMetadataSchema, devicePlacementSchema } from "./dashboardDeviceManagement.schema.js";
 const copy = <T>(v: T): T => deserialize(serialize(v));
 const actor = { userId: 1, tokenVersion: 1 };
 const metadata = { deviceName: "Synthetic new", enforceIpRestriction: true, allowedIp: "192.0.2.1", allowedCidr: null, expiresAtUtc: "2099-01-01T00:00:00Z" };
 const placement = { browser: "edge" as const, screenNumber: 2, fullscreen: true, windowX: -1920, windowY: 0, windowWidth: 1920, windowHeight: 1080 };
-type Row = Record<string, any>;
-function fixture() {
-  let db = { sequence: 3n, parent: { Id: 1, Name: "Synthetic", QueryDefinitionId: 20, ParametersJson: "{}", IsActive: false, QueryMode: "LEGACY", QueryModeVersion: 0,
-    QuerySourceMaxRows: 100, RefreshSeconds: 30, PageSize: 10, PageSeconds: 15, UpdatedAtUtc: "2026-10-20T00:00:00Z", DisplayMode: "TABLE",
-    ShowClock: true, ShowPageNumber: true, ShowCountdown: true, ApprovalRowVersion: Buffer.from("0000000000000001", "hex") } as Row,
-    devices: [{ Id: 7, DashboardId: 1, DeviceName: "Synthetic", CreatedByUserId: 2, SharedWorkstationId: 3, IsActive: true, ExpiresAtUtc: null, RevokedAtUtc: null,
-      ArchivedAtUtc: null, EnforceIpRestriction: true, AllowedIp: "192.0.2.2", AllowedCidr: null, TokenHash: "a".repeat(64), QueryModeGrantVersion: 1, DelegatorTokenVersion: 1 }] as Row[],
-    placements: [] as Row[], audits: [] as Row[] };
-  let staged = copy(db), queue = Promise.resolve();
-  const control = { enabled: true, schema: true, modeSchema: true, deviceSchema: true, pool: true, failAt: "", deniedUser: 0, account: true,
-    permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"], tokenVersion: 1, workstation: true, query: true, statements: [] as string[], events: [] as string[] };
-  const fail = (at: string) => { if (control.failAt === at) throw new Error("synthetic-private-diagnostic"); };
-  let currentTx: sql.Transaction;
-  const deps: typeof defaultDeviceManagementDependencies = { ...defaultDeviceManagementDependencies,
-    getPool: async () => control.pool ? {} as sql.ConnectionPool : null,
-    createTransaction: () => {
-      let release = () => {};
-      const tx = { begin: async (level: number) => { assert.equal(level, sql.ISOLATION_LEVEL.SERIALIZABLE); const previous = queue;
-        queue = new Promise<void>(resolve => { release = resolve; }); await previous; currentTx = tx; staged = copy(db); control.events.push("begin"); },
-        commit: async () => { fail("commit"); db = copy(staged); control.events.push("commit"); release(); },
-        rollback: async () => { staged = copy(db); control.events.push("rollback"); release(); } } as unknown as sql.Transaction;
-      return tx;
-    },
-    securitySchema: async () => { if (!control.schema) throw new SecurityContractError("SECURITY_SCHEMA_REQUIRED"); },
-    modeSchema: async () => control.modeSchema, deviceSchema: async () => control.deviceSchema,
-    session: async (id, tx) => { assert.equal(tx, currentTx); return { isActive: control.account && id !== control.deniedUser, tokenVersion: control.tokenVersion, permissions: control.permissions } as any; },
-    getEffectiveQueryAccess: async (id, _q, tx) => { assert.equal(tx, currentTx); return id !== control.deniedUser && control.query ? { canView: true, canExecute: true } as any : null; },
-    getDataset: async (_id, tx) => { assert.equal(tx, currentTx); return { id: 2, isActive: true, isArchived: false, sqlText: "SELECT 1" } as any; },
-    listDatasetParameters: async (_id, tx) => { assert.equal(tx, currentTx); return []; },
-    writeAuditEvent: async (input, tx) => { assert.equal(tx, currentTx); staged.audits.push(copy(input)); fail("audit"); return control.failAt === "audit-evidence" ? NaN : staged.audits.length; },
-    createRequest: tx => {
-      assert.equal(tx, currentTx); const v: Row = {};
-      return { input(name: string, _type: unknown, value: unknown) { v[name] = value; return this; }, async query(s: string) {
-        control.statements.push(s);
-        if (s.includes("CK_DashboardDataSource_QueryBoundLimit")) return { recordset: [{ Ready: true }] };
-        if (s.startsWith("SELECT * FROM uqp.Dashboard WITH")) { assert.match(s, /UPDLOCK,HOLDLOCK/); return { recordset: v.dashboardId === 1 ? [copy(staged.parent)] : [] }; }
-        if (s.startsWith("SELECT * FROM uqp.DashboardDataSource") || s.includes("SELECT w.ConfigJson") || s.startsWith("SELECT Id,SourceKey,DatasetId,ApprovalRowVersion")) return { recordset: [] };
-        if (s.startsWith("SELECT QueryDefinitionId,ApprovalRowVersion")) return { recordset: [copy(staged.parent)] };
-        if (s.includes("FROM uqp.DashboardDisplayDevice WITH")) { assert.match(s, /UPDLOCK,HOLDLOCK/); return { recordset: copy(staged.devices) }; }
-        if (s.startsWith("SELECT p.* FROM uqp.DashboardDevicePlaybackSettings")) { assert.match(s, /UPDLOCK,HOLDLOCK/); return { recordset: copy(staged.placements) }; }
-        if (s.startsWith("SELECT Id,DatasetId,IsPublished")) return { recordset: control.query ? [{ Id: 20, DatasetId: 2, IsPublished: true, IsActive: true, IsArchived: false }] : [] };
-        if (s.includes("FROM uqp.SharedWorkstation WITH")) return { recordset: [{ IsActive: control.workstation, RetiredAtUtc: null, PurposeCode: "DASHBOARD" }] };
-        if(/UPDATE\s+uqp\.DashboardDisplayDevice\s+SET ExpiresAtUtc=DATEADD/.test(s)){
-          assert.match(s,/ArchivedAtUtc IS NULL/);assert.match(s,/RevokedAtUtc IS NULL/);assert.match(s,/ExpiresAtUtc>SYSUTCDATETIME/);assert.match(s,/DATEADD\(DAY,365,SYSUTCDATETIME/);
-          assert.doesNotMatch(s.split("OUTPUT")[0]!,/TokenHash=|QueryModeGrantVersion=|DelegatorTokenVersion=|IsActive=/);
-          const d=staged.devices.find(d=>d.Id===v.deviceId&&d.DashboardId===v.dashboardId)!;
-          if(control.failAt==="renew-expired")return{recordset:[]};
-          d.ExpiresAtUtc=new Date(Date.parse(d.ExpiresAtUtc)+v.extendDays*86400000).toISOString();fail("renew");return{recordset:[copy(d)]};
-        }
-        if (s.startsWith("INSERT INTO uqp.DashboardDisplayDevice")) {
-          assert.match(s, /CRYPT_GEN_RANDOM\(32\)/); assert.match(s, /NULL,1,@expiresAtUtc/); assert.doesNotMatch(s, /OUTPUT INSERTED\.\*/);
-          staged.devices.push({ Id: 8, DashboardId: v.dashboardId, DeviceName: v.deviceName, CreatedByUserId: v.ownerId, SharedWorkstationId: null,
-            IsActive: true, ExpiresAtUtc: v.expiresAtUtc, EnforceIpRestriction: v.enforceIpRestriction, AllowedIp: v.allowedIp, AllowedCidr: v.allowedCidr,
-            TokenHash: "b".repeat(64), QueryModeGrantVersion: null, DelegatorTokenVersion: null, RevokedAtUtc: null, ArchivedAtUtc: null });
-          fail("create"); return { recordset: [{ Id: 8 }] };
-        }
-        if (s.startsWith("UPDATE uqp.DashboardDisplayDevice SET")) {
-          assert.match(s, /RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL/); assert.match(s, /ExpiresAtUtc>SYSUTCDATETIME/);
-          assert.doesNotMatch(s.split("WHERE")[0]!, /CreatedByUserId=|SharedWorkstationId=|IsActive=|RevokedAtUtc=/);
-          Object.assign(staged.devices.find(d => d.Id === v.deviceId && d.DashboardId === v.dashboardId)!, { DeviceName: v.deviceName, EnforceIpRestriction: v.enforceIpRestriction,
-            AllowedIp: v.allowedIp, AllowedCidr: v.allowedCidr, ExpiresAtUtc: v.expiresAtUtc, TokenHash: "c".repeat(64), QueryModeGrantVersion: null, DelegatorTokenVersion: null, LastUsedAtUtc: null });
-          fail("metadata"); return { rowsAffected: [control.failAt === "rowcount" ? 0 : 1] };
-        }
-        if (s.includes("UPDATE uqp.DashboardDevicePlaybackSettings SET")) {
-          assert.match(s, /RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL/); assert.doesNotMatch(s, /TokenHash=|ParametersJson|ColumnMask/);
-          staged.placements = [{ DashboardId: v.dashboardId, DeviceId: v.deviceId, Browser: v.browser, ScreenNumber: v.screenNumber, Fullscreen: v.fullscreen,
-            WindowX: v.windowX, WindowY: v.windowY, WindowWidth: v.windowWidth, WindowHeight: v.windowHeight }]; fail("placement"); return { rowsAffected: [1] };
-        }
-        if (s.startsWith("UPDATE uqp.Dashboard SET UpdatedAtUtc")) { staged.parent.ApprovalRowVersion = Buffer.from((staged.sequence++).toString(16).padStart(16, "0"), "hex"); fail("touch"); return { rowsAffected: [1] }; }
-        throw new Error("unexpected synthetic SQL");
-      } } as unknown as sql.Request;
-    },
-  };
-  const service = createDeviceManagementService(createDeviceManagementStore(deps), () => control.enabled);
-  return { service, deps, control, db: () => db, snapshot: () => copy(db), version: async () => (await service.read(1, actor)).version };
-}
 
 test("metadata-only creation creates no credential; authenticated creator is the immutable delegator", async () => {
   const f = fixture(), version = await f.version(), before = f.snapshot();
@@ -259,4 +182,112 @@ test("renew active Query-only with matching mode/delegator grant to the 365-day 
 for(const reason of ["missing-mode-version","inactive-query-only"])test(`Query-only renewal requires reliable active-mode evidence: ${reason}`,async()=>{
  const f=fixture(),d=f.db().devices[0]!;d.ExpiresAtUtc=new Date(Date.now()+86400000).toISOString();d.QueryModeGrantVersion=4;d.DelegatorTokenVersion=1;f.db().parent.QueryMode="QUERY_ONLY";f.db().parent.IsActive=reason!=="inactive-query-only";f.db().parent.QueryModeVersion=reason==="missing-mode-version"?undefined:4;const version=await f.version(),before=f.snapshot();
  await assert.rejects(f.service.renew(1,7,actor,{expectedVersion:version,confirmed:true,days:30}));assert.deepEqual(f.snapshot(),before);
+});
+
+
+test("D2-A legacy NULL/absent markers suspend and restore pending with two hash rotations, no credential", async () => {
+ const f=fixture(), old=f.db().devices[0]!.TokenHash;
+ const a=await f.service.suspend(1,7,actor,{expectedVersion:await f.version(),confirmed:true});
+ const suspended=f.snapshot().devices[0]!;
+ assert.equal(suspended.IsActive,false);assert.equal(suspended.ReenrollmentRequired,true);assert.notEqual(suspended.TokenHash,old);
+ assert.equal(suspended.QueryModeGrantVersion,null);assert.equal(suspended.DelegatorTokenVersion,null);
+ const b=await f.service.restore(1,7,actor,{expectedVersion:a.version,confirmed:true});
+ const pending=f.db().devices[0]!;assert.equal(pending.IsActive,true);assert.equal(pending.SuspendedAtUtc,null);assert.equal(pending.ReenrollmentRequired,true);
+ assert.notEqual(pending.TokenHash,suspended.TokenHash);assert.notEqual(pending.TokenHash,old);assert.equal(pending.ExpiresAtUtc,null);
+ assert.equal(a.credentialIssued,false);assert.equal(b.credentialIssued,false);assert(!JSON.stringify(b).includes(pending.TokenHash));
+ assert.deepEqual(f.db().audits.map(a=>a.eventType),["DASHBOARD_DEVICE_SUSPENDED","DASHBOARD_DEVICE_RESTORED_PENDING"]);
+ await assert.rejects(f.service.restore(1,7,actor,{expectedVersion:b.version,confirmed:true}));
+});
+test("D2-A safety read and suspend survive delegator/Query ACL loss; restore rechecks", async()=>{
+ const f=fixture(); f.control.deniedUser=2;f.control.query=false;
+ const v=await f.service.safetyRead(1,actor);
+ const a=await f.service.suspend(1,7,actor,{expectedVersion:v.version,confirmed:true});
+ const before=f.snapshot();await assert.rejects(f.service.restore(1,7,actor,{expectedVersion:a.version,confirmed:true}));assert.deepEqual(f.snapshot(),before);
+});
+for(const action of ["suspend","restore"] as const)for(const failure of ["lifecycle-schema","lifecycle","touch","audit","audit-evidence","commit"])test(`D2-A ${action} rolls back ${failure}`,async()=>{
+ const f=fixture();if(action==="restore")await f.service.suspend(1,7,actor,{expectedVersion:await f.version(),confirmed:true});
+ const input={expectedVersion:(await f.service.safetyRead(1,actor)).version,confirmed:true as const},before=f.snapshot();f.control.failAt=failure;
+ await assert.rejects(f.service[action](1,7,actor,input));assert.deepEqual(f.snapshot(),before);assert.equal(f.control.events.at(-1),"rollback");
+});
+for(const reason of ["revoked","archived","expired","inactive","permission","session","delegator","workstation","query","confirmation"] as const)test(`D2-A restore rejects ${reason}`,async()=>{
+ const f=fixture();await f.service.suspend(1,7,actor,{expectedVersion:await f.version(),confirmed:true});const d=f.db().devices[0]!;
+ if(reason==="revoked")d.RevokedAtUtc="2026-01-01T00:00:00Z";if(reason==="archived")d.ArchivedAtUtc="2026-01-01T00:00:00Z";
+ if(reason==="expired")d.ExpiresAtUtc="2026-01-01T00:00:00Z";if(reason==="inactive")d.SuspendedAtUtc=null;
+ const version=(await f.service.safetyRead(1,actor)).version;
+ if(reason==="permission")f.control.permissions=[];if(reason==="session")f.control.tokenVersion++;if(reason==="delegator")f.control.deniedUser=2;
+ if(reason==="workstation")f.control.workstation=false;if(reason==="query")f.control.query=false;
+ const before=f.snapshot();await assert.rejects(f.service.restore(1,7,actor,{expectedVersion:version,confirmed:(reason!=="confirmation") as true}));assert.deepEqual(f.snapshot(),before);
+});
+test("D2-A repeated and simultaneous suspension commits exactly once",async()=>{
+ const f=fixture(),input={expectedVersion:await f.version(),confirmed:true as const};
+ const results=await Promise.allSettled([f.service.suspend(1,7,actor,input),f.service.suspend(1,7,actor,input)]);
+ assert.equal(results.filter(r=>r.status==="fulfilled").length,1);assert.equal(f.db().audits.length,1);
+ await assert.rejects(f.service.suspend(1,7,actor,{...input,expectedVersion:(await f.service.safetyRead(1,actor)).version}));
+});
+test("D2-A concurrent permanent revocation invalidates full device version before restore",async()=>{
+ const f=fixture();await f.service.suspend(1,7,actor,{expectedVersion:await f.version(),confirmed:true});
+ const version=(await f.service.safetyRead(1,actor)).version,d=f.db().devices[0]!;
+ Object.assign(d,{RevokedAtUtc:"2026-01-01T00:00:00Z",SuspendedAtUtc:null,ReenrollmentRequired:null,TokenHash:"f".repeat(64)});
+ const before=f.snapshot();await assert.rejects(f.service.restore(1,7,actor,{expectedVersion:version,confirmed:true}),{code:"DASHBOARD_DEVICE_VERSION_CONFLICT"});assert.deepEqual(f.snapshot(),before);
+});
+test("D2-A HTTP strict confirmation, version conflicts, no-store and safe management read",async t=>{
+ const f=await httpFixture();t.after(f.close);
+ const view=await f.request("GET","/lifecycle");assert.equal(view.status,200);
+ for(const body of [{expectedVersion:view.body.version},{confirmed:true},{expectedVersion:view.body.version,confirmed:true,token:"forbidden"}])assert.equal((await f.request("POST","/7/suspend",body)).status,400);
+ const a=await f.request("POST","/7/suspend",{expectedVersion:view.body.version,confirmed:true});assert.equal(a.status,200);assert.equal(a.cache,"no-store");
+ assert.equal((await f.request("POST","/7/restore",{expectedVersion:view.body.version,confirmed:true})).status,409);
+ assert.equal((await f.request("POST","/7/restore",{expectedVersion:a.body.version,confirmed:true})).status,200);
+});
+
+for(const revokeFirst of [true,false])test(`D2-A serialized restore/revoke race revokeFirst=${revokeFirst} always ends permanently revoked`,async()=>{
+ const f=fixture();await f.service.suspend(1,7,actor,{expectedVersion:await f.version(),confirmed:true});
+ const input={expectedVersion:(await f.service.safetyRead(1,actor)).version,confirmed:true as const};
+ const results=await Promise.allSettled(revokeFirst?[f.revoke(),f.service.restore(1,7,actor,input)]:[f.service.restore(1,7,actor,input),f.revoke()]);
+ assert.equal(results[revokeFirst?0:1]!.status,"fulfilled");if(revokeFirst)assert.equal(results[1]!.status,"rejected");
+ const d=f.db().devices[0]!;assert.equal(d.IsActive,false);assert(d.RevokedAtUtc);assert.equal(d.SuspendedAtUtc,null);assert.equal(d.ReenrollmentRequired,null);
+ assert.equal(d.QueryModeGrantVersion,null);assert.equal(d.DelegatorTokenVersion,null);
+ await assert.rejects(f.service.restore(1,7,actor,{...input,expectedVersion:(await f.service.safetyRead(1,actor)).version}));
+});
+test("D2-A revocation without 926 never references lifecycle columns in UPDATE",async()=>{
+ const statements:string[]=[];const request={input(){return this;},async query(s:string){statements.push(s);return s.includes("AS Suspended,")?{recordset:[{Suspended:null,Pending:null}]}:{rowsAffected:[1]};}} as unknown as sql.Request;
+ await revokeDashboardQueryDevice(1,7,request);assert.equal(statements.length,2);assert.doesNotMatch(statements[1]!,/SuspendedAtUtc|ReenrollmentRequired/);assert.match(statements[1]!,/AND IsActive=1/);
+});
+
+test("D2-A designer can suspend after losing global Execute permission but cannot restore",async()=>{
+ const f=fixture();f.control.permissions=["DESIGN_QUERY"];
+ const v=await f.service.safetyRead(1,actor),a=await f.service.suspend(1,7,actor,{expectedVersion:v.version,confirmed:true});
+ const before=f.snapshot();await assert.rejects(f.service.restore(1,7,actor,{expectedVersion:a.version,confirmed:true}),{code:"FORBIDDEN"});assert.deepEqual(f.snapshot(),before);
+});
+for(const reason of ["permission","session","confirmation","missing","expired","revoked","archived"])test(`D2-A suspend rejects ${reason} atomically`,async()=>{
+ const f=fixture(),version=await f.version(),d=f.db().devices[0]!;
+ if(reason==="permission")f.control.permissions=["EXECUTE_QUERY"];if(reason==="session")f.control.tokenVersion++;
+ if(reason==="expired")d.ExpiresAtUtc="2026-01-01T00:00:00Z";if(reason==="revoked")d.RevokedAtUtc="2026-01-01T00:00:00Z";if(reason==="archived")d.ArchivedAtUtc="2026-01-01T00:00:00Z";
+ const before=f.snapshot();await assert.rejects(f.service.suspend(1,reason==="missing"?99:7,actor,{expectedVersion:version,confirmed:(reason!=="confirmation") as true}));assert.deepEqual(f.snapshot(),before);
+});
+test("D2-A simultaneous restores commit once and never clear pending",async()=>{
+ const f=fixture(),a=await f.service.suspend(1,7,actor,{expectedVersion:await f.version(),confirmed:true}),input={expectedVersion:a.version,confirmed:true as const};
+ const results=await Promise.allSettled([f.service.restore(1,7,actor,input),f.service.restore(1,7,actor,input)]);assert.equal(results.filter(r=>r.status==="fulfilled").length,1);assert.equal(f.db().audits.length,2);assert.equal(f.db().devices[0]!.ReenrollmentRequired,true);
+});
+
+test("D2-A 926 readiness is required only for lifecycle APIs; ordinary management remains compatible",async()=>{
+ const f=fixture();f.control.failAt="lifecycle-schema";
+ const version=await f.version();assert.match(version,/^[a-f0-9]{64}$/);
+ for(const work of [()=>f.service.safetyRead(1,actor),()=>f.service.suspend(1,7,actor,{expectedVersion:version,confirmed:true}),()=>f.service.restore(1,7,actor,{expectedVersion:version,confirmed:true})]){
+  const before=f.snapshot();await assert.rejects(work(),{code:"DASHBOARD_DEVICE_LIFECYCLE_SCHEMA_REQUIRED",status:503});assert.deepEqual(f.snapshot(),before);
+ }
+});
+
+test("D3 HTTP versioned safety revoke/archive requires live JWT and strict confirmation",async()=>{
+ const f=await httpFixture();try{
+  f.control.permissions=["DESIGN_QUERY"];f.session.permissions=["DESIGN_QUERY"];
+  const i={expectedVersion:(await f.request("GET","/lifecycle")).body.version,confirmed:true};
+  assert.equal((await f.request("POST","/7/archive",i)).status,409);
+  assert.equal((await f.request("POST","/7/revoke",i,null)).status,401);
+  assert.equal((await f.request("POST","/7/revoke",{...i,token:"injected"})).status,400);
+  assert.equal((await f.request("POST","/7/revoke",{...i,confirmed:false})).status,400);
+  const revoked=await f.request("POST","/7/revoke",i);assert.equal(revoked.status,200);assert.equal(revoked.cache,"no-store");
+  assert.equal((await f.request("POST","/7/revoke",i)).status,409);
+  const archived=await f.request("POST","/7/archive",{...i,expectedVersion:revoked.body.version});assert.equal(archived.status,200);
+  assert.doesNotMatch(JSON.stringify(archived.body),/TokenHash|credentialFingerprint|"token"/);
+ }finally{await f.close();}
 });

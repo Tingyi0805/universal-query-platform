@@ -130,6 +130,7 @@ export function DashboardDisplayPage() {
   const persistentCapable = deviceMode && window.location.protocol === "https:" && Number.isSafeInteger(intendedDeviceId) && intendedDeviceId > 0;
   const [restoringDevice,setRestoringDevice] = useState(false);
   const [persistDevice, setPersistDevice] = useState(persistentCapable);
+  const [reenrollDevice, setReenrollDevice] = useState(false);
   const cookieSession = deviceToken === "COOKIE_SESSION";
   const deviceHeaders: Record<string,string> = cookieSession ? {"X-UQP-Kiosk":"1", "X-UQP-Device-Id":String(intendedDeviceId)} : {"X-Dashboard-Device-Token":deviceToken ?? "", ...(Number.isSafeInteger(intendedDeviceId) && intendedDeviceId>0 ? {"X-UQP-Expected-Device-Id":String(intendedDeviceId)} : {})};
   const [deviceExpiryInfo,setDeviceExpiryInfo]=useState<{expiresAtUtc:string|null;offset:number}|null>(null);
@@ -970,9 +971,14 @@ export function DashboardDisplayPage() {
 
   async function activateDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (activationBusy || restoringDevice) return;
     const token = activationInput.trim();
     if (!token || !Number.isInteger(dashboardId) || dashboardId <= 0) {
       setActivationError("請輸入有效的裝置 Token。");
+      return;
+    }
+    if (reenrollDevice && (!persistentCapable || !persistDevice)) {
+      setActivationError("重新授權須使用原 BAT 專用瀏覽器與 HTTPS 裝置播放網址。");
       return;
     }
     const attempt = ++activationAttempt.current;
@@ -982,7 +988,7 @@ export function DashboardDisplayPage() {
       // Verify with the server BEFORE persisting; this endpoint enforces dashboard,
       // revocation, expiry and source-IP restrictions.
       if (persistDevice && persistentCapable) {
-        const value = await apiRequest<{deviceId:number;dashboardId:number;authorizationExpiresAt:number}>(`/dashboards/device/${dashboardId}/kiosk/enrollment`,{method:"POST",headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId,token})});
+        const value = await apiRequest<{deviceId:number;dashboardId:number;authorizationExpiresAt:number}>(`/dashboards/device/${dashboardId}/kiosk/${reenrollDevice ? "enrollment-proof" : "enrollment"}`,{method:"POST",headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId,token})});
         if (attempt !== activationAttempt.current || !navigator.onLine) return;
         if (value.deviceId !== intendedDeviceId || value.dashboardId !== dashboardId) throw new Error("KIOSK_DEVICE_MISMATCH");
         armDeviceLease(value.authorizationExpiresAt);
@@ -1035,7 +1041,9 @@ export function DashboardDisplayPage() {
           <p>Dashboard #{dashboardId} 尚未在目前瀏覽器設定檔完成驗證，或原有憑證已失效。</p>
           <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
-            {persistentCapable ? <label><input type="checkbox" checked={persistDevice} onChange={e=>setPersistDevice(e.target.checked)}/>在此瀏覽器持久授權裝置 #{intendedDeviceId}（僅限受管理裝置；HTTPS 安全 Cookie）</label> : <p>目前僅支援本次頁面授權。持久授權須使用管理者提供的 HTTPS 裝置播放網址。</p>}
+            {persistentCapable ? <label><input type="checkbox" checked={persistDevice} onChange={e=>{setPersistDevice(e.target.checked);if(!e.target.checked)setReenrollDevice(false);}}/>在此瀏覽器持久授權裝置 #{intendedDeviceId}（僅限受管理裝置；HTTPS 安全 Cookie）</label> : <p>目前僅支援本次頁面授權。持久授權須使用管理者提供的 HTTPS 裝置播放網址。</p>}
+            {persistentCapable && persistDevice && <label><input type="checkbox" checked={reenrollDevice} onChange={e=>setReenrollDevice(e.target.checked)}/>使用恢復後的新 Token 重新授權</label>}
+            <p>暫停／恢復後，請使用原 BAT 專用瀏覽器、HTTPS 播放網址，勾選「使用恢復後的新 Token 重新授權」並輸入新 Token；完成 Enrollment 後才可播放。</p>
             {window.location.protocol==="http:" && <p>HTTP 僅限信任的內網手動播放，Token 可能遭網路攔截；不提供重啟後自動恢復。請優先使用 HTTPS。</p>}
             <p>未啟用持久授權時，Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>

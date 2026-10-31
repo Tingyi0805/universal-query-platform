@@ -1,4 +1,10 @@
-import { renewDashboardDisplayDevice } from "./dashboardDevice.repository.js";
+import { readDeviceAuditHistory } from "../audit/audit.repository.js";
+import { readDeviceList } from "./dashboardDeviceList.js";
+import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
+import { parsePatientAuditKeyring } from "../audit/patientAuditKeyring.js";
+import { requireDeviceLifecycleSchema } from "./dashboardDeviceLifecycleSchema.js";
+import { revokeDashboardQueryDevice } from "./dashboardQueryMode.repository.js";
+import { archiveDashboardDevices, renewDashboardDisplayDevice } from "./dashboardDevice.repository.js";
 import sql from "mssql";
 import { createHash } from "node:crypto";
 import { getTokenSessionState } from "../auth/auth.repository.js";
@@ -39,7 +45,7 @@ export async function deviceManagementSchemaReady(request: sql.Request) {
   return Boolean(result.recordset[0]?.DeviceManagementReady);
 }
 export const defaultDeviceManagementDependencies = { ...defaultQuerySourceDependencies, session: getTokenSessionState,
-  securitySchema: requireSecuritySchema, modeSchema: queryModeSchemaReady, deviceSchema: deviceManagementSchemaReady };
+  securitySchema: requireSecuritySchema, modeSchema: queryModeSchemaReady, deviceSchema: deviceManagementSchemaReady, lifecycleSchema: requireDeviceLifecycleSchema, publicDisplay: datasetPublicDisplayRepository.getInTransaction };
 export function createDeviceManagementStore(deps = defaultDeviceManagementDependencies): DeviceManagementStore {
   const store = createQuerySourceStore({ ...deps, extend(transaction, base) {
     const request = () => deps.createRequest(transaction);
@@ -48,21 +54,89 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
       .input("enforceIpRestriction", sql.Bit, value.enforceIpRestriction).input("allowedIp", sql.NVarChar(64), value.allowedIp)
       .input("allowedCidr", sql.NVarChar(64), value.allowedCidr).input("expiresAtUtc", sql.DateTime2(0), value.expiresAtUtc === null ? null : new Date(value.expiresAtUtc));
     return Object.assign(base, {
+      async history(id,deviceId,actor,query){
+        const session=await deps.session(actor.userId,transaction);
+        if(!session?.isActive||session.tokenVersion!==actor.tokenVersion)throw new QuerySourceError("TOKEN_REVOKED",401);
+        if(!["DESIGN_QUERY","VIEW_AUDIT"].every(p=>session.permissions.includes(p)))throw new QuerySourceError("FORBIDDEN",403);
+        await this.readState!(id); // Existing Dashboard lock order and existence check; no Query execution.
+        return readDeviceAuditHistory(request(),id,deviceId,query);
+      },
+      listDevices: (id, query, asOf) => readDeviceList(request(), id, query, asOf),
+      async credentialOwner(device) {
+        await this.delegation!(device);
+        const owner=await deps.session(device.createdByUserId,transaction);
+        if (!owner?.isActive || !Number.isSafeInteger(owner.tokenVersion) || owner.tokenVersion<1 ||
+          !["DESIGN_QUERY","EXECUTE_QUERY"].every(p=>owner.permissions.includes(p))) throw new QuerySourceError("QUERY_DEVICE_DELEGATION_INVALID",403);
+        return owner.tokenVersion;
+      },
+      async credentialPolicy(datasetId) {
+        const display=await deps.publicDisplay(transaction,datasetId);
+        if (display.status!=="CONFIRMED" || !display.policy?.confirmed || display.policy.sensitivityVersion!==display.sensitivityVersion ||
+          !display.policy.grants.some(g=>g.permitted)) throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
+        const config=(await request().input("datasetId",sql.BigInt,datasetId).query(
+          "SELECT IsEnabled,PatientKeyColumn FROM uqp.DatasetPatientAuditConfig WITH(HOLDLOCK) WHERE DatasetId=@datasetId")).recordset[0];
+        if (config?.IsEnabled) {
+          if (!config.PatientKeyColumn) throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED",503);
+          try { parsePatientAuditKeyring(process.env.PATIENT_AUDIT_ACTIVE_KEY_VERSION,process.env.PATIENT_AUDIT_HMAC_KEYRING_JSON); }
+          catch { throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED",503); }
+        }
+      },
+      async writeCredential(id,deviceId,action,hash,modeVersion,ownerVersion) {
+        const result=await scoped(id).input("deviceId",sql.BigInt,deviceId).input("hash",sql.Char(64),hash)
+          .input("modeVersion",sql.BigInt,modeVersion).input("ownerVersion",sql.BigInt,ownerVersion).query(`
+          DECLARE @eventTime DATETIME2(0)=SYSUTCDATETIME();
+          DECLARE @credential TABLE(Id BIGINT);
+          UPDATE uqp.DashboardDisplayDevice SET ${action==="ISSUE" ? "TokenHash=@hash,QueryModeGrantVersion=@modeVersion,DelegatorTokenVersion=@ownerVersion,ReenrollmentRequired=1" : "ReenrollmentRequired=0"}
+          OUTPUT INSERTED.Id INTO @credential
+          WHERE DashboardId=@dashboardId AND Id=@deviceId AND IsActive=1 AND SuspendedAtUtc IS NULL
+            AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL AND ReenrollmentRequired=1
+            AND (ExpiresAtUtc IS NULL OR ExpiresAtUtc>SYSUTCDATETIME())
+            ${action==="ENROLL" ? "AND TokenHash=@hash AND QueryModeGrantVersion=@modeVersion AND DelegatorTokenVersion=@ownerVersion" : ""}
+            AND EXISTS(SELECT 1 FROM uqp.Dashboard WHERE Id=@dashboardId AND IsActive=1 AND QueryMode='QUERY_ONLY' AND QueryModeVersion=@modeVersion);
+          SELECT Id,@eventTime AS EventTime FROM @credential;`);
+        if (result.recordset.length!==1) throw new QuerySourceError("DASHBOARD_DEVICE_UNAUTHORIZED",401);
+        return new Date(result.recordset[0].EventTime).toISOString();
+      },
+      async lifecycleReady() {
+        try { await deps.lifecycleSchema(request()); }
+        catch { throw new QuerySourceError("DASHBOARD_DEVICE_LIFECYCLE_SCHEMA_REQUIRED", 503); }
+      },
+      async lifecycleDevice(id, deviceId, action, userId) {
+        if (action === "REVOKE" || action === "ARCHIVE") {
+          if (action === "REVOKE") await revokeDashboardQueryDevice(id, deviceId, request());
+          else if (await archiveDashboardDevices(id, [deviceId], userId!, request()) !== 1) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE");
+          const row = (await scoped(id).input("deviceId", sql.BigInt, deviceId).query(
+            `SELECT ${action === "REVOKE" ? "RevokedAtUtc" : "ArchivedAtUtc"} AS EventTime FROM uqp.DashboardDisplayDevice WHERE DashboardId=@dashboardId AND Id=@deviceId`)).recordset[0];
+          return new Date(row.EventTime).toISOString();
+        }
+        const result = await scoped(id).input("deviceId", sql.BigInt, deviceId).query(`
+          DECLARE @eventTime DATETIME2(0)=SYSUTCDATETIME();
+          DECLARE @changed TABLE (Id BIGINT);
+          UPDATE uqp.DashboardDisplayDevice SET IsActive=${action === "SUSPEND" ? "0" : "1"},
+            SuspendedAtUtc=${action === "SUSPEND" ? "@eventTime" : "NULL"},ReenrollmentRequired=1,
+            TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),
+            QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL
+          OUTPUT INSERTED.Id INTO @changed
+          WHERE DashboardId=@dashboardId AND Id=@deviceId AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL
+            AND (ExpiresAtUtc IS NULL OR ExpiresAtUtc>SYSUTCDATETIME())
+            AND ${action === "SUSPEND" ? "IsActive=1 AND SuspendedAtUtc IS NULL" : "IsActive=0 AND SuspendedAtUtc IS NOT NULL AND ReenrollmentRequired=1"};
+          SELECT Id,@eventTime AS EventTime FROM @changed;`);
+        if (result.recordset.length !== 1) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE");
+        return new Date(result.recordset[0].EventTime).toISOString();
+      },
       async securityReady() {
         await deps.securitySchema(request());
         if (!await deps.modeSchema(request()) || !await deps.deviceSchema(request())) throw new QuerySourceError("DASHBOARD_DEVICE_SCHEMA_REQUIRED", 503);
       },
-      async actor(actor) {
+      async actor(actor, safety = false) {
         const session = await deps.session(actor.userId, transaction);
         if (!session?.isActive || session.tokenVersion !== actor.tokenVersion) throw new QuerySourceError("TOKEN_REVOKED", 401);
-        if (!["DESIGN_QUERY", "EXECUTE_QUERY"].every(p => session.permissions.includes(p))) throw new QuerySourceError("FORBIDDEN", 403);
+        if (!(safety ? ["DESIGN_QUERY"] : ["DESIGN_QUERY", "EXECUTE_QUERY"]).every(p => session.permissions.includes(p))) throw new QuerySourceError("FORBIDDEN", 403);
       },
       evidence: (id: number) => readDashboardApprovalEvidence(id, request),
       async records(id) {
         // Stable field order; deliberately excludes LastUsedAtUtc (playback activity is not a configuration edit).
-        const rows = (await scoped(id).query(`SELECT Id,DashboardId,DeviceName,CreatedByUserId,SharedWorkstationId,IsActive,
-          ExpiresAtUtc,RevokedAtUtc,ArchivedAtUtc,EnforceIpRestriction,AllowedIp,AllowedCidr,
-          QueryModeGrantVersion,DelegatorTokenVersion,TokenHash
+        const rows = (await scoped(id).query(`SELECT *
           FROM uqp.DashboardDisplayDevice WITH (UPDLOCK,HOLDLOCK) WHERE DashboardId=@dashboardId ORDER BY Id`)).recordset;
         const placements = (await scoped(id).query(`SELECT p.* FROM uqp.DashboardDevicePlaybackSettings p WITH (UPDLOCK,HOLDLOCK)
           INNER JOIN uqp.DashboardDisplayDevice d ON d.Id=p.DeviceId WHERE d.DashboardId=@dashboardId ORDER BY p.DeviceId`)).recordset;
@@ -76,12 +150,13 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
           if (saved && (Number(saved.DashboardId) !== id || !parsed?.success)) throw new QuerySourceError("DASHBOARD_DEVICE_STATE_INVALID", 503);
           return { id: Number(row.Id), dashboardId: id, deviceName: String(row.DeviceName), createdByUserId: Number(row.CreatedByUserId),
             sharedWorkstationId: row.SharedWorkstationId == null ? null : Number(row.SharedWorkstationId), isActive: Boolean(row.IsActive),
+            suspendedAtUtc: date(row.SuspendedAtUtc), reenrollmentRequired: row.ReenrollmentRequired == null ? null : row.ReenrollmentRequired,
             expiresAtUtc: date(row.ExpiresAtUtc), revokedAtUtc: date(row.RevokedAtUtc), archivedAtUtc: date(row.ArchivedAtUtc),
             enforceIpRestriction: Boolean(row.EnforceIpRestriction), allowedIp: row.AllowedIp == null ? null : String(row.AllowedIp),
             allowedCidr: row.AllowedCidr == null ? null : String(row.AllowedCidr),
             queryModeGrantVersion: row.QueryModeGrantVersion == null ? null : Number(row.QueryModeGrantVersion),
             delegatorTokenVersion: row.DelegatorTokenVersion == null ? null : Number(row.DelegatorTokenVersion),
-            credentialFingerprint: createHash("sha256").update(row.TokenHash).digest("hex"), placement: parsed?.success ? parsed.data : null };
+            credentialFingerprint: createHash("sha256").update(row.TokenHash.toLowerCase()).digest("hex"), placement: parsed?.success ? parsed.data : null };
         });
       },
       async delegation(device, modeVersion) {
@@ -106,9 +181,9 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
         if (!Number.isSafeInteger(deviceId) || deviceId < 1) throw new QuerySourceError("DASHBOARD_DEVICE_STATE_INVALID", 503);
         return deviceId;
       },
-      async updateMetadata(id, deviceId, value) {
+      async updateMetadata(id, deviceId, value, managed = false) {
         const result = await metadata(id, value).input("deviceId", sql.BigInt, deviceId).query(`UPDATE uqp.DashboardDisplayDevice SET
-          DeviceName=@deviceName,EnforceIpRestriction=@enforceIpRestriction,AllowedIp=@allowedIp,AllowedCidr=@allowedCidr,ExpiresAtUtc=@expiresAtUtc,
+          ${managed ? "ReenrollmentRequired=1," : ""}DeviceName=@deviceName,EnforceIpRestriction=@enforceIpRestriction,AllowedIp=@allowedIp,AllowedCidr=@allowedCidr,ExpiresAtUtc=@expiresAtUtc,
           TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL,LastUsedAtUtc=NULL
           WHERE DashboardId=@dashboardId AND Id=@deviceId AND IsActive=1 AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL
             AND (ExpiresAtUtc IS NULL OR ExpiresAtUtc>SYSUTCDATETIME())`);
@@ -141,7 +216,7 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
       async deviceAudit(id, actor, action, deviceId, invalidated, renewal) {
         const result = await deps.writeAuditEvent({ eventType: `DASHBOARD_DEVICE_${action}`, userId: actor.userId,
           ipAddress: actor.ipAddress, userAgent: actor.userAgent,
-          parameters: { dashboardId: id, deviceId, credentialIssued: false, deviceCredentialsInvalidated: invalidated, ...(renewal ?? {}) } }, transaction);
+          parameters: { dashboardId: id, deviceId, credentialIssued: action === "TOKEN_ISSUED_PENDING", deviceCredentialsInvalidated: invalidated, ...(action === "ENROLLED" ? { authorizationMethod: "DEVICE_TOKEN_PROOF" } : {}), ...(renewal ?? {}) } }, transaction);
         if (!Number.isSafeInteger(result) || result < 1) throw new QuerySourceError("DASHBOARD_DEVICE_AUDIT_REQUIRED", 503);
       },
     } satisfies Partial<DeviceManagementTransaction>);
@@ -149,6 +224,9 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
   return { async transaction(work) {
     try { return await store.transaction(tx => work(tx as DeviceManagementTransaction)); }
     catch (error) {
+      if (Number((error as {number?:number})?.number) === 51032) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+      if (Number((error as {number?:number})?.number) === 51033) throw new QuerySourceError("DEVICE_HISTORY_SCHEMA_REQUIRED",503);
+      if (Number((error as {number?:number})?.number) === 51031) throw new QuerySourceError("DASHBOARD_DEVICE_STATE_INVALID",503);
       if ([1205, 1222, 51030].includes(Number((error as { number?: number })?.number))) throw new QuerySourceError("DASHBOARD_DEVICE_VERSION_CONFLICT");
       throw error;
     }

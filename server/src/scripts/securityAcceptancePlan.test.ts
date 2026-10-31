@@ -7,9 +7,9 @@ import { acceptanceDirectory, inventory, plan, selectProfile, validateTarget } f
 import { definitionHash, describePatientState, confirmedAliases } from "../modules/dataset/patientAuditConfig.service.js";
 import { hashPatientForDisclosure, parsePatientAuditKeyring } from "../modules/audit/patientAuditKeyring.js";
 
-test("offline inventory pins all 48 migrations and dependency order without loading application config", async () => {
+test("offline inventory pins all 49 migrations and dependency order without loading application config", async () => {
   const actual = await inventory();
-  assert.equal(actual.length, 48);
+  assert.equal(actual.length, 49);
   assert.deepEqual(actual, JSON.parse(await readFile(path.join(acceptanceDirectory, "migration-inventory.json"), "utf8")));
   assert.ok(actual.every(row => /^[a-f0-9]{64}$/.test(row.sha256)));
   const source = await readFile(new URL("./securityAcceptancePlan.ts", import.meta.url), "utf8");
