@@ -1,7 +1,12 @@
-# Migration Inventory 與獨立安裝來源（D5-C-3）
+# Migration Inventory 與獨立安裝來源（D5-C-3／D5-C-4-C）
 
 基準 `ae1b367`；2026-10-31。這份文件補充 [原有 machine inventory](../database/acceptance/migration-inventory.json)，不修改其中歷史 SHA／requires。
 [Schema 清冊](database-schema-inventory.md) 是 Repository 結構索引，舊 R0／923／924／925 文件仍是各階段證據，不用新文件改寫歷史。
+
+## D5-C-4-C 證據更新
+
+本輪Repository基準 `9f8dfb244c5b5b831df021e955bad27cd6f30b8b`；[正式核對報告](database-schema-production-drift-d5-c4.md) 區分使用者提供的正式事實、來源DDL、Runtime與歷史證明。
+原49份Migration／SHA／requires不變；922無獨立正式Ledger證據，923結構PASS不代表原始檔證明，924獨立installer會寫既有Ledger，925不寫Ledger，926當前正式狀態待確認。
 
 ## 已知執行事實與來源身分
 
@@ -9,11 +14,11 @@
 |---|---|---|---|
 | 001–026 | database/migrations，26 份 | Ledger 有紀錄 | 保留原 byte／hash，MIGRATION_ONLY（腳本） |
 | 900–921 | database/migrations，22 份 | Ledger 有紀錄 | 保留原 byte／hash，MIGRATION_ONLY（腳本） |
-| 922 | 沒有 SQL／scanner entry | Ledger 無紀錄 | 保持不存在，不新增空 Migration |
-| 923 | renderer＋tools/sqlserver-acceptance/drafts/923/923_dataset_metadata.draft.sql；非 scanner SQL | Ledger 有紀錄，但沒有原始 migrations/923 SQL | 找到可重現來源，不能證明當年執行 byte；不補登、不另造 Migration |
-| 924 | database/drafts/924_dataset_security_scope_binding.sql＋專用 installer | 未觀察到 DatasetSecurityScopeBinding | 目前 Scope 管理需要此表；不重跑、不自動修補。正式是否啟用功能／缺表原因 UNKNOWN |
-| 925 | tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql＋專用 installer | 三表存在，Ledger 無紀錄 | installer 本來不寫 Ledger；表名存在不代表 EXACT_MATCH。本次只比較來源契約，不重新安裝 |
-| 926 | database/migrations/926_dashboard_device_lifecycle.sql | 尚未正式執行 | 原樣保留；本次沒有執行、修改或採認 |
+| 922 | 沒有 SQL／scanner entry；可達歷史未找到路徑 | 本輪尚無獨立 Ledger 證據，UNKNOWN（取代先前無紀錄假設） | 不推定已安裝／不需要，不新增空 Migration |
+| 923 | renderer＋tools/sqlserver-acceptance/drafts/923/923_dataset_metadata.draft.sql；非 scanner SQL | Ledger 923_dataset_metadata.sql：2026-10-23 13:08:48；結構比對 PASS（本輪提供） | 四表0筆仍保留；原始部署檔／byte仍UNKNOWN，不補登 |
+| 924 | database/drafts/924_dataset_security_scope_binding.sql＋專用 installer／既有SchemaMigration紀錄 | ScopeBinding NOT_FOUND；924 Ledger無紀錄；Permission未確認 | 可選Scope管理與923欄位初始化需要；非啟動必備。部署必要性待功能／安全審查，不重跑或授權 |
+| 925 | tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql＋專用 installer | 三表存在；CreatedBy／UpdatedBy允許NULL相符；本輪未補充Ledger | installer本來不寫Ledger；其餘完整Catalog待證據，不能判EXACT_MATCH，不重新安裝 |
+| 926 | database/migrations/926_dashboard_device_lifecycle.sql；runner／Runtime attestation | 先前曾提供尚未執行；本輪當前Ledger／Schema未提供，UNKNOWN | 保留原Migration；不從現有表存在推定新增欄位／Constraint／Trigger已安裝 |
 
 ## 923 原始來源追查
 
@@ -21,13 +26,14 @@
 - `git log --all -- database/migrations/923_dataset_metadata.sql` 沒有該檔歷史。
 - `5087dfe` 已包含 draft 與 datasetMetadata923Catalog.ts。`d71ea0b`、`7612c5d` 等後續 Catalog/installer 調整仍保留可重建來源；不將最新版本冒認當年版本。
 - `installDataset923.ts` 的 `fileName` 固定為 `923_dataset_metadata.sql`，執行的是 `render923Draft()`，成功後寫 Ledger；所以 Ledger 名稱**不必對應一份 scanner 內的同名實體 SQL**。
-- 本次只執行純 renderer 產生暫存檔，與 tracked draft `cmp` 完全相同；沒有執行 SQL 或 installer。
+- D5-C-3曾只執行純 renderer 產生暫存檔，與 tracked draft `cmp` 完全相同；沒有執行 SQL 或 installer。
 - 檢查 CI／release packaging：有原始碼打包路徑，但本次基準 PR83 CI #1249 與 7612c5d 對應歷史 CI #959（run 39976099234）的 artifact 清單均為空；PR66 release job 受 PR number gate，不把其設定當成已下載部署包的證明。
-- 結論：**可恢復目前 Repository 的安裝 DDL；正式當年原始版本／byte 仍 UNKNOWN**。需要正式部署包 commit／manifest 或留存 artifact，以及 DBA 唯讀 Catalog 比對才能閉合。不得自行補登 923。
+- 結論：**可恢復目前 Repository 的安裝 DDL；正式當年原始版本／byte 仍 UNKNOWN**。本輪正式結構比對已由使用者提供 PASS，但歷史來源仍需正式部署包 commit／manifest 或留存 artifact 閉合；不能用目前結構相符反證當年原始 byte。不得自行補登 923。
 
 ## 924 Runtime 需求
 
 `app.ts` 已掛載 `/api/dataset-security`，datasetScopeManagement.repository 在 feature flag／incarnation／權限／exact schema gate 後以 SERIALIZABLE 讀寫 ScopeBinding。
+D5-C-4-C另追查到923欄位初始化status／collect透過withMetadataOwner共用此binding；Server啟動／health不要求924。兩項Permission已有Runtime消費者，非單純預留；不自動授予角色。
 ScopeVersion、subject/parent TokenVersion、DefinitionVersion、ConfigurationVersion、PlatformIncarnation 將 923 Scope 與目前安全狀態綁定；不是可刪除的重複欄位。
 專用 installer 限定 001–921＋923 的基線，寫入獨立 924 Ledger；不能直接用於含後續 926 的任意環境。
 缺表時 fail closed；本次不變更安全契約、不重跑 installer、不為清理新增 Migration。
@@ -39,7 +45,7 @@ ScopeVersion、subject/parent TokenVersion、DefinitionVersion、ConfigurationVe
 installer 只接受 ABSENT 或 EXACT_MATCH，SERIALIZABLE＋applock，重驗後 commit；不寫 SchemaMigration。
 Windows installer 與 release 將同一來源複製到相容路徑，不是第二份可移除的 Schema 來源。
 正式三表存在且 Ledger 無紀錄，與獨立安裝模式相容；**正式結構是否一致仍 UNKNOWN，不能以此回報已驗證一致**。
-本次不連線、不 apply、不 verify；保留待獨立授權的既有 read-only Catalog 結果核對事項。
+本輪正式CreatedBy／UpdatedBy允許NULL已確認相符，不是Drift；未提供其他完整Catalog，不補造EXACT_MATCH。本次不連線、不 apply、不 verify。
 
 ## 歷史 Migration 明細
 
@@ -95,7 +101,7 @@ Windows installer 與 release 將同一來源複製到相容路徑，不是第�
 | 919 | [919_dashboard_dataset_security_contract.sql](../database/migrations/919_dashboard_dataset_security_contract.sql) | 3, 6, 7, 907, 910, 913 | 有紀錄（使用者提供） |
 | 920 | [920_dataset_definition_rowversion.sql](../database/migrations/920_dataset_definition_rowversion.sql) | 3, 907, 910, 919 | 有紀錄（使用者提供） |
 | 921 | [921_datasource_native_parameter_versions.sql](../database/migrations/921_datasource_native_parameter_versions.sql) | 2, 3, 4, 9, 10, 13, 920 | 有紀錄（使用者提供） |
-| 926 | [926_dashboard_device_lifecycle.sql](../database/migrations/926_dashboard_device_lifecycle.sql) | 25, 900, 918 | 尚未執行（使用者提供） |
+| 926 | [926_dashboard_device_lifecycle.sql](../database/migrations/926_dashboard_device_lifecycle.sql) | 25, 900, 918 | 先前曾提供尚未執行；本輪當前狀態待證據 |
 
 ## 驗證方式
 

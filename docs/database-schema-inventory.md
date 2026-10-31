@@ -5,6 +5,19 @@
 未連線正式 SQL Server、未執行 Migration、未變更既有 SQL、未操作 C:\UQP。
 正式 Ledger 資訊來自本次任務提供的事實，未聲稱已獨立實測。
 
+## D5-C-4-C 正式證據補註
+
+本輪基準 `9f8dfb244c5b5b831df021e955bad27cd6f30b8b`；完整核對見 [正式 Drift／依賴報告](database-schema-production-drift-d5-c4.md)。
+以下數字與分類仍是 **Repository 預期宣告／用途**，不重算為正式已安裝數量。
+正式事實依使用者提供：UniversalQueryPlatform／SQL Server 15.0.2180.2 Express／uqp，未由本代理連線。
+
+- 923：四表 87 欄位、24 CHECK、4 DEFAULT、7 PK/UQ、10 FK、9 明確 Index 與 Sequence 參數結構比對 PASS；Ledger 923_dataset_metadata.sql 於 2026-10-23 13:08:48。四表均0筆不改變使用分類；當年原始部署檔仍 UNKNOWN。
+- 924：ScopeBinding NOT_FOUND、Ledger 無紀錄、Permission 資料未確認；此處列 ACTIVE 指 Repository Scope／欄位初始化依賴，不表示正式表存在，也不授權安裝。
+- 925：三表存在；DatasetMaskTemplate.CreatedBy／UpdatedBy 正式允許 NULL，與現行 DDL 相符，**不是 Schema Drift**；其餘完整 Catalog 尚缺，不判完整 EXACT_MATCH。
+- 922：尚缺獨立正式 Ledger 證據，正式歷史狀態 UNKNOWN；不能沿用先前「無紀錄」作本輪已證實事實。
+- 926：本輪未提供當前正式 Ledger／新增欄位／Constraint／Trigger，安裝狀態 UNKNOWN；來源 ACTIVE／MIGRATION_ONLY 與正式安裝狀態分開。
+- 可安全清理候選仍無；UNUSED_CONFIRMED 維持0。以下原始欄位／Constraint／來源 SHA 清冊不變。
+
 ## 計數與分類口徑
 
 一個應用 Schema：`uqp`。SQL Server 系統 Schema、外部資料來源 Schema、測試臨時 Schema 不納入此數字。

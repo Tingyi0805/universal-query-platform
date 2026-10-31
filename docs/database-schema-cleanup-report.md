@@ -1,7 +1,18 @@
-# SQL Schema 安全清理報告（D5-C-3）
+# SQL Schema 安全清理報告（D5-C-3／D5-C-4-C）
 
-基準 `ae1b367`；日期 2026-10-31。完成 Repository 層盤點，正式 Catalog／外部用途尚待證據。
+D5-C-3歷史基準 `ae1b367`；日期 2026-10-31。Repository 層盤點保留；本輪923正式結構PASS與其他待證據項目見下方D5-C-4-C更新。
 沒有刪除 SQL／文件／資料庫物件；沒有修改既有 Migration、Schema、seed、權限、Token、Cookie、Enrollment、Audit 或 lifecycle 流程。
+
+## D5-C-4-C 正式核對更新
+
+本輪基準 `9f8dfb244c5b5b831df021e955bad27cd6f30b8b`；[完整正式核對／Drift報告](database-schema-production-drift-d5-c4.md)。以下D5-C-3來源計數保持原口徑，不當作正式安裝物件數。
+
+- **923結構PASS**：依本輪提供的Ledger、87欄位、Constraint、Index與Sequence證據；四表0筆不等於未使用，原始部署檔仍UNKNOWN。
+- **924未安裝**：正式ScopeBinding NOT_FOUND、Ledger無紀錄；已有Scope與923欄位初始化Runtime用途，Permission亦有消費者。不是啟動必備；是否現在部署待需求／旗標／權限／Provider及installer相容性審查，絕不自動安裝或授權。
+- **925部分相符**：三表存在，Template.CreatedBy／UpdatedBy正式允許NULL與DDL相符，**不是Drift**；其他完整Catalog未提供，不能回報完整EXACT_MATCH。三表有實際程式讀寫及歷史用途，管理旗標關閉不等於播放／政策路徑不用。
+- **922 UNKNOWN**：尚無獨立正式Ledger證據；不沿用先前無紀錄假設，不因923存在推定922已裝或不需要。
+- **926 UNKNOWN（當前正式安裝）**：來源Migration與Runtime gate明確；本輪未提供當前Ledger／欄位／Constraint／Trigger。先前尚未安裝是歷史陳述。
+- **已確認Drift：無；仍待比對：有。可安全清理候選0、UNUSED_CONFIRMED 0、實際移除0；不提出Cleanup Migration或DROP。** 外部報表／排程／第三方／DB module尚無否定依賴證據，保留UNKNOWN。
 
 ## 盤點結果
 
@@ -117,7 +128,7 @@
 Server Unit／Typecheck／Build、Client Tests／Build、Browser 與既有 CI 的最新結果記錄於 Commit 對應 CI；不使用上一次綠燈冒充這次結果。
 SQL Schema Acceptance 在本機限既有離線 Catalog／installer guard／inventory tests；不呼叫會連 DB 或 bootstrap 的 CLI。
 既有 CI 的 disposable lifecycle SQL 只覆蓋其受測子集；PR83 的 923／924 full-schema 工作被既有條件跳過，不能宣稱完整正式 Schema 或 925 正式一致性已 PASS。
-因此 Repository 文件／來源完整性可驗證；正式 Schema／外部相依性全量驗收仍 **BLOCKED（缺唯讀證據）**，不阻止保留未知物件完成安全盤點。
+因此 Repository 文件／來源完整性可驗證；正式 Schema／外部相依性全量驗收仍 **部分待證據（923已依提供證據結構PASS；925完整比對、922／926現況及外部依賴未閉合）**，不阻止保留未知物件完成安全盤點。
 
 ### 本機驗證紀錄
 
@@ -126,3 +137,8 @@ SQL Schema Acceptance 在本機限既有離線 Catalog／installer guard／inven
 - 既有離線 Catalog／installer guard／inventory 專項：104／104；新清冊 validator 通過。
 - 923 renderer 輸出與 draft 逐 byte 相同；Migration 原 SHA 與 requires pin 未變。
 - Browser 與最新完整 CI 結果另於 PR83 記錄；首次 Browser 因預設 browser binary 不存在未啟動，改用既有系統 Chromium 後重跑。未修改產品以配合測試。
+
+### D5-C-4-C 文件驗證
+
+本輪只跑離線inventory validator、文件相對連結／git diff檢查；不重跑前段完整Server／Client／Browser或手動觸發完整CI。
+上方D5-C-3測試數字是歷史驗證紀錄，沒有冒充本輪執行。沒有修改驗證工具、Runtime、任何SQL／Migration或正式資料庫。

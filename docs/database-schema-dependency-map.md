@@ -2,6 +2,19 @@
 
 基準 `ae1b367`。這份來源相依圖不替代正式 Catalog、外部消費者與 workload 證據。
 
+## D5-C-4-C 新增核對（不變更 Runtime）
+
+[正式證據／用途／歷史分離報告](database-schema-production-drift-d5-c4.md) 補充：
+
+- 正式923結構依提供證據 PASS，零筆資料不等於未使用；原始部署來源仍 UNKNOWN。
+- `datasetFieldInitialization.status/collect → datasetScopeManagement.withMetadataOwner → owned/scopes → ScopeBinding`：924缺表會阻擋923欄位初始化讀寫；不是只有Scope管理入口受影響。
+- `server.ts`／health 不查924；router factory建立即不連DB。Scope旗標預設false，實際正式值未知；不自動安裝。
+- CONFIRM_DATASET_CLASSIFICATION 同時用於欄位初始化、eligibility與923 guard；MANAGE_DATASET_SECURITY_SCOPE 用於Scope route／交易重驗。兩者非僅預留定義，也不自動授予SYSTEM_ADMIN。
+- `Dashboard query mode／device management／device page／query source execution → PublicDisplayPolicy.get/getInTransaction`：925管理旗標關閉不能證明播放端不用925。
+- `datasetSensitiveColumn.replace → recordTemplateApplications` 會讀模板並追加Use歷史；無Runtime UPDATE/DELETE不構成未使用。
+- 925 CreatedBy／UpdatedBy 的正式 NULL 設定相符；922／926正式當前Ledger仍需獨立證據，未從Repository推定安裝。
+- 下方FK圖是來源宣告，外部View／SP／Trigger／Job／報表仍未有全量證據；無可安全清理候選。
+
 ## 已追查的執行路徑
 
 | 程式入口／模組 | 表／欄位與 SQL 行為 | 保留原因 |
