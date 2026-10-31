@@ -64,6 +64,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Validate offline SQL Schema usage inventory
+        run: node ../tools/validate-database-schema-inventory.mjs
       - name: Measure tracked source and clean Server build bytes
         run: node ../tools/measure-browser-build.mjs
 
