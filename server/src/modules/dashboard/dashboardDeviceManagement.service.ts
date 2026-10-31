@@ -13,7 +13,7 @@ export interface DeviceManagementTransaction extends SourceTransaction {
   credentialPolicy(datasetId: number): Promise<void>;
   writeCredential(id: number, deviceId: number, action: "ISSUE" | "ENROLL", hash: string, modeVersion: number, ownerVersion: number): Promise<string>;
   lifecycleReady(): Promise<void>;
-  lifecycleDevice(id: number, deviceId: number, action: "SUSPEND" | "RESTORE"): Promise<string>;
+  lifecycleDevice(id: number, deviceId: number, action: "SUSPEND" | "RESTORE" | "REVOKE" | "ARCHIVE", userId?: number): Promise<string>;
   securityReady(): Promise<void>;
   actor(actor: DeviceActor, safety?: boolean): Promise<void>;
   evidence(id: number): Promise<string>;
@@ -24,7 +24,7 @@ export interface DeviceManagementTransaction extends SourceTransaction {
   updatePlacement(id: number, deviceId: number, placement: DevicePlacement): Promise<void>;
   renewDevice(id: number, deviceId: number, days: number): Promise<string>;
   touch(id: number): Promise<void>;
-  deviceAudit(id: number, actor: DeviceActor, action: "CREATED" | "METADATA_UPDATED" | "PLACEMENT_UPDATED" | "RENEWED" | "SUSPENDED" | "RESTORED_PENDING" | "TOKEN_ISSUED_PENDING" | "ENROLLED", deviceId: number, invalidated: boolean, renewal?: { extendDays: number; previousExpiresAtUtc: string; expiresAtUtc: string }): Promise<void>;
+  deviceAudit(id: number, actor: DeviceActor, action: "CREATED" | "METADATA_UPDATED" | "PLACEMENT_UPDATED" | "RENEWED" | "SUSPENDED" | "RESTORED_PENDING" | "TOKEN_ISSUED_PENDING" | "ENROLLED" | "REVOKED" | "ARCHIVED", deviceId: number, invalidated: boolean, renewal?: { extendDays: number; previousExpiresAtUtc: string; expiresAtUtc: string }): Promise<void>;
 }
 export interface DeviceManagementStore { transaction<T>(work: (tx: DeviceManagementTransaction) => Promise<T>): Promise<T> }
 export const deviceManagementVersion = (state: SourceState, evidence: string, devices: DeviceRecord[]) =>
@@ -68,7 +68,7 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
       throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE");
     return device;
   };
-  const lifecycle = (action: "SUSPEND" | "RESTORE", id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => run(id, actor, async (tx, current) => {
+  const lifecycle = (action: "SUSPEND" | "RESTORE" | "REVOKE" | "ARCHIVE", id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => run(id, actor, async (tx, current) => {
     validate(current, input);
     const device = current.devices.find(d => d.id === deviceId);
     if (!device) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND", 404);
@@ -77,7 +77,7 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
       await tx.delegation(device);
       await queries(tx, current.state, device.createdByUserId);
     }
-    const eventTime = await tx.lifecycleDevice(id, deviceId, action);
+    const eventTime = await tx.lifecycleDevice(id, deviceId, action, actor.userId);
     const after = await snapshot(tx, id), updated = after.devices.find(d => d.id === deviceId)!;
     const record = (d: DeviceRecord): DeviceLifecycleRecord => ({ id: d.id, dashboardId: d.dashboardId, isActive: d.isActive,
       suspendedAtUtc: d.suspendedAtUtc, reenrollmentRequired: d.reenrollmentRequired, revokedAtUtc: d.revokedAtUtc,
@@ -87,11 +87,13 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
     try { assertDeviceLifecycleTransition(record(device), record(updated), action, Date.parse(eventTime)); }
     catch { throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE"); }
     await tx.touch(id);
-    await tx.deviceAudit(id, actor, action === "SUSPEND" ? "SUSPENDED" : "RESTORED_PENDING", deviceId, true);
+    await tx.deviceAudit(id, actor, ({ SUSPEND: "SUSPENDED", RESTORE: "RESTORED_PENDING", REVOKE: "REVOKED", ARCHIVE: "ARCHIVED" } as const)[action], deviceId, true);
     return { ...project(await snapshot(tx, id)), deviceId, credentialIssued: false, deviceCredentialsInvalidated: true };
-  }, true, action === "SUSPEND");
+  }, true, action !== "RESTORE");
   return {
     safetyRead: (id: number, actor: DeviceActor) => run(id, actor, async (_tx, current) => project(current), true, true),
+    revoke: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("REVOKE", id, deviceId, actor, input),
+    archive: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("ARCHIVE", id, deviceId, actor, input),
     suspend: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("SUSPEND", id, deviceId, actor, input),
     restore: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("RESTORE", id, deviceId, actor, input),
     read: (id: number, actor: DeviceActor) => run(id, actor, async (tx, current) => {

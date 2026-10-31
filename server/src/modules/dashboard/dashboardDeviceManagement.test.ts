@@ -276,3 +276,18 @@ test("D2-A 926 readiness is required only for lifecycle APIs; ordinary managemen
   const before=f.snapshot();await assert.rejects(work(),{code:"DASHBOARD_DEVICE_LIFECYCLE_SCHEMA_REQUIRED",status:503});assert.deepEqual(f.snapshot(),before);
  }
 });
+
+test("D3 HTTP versioned safety revoke/archive requires live JWT and strict confirmation",async()=>{
+ const f=await httpFixture();try{
+  f.control.permissions=["DESIGN_QUERY"];f.session.permissions=["DESIGN_QUERY"];
+  const i={expectedVersion:(await f.request("GET","/lifecycle")).body.version,confirmed:true};
+  assert.equal((await f.request("POST","/7/archive",i)).status,409);
+  assert.equal((await f.request("POST","/7/revoke",i,null)).status,401);
+  assert.equal((await f.request("POST","/7/revoke",{...i,token:"injected"})).status,400);
+  assert.equal((await f.request("POST","/7/revoke",{...i,confirmed:false})).status,400);
+  const revoked=await f.request("POST","/7/revoke",i);assert.equal(revoked.status,200);assert.equal(revoked.cache,"no-store");
+  assert.equal((await f.request("POST","/7/revoke",i)).status,409);
+  const archived=await f.request("POST","/7/archive",{...i,expectedVersion:revoked.body.version});assert.equal(archived.status,200);
+  assert.doesNotMatch(JSON.stringify(archived.body),/TokenHash|credentialFingerprint|"token"/);
+ }finally{await f.close();}
+});

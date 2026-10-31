@@ -77,6 +77,7 @@ async function main(){
   await query("UPDATE uqp.DashboardDisplayDevice SET IsActive=0,ReenrollmentRequired=NULL,RevokedAtUtc=SYSUTCDATETIME(),TokenHash=CONVERT(char(64),HASHBYTES('SHA2_256','revoke'),2),QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL WHERE Id=1");
   await denied("UPDATE uqp.DashboardDisplayDevice SET RevokedAtUtc=NULL,IsActive=1 WHERE Id=1");
   await query("UPDATE uqp.DashboardDisplayDevice SET ArchivedAtUtc=SYSUTCDATETIME() WHERE Id IN(1,2) AND IsActive=0 AND RevokedAtUtc IS NOT NULL");
+  stage="D3-production-writers";await (await import("./deviceLifecycleD3Acceptance.js")).verifyD3(db);
   stage="disabled-check-not-repaired";
   await query("ALTER TABLE uqp.DashboardDisplayDevice NOCHECK CONSTRAINT CK_DashboardDevice_LifecycleTerminal");
   await assert.rejects(query(deviceLifecycleSchemaSql));await assert.rejects(db.request().batch(ddl));

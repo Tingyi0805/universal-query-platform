@@ -1,7 +1,8 @@
 import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
 import { parsePatientAuditKeyring } from "../audit/patientAuditKeyring.js";
 import { requireDeviceLifecycleSchema } from "./dashboardDeviceLifecycleSchema.js";
-import { renewDashboardDisplayDevice } from "./dashboardDevice.repository.js";
+import { revokeDashboardQueryDevice } from "./dashboardQueryMode.repository.js";
+import { archiveDashboardDevices, renewDashboardDisplayDevice } from "./dashboardDevice.repository.js";
 import sql from "mssql";
 import { createHash } from "node:crypto";
 import { getTokenSessionState } from "../auth/auth.repository.js";
@@ -90,7 +91,14 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
         try { await deps.lifecycleSchema(request()); }
         catch { throw new QuerySourceError("DASHBOARD_DEVICE_LIFECYCLE_SCHEMA_REQUIRED", 503); }
       },
-      async lifecycleDevice(id, deviceId, action) {
+      async lifecycleDevice(id, deviceId, action, userId) {
+        if (action === "REVOKE" || action === "ARCHIVE") {
+          if (action === "REVOKE") await revokeDashboardQueryDevice(id, deviceId, request());
+          else if (await archiveDashboardDevices(id, [deviceId], userId!, request()) !== 1) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_EDITABLE");
+          const row = (await scoped(id).input("deviceId", sql.BigInt, deviceId).query(
+            `SELECT ${action === "REVOKE" ? "RevokedAtUtc" : "ArchivedAtUtc"} AS EventTime FROM uqp.DashboardDisplayDevice WHERE DashboardId=@dashboardId AND Id=@deviceId`)).recordset[0];
+          return new Date(row.EventTime).toISOString();
+        }
         const result = await scoped(id).input("deviceId", sql.BigInt, deviceId).query(`
           DECLARE @eventTime DATETIME2(0)=SYSUTCDATETIME();
           DECLARE @changed TABLE (Id BIGINT);

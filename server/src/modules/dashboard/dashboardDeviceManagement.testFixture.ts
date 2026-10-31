@@ -15,7 +15,7 @@ export function deviceManagementFixture() {
     ShowClock: true, ShowPageNumber: true, ShowCountdown: true, ApprovalRowVersion: Buffer.from("0000000000000001", "hex") } as Row,
     devices: [{ Id: 7, DashboardId: 1, DeviceName: "Synthetic", CreatedByUserId: 2, SharedWorkstationId: 3, IsActive: true, ExpiresAtUtc: null, RevokedAtUtc: null,
       ArchivedAtUtc: null, EnforceIpRestriction: true, AllowedIp: "192.0.2.2", AllowedCidr: null, TokenHash: "a".repeat(64), QueryModeGrantVersion: 1, DelegatorTokenVersion: 1 }] as Row[],
-    placements: [] as Row[], audits: [] as Row[] };
+    history: [] as Row[], placements: [] as Row[], audits: [] as Row[] };
   let staged = copy(db), queue = Promise.resolve();
   const control = { enabled: true, schema: true, modeSchema: true, deviceSchema: true, pool: true, failAt: "", deniedUser: 0, account: true,
     permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"], tokenVersion: 1, workstation: true, query: true, policy: true, policyReads: 0, policyFailAtRead: 0, patientAudit: false, statements: [] as string[], events: [] as string[] };
@@ -56,6 +56,18 @@ export function deviceManagementFixture() {
           Object.assign(d,{IsActive:false,RevokedAtUtc:new Date(Math.floor(Date.now()/1000)*1000).toISOString(),SuspendedAtUtc:null,
             ReenrollmentRequired:null,TokenHash:"f".repeat(64),QueryModeGrantVersion:null,DelegatorTokenVersion:null});
           return {rowsAffected:[1]};
+        }
+        if (s.includes("AS EventTime FROM uqp.DashboardDisplayDevice")) {
+          const d=staged.devices.find(d=>d.Id===v.deviceId)!;
+          return {recordset:[{EventTime:s.includes("RevokedAtUtc AS")?d.RevokedAtUtc:d.ArchivedAtUtc}]};
+        }
+        if (s.includes("DECLARE @archived TABLE")) {
+          assert.match(s,/RevokedAtUtc IS NOT NULL/);
+          const d=staged.devices.find(d=>d.Id===v.device0&&d.DashboardId===v.dashboardId);
+          if (!d || d.IsActive || !d.RevokedAtUtc || d.ArchivedAtUtc) return {recordset:[{Archived:0}]};
+          d.ArchivedAtUtc=new Date(Math.floor(Date.now()/1000)*1000).toISOString();
+          staged.history.push({DeviceId:d.Id,ArchiveMode:"MANUAL",ArchivedByUserId:v.userId});
+          fail("history");return {recordset:[{Archived:1}]};
         }
         if (s.includes("DECLARE @credential TABLE")) {
           assert.match(s,/OUTPUT INSERTED.Id INTO @credential/);assert.match(s,/SuspendedAtUtc IS NULL/);assert.match(s,/AND ReenrollmentRequired=1/);

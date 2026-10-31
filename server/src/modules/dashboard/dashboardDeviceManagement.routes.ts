@@ -33,7 +33,7 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
     try { const c = context(req); res.json(await service.safetyRead(c.id, c.actor)); }
     catch (error) { failure(error, res, req.id); }
   });
-  for (const operation of ["suspend", "restore"] as const) router.post(`/:id/device-management/v1/:deviceId/${operation}`, async (req, res) => {
+  for (const operation of ["suspend", "restore", "revoke", "archive"] as const) router.post(`/:id/device-management/v1/:deviceId/${operation}`, async (req, res) => {
     try {
       const c = context(req), deviceId = idSchema.safeParse(req.params.deviceId);
       const input = z.object(confirmed).strict().safeParse(req.body);

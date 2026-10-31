@@ -1,3 +1,4 @@
+import { revokeDashboardQueryDevice } from "./dashboardQueryMode.repository.js";
 import { requireUnmanagedDeviceCredential } from "./dashboardDeviceCredentialWriters.js";
 import crypto from "node:crypto";
 import { getTokenSessionState } from "../auth/auth.repository.js";
@@ -243,20 +244,7 @@ export async function renewDashboardDisplayDevice(
 
 export async function revokeDashboardDisplayDevice(dashboardId: number, deviceId: number) {
   const pool = await requirePool();
-  const result = await pool.request()
-    .input("dashboardId", sql.BigInt, dashboardId)
-    .input("deviceId", sql.BigInt, deviceId)
-    .query(`
-      UPDATE uqp.DashboardDisplayDevice
-      SET IsActive=0,
-          RevokedAtUtc=SYSUTCDATETIME()
-      WHERE Id=@deviceId AND DashboardId=@dashboardId AND IsActive=1;
-      SELECT @@ROWCOUNT AS Affected;
-    `);
-
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
-    throw new Error("DASHBOARD_DEVICE_NOT_FOUND");
-  }
+  await revokeDashboardQueryDevice(dashboardId, deviceId, pool.request());
 }
 
 export async function checkDashboardDisplayDevice(
@@ -357,22 +345,31 @@ export async function setDashboardDeviceArchivePolicy(
   return { enabled, retentionDays };
 }
 
-export async function archiveDashboardDevices(dashboardId: number, deviceIds: number[], userId: number) {
-  const pool = await requirePool();
-  const request = pool.request()
+export async function archiveDashboardDevices(dashboardId: number, deviceIds: number[], userId: number, scopedRequest?: sql.Request) {
+  if (deviceIds.length === 0) return 0;
+  const request = (scopedRequest ?? (await requirePool()).request())
     .input("dashboardId", sql.BigInt, dashboardId)
     .input("userId", sql.BigInt, userId);
   const ids = [...new Set(deviceIds)];
   ids.forEach((id, index) => request.input("device" + index, sql.BigInt, id));
   const result = await request.query(`
+    SET XACT_ABORT ON;
+    BEGIN TRY
+    BEGIN TRANSACTION;
+    DECLARE @archived TABLE(DashboardId BIGINT, DeviceId BIGINT, ArchivedAtUtc DATETIME2(0));
     UPDATE uqp.DashboardDisplayDevice
     SET ArchivedAtUtc=SYSUTCDATETIME()
-    OUTPUT INSERTED.DashboardId, INSERTED.Id, 'MANUAL', @userId, INSERTED.ArchivedAtUtc
-    INTO uqp.DashboardDeviceArchiveHistory
-      (DashboardId, DeviceId, ArchiveMode, ArchivedByUserId, ArchivedAtUtc)
+    OUTPUT INSERTED.DashboardId, INSERTED.Id, INSERTED.ArchivedAtUtc INTO @archived
     WHERE DashboardId=@dashboardId AND Id IN (${ids.map((_, index) => "@device" + index).join(",")})
-      AND IsActive=0 AND ArchivedAtUtc IS NULL;
-    SELECT @@ROWCOUNT AS Archived;
+      AND IsActive=0 AND RevokedAtUtc IS NOT NULL AND ArchivedAtUtc IS NULL;
+    INSERT uqp.DashboardDeviceArchiveHistory(DashboardId,DeviceId,ArchiveMode,ArchivedByUserId,ArchivedAtUtc)
+      SELECT DashboardId,DeviceId,'MANUAL',@userId,ArchivedAtUtc FROM @archived;
+    COMMIT TRANSACTION;
+    SELECT COUNT(*) AS Archived FROM @archived;
+    END TRY BEGIN CATCH
+      IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+      THROW;
+    END CATCH;
   `);
   return Number(result.recordset[0]?.Archived ?? 0);
 }
@@ -380,6 +377,10 @@ export async function archiveDashboardDevices(dashboardId: number, deviceIds: nu
 export async function autoArchiveDashboardDevices(): Promise<number> {
   const pool = await requirePool();
   const result = await pool.request().query(`
+    SET XACT_ABORT ON;
+    BEGIN TRY
+    BEGIN TRANSACTION;
+    DECLARE @archived TABLE(DashboardId BIGINT, DeviceId BIGINT, ArchivedAtUtc DATETIME2(0));
     ;WITH Candidates AS (
       SELECT TOP (200) ddd.Id, ddd.DashboardId, ddd.ArchivedAtUtc
       FROM uqp.DashboardDisplayDevice ddd
@@ -390,10 +391,15 @@ export async function autoArchiveDashboardDevices(): Promise<number> {
         AND ddd.RevokedAtUtc <= DATEADD(DAY, -COALESCE(p.RetentionDays,90), SYSUTCDATETIME())
     )
     UPDATE Candidates SET ArchivedAtUtc=SYSUTCDATETIME()
-    OUTPUT INSERTED.DashboardId, INSERTED.Id, 'AUTO', NULL, INSERTED.ArchivedAtUtc
-    INTO uqp.DashboardDeviceArchiveHistory
-      (DashboardId, DeviceId, ArchiveMode, ArchivedByUserId, ArchivedAtUtc);
-    SELECT @@ROWCOUNT AS Archived;
+    OUTPUT INSERTED.DashboardId, INSERTED.Id, INSERTED.ArchivedAtUtc INTO @archived;
+    INSERT uqp.DashboardDeviceArchiveHistory(DashboardId,DeviceId,ArchiveMode,ArchivedByUserId,ArchivedAtUtc)
+      SELECT DashboardId,DeviceId,'AUTO',NULL,ArchivedAtUtc FROM @archived;
+    COMMIT TRANSACTION;
+    SELECT COUNT(*) AS Archived FROM @archived;
+    END TRY BEGIN CATCH
+      IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+      THROW;
+    END CATCH;
   `);
   return Number(result.recordset[0]?.Archived ?? 0);
 }
