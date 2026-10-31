@@ -1,3 +1,5 @@
+import { DeviceExpiryInput } from "./DeviceExpiryInput";
+import { taipeiDateTime, validDeviceExpiry } from "../dashboard/taipeiDateTime";
 import { useAuth } from "../auth/AuthContext";
 import { lifecycleActions, lifecycleConfirmation, lifecycleLabels, lifecycleStatus, type LifecycleAction, type LifecycleDevice } from "../dashboard/deviceLifecycle";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
@@ -65,6 +67,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   }
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null), [version, setVersion] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ deviceId: number | null; operation: "metadata" | "placement" } | null>(null);
+  const [expiryValid, setExpiryValid] = useState(true);
   const [metadata, setMetadata] = useState<Metadata>(empty), [placement, setPlacement] = useState(defaultPlacement);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
   const [renewId,setRenewId]=useState<number|null>(null),[renewDays,setRenewDays]=useState(30);
@@ -191,7 +194,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     finally{if(read===sequence.current)setBusy(false);}
   }
   async function save() {
-    if (busy || !design || !execute || !draft || !version || !window.confirm(draft.operation === "placement" ? "保存播放位置？此操作不改動患者資料權限。" : "保存裝置設定？不核發憑證；既有裝置的舊憑證將失效，須明確重新授權。")) return;
+    if (busy || !design || !execute || !draft || !version || (draft.operation === "metadata" && (!expiryValid || !validDeviceExpiry(metadata.expiresAtUtc))) || !window.confirm(draft.operation === "placement" ? "保存播放位置？此操作不改動患者資料權限。" : "保存裝置設定？不核發憑證；既有裝置的舊憑證將失效，須明確重新授權。")) return;
     const read = ++sequence.current; setLifecycleVersion(null); clearToken(); setBusy(true); setMessage("");
     try {
       const path = draft.deviceId === null ? base : `${base}/${draft.deviceId}/${draft.operation}`;
@@ -221,7 +224,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
         <span>狀態：{lifecycleStatus(device as LifecycleDevice, now)}</span>
         {lifecycleActions(device as LifecycleDevice, design, execute, now).map(action => <button key={action} type="button" disabled={busy || !lifecycleVersion || !!draft || renewId !== null} onClick={() => void lifecycleWrite(device, action)}>{lifecycleLabels[action]} {device.deviceName}</button>)}
       </div>}
-      <span>；到期：{device.expiresAtUtc??"未設定到期日"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</span>
+      <span>；到期：{device.expiresAtUtc === null ? "未設定到期日" : `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）`}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</span>
       <button type="button" disabled={busy||!design||!execute||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>
       <button type="button" disabled={busy || !design || !execute || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
       <button type="button" disabled={busy || !design || !execute || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
@@ -248,13 +251,13 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
         <label className="uqp-device-checkbox"><input type="checkbox" checked={metadata.enforceIpRestriction} onChange={e => setMetadata({ ...metadata, enforceIpRestriction: e.target.checked, allowedIp: null, allowedCidr: null })}/>限制來源 IP</label>
         <label>允許 IP<input aria-label="允許 IP" disabled={!metadata.enforceIpRestriction} value={metadata.allowedIp ?? ""} onChange={e => setMetadata({ ...metadata, allowedIp: e.target.value || null })}/></label>
         <label>允許 IPv4 CIDR<input aria-label="允許 IPv4 CIDR" disabled={!metadata.enforceIpRestriction} value={metadata.allowedCidr ?? ""} onChange={e => setMetadata({ ...metadata, allowedCidr: e.target.value || null })}/></label>
-        <label>到期時間（UTC ISO，留空為無到期日）<input aria-label="裝置到期時間 UTC" placeholder="2030-01-01T00:00:00Z" value={metadata.expiresAtUtc ?? ""} onChange={e => setMetadata({ ...metadata, expiresAtUtc: e.target.value || null })}/></label>
+        <DeviceExpiryInput value={metadata.expiresAtUtc} onChange={expiresAtUtc => setMetadata(previous => ({ ...previous, expiresAtUtc }))} onValidityChange={setExpiryValid}/>
       </div> : <div className="uqp-device-fields">
         <label>瀏覽器<select aria-label="播放瀏覽器" value={placement.browser} onChange={e => setPlacement({ ...placement, browser: e.target.value as "edge" | "chrome" })}><option value="edge">Edge</option><option value="chrome">Chrome</option></select></label>
         <label className="uqp-device-checkbox"><input type="checkbox" checked={placement.fullscreen} onChange={e => setPlacement({ ...placement, fullscreen: e.target.checked })}/>全螢幕</label>
         {([['screenNumber', '指定螢幕'], ['windowX', '視窗 X'], ['windowY', '視窗 Y'], ['windowWidth', '視窗寬度'], ['windowHeight', '視窗高度']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" aria-label={label} value={placement[key]} onChange={e => setPlacement({ ...placement, [key]: Number(e.target.value) })}/></label>)}
       </div>}
-      <div className="uqp-device-actions"><button type="button" disabled={!version || (draft.operation === "metadata" && !metadata.deviceName.trim())} onClick={() => void save()}>確認保存裝置設定</button></div>
+      <div className="uqp-device-actions"><button type="button" disabled={!version || (draft.operation === "metadata" && (!metadata.deviceName.trim() || !expiryValid || !validDeviceExpiry(metadata.expiresAtUtc)))} onClick={() => void save()}>確認保存裝置設定</button></div>
     </fieldset>}
     {issuedId !== null && <dialog ref={tokenDialog} aria-label="一次性新 Token" onCancel={e => { e.preventDefault(); clearToken(); }} onClose={clearToken}>
       <h3>一次性新 Token</h3><p>裝置 {issuedId} 待重新授權。新 Token 只顯示一次；關閉後無法從歷史重新讀取。</p>

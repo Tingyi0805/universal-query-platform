@@ -66,7 +66,7 @@ test("create metadata-only device while playback flag is off; explicit delegator
   const { state, panel } = await setup(page);
   await panel.getByRole("button", { name: "建立未授權裝置", exact: true }).click();
   await panel.getByLabel("裝置名稱", { exact: true }).fill("新合成裝置");
-  await panel.getByLabel("裝置到期時間 UTC").fill("2099-01-01T00:00:00Z");
+  await panel.getByLabel("裝置到期時間（Asia/Taipei）").fill("2099-01-01 08:00");
   await panel.getByRole("button", { name: "確認保存裝置設定" }).click();
   await expect(panel.getByText(/裝置設定已保存；未核發憑證/)).toBeVisible();
   await expect(panel.getByText(/新合成裝置；委派者 1/)).toBeVisible();
@@ -81,10 +81,10 @@ test("metadata edit saves name/IP/expiry and reloads exact values; original dele
   await panel.getByRole("button", { name: "編輯 合成裝置 基本設定" }).click();
   await expect(panel.getByLabel("允許 IP", { exact: true })).toHaveValue("192.0.2.1");
   await panel.getByLabel("裝置名稱", { exact: true }).fill("合成新名稱"); await panel.getByLabel("允許 IP", { exact: true }).fill("192.0.2.20");
-  await panel.getByLabel("裝置到期時間 UTC").fill("2099-01-01T00:00:00Z"); await panel.getByRole("button", { name: "確認保存裝置設定" }).click();
+  await panel.getByLabel("裝置到期時間（Asia/Taipei）").fill("2099-01-01 08:00"); await panel.getByRole("button", { name: "確認保存裝置設定" }).click();
   await expect(panel.getByText(/既有裝置須明確重新授權/)).toBeVisible();
   await panel.getByRole("button", { name: "重新載入裝置設定" }).click(); await panel.getByRole("button", { name: "編輯 合成新名稱 基本設定" }).click();
-  await expect(panel.getByLabel("允許 IP", { exact: true })).toHaveValue("192.0.2.20"); await expect(panel.getByLabel("裝置到期時間 UTC")).toHaveValue("2099-01-01T00:00:00Z");
+  await expect(panel.getByLabel("允許 IP", { exact: true })).toHaveValue("192.0.2.20"); await expect(panel.getByLabel("裝置到期時間（Asia/Taipei）")).toHaveValue("2099-01-01 08:00");
   expect(state.devices[0]!.createdByUserId).toBe(2); expect(state.devices[0]!.sharedWorkstationId).toBe(3); expect(state.oldWrites).toBe(0);
 });
 test("existing placement loads without overwriting, preserves all fields and persists through reload", async ({ page }) => {
@@ -325,4 +325,47 @@ test("360px lifecycle dialog and denied clipboard preserve one-time manual copy"
   const box=await dialog.boundingBox();expect(box!.x).toBeGreaterThanOrEqual(0);expect(box!.x+box!.width).toBeLessThanOrEqual(360);
   await dialog.getByRole("button",{name:"關閉並清除新 Token"}).click();
   expect(await page.locator("body").innerHTML()).not.toContain("L".repeat(43));
+});
+for(const timezoneId of ["America/Los_Angeles","Asia/Tokyo"]) test.describe(`Taipei expiry in ${timezoneId}`,()=>{
+  test.use({timezoneId});
+  test("unchanged seconds survive metadata save; calendar sets explicit Taipei minute",async({page})=>{
+    const {state,panel}=await setup(page);state.devices[0]!.expiresAtUtc="2099-02-28T23:59:42.123Z";
+    await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+    await panel.getByRole("button",{name:"編輯 合成裝置 基本設定"}).click();
+    await expect(panel.getByLabel("裝置到期時間（Asia/Taipei）")).toHaveValue("2099-03-01 07:59");
+    await panel.getByLabel("裝置名稱",{exact:true}).fill("保留秒數");
+    await panel.getByRole("button",{name:"確認保存裝置設定"}).click();
+    expect(state.writes[0]!.body.metadata.expiresAtUtc).toBe("2099-02-28T23:59:42.123Z");
+    await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+    await panel.getByRole("button",{name:"編輯 保留秒數 基本設定"}).click();
+    await panel.getByRole("button",{name:"開啟到期日期時間選擇器"}).click();
+    const dialog=page.getByRole("dialog",{name:"選擇授權到期日期時間"});
+    await dialog.getByLabel("到期日期",{exact:true}).fill("2099-03-02");
+    await dialog.getByLabel("到期小時").selectOption("00");await dialog.getByLabel("到期分鐘").selectOption("01");
+    await dialog.getByRole("button",{name:"套用到期時間"}).click();
+    await panel.getByRole("button",{name:"確認保存裝置設定"}).click();
+    expect(state.writes[1]!.body.metadata.expiresAtUtc).toBe("2099-03-01T16:01:00.000Z");
+  });
+});
+test.describe("touch expiry",()=>{
+  test.use({hasTouch:true});
+test("invalid and past expiry block writes; cancel preserves original; blank saves NULL on mobile",async({page})=>{
+  await page.setViewportSize({width:360,height:800});
+  const {state,panel}=await setup(page);
+  await panel.getByRole("button",{name:"編輯 合成裝置 基本設定"}).click();
+  const input=panel.getByLabel("裝置到期時間（Asia/Taipei）");
+  for(const value of ["2027-02-29 10:00","2000-01-01 12:00","2099-01-01 10:00:59"]){
+    await input.fill(value);await expect(input).toHaveAttribute("aria-invalid","true");
+    await expect(panel.getByRole("button",{name:"確認保存裝置設定"})).toBeDisabled();
+  }
+  expect(state.writes).toHaveLength(0);
+  await input.fill("2099-01-01 08:00");
+  await panel.getByRole("button",{name:"開啟到期日期時間選擇器"}).tap();
+  const dialog=page.getByRole("dialog",{name:"選擇授權到期日期時間"});
+  await dialog.getByLabel("到期小時").selectOption("23");
+  await dialog.getByRole("button",{name:"取消日期選擇"}).click();
+  await expect(input).toHaveValue("2099-01-01 08:00");
+  await input.fill("");await panel.getByRole("button",{name:"確認保存裝置設定"}).click();
+  expect(state.writes[0]!.body.metadata.expiresAtUtc).toBe(null);
+});
 });
