@@ -29,7 +29,7 @@ export async function verifyDeviceHistory(pool:sql.ConnectionPool){
   for(const parameters of [{dashboardId:1,deviceId:target},{dashboardId:99,deviceId:other},{deviceId:target},{dashboardId:99,deviceId:String(target)},{nested:{dashboardId:99,deviceId:target}},{"dashboardId ":99,deviceId:target},{dashboardId:"99",deviceId:target}])await writeAuditEvent({eventType:"DASHBOARD_DEVICE_SUSPENDED",userId:1,parameters},tx);
   await writeAuditEvent({eventType:"LOGIN_FAILED",userId:1,parameters:{dashboardId:99,deviceId:target}},tx);
   await tx.commit();
- }catch(e){await tx.rollback();throw e;}
+ }catch(e){await tx.rollback().catch(()=>undefined);throw e;}
  const poison=(await query("SELECT MAX(Id) Id FROM uqp.AuditLog")).recordset[0].Id;
  await pool.request().input("id",sql.BigInt,poison).input("json",sql.NVarChar(sql.MAX),`{"dashboardId":99,"deviceId":${target},"deviceId":${other}}`).query("UPDATE uqp.AuditLog SET EventType='DASHBOARD_DEVICE_SUSPENDED',ParametersJson=@json WHERE Id=@id");
  await pool.request().input("badJson",sql.NVarChar(sql.MAX),'{"dashboardId":99,').query("INSERT uqp.AuditLog(EventType,EventCategory,IsImportant,UserId,Status,ParametersJson) VALUES('DASHBOARD_DEVICE_SUSPENDED','CONFIG',1,1,'SUCCESS',@badJson)");
@@ -40,7 +40,7 @@ export async function verifyDeviceHistory(pool:sql.ConnectionPool){
  const read=async(source:"LIVE"|"ARCHIVE",input:Record<string,string>={},id=99,deviceId=target)=>{
   const tx=new sql.Transaction(pool);await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try{const r=await readDeviceAuditHistory(new sql.Request(tx),id,deviceId,deviceHistoryQuery.parse({source,...input}));await tx.commit();return r;}
-  catch(e){await tx.rollback();throw e;}
+  catch(e){await tx.rollback().catch(()=>undefined);throw e;}
  };
  const assertSource=async(source:"LIVE"|"ARCHIVE")=>{
   phase=`${source}_COUNT`;const all=await read(source,{pageSize:"100"});assert.equal(all.total,37);assert.equal(all.items.length,37);
@@ -55,15 +55,15 @@ export async function verifyDeviceHistory(pool:sql.ConnectionPool){
   phase=`${source}_DATES`;assert.equal((await read(source,{startDate:"2020-03-01",endDate:"2020-03-01"})).total,36);
   assert.equal((await read(source,{endDate:"2020-02-29"})).total,0);
   assert.equal((await read(source,{startDate:"2020-03-02"})).total,1);
-  phase=`${source}_SCOPE`;await assert.rejects(read(source,{},1,target),e=>Number((e as {number?:number}).number)===51032);
-  const otherRecords=await read(source,{},99,other);assert.equal(otherRecords.total,1); // Only its explicitly attributed record.
+  phase=`${source}_CROSS_DASHBOARD`;await assert.rejects(read(source,{},1,target),e=>Number((e as {number?:number}).number)===51032);
+  phase=`${source}_CROSS_DEVICE`;const otherRecords=await read(source,{},99,other);assert.equal(otherRecords.total,1); // Only its explicitly attributed record.
  };
  await assertSource("LIVE");assert.equal((await read("ARCHIVE")).total,0);
  // Execute the exact existing archive INSERT/SELECT/DELETE batch with its real schema.
  phase="ARCHIVE_COPY";const repository=await readFile(new URL("../modules/audit/audit.repository.ts",import.meta.url),"utf8");
  const archiveSql=repository.split("export async function archiveOldAuditLogs()")[1]!.split("export async function cleanupAuditArchive")[0]!.match(/\.query\(`([\s\S]*?)`\)/)![1]!;
  const archiving=new sql.Transaction(pool);await archiving.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
- try{await new sql.Request(archiving).input("onlineDays",sql.Int,365).query(archiveSql);await archiving.commit();}catch(e){await archiving.rollback();throw e;}
+ try{await new sql.Request(archiving).input("onlineDays",sql.Int,365).query(archiveSql);await archiving.commit();}catch(e){await archiving.rollback().catch(()=>undefined);throw e;}
  await assertSource("ARCHIVE");assert.equal((await read("LIVE")).total,0);
  console.log("D4D_SQL_LIVE_ARCHIVE_SCOPE_DATES_EVENTS_USERNAME_PAGES_REDACTION_RETENTION_COPY_PASS");
  }catch(error){console.error(`D4D_SQL_FAILED:${phase}:${Number((error as {number?:number}).number)||0}`);throw error;}
