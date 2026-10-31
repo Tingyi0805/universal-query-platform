@@ -1,3 +1,5 @@
+import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
+import { parsePatientAuditKeyring } from "../audit/patientAuditKeyring.js";
 import { requireDeviceLifecycleSchema } from "./dashboardDeviceLifecycleSchema.js";
 import { renewDashboardDisplayDevice } from "./dashboardDevice.repository.js";
 import sql from "mssql";
@@ -40,7 +42,7 @@ export async function deviceManagementSchemaReady(request: sql.Request) {
   return Boolean(result.recordset[0]?.DeviceManagementReady);
 }
 export const defaultDeviceManagementDependencies = { ...defaultQuerySourceDependencies, session: getTokenSessionState,
-  securitySchema: requireSecuritySchema, modeSchema: queryModeSchemaReady, deviceSchema: deviceManagementSchemaReady, lifecycleSchema: requireDeviceLifecycleSchema };
+  securitySchema: requireSecuritySchema, modeSchema: queryModeSchemaReady, deviceSchema: deviceManagementSchemaReady, lifecycleSchema: requireDeviceLifecycleSchema, publicDisplay: datasetPublicDisplayRepository.getInTransaction };
 export function createDeviceManagementStore(deps = defaultDeviceManagementDependencies): DeviceManagementStore {
   const store = createQuerySourceStore({ ...deps, extend(transaction, base) {
     const request = () => deps.createRequest(transaction);
@@ -49,6 +51,41 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
       .input("enforceIpRestriction", sql.Bit, value.enforceIpRestriction).input("allowedIp", sql.NVarChar(64), value.allowedIp)
       .input("allowedCidr", sql.NVarChar(64), value.allowedCidr).input("expiresAtUtc", sql.DateTime2(0), value.expiresAtUtc === null ? null : new Date(value.expiresAtUtc));
     return Object.assign(base, {
+      async credentialOwner(device) {
+        await this.delegation!(device);
+        const owner=await deps.session(device.createdByUserId,transaction);
+        if (!owner?.isActive || !Number.isSafeInteger(owner.tokenVersion) || owner.tokenVersion<1 ||
+          !["DESIGN_QUERY","EXECUTE_QUERY"].every(p=>owner.permissions.includes(p))) throw new QuerySourceError("QUERY_DEVICE_DELEGATION_INVALID",403);
+        return owner.tokenVersion;
+      },
+      async credentialPolicy(datasetId) {
+        const display=await deps.publicDisplay(transaction,datasetId);
+        if (display.status!=="CONFIRMED" || !display.policy?.confirmed || display.policy.sensitivityVersion!==display.sensitivityVersion ||
+          !display.policy.grants.some(g=>g.permitted)) throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
+        const config=(await request().input("datasetId",sql.BigInt,datasetId).query(
+          "SELECT IsEnabled,PatientKeyColumn FROM uqp.DatasetPatientAuditConfig WITH(HOLDLOCK) WHERE DatasetId=@datasetId")).recordset[0];
+        if (config?.IsEnabled) {
+          if (!config.PatientKeyColumn) throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED",503);
+          try { parsePatientAuditKeyring(process.env.PATIENT_AUDIT_ACTIVE_KEY_VERSION,process.env.PATIENT_AUDIT_HMAC_KEYRING_JSON); }
+          catch { throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED",503); }
+        }
+      },
+      async writeCredential(id,deviceId,action,hash,modeVersion,ownerVersion) {
+        const result=await scoped(id).input("deviceId",sql.BigInt,deviceId).input("hash",sql.Char(64),hash)
+          .input("modeVersion",sql.BigInt,modeVersion).input("ownerVersion",sql.BigInt,ownerVersion).query(`
+          DECLARE @eventTime DATETIME2(0)=SYSUTCDATETIME();
+          DECLARE @credential TABLE(Id BIGINT);
+          UPDATE uqp.DashboardDisplayDevice SET ${action==="ISSUE" ? "TokenHash=@hash,QueryModeGrantVersion=@modeVersion,DelegatorTokenVersion=@ownerVersion,ReenrollmentRequired=1" : "ReenrollmentRequired=0"}
+          OUTPUT INSERTED.Id INTO @credential
+          WHERE DashboardId=@dashboardId AND Id=@deviceId AND IsActive=1 AND SuspendedAtUtc IS NULL
+            AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL AND ReenrollmentRequired=1
+            AND (ExpiresAtUtc IS NULL OR ExpiresAtUtc>SYSUTCDATETIME())
+            ${action==="ENROLL" ? "AND TokenHash=@hash AND QueryModeGrantVersion=@modeVersion AND DelegatorTokenVersion=@ownerVersion" : ""}
+            AND EXISTS(SELECT 1 FROM uqp.Dashboard WHERE Id=@dashboardId AND IsActive=1 AND QueryMode='QUERY_ONLY' AND QueryModeVersion=@modeVersion);
+          SELECT Id,@eventTime AS EventTime FROM @credential;`);
+        if (result.recordset.length!==1) throw new QuerySourceError("DASHBOARD_DEVICE_UNAUTHORIZED",401);
+        return new Date(result.recordset[0].EventTime).toISOString();
+      },
       async lifecycleReady() {
         try { await deps.lifecycleSchema(request()); }
         catch { throw new QuerySourceError("DASHBOARD_DEVICE_LIFECYCLE_SCHEMA_REQUIRED", 503); }
@@ -101,7 +138,7 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
             allowedCidr: row.AllowedCidr == null ? null : String(row.AllowedCidr),
             queryModeGrantVersion: row.QueryModeGrantVersion == null ? null : Number(row.QueryModeGrantVersion),
             delegatorTokenVersion: row.DelegatorTokenVersion == null ? null : Number(row.DelegatorTokenVersion),
-            credentialFingerprint: createHash("sha256").update(row.TokenHash).digest("hex"), placement: parsed?.success ? parsed.data : null };
+            credentialFingerprint: createHash("sha256").update(row.TokenHash.toLowerCase()).digest("hex"), placement: parsed?.success ? parsed.data : null };
         });
       },
       async delegation(device, modeVersion) {
@@ -126,9 +163,9 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
         if (!Number.isSafeInteger(deviceId) || deviceId < 1) throw new QuerySourceError("DASHBOARD_DEVICE_STATE_INVALID", 503);
         return deviceId;
       },
-      async updateMetadata(id, deviceId, value) {
+      async updateMetadata(id, deviceId, value, managed = false) {
         const result = await metadata(id, value).input("deviceId", sql.BigInt, deviceId).query(`UPDATE uqp.DashboardDisplayDevice SET
-          DeviceName=@deviceName,EnforceIpRestriction=@enforceIpRestriction,AllowedIp=@allowedIp,AllowedCidr=@allowedCidr,ExpiresAtUtc=@expiresAtUtc,
+          ${managed ? "ReenrollmentRequired=1," : ""}DeviceName=@deviceName,EnforceIpRestriction=@enforceIpRestriction,AllowedIp=@allowedIp,AllowedCidr=@allowedCidr,ExpiresAtUtc=@expiresAtUtc,
           TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL,LastUsedAtUtc=NULL
           WHERE DashboardId=@dashboardId AND Id=@deviceId AND IsActive=1 AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL
             AND (ExpiresAtUtc IS NULL OR ExpiresAtUtc>SYSUTCDATETIME())`);
@@ -161,7 +198,7 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
       async deviceAudit(id, actor, action, deviceId, invalidated, renewal) {
         const result = await deps.writeAuditEvent({ eventType: `DASHBOARD_DEVICE_${action}`, userId: actor.userId,
           ipAddress: actor.ipAddress, userAgent: actor.userAgent,
-          parameters: { dashboardId: id, deviceId, credentialIssued: false, deviceCredentialsInvalidated: invalidated, ...(renewal ?? {}) } }, transaction);
+          parameters: { dashboardId: id, deviceId, credentialIssued: action === "TOKEN_ISSUED_PENDING", deviceCredentialsInvalidated: invalidated, ...(action === "ENROLLED" ? { authorizationMethod: "DEVICE_TOKEN_PROOF" } : {}), ...(renewal ?? {}) } }, transaction);
         if (!Number.isSafeInteger(result) || result < 1) throw new QuerySourceError("DASHBOARD_DEVICE_AUDIT_REQUIRED", 503);
       },
     } satisfies Partial<DeviceManagementTransaction>);

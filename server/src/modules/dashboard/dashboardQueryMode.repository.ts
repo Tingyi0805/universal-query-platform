@@ -1,3 +1,4 @@
+import { devicePendingInvalidationClause, requireUnmanagedDeviceCredential } from "./dashboardDeviceCredentialWriters.js";
 import { requireDeviceLifecycleSchema } from "./dashboardDeviceLifecycleSchema.js";
 import {dashboardSecurityFailure} from "./dashboardSecurityFailure.js";
 import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
@@ -51,6 +52,7 @@ return createQuerySourceStore({ ...deps,
         return rows.map(row => ({ id: Number(row.Id), ownerId: Number(row.CreatedByUserId),
           enforceIpRestriction: Boolean(row.EnforceIpRestriction), allowedIp: row.AllowedIp == null ? null : String(row.AllowedIp),
           allowedCidr: row.AllowedCidr == null ? null : String(row.AllowedCidr),
+          lifecycleManaged: row.SuspendedAtUtc != null || row.ReenrollmentRequired != null,
           workstationId: row.SharedWorkstationId == null ? null : Number(row.SharedWorkstationId),
           expiresAt: row.ExpiresAtUtc == null ? null : new Date(row.ExpiresAtUtc).toISOString() }));
       },
@@ -82,14 +84,16 @@ return createQuerySourceStore({ ...deps,
         }
       },
       async switchMode(id, enabled) {
+        const pendingClause=await devicePendingInvalidationClause(request());
         await scoped(id).input("mode", sql.VarChar(24), enabled ? "QUERY_ONLY" : "QUERY_ONLY_DISABLED").input("active", sql.Bit, enabled).query(`
           UPDATE uqp.Dashboard SET QueryMode=@mode,QueryModeVersion=QueryModeVersion+1,IsActive=@active,
             QuerySourceMaxRows=COALESCE(QuerySourceMaxRows,1000),UpdatedAtUtc=SYSUTCDATETIME() WHERE Id=@id;
-          UPDATE uqp.DashboardDisplayDevice SET TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),LastUsedAtUtc=NULL,
+          UPDATE uqp.DashboardDisplayDevice SET ${pendingClause}TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),LastUsedAtUtc=NULL,
             QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL
             WHERE DashboardId=@id;`);
       },
       async issueDevice(id, device, hash) {
+        await requireUnmanagedDeviceCredential(request(),id,device.id);
         const session = await getTokenSessionState(device.ownerId, transaction);
         if (!session?.isActive) throw new QuerySourceError("QUERY_DEVICE_DELEGATION_INVALID", 403);
         const result = await scoped(id).input("deviceId", sql.BigInt, device.id).input("hash", sql.Char(64), hash)

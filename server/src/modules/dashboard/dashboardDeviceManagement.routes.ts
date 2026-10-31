@@ -10,7 +10,7 @@ import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import { failure } from "./dashboardQuerySources.routes.js";
 import type { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
 
-export function createDeviceManagementRouter(service: ReturnType<typeof createDeviceManagementService>) {
+export function createDeviceManagementRouter(service: ReturnType<typeof createDeviceManagementService>, enrollment?: ReturnType<typeof import("./dashboardDeviceEnrollment.service.js").createDeviceEnrollmentService>) {
   const router = Router(), idSchema = z.coerce.number().int().positive().safe();
   const confirmed = { expectedVersion: deviceExpectedVersion, confirmed: z.literal(true) };
   router.use("/:id/device-management/v1", requirePermission("DESIGN_QUERY"));
@@ -21,6 +21,14 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
     if (!payload || typeof payload === "string" || Number(payload.sub) !== req.authUser!.id || !Number.isSafeInteger(payload.tokenVersion) || payload.tokenVersion < 1) throw new QuerySourceError("INVALID_TOKEN", 401);
     return { id: id.data, actor: { userId: req.authUser!.id, tokenVersion: Number(payload.tokenVersion), ...auditRequestContext(req) } };
   };
+  router.post("/:id/device-management/v1/:deviceId/credential", async (req,res) => {
+    try {
+      const c=context(req),deviceId=idSchema.safeParse(req.params.deviceId),input=z.object(confirmed).strict().safeParse(req.body);
+      if (!deviceId.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR",400);
+      if (!enrollment) throw new QuerySourceError("QUERY_DEVICE_PLAYBACK_DISABLED",404);
+      res.json(await enrollment.issue(c.id,deviceId.data,c.actor,input.data));
+    } catch(error) { failure(error,res,req.id); }
+  });
   router.get("/:id/device-management/v1/lifecycle", async (req, res) => {
     try { const c = context(req); res.json(await service.safetyRead(c.id, c.actor)); }
     catch (error) { failure(error, res, req.id); }

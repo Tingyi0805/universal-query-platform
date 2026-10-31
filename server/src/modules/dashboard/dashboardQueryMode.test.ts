@@ -17,7 +17,7 @@ function fixture() {
       maxRows: 100, parameters: { WARD: "SYNTHETIC" }, refreshSeconds: 30, pageSize: 10, pageSeconds: 5, isEnabled: true }], references: ["PRIMARY", "WARD"] };
   let credentials = "old-hash";
   const control = { enabled: true, schema: true, actorVersion: 1, deniedOwner: false, stationRevoked: false, policyReady: true,
-    auditFailure: false, noDevices: false, unpublished: false, checks: [] as number[], audits: [] as string[] };
+    auditFailure: false, lifecycleManaged: false, noDevices: false, unpublished: false, checks: [] as number[], audits: [] as string[] };
   const store: SourceStore = { async transaction(work) {
     const staged = structuredClone(state); let token = credentials;
     const tx: ModeTransaction = {
@@ -31,7 +31,7 @@ function fixture() {
         if (id === 21 && !parameters.WARD) throw new QuerySourceError("PARAMETER_REQUIRED", 400);
         return id === 20 ? 2 : 3;
       },
-      devices: async () => control.noDevices ? [] : [{ id: 7, ownerId: 2, workstationId: 9, expiresAt: null }],
+      devices: async () => control.noDevices ? [] : [{ id: 7, ownerId: 2, workstationId: 9, expiresAt: null, lifecycleManaged: control.lifecycleManaged }],
       delegation: async () => { if (control.stationRevoked) throw new QuerySourceError("QUERY_DEVICE_WORKSTATION_INVALID"); },
       policy: async () => { if (!control.policyReady) throw new QuerySourceError("QUERY_SOURCE_SENSITIVITY_NOT_READY"); },
       switchMode: async (_id, enabled) => { staged.dashboard.mode = enabled ? "QUERY_ONLY" : "QUERY_ONLY_DISABLED"; staged.dashboard.modeVersion!++; staged.dashboard.isActive = enabled; token = "invalidated-token-hash"; },
@@ -200,4 +200,9 @@ test("revoke requires current mode/version but remains available after delegatio
 test("activation rejects a disabled source still referenced by a widget",async()=>{
   const f=fixture();f.state().sources[0]!.isEnabled=false;
   await assert.rejects(f.service.change(1,1,1,sourceVersion(f.state()),true),{code:"QUERY_SOURCE_REFERENCE_INVALID"});
+});
+
+test("old Query-mode credential endpoint cannot issue for a managed lifecycle cycle",async()=>{
+ const f=fixture();await f.service.change(1,1,1,sourceVersion(f.state()),true);f.control.lifecycleManaged=true;
+ const before=f.credentials();await assert.rejects(f.service.issue(1,7,1,1,sourceVersion(f.state())),{code:"DASHBOARD_DEVICE_VERSIONED_API_REQUIRED"});assert.equal(f.credentials(),before);
 });

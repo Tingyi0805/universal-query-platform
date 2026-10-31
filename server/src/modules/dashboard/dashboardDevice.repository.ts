@@ -1,3 +1,4 @@
+import { requireUnmanagedDeviceCredential } from "./dashboardDeviceCredentialWriters.js";
 import crypto from "node:crypto";
 import { getTokenSessionState } from "../auth/auth.repository.js";
 import sql from "mssql";
@@ -173,6 +174,7 @@ export async function reissueDashboardDisplayDeviceToken(
     .query("SELECT * FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@id")).recordset[0];
   if (!dashboard) throw new QuerySourceError("DASHBOARD_NOT_FOUND", 404);
   if (String(dashboard.QueryMode ?? "LEGACY") !== "LEGACY") throw new QuerySourceError("QUERY_MODE_DEVICE_CREDENTIAL_REQUIRED");
+  await requireUnmanagedDeviceCredential(new sql.Request(tx),dashboardId,deviceId);
   const result = await new sql.Request(tx)
     .input("dashboardId", sql.BigInt, dashboardId)
     .input("deviceId", sql.BigInt, deviceId)

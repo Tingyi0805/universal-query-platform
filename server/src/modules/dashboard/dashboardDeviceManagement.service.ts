@@ -9,6 +9,9 @@ export type DeviceRecord = DeviceMetadata & { id: number; dashboardId: number; c
   isActive: boolean; suspendedAtUtc: string | null; reenrollmentRequired: boolean | null; revokedAtUtc: string | null; archivedAtUtc: string | null; queryModeGrantVersion: number | null;
   delegatorTokenVersion: number | null; credentialFingerprint: string; placement: DevicePlacement | null };
 export interface DeviceManagementTransaction extends SourceTransaction {
+  credentialOwner(device: DeviceRecord): Promise<number>;
+  credentialPolicy(datasetId: number): Promise<void>;
+  writeCredential(id: number, deviceId: number, action: "ISSUE" | "ENROLL", hash: string, modeVersion: number, ownerVersion: number): Promise<string>;
   lifecycleReady(): Promise<void>;
   lifecycleDevice(id: number, deviceId: number, action: "SUSPEND" | "RESTORE"): Promise<string>;
   securityReady(): Promise<void>;
@@ -17,18 +20,20 @@ export interface DeviceManagementTransaction extends SourceTransaction {
   records(id: number): Promise<DeviceRecord[]>;
   delegation(device: DeviceRecord, modeVersion?: number): Promise<void>;
   createDevice(id: number, ownerId: number, metadata: DeviceMetadata): Promise<number>;
-  updateMetadata(id: number, deviceId: number, metadata: DeviceMetadata): Promise<void>;
+  updateMetadata(id: number, deviceId: number, metadata: DeviceMetadata, managed?: boolean): Promise<void>;
   updatePlacement(id: number, deviceId: number, placement: DevicePlacement): Promise<void>;
   renewDevice(id: number, deviceId: number, days: number): Promise<string>;
   touch(id: number): Promise<void>;
-  deviceAudit(id: number, actor: DeviceActor, action: "CREATED" | "METADATA_UPDATED" | "PLACEMENT_UPDATED" | "RENEWED" | "SUSPENDED" | "RESTORED_PENDING", deviceId: number, invalidated: boolean, renewal?: { extendDays: number; previousExpiresAtUtc: string; expiresAtUtc: string }): Promise<void>;
+  deviceAudit(id: number, actor: DeviceActor, action: "CREATED" | "METADATA_UPDATED" | "PLACEMENT_UPDATED" | "RENEWED" | "SUSPENDED" | "RESTORED_PENDING" | "TOKEN_ISSUED_PENDING" | "ENROLLED", deviceId: number, invalidated: boolean, renewal?: { extendDays: number; previousExpiresAtUtc: string; expiresAtUtc: string }): Promise<void>;
 }
 export interface DeviceManagementStore { transaction<T>(work: (tx: DeviceManagementTransaction) => Promise<T>): Promise<T> }
+export const deviceManagementVersion = (state: SourceState, evidence: string, devices: DeviceRecord[]) =>
+  createHash("sha256").update(JSON.stringify([sourceVersion(state), evidence, devices])).digest("hex");
 export function createDeviceManagementService(store: DeviceManagementStore, enabled: () => boolean) {
   const snapshot = async (tx: DeviceManagementTransaction, id: number) => {
     const state = await tx.readState(id), evidence = await tx.evidence(id), devices = await tx.records(id);
     if (!/^[a-f0-9]{64}$/.test(evidence)) throw new QuerySourceError("SECURITY_SCHEMA_REQUIRED", 503);
-    const version = createHash("sha256").update(JSON.stringify([sourceVersion(state), evidence, devices])).digest("hex");
+    const version = deviceManagementVersion(state, evidence, devices);
     return { state, devices, version };
   };
   const run = async <T>(id: number, actor: DeviceActor, work: (tx: DeviceManagementTransaction, current: Awaited<ReturnType<typeof snapshot>>) => Promise<T>, lifecycle = false, safety = false) => {
@@ -108,7 +113,7 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
       if (!parsed.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
       const device = target(current.devices, deviceId);
       await queries(tx, current.state, actor.userId); await tx.delegation(device); await queries(tx, current.state, device.createdByUserId);
-      await tx.updateMetadata(id, deviceId, parsed.data);
+      await tx.updateMetadata(id, deviceId, parsed.data, device.reenrollmentRequired !== null);
       await tx.touch(id); await tx.deviceAudit(id, actor, "METADATA_UPDATED", deviceId, true);
       return { ...project(await snapshot(tx, id)), deviceId, deviceCredentialsInvalidated: true };
     }),

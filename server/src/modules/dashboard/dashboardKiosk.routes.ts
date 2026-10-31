@@ -1,3 +1,4 @@
+import { auditRequestContext } from "../audit/auditContext.js";
 import { purgeDashboardDeviceSnapshots } from "./dashboardPageSnapshot.js";
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from "node:crypto";
 import { Router, type Request, type Response } from "express";
@@ -7,6 +8,7 @@ import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 
 type Configuration = { origin?: string; key?: string; enabled: boolean; trustedProxies: string[] };
 type Dependencies = {
+  enroll?: ReturnType<typeof import("./dashboardDeviceEnrollment.service.js").createDeviceEnrollmentService>["enroll"];
   check: typeof import("./dashboardDevice.repository.js").checkDashboardDisplayDevice;
   mode: (id: number) => Promise<{ mode: string; version: number }>;
   inspect: (id: number, subject: ExecutionSubject) => Promise<unknown>;
@@ -77,6 +79,31 @@ export function createKioskRouter(configuration: () => Configuration, deps: Depe
       } });
     return device;
   }
+  router.post("/device/:id/kiosk/enrollment-proof", async (req,res) => {
+    res.setHeader("Cache-Control","no-store");
+    let deviceId:number|undefined, trusted=false;
+    try {
+      const codec=secure(req); trusted=true;
+      const dashboardId=idSchema.parse(req.params.id);
+      const input=z.object({deviceId:idSchema,token:z.string().regex(/^[A-Za-z0-9_-]{43}$/)}).strict().parse(req.body);
+      deviceId=input.deviceId;
+      if (!deps.enroll || req.header("x-dashboard-device-token")) throw new Error("KIOSK_UNAUTHORIZED");
+      // enroll resolves only after its SERIALIZABLE authorization/Audit transaction commits.
+      const result=await deps.enroll(dashboardId,deviceId,input.token,{...auditRequestContext(req),ipAddress:getClientIp(req)});
+      if (result.dashboardId!==dashboardId || result.deviceId!==deviceId) throw new Error("KIOSK_UNAUTHORIZED");
+      const expires=Math.min(Date.now()+365*86400000,result.expiresAtUtc?Date.parse(result.expiresAtUtc):Infinity);
+      if (!Number.isSafeInteger(expires) || expires<=Date.now()) throw new Error("KIOSK_UNAUTHORIZED");
+      const grant:Grant={dashboardId,deviceId,token:input.token,version:result.modeVersion,expires,kind:"enrollment"};
+      const sessionExpires=Math.min(expires,Date.now()+300000);
+      const persistent=codec.seal(grant),session=codec.seal({...grant,kind:"session",expires:sessionExpires});
+      res.cookie(name("enrollment",deviceId),persistent,{...options,maxAge:expires-Date.now()});
+      res.cookie(name("session",deviceId),session,{...options,maxAge:sessionExpires-Date.now()});
+      res.json({dashboardId,deviceId,authorizationExpiresAt:sessionExpires});
+    } catch {
+      if (trusted && deviceId) clear(res,deviceId);
+      res.status(401).json({error:{code:"KIOSK_AUTHORIZATION_REQUIRED"}});
+    }
+  });
   for (const operation of ["enrollment", "session", "forget"] as const) router.post(`/device/:id/kiosk/${operation}`, async (req,res) => {
     res.setHeader("Cache-Control","no-store");
     let deviceId: number | undefined;

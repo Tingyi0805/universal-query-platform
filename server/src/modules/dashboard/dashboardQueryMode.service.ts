@@ -2,7 +2,7 @@ import { dashboardQueryParameters } from "./dashboardDeviceMasking.js";
 import { QuerySourceError, sourceVersion, type SourceStore, type SourceTransaction } from "./dashboardQuerySources.service.js";
 import { randomBytes, createHash } from "node:crypto";
 
-export type ModeDevice = { id: number; ownerId: number; workstationId: number | null; expiresAt: string | null;
+export type ModeDevice = { lifecycleManaged?: boolean; id: number; ownerId: number; workstationId: number | null; expiresAt: string | null;
   enforceIpRestriction?: boolean; allowedIp?: string | null; allowedCidr?: string | null };
 export interface ModeTransaction extends SourceTransaction {
   modeReady(): Promise<boolean>;
@@ -78,6 +78,7 @@ export function createQueryModeService(store: SourceStore, enabled: () => boolea
       if (state.dashboard.mode !== "QUERY_ONLY" || !state.dashboard.isActive) throw new QuerySourceError("QUERY_SOURCE_MODE_NOT_ACTIVATED");
       const device = (await tx.devices(id)).find(d => d.id === deviceId);
       if (!device) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND", 404);
+      if (device.lifecycleManaged) throw new QuerySourceError("DASHBOARD_DEVICE_VERSIONED_API_REQUIRED");
       await tx.delegation(device);
       const parameters = dashboardQueryParameters(state.dashboard.parameters);
       for (const source of [{ queryDefinitionId: state.dashboard.queryDefinitionId, parameters }, ...state.sources]) {

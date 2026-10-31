@@ -64,6 +64,7 @@ function fixture() {
       const request = { input(name: string, _type: unknown, value: unknown) { values[name] = value; return this; },
         async query(statement: string) {
           control.statements.push(statement);
+          if (statement.includes("AS Suspended,")) return {recordset:[{Suspended:null,Pending:null}]};
           assert.doesNotMatch(statement, /DELETE\s+FROM|INSERT\s+INTO/i);
           if (statement.includes("CK_DashboardDataSource_QueryBoundLimit")) return { recordset: [{ Ready: control.schema917 }] };
           if (statement.includes("CK_DashboardDevice_QueryModeGrant")) return { recordset: [{ Ready: control.schema918 }] };

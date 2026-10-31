@@ -1,3 +1,4 @@
+import { createDeviceEnrollmentService } from "./dashboardDeviceEnrollment.service.js";
 import { createKioskRouter } from "./dashboardKiosk.routes.js";
 import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
 import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
@@ -197,8 +198,9 @@ const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPla
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
   execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 
+const deviceEnrollment = createDeviceEnrollmentService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT && env.DASHBOARD_QUERY_DEVICE_PLAYBACK);
 export const dashboardRouter = Router();
-dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect}));
+dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect, enroll: deviceEnrollment.enroll}));
 
 dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
   try {
@@ -301,7 +303,7 @@ dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionSer
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));
-dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
+dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT), deviceEnrollment));
 dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
