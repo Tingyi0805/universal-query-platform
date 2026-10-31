@@ -372,3 +372,11 @@ test("D2-A simultaneous restores commit once and never clear pending",async()=>{
  const f=fixture(),a=await f.service.suspend(1,7,actor,{expectedVersion:await f.version(),confirmed:true}),input={expectedVersion:a.version,confirmed:true as const};
  const results=await Promise.allSettled([f.service.restore(1,7,actor,input),f.service.restore(1,7,actor,input)]);assert.equal(results.filter(r=>r.status==="fulfilled").length,1);assert.equal(f.db().audits.length,2);assert.equal(f.db().devices[0]!.ReenrollmentRequired,true);
 });
+
+test("D2-A 926 readiness is required only for lifecycle APIs; ordinary management remains compatible",async()=>{
+ const f=fixture();f.control.failAt="lifecycle-schema";
+ const version=await f.version();assert.match(version,/^[a-f0-9]{64}$/);
+ for(const work of [()=>f.service.safetyRead(1,actor),()=>f.service.suspend(1,7,actor,{expectedVersion:version,confirmed:true}),()=>f.service.restore(1,7,actor,{expectedVersion:version,confirmed:true})]){
+  const before=f.snapshot();await assert.rejects(work(),{code:"DASHBOARD_DEVICE_LIFECYCLE_SCHEMA_REQUIRED",status:503});assert.deepEqual(f.snapshot(),before);
+ }
+});

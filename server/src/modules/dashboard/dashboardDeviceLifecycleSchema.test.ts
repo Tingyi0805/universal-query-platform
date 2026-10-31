@@ -26,10 +26,10 @@ test("926 repeats strict catalog checks instead of repairing conflicting/partial
  assert(sql.includes(`=0x${digest}`));
  const runner=await readFile(new URL("../../scripts/migrate.ts",import.meta.url),"utf8");assert(runner.includes(`"${file}"`));assert(runner.includes("deviceLifecycleSchemaSql"));
 });
-test("D1 readiness is read-only and forwards failures without enabling existing APIs",async()=>{
+test("lifecycle readiness stays read-only and is not forced on existing playback",async()=>{
  let called="";await requireDeviceLifecycleSchema({query:async text=>{called=text;return{};}});assert.equal(called,deviceLifecycleSchemaSql);
  await assert.rejects(requireDeviceLifecycleSchema({query:async()=>{throw new Error("SCHEMA_NOT_READY");}}),/SCHEMA_NOT_READY/);
- for(const name of ["dashboardKiosk.routes.ts","dashboardDeviceManagement.repository.ts"]){const text=await readFile(new URL(name,import.meta.url),"utf8");assert(!text.includes("requireDeviceLifecycleSchema"));}
+ for(const name of ["dashboardKiosk.routes.ts"]){const text=await readFile(new URL(name,import.meta.url),"utf8");assert(!text.includes("requireDeviceLifecycleSchema"));}
 });
 test("SQL acceptance refuses an unbound target before connecting and never imports platform configuration",async()=>{
  const url=new URL("../../scripts/deviceLifecycle926Acceptance.ts",import.meta.url),source=await readFile(url,"utf8");

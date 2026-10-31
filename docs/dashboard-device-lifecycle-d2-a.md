@@ -26,7 +26,7 @@ POST 嚴格接受 `{ expectedVersion: string, confirmed: true }`，禁止額外�
 
 ## 驗證與界線
 
-本機受影響測試 209/209 PASS，Server Typecheck／Build PASS。
+本機受影響測試首輪 209/209 PASS；CI 發現 D1「管理 API 不可接 readiness」的階段性斷言已過時，改為保留既有播放防護並以交易測試驗證新舊 API readiness 界線，針對相關兩檔重測 121/121 PASS。Server Typecheck／Build PASS。
 
 受影響測試涵蓋 API 確認／版本／no-store、兩次 hash 輪替、重複與並行操作、雙方 ACL／session／工作站、terminal／expired、Audit 與 commit 失敗回滾、撤銷／恢復兩種交易順序、舊欄位 absent／NULL 與未安裝 926 的永久撤銷 SQL、舊 Cookie 的零資料交付。此階段使用合成交易／HTTP 測試，不宣稱已在 SQL Server 執行新 API SQL 或部署到正式環境。未操作正式 SQL 或 C:\UQP。
 
