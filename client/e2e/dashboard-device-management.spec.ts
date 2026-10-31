@@ -332,6 +332,7 @@ for(const timezoneId of ["America/Los_Angeles","Asia/Tokyo"]) test.describe(`Tai
     const {state,panel}=await setup(page);state.devices[0]!.expiresAtUtc="2099-02-28T23:59:42.123Z";
     await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
     await panel.getByRole("button",{name:"編輯 合成裝置 基本設定"}).click();
+    await page.clock.setFixedTime(new Date("2099-02-28T23:59:30Z"));
     await expect(panel.getByLabel("裝置到期時間（Asia/Taipei）")).toHaveValue("2099-03-01 07:59");
     await panel.getByLabel("裝置名稱",{exact:true}).fill("保留秒數");
     await panel.getByRole("button",{name:"確認保存裝置設定"}).click();

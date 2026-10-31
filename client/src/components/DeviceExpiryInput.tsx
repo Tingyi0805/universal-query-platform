@@ -8,7 +8,7 @@ export function DeviceExpiryInput({ value, onChange, onValidityChange }: { value
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { setText(taipeiDateTime(value)); }, [value]);
   let parsed: string | null = null, valid = true;
-  try { parsed = parseTaipeiDateTime(text); valid = validDeviceExpiry(parsed); } catch { valid = false; }
+  try { parsed = parseTaipeiDateTime(text); valid = validDeviceExpiry(text === taipeiDateTime(value) ? value : parsed); } catch { valid = false; }
   useEffect(() => onValidityChange(valid), [valid, onValidityChange]);
   function change(next: string) {
     setText(next);
