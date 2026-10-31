@@ -61,6 +61,10 @@ export async function verifyD3(pool:sql.ConnectionPool) {
   await assert.rejects(service.revoke(1,id,actor,i),/VERSION_CONFLICT/);
   const r=(await query(`SELECT * FROM uqp.DashboardDisplayDevice WHERE Id=${id}`)).recordset[0];
   assert.notEqual(r.TokenHash,before.TokenHash);assert.equal(r.QueryModeGrantVersion,null);assert.equal(r.DelegatorTokenVersion,null);assert.equal(r.SuspendedAtUtc,null);assert.equal(r.ReenrollmentRequired,null);
+  await production.transaction(async tx=>{
+   await assert.rejects(tx.writeCredential(1,id,"ENROLL",before.TokenHash,1,1));
+   await assert.rejects(tx.writeCredential(1,id,"ISSUE","c".repeat(64),1,1));
+  });
   await service.archive(1,id,actor,await input());await assert.rejects(service.archive(1,id,actor,await input()));
   assert.equal((await query(`SELECT COUNT(*) N FROM uqp.DashboardDeviceArchiveHistory WHERE DeviceId=${id}`)).recordset[0].N,1);
  }
@@ -89,6 +93,9 @@ export async function verifyD3(pool:sql.ConnectionPool) {
  const raceInput=await input();
  await Promise.allSettled([service.archive(1,aged,actor,raceInput),query(auto)]);assert.equal((await query(`SELECT COUNT(*) N FROM uqp.DashboardDeviceArchiveHistory WHERE DeviceId=${aged}`)).recordset[0].N,1);
  assert.equal((await query(`SELECT COUNT(*) N FROM uqp.DashboardDisplayDevice WHERE Id IN(${recent},${suspended}) AND ArchivedAtUtc IS NULL`)).recordset[0].N,2);
+ const autoOnly=Number((await query("INSERT uqp.DashboardDisplayDevice(TokenHash,IsActive,RevokedAtUtc) OUTPUT INSERTED.Id VALUES(CONVERT(char(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),0,'2020-01-01')")).recordset[0].Id);
+ assert.equal((await query(auto)).recordset[0].Archived,1);
+ assert.equal((await query(`SELECT COUNT(*) N FROM uqp.DashboardDeviceArchiveHistory WHERE DeviceId=${autoOnly} AND ArchiveMode='AUTO' AND ArchivedByUserId IS NULL`)).recordset[0].N,1);
  assert.equal((await query(auto)).recordset[0].Archived,0);
  console.log("D3_SQL_PRODUCTION_REVOKE_ARCHIVE_VERSION_RACE_AUDIT_ROLLBACK_AUTO_PASS");
 }
