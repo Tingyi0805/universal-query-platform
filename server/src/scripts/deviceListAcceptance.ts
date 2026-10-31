@@ -47,7 +47,7 @@ export async function verifyDeviceList(pool:sql.ConnectionPool,config:sql.config
  await changed(`UPDATE uqp.DashboardDisplayDevice SET IsActive=0,RevokedAtUtc=SYSUTCDATETIME(),TokenHash=REPLICATE('7',64) WHERE Id=${ids[1]}`);
  await changed(`DELETE FROM uqp.DashboardDisplayDevice WHERE Id=${ids[2]}`);
  await query(`UPDATE uqp.DashboardDisplayDevice SET ExpiresAtUtc=DATEADD(second,2,SYSUTCDATETIME()) WHERE Id=${ids[0]}`);
- const timed=await read(99,actor,{pageSize:"10"});await new Promise(resolve=>setTimeout(resolve,2200));
+ const timed=await read(99,actor,{pageSize:"10"});await new Promise(resolve=>setTimeout(resolve,3000));
  await assert.rejects(read(99,actor,{page:"2",pageSize:"10",snapshot:timed.snapshot}),{code:"DASHBOARD_DEVICE_LIST_CHANGED"});
  // Writer on another connection must wait while the serializable list holds its range.
  const other=await new sql.ConnectionPool({...config,pool:{max:1,min:0}}).connect();
