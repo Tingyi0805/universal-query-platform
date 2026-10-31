@@ -7,6 +7,10 @@ on:
 
 jobs:
   device-lifecycle-d1-sql:
+    strategy:
+      fail-fast: false
+      matrix:
+        sql: [2019, 2022]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -32,7 +36,8 @@ jobs:
           echo "UQP_D1_SQL_PASSWORD=$uqp_d1_password" >> "$GITHUB_ENV"
           docker run -d --rm --name "$uqp_d1_name" --hostname "$uqp_d1_name" \
             --label uqp.d1.disposable=true -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$uqp_d1_password" \
-            -p 127.0.0.1:14336:1433 mcr.microsoft.com/mssql/server:2022-latest >/dev/null
+            -p 127.0.0.1:14336:1433 mcr.microsoft.com/mssql/server:${{ matrix.sql }}-latest >/dev/null
+          docker inspect --format '{{.Id}} {{.Config.Hostname}} {{.Config.Image}} {{index .Config.Labels "uqp.d1.disposable"}}' "$uqp_d1_name"
       - name: Verify D1 and D3 production writers in disposable synthetic SQL DB
         env:
           UQP_D1_SCOPE: DISPOSABLE_ONLY

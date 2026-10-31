@@ -39,3 +39,22 @@ test("SQL acceptance refuses an unbound target before connecting and never impor
   const result=error as Error&{stderr?:string;code?:number};assert.equal(result.code,1);assert.match(result.stderr??"",/D1_SQL_ACCEPTANCE_FAILED:target-guard:0/);return true;
  });
 });
+
+test("D5-C5A helper rejects an unbound endpoint or machine before SQL",async()=>{
+ const {verify926Upgrade}=await import("../../scripts/deviceLifecycleUpgradeAcceptance.js");
+ let queries=0;const admin={request:()=>{queries++;throw new Error("MUST_NOT_QUERY");}} as any;
+ await assert.rejects(verify926Upgrade(admin,{server:"not-disposable.invalid",port:14336,database:"master"},"uqp-d1-0123456789ab"));
+ await assert.rejects(verify926Upgrade(admin,{server:"127.0.0.1",port:1433,database:"master"},"uqp-d1-0123456789ab"));
+ await assert.rejects(verify926Upgrade(admin,{server:"127.0.0.1",port:14336,database:"UniversalQueryPlatform"},"uqp-d1-0123456789ab"));
+ await assert.rejects(verify926Upgrade(admin,{server:"127.0.0.1",port:14336,database:"master"},"not-a-disposable-machine"));
+ assert.equal(queries,0);
+});
+test("D1 refuses application DB configuration even with otherwise valid disposable arguments",async()=>{
+ const url=new URL("../../scripts/deviceLifecycle926Acceptance.ts",import.meta.url),run=promisify(execFile);
+ await assert.rejects(run(process.execPath,["--import","tsx",fileURLToPath(url)],{env:{PATH:process.env.PATH,
+  UQP_D1_SCOPE:"DISPOSABLE_ONLY",UQP_D1_CONTAINER_NAME:"uqp-d1-0123456789ab",UQP_D1_SQL_PASSWORD:"synthetic-only",
+  PLATFORM_DB_SERVER:"must-not-connect"}}),error=>{
+  const result=error as Error&{stderr?:string;code?:number};assert.equal(result.code,1);
+  assert.match(result.stderr??"",/D1_SQL_ACCEPTANCE_FAILED:target-guard:0/);return true;
+ });
+});

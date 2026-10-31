@@ -52,6 +52,8 @@ export async function verifyD3(pool:sql.ConnectionPool) {
   await tx.lifecycleDevice(1,enrollmentId,"RESTORE");
   await tx.writeCredential(1,enrollmentId,"ISSUE","b".repeat(64),1,1);
   await assert.rejects(tx.writeCredential(1,enrollmentId,"ENROLL","a".repeat(64),1,1));
+  await assert.rejects(tx.writeCredential(1,enrollmentId,"ENROLL","b".repeat(64),2,1));
+  await assert.rejects(tx.writeCredential(1,enrollmentId,"ENROLL","b".repeat(64),1,2));
   await tx.writeCredential(1,enrollmentId,"ENROLL","b".repeat(64),1,1);
  });
  for(const state of ["ACTIVE","SUSPENDED","PENDING"]){

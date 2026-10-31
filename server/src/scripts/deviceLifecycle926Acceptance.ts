@@ -9,6 +9,7 @@ let stage="target-guard";
 async function main(){
  const machine=process.env.UQP_D1_CONTAINER_NAME,password=process.env.UQP_D1_SQL_PASSWORD;
  if(process.env.UQP_D1_SCOPE!=="DISPOSABLE_ONLY"||!machine||!/^uqp-d1-[a-f0-9]{12}$/.test(machine)||!password)throw new Error("DISPOSABLE_TARGET_REQUIRED");
+ if(Object.keys(process.env).some(k=>k.startsWith("PLATFORM_DB_")||k==="DOTENV_CONFIG_PATH"))throw new Error("DISPOSABLE_APPLICATION_CONFIG_FORBIDDEN");
  const config={server:"127.0.0.1",port:14336,user:"sa",password,database:"master",connectionTimeout:2000,requestTimeout:15000,
   options:{encrypt:true,trustServerCertificate:true},pool:{max:1,min:0}};
  const admin=new sql.ConnectionPool(config);let connected=false;
@@ -17,6 +18,7 @@ async function main(){
  try{
   const identity=(await admin.request().query("SELECT CONVERT(nvarchar(128),SERVERPROPERTY('MachineName')) AS Machine,DB_NAME() AS Db")).recordset[0];
   assert.equal(identity.Machine,machine);assert.equal(identity.Db,"master");
+  stage="D5-C5A-upgrade-and-recovery";await (await import("./deviceLifecycleUpgradeAcceptance.js")).verify926Upgrade(admin,config,machine);
   stage="create-disposable-fixture";await admin.request().query(`CREATE DATABASE [${name}]`);created=true;
   db=await new sql.ConnectionPool({...config,database:name}).connect();const query=(text:string)=>db!.request().query(text);
   await query(`CREATE SCHEMA uqp`);
