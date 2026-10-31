@@ -1,3 +1,4 @@
+import { readDeviceAuditHistory } from "../audit/audit.repository.js";
 import { readDeviceList } from "./dashboardDeviceList.js";
 import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
 import { parsePatientAuditKeyring } from "../audit/patientAuditKeyring.js";
@@ -53,6 +54,13 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
       .input("enforceIpRestriction", sql.Bit, value.enforceIpRestriction).input("allowedIp", sql.NVarChar(64), value.allowedIp)
       .input("allowedCidr", sql.NVarChar(64), value.allowedCidr).input("expiresAtUtc", sql.DateTime2(0), value.expiresAtUtc === null ? null : new Date(value.expiresAtUtc));
     return Object.assign(base, {
+      async history(id,deviceId,actor,query){
+        const session=await deps.session(actor.userId,transaction);
+        if(!session?.isActive||session.tokenVersion!==actor.tokenVersion)throw new QuerySourceError("TOKEN_REVOKED",401);
+        if(!["DESIGN_QUERY","VIEW_AUDIT"].every(p=>session.permissions.includes(p)))throw new QuerySourceError("FORBIDDEN",403);
+        await this.readState!(id); // Existing Dashboard lock order and existence check; no Query execution.
+        return readDeviceAuditHistory(request(),id,deviceId,query);
+      },
       listDevices: (id, query, asOf) => readDeviceList(request(), id, query, asOf),
       async credentialOwner(device) {
         await this.delegation!(device);
@@ -216,6 +224,8 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
   return { async transaction(work) {
     try { return await store.transaction(tx => work(tx as DeviceManagementTransaction)); }
     catch (error) {
+      if (Number((error as {number?:number})?.number) === 51032) throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+      if (Number((error as {number?:number})?.number) === 51033) throw new QuerySourceError("DEVICE_HISTORY_SCHEMA_REQUIRED",503);
       if (Number((error as {number?:number})?.number) === 51031) throw new QuerySourceError("DASHBOARD_DEVICE_STATE_INVALID",503);
       if ([1205, 1222, 51030].includes(Number((error as { number?: number })?.number))) throw new QuerySourceError("DASHBOARD_DEVICE_VERSION_CONFLICT");
       throw error;

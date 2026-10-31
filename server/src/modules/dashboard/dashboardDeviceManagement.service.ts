@@ -1,3 +1,4 @@
+import { deviceHistoryQuery, type DeviceHistoryQuery, type DeviceHistoryResult } from "../audit/deviceAuditHistory.js";
 import { createDeviceListReader, type DeviceListQuery, type ListRead } from "./dashboardDeviceList.js";
 import { assertDeviceLifecycleTransition, type DeviceLifecycleRecord } from "./dashboardDeviceLifecycle.js";
 import { createHash } from "node:crypto";
@@ -10,6 +11,7 @@ export type DeviceRecord = DeviceMetadata & { id: number; dashboardId: number; c
   isActive: boolean; suspendedAtUtc: string | null; reenrollmentRequired: boolean | null; revokedAtUtc: string | null; archivedAtUtc: string | null; queryModeGrantVersion: number | null;
   delegatorTokenVersion: number | null; credentialFingerprint: string; placement: DevicePlacement | null };
 export interface DeviceManagementTransaction extends SourceTransaction {
+  history?(id:number, deviceId:number, actor:DeviceActor, query:DeviceHistoryQuery):Promise<DeviceHistoryResult>;
   listDevices?(id:number, query:DeviceListQuery, asOf:string|null):Promise<ListRead & {asOfUtc:string}>;
   credentialOwner(device: DeviceRecord): Promise<number>;
   credentialPolicy(datasetId: number): Promise<void>;
@@ -94,6 +96,17 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
   }, true, action !== "RESTORE");
   return {
     list: createDeviceListReader(store, enabled),
+    history: async(id:number,deviceId:number,actor:DeviceActor,input:unknown)=>{
+      const parsed=deviceHistoryQuery.safeParse(input);
+      if(!parsed.success)throw new QuerySourceError("VALIDATION_ERROR",400);
+      if(!enabled())throw new QuerySourceError("QUERY_SOURCE_MANAGEMENT_DISABLED",404);
+      return store.transaction(async tx=>{
+        if(!await tx.schemaReady())throw new QuerySourceError("QUERY_SOURCE_SCHEMA_REQUIRED",503);
+        await tx.securityReady();await tx.actor(actor,true);
+        if(!tx.history)throw new QuerySourceError("DEVICE_HISTORY_UNAVAILABLE",503);
+        return tx.history(id,deviceId,actor,parsed.data);
+      });
+    },
     safetyRead: (id: number, actor: DeviceActor) => run(id, actor, async (_tx, current) => project(current), true, true),
     revoke: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("REVOKE", id, deviceId, actor, input),
     archive: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("ARCHIVE", id, deviceId, actor, input),

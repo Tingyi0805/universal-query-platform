@@ -79,6 +79,7 @@ async function main(){
   await query("UPDATE uqp.DashboardDisplayDevice SET ArchivedAtUtc=SYSUTCDATETIME() WHERE Id IN(1,2) AND IsActive=0 AND RevokedAtUtc IS NOT NULL");
   stage="D3-production-writers";await (await import("./deviceLifecycleD3Acceptance.js")).verifyD3(db);
   stage="D4-C1-list";await (await import("./deviceListAcceptance.js")).verifyDeviceList(db,{...config,database:name});
+  stage="D4D-history";await (await import("./deviceHistoryAcceptance.js")).verifyDeviceHistory(db);
   stage="disabled-check-not-repaired";
   await query("ALTER TABLE uqp.DashboardDisplayDevice NOCHECK CONSTRAINT CK_DashboardDevice_LifecycleTerminal");
   await assert.rejects(query(deviceLifecycleSchemaSql));await assert.rejects(db.request().batch(ddl));

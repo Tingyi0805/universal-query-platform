@@ -356,3 +356,6 @@ export async function cleanupAuditArchive() {
 
   return { deletedCount: Number(result.recordset[0]?.DeletedCount ?? 0) };
 }
+
+// Device-scoped history reuses the existing LIVE/ARCHIVE storage; no global-history fallback.
+export { readDeviceAuditHistory } from "./deviceAuditHistory.js";

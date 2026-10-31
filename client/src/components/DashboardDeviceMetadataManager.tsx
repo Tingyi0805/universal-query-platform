@@ -1,3 +1,4 @@
+import { DashboardDeviceHistory } from "./DashboardDeviceHistory";
 import { useDeviceList } from "../dashboard/useDeviceList";
 import { deviceListLabels, type ListStatus, type ListDevice } from "../dashboard/deviceList";
 import { DeviceExpiryInput } from "./DeviceExpiryInput";
@@ -6,7 +7,7 @@ import { useAuth } from "../auth/AuthContext";
 import { lifecycleActions, lifecycleConfirmation, lifecycleLabels, type LifecycleAction, type LifecycleDevice } from "../dashboard/deviceLifecycle";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
 import "./DashboardDeviceMetadataManager.css";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 import { dashboardOperationError, deviceMayIssue, playbackPlacement, type ManagedDevice, type PlaybackPlacement } from "../dashboard/managementStatus";
 
@@ -17,6 +18,9 @@ const empty: Metadata = { deviceName: "", enforceIpRestriction: false, allowedIp
 const defaultPlacement: PlaybackPlacement = { browser: "edge", screenNumber: 2, fullscreen: true, windowX: 1920, windowY: 0, windowWidth: 1920, windowHeight: 1080 };
 export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void }) {
   const { hasPermission } = useAuth();
+  const [history,setHistory]=useState<{dashboardId:number;deviceId:number;name:string;token:string|null}|null>(null);
+  const closeHistory=useCallback(()=>setHistory(null),[]);
+  useEffect(()=>setHistory(null),[dashboardId,accessToken]);
   const design = hasPermission("DESIGN_QUERY"), execute = hasPermission("EXECUTE_QUERY");
   const list = useDeviceList(dashboardId, accessToken, design);
   useEffect(()=>{onPage?.(list.data?.items??[]);},[list.data,onPage]);
@@ -252,6 +256,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
         <span>狀態：{deviceListLabels[row.status]}</span>
         {lifecycle && lifecycleActions(device as LifecycleDevice, design, execute, now).map(action => <button key={action} type="button" disabled={busy || !lifecycleVersion || !!draft || renewId !== null} onClick={() => void lifecycleWrite(device, action)}>{lifecycleLabels[action]} {device.deviceName}</button>)}
       </div>
+      {hasPermission("VIEW_AUDIT")&&<details><summary>更多操作</summary><button type="button" onClick={()=>setHistory({dashboardId,deviceId:device.id,name:device.deviceName,token:accessToken})}>查看操作歷史 {device.deviceName}</button></details>}
       <span>；到期：{device.expiresAtUtc === null ? "未設定到期日" : `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）`}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</span>
       <button type="button" disabled={busy||!design||!execute||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>
       <button type="button" disabled={busy || !design || !execute || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
@@ -295,6 +300,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
       <button type="button" onClick={clearToken}>關閉並清除新 Token</button>
       {copyMessage && <p role="status">{copyMessage}</p>}
     </dialog>}
+    {history&&history.dashboardId===dashboardId&&history.token===accessToken&&hasPermission("VIEW_AUDIT")&&<DashboardDeviceHistory key={`${dashboardId}:${history.deviceId}`} dashboardId={dashboardId} deviceId={history.deviceId} deviceName={history.name} accessToken={accessToken} onClose={closeHistory}/>}
     {message && <p role="status">{message}</p>}
   </section>;
 }

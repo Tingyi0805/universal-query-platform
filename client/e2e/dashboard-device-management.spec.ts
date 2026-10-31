@@ -1,15 +1,23 @@
 import { test, expect, type Page } from "@playwright/test";
 const initialVersion = "a".repeat(64);
-async function setup(page: Page, execute = true) {
-  const state = { listCalls:[] as Record<string,string>[],listError:0,listConflict:false,listDelay:0,listPageDelay:0, safetyOnly: false, lifecycleFail: false, tokenDelay: 0, malformedToken: false, linkDelay:0,linkCode:"",linkStatus:503,linkReads:0,alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
+async function setup(page: Page, execute = true, audit = false) {
+  const state = { historyCalls:[] as Record<string,string>[],historyError:0,historyDelay:0,historyEmpty:false,historyMalformed:false, listCalls:[] as Record<string,string>[],listError:0,listConflict:false,listDelay:0,listPageDelay:0, safetyOnly: false, lifecycleFail: false, tokenDelay: 0, malformedToken: false, linkDelay:0,linkCode:"",linkStatus:503,linkReads:0,alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
     writes: [] as { path: string; method: string; body: any }[], reads: 0, oldWrites: 0,
     devices: [{ id: 7, dashboardId: 1, deviceName: "合成裝置", isActive: true, createdByUserId: 2, sharedWorkstationId: 3,
       enforceIpRestriction: true, allowedIp: "192.0.2.1" as string | null, allowedCidr: null, expiresAtUtc: null as string | null,
       suspendedAtUtc: null as string | null, reenrollmentRequired: null as boolean | null, revokedAtUtc: null as string | null, archivedAtUtc: null as string | null, queryModeGrantVersion: null, delegatorTokenVersion: null,
       placement: { browser: "chrome", screenNumber: 3, fullscreen: false, windowX: -2000, windowY: 100, windowWidth: 1200, windowHeight: 800 } }] };
-  await page.addInitScript((execute) => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY", "VIEW_QUERY", ...(execute ? ["EXECUTE_QUERY"] : [])] } })), execute);
+  await page.addInitScript(({execute,audit}) => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "測試", permissions: ["DESIGN_QUERY", "VIEW_QUERY", ...(audit ? ["VIEW_AUDIT"] : []), ...(execute ? ["EXECUTE_QUERY"] : [])] } })), {execute,audit});
   await page.context().route(url => url.pathname.startsWith("/api/"), async route => {
     const req = route.request(), path = new URL(req.url()).pathname;
+    if(path.endsWith("/history")){
+      const q=Object.fromEntries(new URL(req.url()).searchParams);state.historyCalls.push(q);
+      if(state.historyDelay&&q.source==="LIVE")await new Promise(r=>setTimeout(r,state.historyDelay));
+      if(state.historyError){await route.fulfill({status:state.historyError,json:{error:{code:"FORBIDDEN",message:"PRIVATE PARAMETERS TOKEN"}}});return;}
+      const source=q.source??"LIVE",page=Number(q.page??1),pageSize=Number(q.pageSize??20);
+      const rows=state.historyEmpty?[]:Array.from({length:25},(_,i)=>({id:String(25-i),createdAtUtc:"2026-10-31T00:00:00Z",eventType:i%2?"DASHBOARD_DEVICE_REVOKED":"DASHBOARD_DEVICE_SUSPENDED",username:source==="ARCHIVE"?"archiver":"admin",displayName:source==="ARCHIVE"?"封存操作者":"線上管理者",status:i%2?"FAILED":"SUCCESS",errorCode:i%2?"FORBIDDEN":null})).filter(d=>(!q.eventType||d.eventType===q.eventType)&&(!q.username||d.username.includes(q.username)));
+      await route.fulfill({json:{dashboardId:state.historyMalformed?2:Number(path.split("/")[3]),deviceId:Number(path.split("/").at(-2)),source,items:rows.slice((page-1)*pageSize,page*pageSize),total:rows.length,page,pageSize}});return;
+    }
     if(path.endsWith("/device-alerts")){
       if(state.alertFail){await route.fulfill({status:503,json:{error:{code:"PRIVATE_DIAGNOSTIC"}}});return;}
       await route.fulfill({json:{days:30,asOfUtc:new Date().toISOString(),devices:state.devices.filter(d=>d.expiresAtUtc!==null).map(d=>({...d,daysRemaining:Math.ceil((Date.parse(d.expiresAtUtc!)-Date.now())/86400000)}))}});return;
@@ -481,3 +489,48 @@ test("an in-flight page clears old items and cannot overwrite a new search",asyn
  await page.waitForTimeout(500);await expect(panel.getByRole("list",{name:"裝置分頁清單"})).toContainText("裝置 43");
  expect(state.reads).toBe(fullReads);expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();
 });
+
+test("archived device more menu opens scoped LIVE/ARCHIVE history with filters, dates and paging",async({page})=>{
+ const {state,panel}=await setup(page,true,true);state.revoked=true;state.archived=true;
+ await panel.getByLabel("裝置狀態篩選").selectOption("ARCHIVED");
+ await panel.getByText("更多操作",{exact:true}).click();await panel.getByRole("button",{name:"查看操作歷史 合成裝置",exact:true}).click();
+ const dialog=page.getByRole("dialog",{name:"裝置操作歷史"});await expect(dialog).toContainText("共 25 筆");await expect(dialog).toContainText("2026-10-31 08");
+ await expect(dialog.getByRole("button",{name:"上一頁歷史"})).toBeDisabled();
+ await dialog.getByRole("button",{name:"下一頁歷史"}).click();await expect(dialog).toContainText("第 2／2 頁");expect(state.historyCalls.at(-1)!.page).toBe("2");
+ await dialog.getByLabel("歷史資料區").selectOption("ARCHIVE");await expect(dialog).toContainText("封存操作者");expect(state.historyCalls.at(-1)!.page).toBe("1");
+ for(const size of [10,20,50,100]){await dialog.getByLabel("歷史每頁筆數").selectOption(String(size));await expect(dialog.locator("tbody tr")).toHaveCount(Math.min(size,25));expect(state.historyCalls.at(-1)!.pageSize).toBe(String(size));}
+ await dialog.getByLabel("歷史操作類型").selectOption("DASHBOARD_DEVICE_REVOKED");await expect(dialog).toContainText("共 12 筆");
+ await dialog.getByLabel("歷史起日").fill("2026-10-30");await dialog.getByLabel("歷史迄日").fill("2026-10-31");await dialog.getByLabel("歷史操作人員").fill("archiver");
+ const before=state.historyCalls.length;await dialog.getByRole("button",{name:"查詢操作歷史",exact:true}).click();await expect.poll(()=>state.historyCalls.length).toBeGreaterThan(before);
+ expect(state.historyCalls.at(-1)).toMatchObject({source:"ARCHIVE",eventType:"DASHBOARD_DEVICE_REVOKED",startDate:"2026-10-30",endDate:"2026-10-31",username:"archiver",page:"1"});
+ await expect(dialog).not.toContainText("ParametersJson");await expect(dialog).not.toContainText("TokenHash");
+ await dialog.getByRole("button",{name:"關閉操作歷史"}).click();await expect(dialog).toHaveCount(0);expect(state.writes).toHaveLength(0);
+});
+test("no VIEW_AUDIT provides no history entry or global Audit fallback",async({page})=>{
+ const {state,panel}=await setup(page);await expect(panel.getByText("更多操作",{exact:true})).toHaveCount(0);expect(state.historyCalls).toHaveLength(0);
+});
+for(const status of [403,503])test(`history ${status} clears records and offers safe retry`,async({page})=>{
+ const {state,panel}=await setup(page,true,true);state.historyError=status;
+ await panel.getByText("更多操作",{exact:true}).click();await panel.getByRole("button",{name:"查看操作歷史 合成裝置",exact:true}).click();
+ const dialog=page.getByRole("dialog",{name:"裝置操作歷史"});await expect(dialog.getByRole("alert")).toBeVisible();await expect(dialog).not.toContainText("PRIVATE PARAMETERS TOKEN");await expect(dialog.locator("tbody tr")).toHaveCount(0);
+ if(status===403)await expect(dialog).toContainText("權限不足");state.historyError=0;await dialog.getByRole("button",{name:"重試操作歷史"}).click();await expect(dialog).toContainText("共 25 筆");
+});
+test("history empty, invalid date interval and malformed scope never show unrelated records",async({page})=>{
+ const {state,panel}=await setup(page,true,true);state.historyEmpty=true;
+ await panel.getByText("更多操作",{exact:true}).click();await panel.getByRole("button",{name:"查看操作歷史 合成裝置",exact:true}).click();const dialog=page.getByRole("dialog",{name:"裝置操作歷史"});
+ await expect(dialog).toContainText("沒有符合條件的操作歷史");const calls=state.historyCalls.length;
+ await dialog.getByLabel("歷史起日").fill("2026-11-02");await dialog.getByLabel("歷史迄日").fill("2026-11-01");await dialog.getByRole("button",{name:"查詢操作歷史",exact:true}).click();await expect(dialog).toContainText("起日不可晚於迄日");expect(state.historyCalls).toHaveLength(calls);
+ state.historyEmpty=false;state.historyMalformed=true;await dialog.getByLabel("歷史起日").fill("");await dialog.getByLabel("歷史迄日").fill("");await dialog.getByRole("button",{name:"查詢操作歷史",exact:true}).click();await expect(dialog).toContainText("操作歷史讀取失敗");await expect(dialog.locator("tbody tr")).toHaveCount(0);
+});
+test("history source changes and closing ignore late responses",async({page})=>{
+ const {state,panel}=await setup(page,true,true);state.historyDelay=400;
+ await panel.getByText("更多操作",{exact:true}).click();await panel.getByRole("button",{name:"查看操作歷史 合成裝置",exact:true}).click();const dialog=page.getByRole("dialog",{name:"裝置操作歷史"});
+ await expect(dialog).toContainText("操作歷史載入中");await dialog.getByLabel("歷史資料區").selectOption("ARCHIVE");await expect(dialog).toContainText("封存操作者");await page.waitForTimeout(500);await expect(dialog).not.toContainText("線上管理者");
+ await dialog.getByLabel("歷史資料區").selectOption("LIVE");await dialog.getByRole("button",{name:"關閉操作歷史"}).click();await page.waitForTimeout(500);await expect(dialog).toHaveCount(0);
+});
+test.describe("touch history",()=>{test.use({hasTouch:true});test("history filters, rows and paging fit a narrow tablet",async({page})=>{
+ const {panel}=await setup(page,true,true);await page.setViewportSize({width:390,height:844});
+ await panel.getByText("更多操作",{exact:true}).tap();await panel.getByRole("button",{name:"查看操作歷史 合成裝置",exact:true}).tap();const dialog=page.getByRole("dialog",{name:"裝置操作歷史"});
+ await expect(dialog).toContainText("共 25 筆");const size=await dialog.evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));expect(size.scroll).toBeLessThanOrEqual(size.width+1);
+ await dialog.getByRole("button",{name:"下一頁歷史"}).tap();await expect(dialog).toContainText("第 2／2 頁");await dialog.getByRole("button",{name:"關閉操作歷史"}).tap();
+});});

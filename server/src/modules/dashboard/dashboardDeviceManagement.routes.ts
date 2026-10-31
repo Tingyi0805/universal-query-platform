@@ -29,6 +29,12 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
       res.json(await enrollment.issue(c.id,deviceId.data,c.actor,input.data));
     } catch(error) { failure(error,res,req.id); }
   });
+  router.get("/:id/device-management/v1/:deviceId/history",requirePermission("VIEW_AUDIT"),async(req,res)=>{
+    try{const c=context(req),deviceId=idSchema.safeParse(req.params.deviceId);
+      if(!deviceId.success)throw new QuerySourceError("VALIDATION_ERROR",400);
+      res.json(await service.history(c.id,deviceId.data,c.actor,req.query));
+    }catch(error){failure(error,res,req.id);}
+  });
   router.get("/:id/device-management/v1/list", async (req,res) => {
     try { const c=context(req);res.json(await service.list(c.id,c.actor,req.query)); }
     catch(error){failure(error,res,req.id);}
