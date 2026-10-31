@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 const initialVersion = "a".repeat(64);
 async function setup(page: Page, execute = true) {
-  const state = { safetyOnly: false, lifecycleFail: false, tokenDelay: 0, malformedToken: false, linkDelay:0,linkCode:"",linkStatus:503,linkReads:0,alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
+  const state = { listCalls:[] as Record<string,string>[],listError:0,listConflict:false,listDelay:0,listPageDelay:0, safetyOnly: false, lifecycleFail: false, tokenDelay: 0, malformedToken: false, linkDelay:0,linkCode:"",linkStatus:503,linkReads:0,alertFail:false, linkUrl: "https://hospital.example:8443/display/dashboards/1?deviceId=7", revision: 0, mode: "LEGACY", failStatus: 0, flag: false, createAllowed: true, archived: false, revoked: false, expired: false,
     writes: [] as { path: string; method: string; body: any }[], reads: 0, oldWrites: 0,
     devices: [{ id: 7, dashboardId: 1, deviceName: "合成裝置", isActive: true, createdByUserId: 2, sharedWorkstationId: 3,
       enforceIpRestriction: true, allowedIp: "192.0.2.1" as string | null, allowedCidr: null, expiresAtUtc: null as string | null,
@@ -15,6 +15,15 @@ async function setup(page: Page, execute = true) {
       await route.fulfill({json:{days:30,asOfUtc:new Date().toISOString(),devices:state.devices.filter(d=>d.expiresAtUtc!==null).map(d=>({...d,daysRemaining:Math.ceil((Date.parse(d.expiresAtUtc!)-Date.now())/86400000)}))}});return;
     }
     if(path.endsWith("/playback-link")){state.linkReads++;if(state.linkDelay)await new Promise(resolve=>setTimeout(resolve,state.linkDelay));if(state.linkCode){await route.fulfill({status:state.linkStatus,json:{error:{code:state.linkCode,message:"PRIVATE_SQL_TOKEN"}}});return;}const deviceId=Number(path.split("/").at(-2));await route.fulfill({json:{dashboardId:1,deviceId,url:state.linkUrl.replace("deviceId=7",`deviceId=${deviceId}`),bat:"@echo off\r\nREM synthetic public URL only\r\n"}});return;}
+    if(path.endsWith("/device-management/v1/list")){
+      const q=Object.fromEntries(new URL(req.url()).searchParams);state.listCalls.push(q);
+      if(state.listDelay && q.search==="slow")await new Promise(r=>setTimeout(r,state.listDelay));
+      if(state.listPageDelay&&q.page==="2")await new Promise(r=>setTimeout(r,state.listPageDelay));
+      if(state.listError||state.flag||state.lifecycleFail||state.listConflict){const status=state.listConflict?409:state.listError||503;state.listConflict=false;await route.fulfill({status,json:{error:{code:status===409?"DASHBOARD_DEVICE_LIST_CHANGED":"FORBIDDEN",message:"PRIVATE STORAGE DETAIL"}}});return;}
+      const all=state.devices.map(d=>({...d,isActive:!state.revoked&&d.isActive,revokedAtUtc:state.revoked?"2020-01-01T00:00:00Z":null,archivedAtUtc:state.archived?"2020-01-01T00:00:00Z":null,expiresAtUtc:state.expired?"2000-01-01T00:00:00Z":d.expiresAtUtc})).map(d=>({...d,status:d.archivedAtUtc?"ARCHIVED":d.revokedAtUtc?"REVOKED":d.expiresAtUtc&&Date.parse(d.expiresAtUtc)<=Date.now()?"EXPIRED":d.suspendedAtUtc?"SUSPENDED":d.reenrollmentRequired?"PENDING_REENROLLMENT":"UNVERIFIED"})).filter(d=>(q.status==="ALL"||d.status===q.status)&&(!q.search||d.deviceName.includes(q.search)||String(d.id)===q.search)).sort((a,b)=>a.id-b.id);
+      const page=Number(q.page),pageSize=Number(q.pageSize);
+      await route.fulfill({json:{items:all.slice((page-1)*pageSize,page*pageSize),total:all.length,page,pageSize,snapshot:"list-snapshot-"+state.revision,asOfUtc:"2026-10-31T00:00:00Z",validUntilUtc:"2026-10-31T00:05:00Z",sort:"ID_ASC",consistency:"CONTENT_CHECKED_UNTIL_EXPIRY",writeVersionIncluded:false}});return;
+    }
     if (path.includes("/device-management/v1")) {
       const version = () => state.revision === 0 ? initialVersion : String(state.revision).repeat(64);
       if (req.method() === "GET") state.reads++;
@@ -109,7 +118,7 @@ test("metadata API disabled remains fail-closed despite available Legacy read AP
   const { state, panel } = await setup(page); state.flag = true;
   await panel.getByRole("button", { name: "重新載入裝置設定" }).click();
   await expect(panel.getByRole("button", { name: "建立未授權裝置", exact: true })).toBeDisabled();
-  await expect(panel.getByRole("button", { name: "編輯 合成裝置 基本設定" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "編輯 合成裝置 基本設定" })).toHaveCount(0);
   expect(state.writes).toHaveLength(0); expect(state.oldWrites).toBe(0);
 });
 test("revoked, archived and expired devices cannot be restored by settings; active Dashboard creation denied", async ({ page }) => {
@@ -216,18 +225,18 @@ test("reminder read failure is explicit and never presented as zero expiring dev
 test("lifecycle pause confirmation, restore pending, credential once and archive use complete versions", async ({page}) => {
   const {state,panel}=await setup(page);
   const lifecycle=panel.getByLabel("裝置 7 生命週期");
-  await expect(lifecycle).toContainText("啟用設定／無法驗證播放授權");
+  await expect(lifecycle).toContainText("未驗證");
   page.removeAllListeners("dialog");
   page.once("dialog", d=>{expect(d.message()).toContain("舊 Token");void d.dismiss();});
   await lifecycle.getByRole("button",{name:"暫停 合成裝置",exact:true}).click(); expect(state.writes).toHaveLength(0);
   page.on("dialog",d=>void d.accept());
   await lifecycle.getByRole("button",{name:"暫停 合成裝置",exact:true}).click();
-  await expect(lifecycle).toContainText("已暫停");
+  await expect(lifecycle).toContainText("暫停");
   expect(state.writes[0]!.body).toEqual({expectedVersion:initialVersion,confirmed:true});
   await expect(lifecycle.getByRole("button",{name:"恢復 合成裝置",exact:true})).toBeDisabled();
   await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
   await lifecycle.getByRole("button",{name:"恢復 合成裝置",exact:true}).click();
-  await expect(lifecycle).toContainText("待重新授權");
+  await expect(lifecycle).toContainText("待重新註冊");
   await expect(lifecycle).not.toContainText("啟用設定");
   await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
   await lifecycle.getByRole("button",{name:"核發新 Token 合成裝置",exact:true}).click();
@@ -250,7 +259,7 @@ test("lifecycle pause confirmation, restore pending, credential once and archive
   expect(state.writes).toHaveLength(3);
   page.on("dialog",d=>void d.accept());
   await lifecycle.getByRole("button",{name:"永久撤銷 合成裝置",exact:true}).click();
-  await expect(lifecycle).toContainText("已撤銷（永久）");
+  await expect(lifecycle).toContainText("已撤銷");
   await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
   await lifecycle.getByRole("button",{name:"封存 合成裝置",exact:true}).click();
   await expect(lifecycle).toContainText("已封存");
@@ -266,7 +275,7 @@ for (const status of [401,403,409,503]) test(`lifecycle ${status} invalidates ve
   expect(state.writes).toHaveLength(1);await expect(panel).not.toContainText("PRIVATE STORAGE DETAIL");
   state.failStatus=0;await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
   await panel.getByRole("button",{name:"暫停 合成裝置",exact:true}).click();
-  await expect(panel.getByLabel("裝置 7 生命週期")).toContainText("已暫停");expect(state.writes).toHaveLength(2);
+  await expect(panel.getByLabel("裝置 7 生命週期")).toContainText("暫停");expect(state.writes).toHaveLength(2);
 });
 test("DESIGN_QUERY safety read works when full Query ACL read is denied",async({page})=>{
   const {state,panel}=await setup(page,false);state.safetyOnly=true;
@@ -369,4 +378,106 @@ test("invalid and past expiry block writes; cancel preserves original; blank sav
   await input.fill("");await panel.getByRole("button",{name:"確認保存裝置設定"}).click();
   expect(state.writes[0]!.body.metadata.expiresAtUtc).toBe(null);
 });
+});
+
+function populateDevices(state: Awaited<ReturnType<typeof setup>>["state"]) {
+  for(let id=8;id<=43;id++)state.devices.push({...state.devices[0]!,id,deviceName:`裝置 ${id}`});
+}
+test("server paging uses first snapshot, fixed sort, total and all supported sizes",async({page})=>{
+ const {state,panel}=await setup(page);populateDevices(state);
+ await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+ const rows=panel.getByRole("list",{name:"裝置分頁清單"}).getByRole("listitem");
+ await expect(rows).toHaveCount(20);await expect(panel.getByRole("navigation",{name:"裝置清單分頁"})).toContainText("共 37 筆；第 1／2 頁");
+ expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();
+ await panel.getByRole("button",{name:"下一頁裝置"}).click();await expect(rows).toHaveCount(17);
+ expect(state.listCalls.at(-1)!.page).toBe("2");expect(state.listCalls.at(-1)!.snapshot).toBe("list-snapshot-0");
+ await expect(rows.first()).toContainText("裝置 27");
+ await panel.getByRole("button",{name:"上一頁裝置"}).click();await expect(rows).toHaveCount(20);
+ expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();
+ for(const size of [10,20,50,100]){await panel.getByLabel("裝置每頁筆數").selectOption(String(size));await expect(rows).toHaveCount(Math.min(size,37));expect(state.listCalls.at(-1)!.page).toBe("1");expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();}
+});
+test("explicit search and status changes reset snapshot; UNVERIFIED is not ACTIVE",async({page})=>{
+ const {state,panel}=await setup(page);populateDevices(state);
+ await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+ await panel.getByRole("button",{name:"下一頁裝置"}).click();await expect(panel.getByRole("navigation",{name:"裝置清單分頁"})).toContainText("第 2／2 頁");
+ const before=state.listCalls.length;
+ await panel.getByLabel("裝置搜尋關鍵字").fill("27");expect(state.listCalls).toHaveLength(before);
+ await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await expect(panel.getByRole("list",{name:"裝置分頁清單"})).toContainText("裝置 27");expect(state.listCalls.at(-1)!.search).toBe("27");expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();
+ await panel.getByLabel("裝置狀態篩選").selectOption("ACTIVE");await expect(panel.getByText("沒有符合條件的裝置。",{exact:true})).toBeVisible();
+ await panel.getByLabel("裝置狀態篩選").selectOption("UNVERIFIED");await expect(panel.getByLabel("裝置 27 生命週期")).toContainText("未驗證");
+ for(const status of ["SUSPENDED","PENDING_REENROLLMENT","REVOKED","ARCHIVED","EXPIRED"]){await panel.getByLabel("裝置狀態篩選").selectOption(status);await expect(panel.getByText("沒有符合條件的裝置。",{exact:true})).toBeVisible();expect(state.listCalls.at(-1)!.status).toBe(status);}
+});
+test("409 discards old items and snapshot, reloads page one and never resends a write",async({page})=>{
+ const {state,panel}=await setup(page);populateDevices(state);
+ await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+ await expect(panel.getByRole("button",{name:"下一頁裝置"})).toBeEnabled();state.listConflict=true;
+ await panel.getByRole("button",{name:"下一頁裝置"}).click();
+ await expect(panel.getByText("清單已更新或已到期，已清除舊清單，重新從第一頁載入。",{exact:true})).toBeVisible();
+ await expect(panel.getByRole("navigation",{name:"裝置清單分頁"})).toContainText("第 1／2 頁");
+ expect(state.listCalls.at(-2)!.snapshot).toBe("list-snapshot-0");expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();expect(state.writes).toHaveLength(0);
+});
+test("quick search ignores late response; unmount discards pending list",async({page})=>{
+ const {state,panel}=await setup(page);state.listDelay=400;
+ await panel.getByLabel("裝置搜尋關鍵字").fill("slow");await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await expect(panel.getByText("裝置清單載入中…",{exact:true})).toBeVisible();
+ await panel.getByLabel("裝置搜尋關鍵字").fill("7");await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await expect(panel.getByRole("list",{name:"裝置分頁清單"})).toContainText("合成裝置");
+ await page.waitForTimeout(500);await expect(panel.getByRole("list",{name:"裝置分頁清單"})).toContainText("合成裝置");
+ await panel.getByLabel("裝置搜尋關鍵字").fill("slow");await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await page.goto("/dashboards");await page.waitForTimeout(500);await expect(page.getByRole("list",{name:"裝置分頁清單"})).toHaveCount(0);
+});
+for(const status of [401,403,503])test(`list ${status} clears rows and offers safe retry without full-snapshot fallback`,async({page})=>{
+ const {state,panel}=await setup(page);state.listError=status;
+ await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await expect(panel.getByRole("button",{name:"重試裝置清單"})).toBeVisible();
+ await expect(panel.getByRole("list",{name:"裝置分頁清單"}).getByRole("listitem")).toHaveCount(0);
+ await expect(panel).not.toContainText("PRIVATE STORAGE DETAIL");if(status===403)await expect(panel.getByRole("alert")).toContainText("權限不足");
+ state.listError=0;await panel.getByRole("button",{name:"重試裝置清單"}).click();await expect(panel.getByRole("list",{name:"裝置分頁清單"})).toContainText("合成裝置");
+});
+test("life operation refresh preserves filters but drops snapshot and write uses full expectedVersion",async({page})=>{
+ const {state,panel}=await setup(page);await panel.getByLabel("裝置狀態篩選").selectOption("UNVERIFIED");
+ await expect(panel.getByRole("button",{name:"暫停 合成裝置",exact:true})).toBeEnabled();
+ await panel.getByRole("button",{name:"暫停 合成裝置",exact:true}).click();
+ await expect(panel.getByText("沒有符合條件的裝置。",{exact:true})).toBeVisible();
+ expect(state.writes[0]!.body).toEqual({expectedVersion:initialVersion,confirmed:true});expect(state.listCalls.at(-1)!.status).toBe("UNVERIFIED");expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();
+});
+test.describe("touch paged list",()=>{test.use({hasTouch:true});test("narrow controls and paging fit without horizontal overflow",async({page})=>{
+ const {state,panel}=await setup(page);populateDevices(state);await page.setViewportSize({width:390,height:844});
+ await panel.getByRole("button",{name:"重新載入裝置設定"}).click();await expect(panel.getByRole("button",{name:"下一頁裝置"})).toBeEnabled();
+ await panel.getByRole("button",{name:"下一頁裝置"}).tap();await expect(panel.getByRole("navigation",{name:"裝置清單分頁"})).toContainText("第 2／2 頁");
+ const size=await panel.locator(".uqp-device-list-tools").first().evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));expect(size.scroll).toBeLessThanOrEqual(size.width+1);
+});});
+test("Dashboard switch rejects the former Dashboard's delayed response",async({page})=>{
+ const {state}=await setup(page);state.listDelay=500;
+ await page.context().route(url=>url.pathname==="/api/dashboards",route=>route.fulfill({json:{dashboards:[1,2].map(id=>({id,code:`D${id}`,name:`看板 ${id}`,queryDefinitionId:20,parameters:{},refreshSeconds:5,pageSize:1,pageSeconds:5,isActive:false})),total:2,totalPages:1}}));
+ await page.context().route(url=>url.pathname==="/api/dashboards/2/device-management/v1/list",route=>route.fulfill({json:{items:[{...state.devices[0]!,dashboardId:2,deviceName:"第二看板裝置",status:"UNVERIFIED"}],total:1,page:1,pageSize:20,snapshot:"dashboard-two",asOfUtc:"2026-10-31T00:00:00Z",validUntilUtc:"2026-10-31T00:05:00Z",sort:"ID_ASC",consistency:"CONTENT_CHECKED_UNTIL_EXPIRY",writeVersionIncluded:false}}));
+ await page.reload();await page.getByRole("button",{name:"編輯",exact:true}).first().click();
+ const panel=page.getByRole("region",{name:"版本化裝置基本管理"});
+ await panel.getByLabel("裝置搜尋關鍵字").fill("slow");await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await expect(panel.getByText("裝置清單載入中…",{exact:true})).toBeVisible();
+ await page.getByRole("button",{name:"編輯",exact:true}).nth(1).click();
+ const rows=panel.getByRole("list",{name:"裝置分頁清單"});await expect(rows).toContainText("第二看板裝置");
+ await page.waitForTimeout(600);await expect(rows).toContainText("第二看板裝置");await expect(rows).not.toContainText("合成裝置");
+ await expect(panel.getByLabel("裝置搜尋關鍵字")).toHaveValue("");
+});
+test("a first-page conflict recovers once with no snapshot",async({page})=>{
+ const {state,panel}=await setup(page);state.listConflict=true;
+ await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await expect(panel.getByText("清單已更新或已到期，已清除舊清單，重新從第一頁載入。",{exact:true})).toBeVisible();
+ await expect(panel.getByRole("list",{name:"裝置分頁清單"})).toContainText("合成裝置");
+ expect(state.listCalls.slice(-2).every(q=>q.page==="1"&&q.snapshot===undefined)).toBe(true);
+});
+test("an in-flight page clears old items and cannot overwrite a new search",async({page})=>{
+ const {state,panel}=await setup(page);populateDevices(state);
+ await panel.getByRole("button",{name:"重新載入裝置設定"}).click();await expect(panel.getByRole("button",{name:"下一頁裝置"})).toBeEnabled();
+ const fullReads=state.reads;state.listPageDelay=400;
+ await panel.getByRole("button",{name:"下一頁裝置"}).click();
+ await expect(panel.getByText("裝置清單載入中…",{exact:true})).toBeVisible();
+ await expect(panel.getByRole("list",{name:"裝置分頁清單"}).getByRole("listitem")).toHaveCount(0);
+ await expect(panel.getByRole("button",{name:"下一頁裝置"})).toHaveCount(0);
+ await panel.getByLabel("裝置搜尋關鍵字").fill("43");await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
+ await expect(panel.getByRole("list",{name:"裝置分頁清單"}).getByRole("listitem")).toHaveCount(1);
+ await page.waitForTimeout(500);await expect(panel.getByRole("list",{name:"裝置分頁清單"})).toContainText("裝置 43");
+ expect(state.reads).toBe(fullReads);expect(state.listCalls.at(-1)!.snapshot).toBeUndefined();
 });

@@ -1,7 +1,9 @@
+import { useDeviceList } from "../dashboard/useDeviceList";
+import { deviceListLabels, type ListStatus, type ListDevice } from "../dashboard/deviceList";
 import { DeviceExpiryInput } from "./DeviceExpiryInput";
 import { taipeiDateTime, validDeviceExpiry } from "../dashboard/taipeiDateTime";
 import { useAuth } from "../auth/AuthContext";
-import { lifecycleActions, lifecycleConfirmation, lifecycleLabels, lifecycleStatus, type LifecycleAction, type LifecycleDevice } from "../dashboard/deviceLifecycle";
+import { lifecycleActions, lifecycleConfirmation, lifecycleLabels, type LifecycleAction, type LifecycleDevice } from "../dashboard/deviceLifecycle";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
 import "./DashboardDeviceMetadataManager.css";
 import { useEffect, useRef, useState } from "react";
@@ -13,9 +15,13 @@ type Device = ManagedDevice & Metadata & { dashboardId: number; createdByUserId:
 type Snapshot = { dashboardId: number; version: string; canCreate: boolean; devices: Device[] };
 const empty: Metadata = { deviceName: "", enforceIpRestriction: false, allowedIp: null, allowedCidr: null, expiresAtUtc: null };
 const defaultPlacement: PlaybackPlacement = { browser: "edge", screenNumber: 2, fullscreen: true, windowX: 1920, windowY: 0, windowWidth: 1920, windowHeight: 1080 };
-export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
+export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void }) {
   const { hasPermission } = useAuth();
   const design = hasPermission("DESIGN_QUERY"), execute = hasPermission("EXECUTE_QUERY");
+  const list = useDeviceList(dashboardId, accessToken, design);
+  useEffect(()=>{onPage?.(list.data?.items??[]);},[list.data,onPage]);
+  const [searchText, setSearchText] = useState("");
+  useEffect(()=>setSearchText(""),[dashboardId,accessToken]);
   const [lifecycle, setLifecycle] = useState<Snapshot | null>(null), [lifecycleVersion, setLifecycleVersion] = useState<string | null>(null);
   const [lifecycleMessage, setLifecycleMessage] = useState("");
   const [issuedId, setIssuedId] = useState<number | null>(null), [copyMessage, setCopyMessage] = useState("");
@@ -65,6 +71,9 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
       if (read === sequence.current) { clearToken(); setLifecycleMessage(`${dashboardOperationError(error)} 請重新載入後再次確認，不會自動重送；若核發回應遺失，無法讀回該 Token。`); }
     } finally { mutation.current = false; if (read === sequence.current) setBusy(false); }
   }
+  useEffect(()=>{
+    if(list.error.startsWith("權限不足")||list.notice.startsWith("清單已更新")){setVersion(null);setLifecycleVersion(null);clearToken();}
+  },[list.error,list.notice]);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null), [version, setVersion] = useState<string | null>(null);
   const [draft, setDraft] = useState<{ deviceId: number | null; operation: "metadata" | "placement" } | null>(null);
   const [expiryValid, setExpiryValid] = useState(true);
@@ -140,6 +149,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   }
   async function load(discard = false) {
     if (discard && draft && !window.confirm("重新載入會捨棄本區裝置草稿，確定繼續？")) return;
+    if(discard)list.reset();
     const read = ++sequence.current; clearToken(); setLifecycleVersion(null); setLifecycle(null); setLifecycleMessage(""); clearLinks(); setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
     try {
       const [metadata,reminders,safety]=await Promise.allSettled([apiRequest<Snapshot>(base,{},accessToken),apiRequest<{asOfUtc?:string;devices:{id:number;dashboardId:number;expiresAtUtc:string|null}[]}>("/dashboards/device-alerts?days=30",{},accessToken),apiRequest<Snapshot>(`${base}/lifecycle`,{},accessToken)]);
@@ -168,16 +178,18 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
   useEffect(() => {
     const changed = (event: Event) => {
       if ((event as CustomEvent).detail?.dashboardId !== dashboardId) return;
-      ++sequence.current; clearLinks(); clearToken(); setBusy(false); setVersion(null); setLifecycleVersion(null); setMessage("Dashboard 或裝置授權狀態已變更；草稿已保留，請明確重新載入。");
+      list.reset(); ++sequence.current; clearLinks(); clearToken(); setBusy(false); setVersion(null); setLifecycleVersion(null); setMessage("Dashboard 或裝置授權狀態已變更；草稿已保留，請明確重新載入。");
     };
+    const refreshList=(event:Event)=>{if((event as CustomEvent).detail?.dashboardId===dashboardId)list.reset();};
+    window.addEventListener("uqp.dashboard.device-list.refresh",refreshList);
     window.addEventListener("uqp.dashboard.configuration.changed", changed);
-    return () => window.removeEventListener("uqp.dashboard.configuration.changed", changed);
+    return () => {window.removeEventListener("uqp.dashboard.configuration.changed", changed);window.removeEventListener("uqp.dashboard.device-list.refresh",refreshList);};
   }, [dashboardId]);
   function edit(device: Device | null, operation: "metadata" | "placement") {
     if (draft && !window.confirm("捨棄目前裝置草稿並編輯另一項設定？")) return;
     setDraft({ deviceId: device?.id ?? null, operation });
     setMetadata(device ? { deviceName: device.deviceName, enforceIpRestriction: device.enforceIpRestriction, allowedIp: device.allowedIp, allowedCidr: device.allowedCidr, expiresAtUtc: device.expiresAtUtc } : empty);
-    setPlacement(device?.placement ?? defaultPlacement); setMessage("");
+    setPlacement((snapshot?.devices.find(d=>d.id===device?.id)?.placement ?? device?.placement) ?? defaultPlacement); setMessage("");
   }
   async function renew() {
     if(busy||!design||!execute||!version||renewId===null||!Number.isInteger(renewDays)||renewDays<1||renewDays>365||!window.confirm(`確認延長裝置 ${renewId} 的到期日 ${renewDays} 天？最遠不得超過目前時間 365 天，不重新核發 Token；已失效授權不會恢復。`))return;
@@ -219,15 +231,31 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
     <button type="button" disabled={busy || !version || !design || !execute || !snapshot?.canCreate} onClick={() => edit(null, "metadata")}>建立未授權裝置</button>
     <p>啟用設定不代表正常播放；無法驗證表示管理快照未提供即時播放授權證據。恢復或核發後，須在原 BAT 專用瀏覽器勾選「使用恢復後的新 Token 重新授權」並輸入新 Token，完成 Enrollment 後才可播放。</p>
     {lifecycleMessage && <p role="status">{lifecycleMessage}</p>}
-    <ul>{(lifecycle ?? snapshot)?.devices.map(device => <li key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
-      {lifecycle && <div aria-label={`裝置 ${device.id} 生命週期`}>
-        <span>狀態：{lifecycleStatus(device as LifecycleDevice, now)}</span>
-        {lifecycleActions(device as LifecycleDevice, design, execute, now).map(action => <button key={action} type="button" disabled={busy || !lifecycleVersion || !!draft || renewId !== null} onClick={() => void lifecycleWrite(device, action)}>{lifecycleLabels[action]} {device.deviceName}</button>)}
-      </div>}
+    <form className="uqp-device-list-tools" aria-label="搜尋裝置" onSubmit={e=>{e.preventDefault();list.change({search:searchText.trim()});}}>
+      <label>裝置名稱或精確 ID<input aria-label="裝置搜尋關鍵字" maxLength={200} value={searchText} onChange={e=>setSearchText(e.target.value)}/></label>
+      <button type="submit">搜尋裝置</button>
+      <label>狀態<select aria-label="裝置狀態篩選" value={list.query.status} onChange={e=>list.change({status:e.target.value as ListStatus})}>{Object.entries(deviceListLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
+      <label>每頁筆數<select aria-label="裝置每頁筆數" value={list.query.pageSize} onChange={e=>list.change({pageSize:Number(e.target.value)})}>{[10,20,50,100].map(size=><option key={size} value={size}>{size}</option>)}</select></label>
+    </form>
+    <p>依裝置 ID 遞增排序。未驗證不代表有效；有效篩選若無即時播放授權證據將顯示空結果。</p>
+    {list.notice && <p role="status">{list.notice}</p>}
+    {list.loading && <p role="status">裝置清單載入中…</p>}
+    {list.error && <div role="alert">{list.error}<button type="button" onClick={()=>list.reset()}>重試裝置清單</button></div>}
+    {list.data && <nav className="uqp-device-list-tools" aria-label="裝置清單分頁">
+      <span>共 {list.data.total} 筆；第 {list.data.page}／{Math.max(1,Math.ceil(list.data.total/list.data.pageSize))} 頁；每頁 {list.data.pageSize} 筆</span>
+      <button type="button" disabled={list.loading||list.data.page<=1} onClick={()=>list.go(list.data!.page-1)}>上一頁裝置</button>
+      <button type="button" disabled={list.loading||list.data.page>=Math.ceil(list.data.total/list.data.pageSize)||(list.data.page)*list.data.pageSize>1_000_000} onClick={()=>list.go(list.data!.page+1)}>下一頁裝置</button>
+    </nav>}
+    {list.data?.items.length===0 && <p role="status">沒有符合條件的裝置。</p>}
+    <ul aria-label="裝置分頁清單" aria-busy={list.loading}>{list.data?.items.map(row => {const device:Device={...row,placement:null};return <li key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
+      <div aria-label={`裝置 ${device.id} 生命週期`}>
+        <span>狀態：{deviceListLabels[row.status]}</span>
+        {lifecycle && lifecycleActions(device as LifecycleDevice, design, execute, now).map(action => <button key={action} type="button" disabled={busy || !lifecycleVersion || !!draft || renewId !== null} onClick={() => void lifecycleWrite(device, action)}>{lifecycleLabels[action]} {device.deviceName}</button>)}
+      </div>
       <span>；到期：{device.expiresAtUtc === null ? "未設定到期日" : `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）`}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</span>
       <button type="button" disabled={busy||!design||!execute||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>
       <button type="button" disabled={busy || !design || !execute || !version || !deviceMayIssue(device)} onClick={() => edit(device, "metadata")}>編輯 {device.deviceName} 基本設定</button>
-      <button type="button" disabled={busy || !design || !execute || !version || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
+      <button type="button" disabled={busy || !design || !execute || !version || !snapshot?.devices.some(d=>d.id===device.id) || !deviceMayIssue(device)} onClick={() => edit(device, "placement")}>編輯 {device.deviceName} 播放位置</button>
       {deviceMayIssue(device,now) && <button type="button" disabled={busy||linkStatus[device.id]?.busy} aria-busy={linkStatus[device.id]?.busy??false} onClick={()=>void playbackLink(device.id)}>顯示 {device.deviceName} 播放網址</button>}
       {linkStatus[device.id] && <p role={linkStatus[device.id]!.error?"alert":"status"}>{linkStatus[device.id]!.message}</p>}
       {links[device.id] && deviceMayIssue(device,now) && <div aria-label={`裝置 ${device.id} 播放網址`}>
@@ -238,7 +266,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken }: { d
         {links[device.id]!.url.startsWith("http:") && <p>HTTP 僅供手動播放；重整、關閉或重啟後須再次輸入 Token，不支援持久授權。HTTP 無法保護傳輸中的 Token。</p>}
         <p>BAT 使用獨立且固定的瀏覽器設定檔；首次請從 BAT 開啟並輸入 Token。指定螢幕依 Windows DeviceName 排序，非顯示設定編號；座標為桌面絕對座標。</p>
       </div>}
-    </li>)}</ul>
+    </li>;})}</ul>
     {renewId!==null && <fieldset disabled={busy} aria-label="安全續期"><legend>安全續期裝置 {renewId}</legend>
       <label>延長天數<input aria-label="延長天數" type="number" min={1} max={365} value={renewDays} onChange={e=>setRenewDays(Number(e.target.value))}/></label>
       <p>僅限尚未到期且授權有效的裝置；延長後的到期日最多為目前時間起 365 天。</p>

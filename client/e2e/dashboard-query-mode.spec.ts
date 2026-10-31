@@ -8,6 +8,9 @@ async function setup(page:Page){
     const req=route.request(),path=new URL(req.url()).pathname;
     if(req.method()!=="GET")state.writes.push({path,method:req.method(),body:req.postDataJSON()});
     if(state.disabled && path.includes("/query-mode/v1")){await route.fulfill({status:404,json:{error:{code:"QUERY_DEVICE_PLAYBACK_DISABLED",message:"SQL SECRET TOKEN"}}});return;}
+    if(path.endsWith("/device-management/v1/list")) {
+      await route.fulfill({json:{items:[{id:7,dashboardId:1,deviceName:"合成平板",isActive:!state.revoked,createdByUserId:1,sharedWorkstationId:null,enforceIpRestriction:false,allowedIp:null,allowedCidr:null,expiresAtUtc:state.expiry??null,suspendedAtUtc:null,reenrollmentRequired:null,revokedAtUtc:state.revoked?"2026-10-20T00:00:00Z":null,archivedAtUtc:state.archived?"2026-10-20T00:00:00Z":null,status:state.archived?"ARCHIVED":state.revoked?"REVOKED":"UNVERIFIED"}],total:1,page:1,pageSize:20,snapshot:"list-query-mode",asOfUtc:"2026-10-31T00:00:00Z",validUntilUtc:"2026-10-31T00:05:00Z",sort:"ID_ASC",consistency:"CONTENT_CHECKED_UNTIL_EXPIRY",writeVersionIncluded:false}});return;
+    }
     if(path.includes("/device-management/v1")) {
       if(path.endsWith("/revoke")) state.revoked=true;
       await route.fulfill({json:{dashboardId:1,version,canCreate:false,devices:[{id:7,dashboardId:1,deviceName:"合成平板",isActive:!state.revoked,createdByUserId:1,sharedWorkstationId:null,enforceIpRestriction:false,allowedIp:null,allowedCidr:null,expiresAtUtc:state.expiry ?? null,suspendedAtUtc:null,reenrollmentRequired:null,revokedAtUtc:state.revoked?"2026-10-20T00:00:00Z":null,archivedAtUtc:state.archived?"2026-10-20T00:00:00Z":null,placement:null}],...(path.endsWith("/revoke")?{deviceId:7,credentialIssued:false,deviceCredentialsInvalidated:true}:{})}});return;
@@ -94,7 +97,7 @@ test("expiry, archive and missing expiry evidence deny issuance without changing
     await expect(page.getByText(/目前模式：QUERY_ONLY/)).toBeVisible();
   }
   state.archived = true; state.expiry = null; await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
-  await expect(page.getByText("已封存（裝置，不代表 Dashboard 退役）",{exact:true})).toBeVisible();
+  await expect(page.getByLabel("裝置 7 生命週期")).toContainText("已封存");
   await page.getByRole("button",{name:"重新載入裝置設定",exact:true}).click();
   await expect(page.getByRole("button",{name:"永久撤銷 合成平板",exact:true})).toHaveCount(0); expect(state.writes).toHaveLength(0);
 });

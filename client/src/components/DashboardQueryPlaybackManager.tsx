@@ -1,17 +1,20 @@
+import { deviceListLabels, type ListDevice } from "../dashboard/deviceList";
 import { taipeiDateTime } from "../dashboard/taipeiDateTime";
 import { useAuth } from "../auth/AuthContext";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
 import { DashboardDeviceMetadataManager } from "./DashboardDeviceMetadataManager";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { trustedConfiguration, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
-import { playbackPlacement, type PlaybackPlacement, dashboardMode, dashboardPreflight, dashboardOperationError, deviceMayIssue, deviceStatus, type DashboardMode, type Preflight, type Check, type ManagedDevice } from "../dashboard/managementStatus";
+import { playbackPlacement, type PlaybackPlacement, dashboardMode, dashboardPreflight, dashboardOperationError, deviceMayIssue, type DashboardMode, type Preflight, type Check, type ManagedDevice } from "../dashboard/managementStatus";
 import { forgetDashboardToken, prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { DashboardLegacyDisable } from "./DashboardLegacyDisable";
 const labels: Record<string, string> = { inactive: "停用狀態", capacity: "含 PRIMARY 最多 8 個來源", primaryConversion: "PRIMARY 資料來源已完成轉換", bindings: "來源已轉換與識別有效", references: "元件來源引用", devices: "有效裝置綁定" };
 export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
   const { hasPermission } = useAuth();
+  const [pageView,setPageView]=useState<{token:string|null;items:ListDevice[]}|null>(null);
+  const onDevicePage=useCallback((items:ListDevice[])=>setPageView({token:accessToken,items}),[accessToken]);
   const [mode, setMode] = useState<DashboardMode | null>(null), [configuration, setConfiguration] = useState<QuerySourceConfiguration | null>(null);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
   const [devices, setDevices] = useState<ManagedDevice[]>([]), [busy, setBusy] = useState(false), [message, setMessage] = useState("");
@@ -58,6 +61,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     } finally { if (issued.current === credential) setCopying(false); }
   }
   async function refresh() {
+    window.dispatchEvent(new CustomEvent("uqp.dashboard.device-list.refresh",{detail:{dashboardId}}));
     const current = epoch.current, read = ++readSequence.current;
     clearCredential(); setPlacement(null); setBusy(true); setMode(null); setPreflight(null); setConfiguration(null); setDevices([]); setReadMessages([]);
     const configRead = apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken).then(trustedConfiguration);
@@ -104,7 +108,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     if (issued.current && !devices.some(device => device.id === issued.current!.deviceId && deviceMayIssue(device, now))) clearCredential();
   }, [devices, now]);
   const canActivate = readMessages.length === 0 && !!mode && !!configuration?.editable && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
-  const canIssue = (device: ManagedDevice, time = Date.now()) => hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time);
+  const canIssue = (device: ManagedDevice, time = Date.now()) => hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time) && devices.some(d=>d.id===device.id&&deviceMayIssue(d,time));
   function failed(error: unknown) { clearCredential(); setPreflight(null); setMode(null); setMessage(dashboardOperationError(error)); }
   async function check() {
     if (busy || !mode) return;
@@ -177,10 +181,10 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <button type="button" disabled={busy || !canActivate || mode?.mode === "QUERY_ONLY"} onClick={() => void change(true)}>啟用 Query-only</button>
     <button type="button" disabled={busy || mode?.mode !== "QUERY_ONLY"} onClick={() => void change(false)}>停用 Query-only</button>
     <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。下方版本化管理區顯示已儲存工作站關聯；即時有效性仍以預檢與核發時的後端委派驗證為準。</p>
-    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken}/>
+    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage}/>
     <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
-    <table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{devices.map(device => <tr key={device.id}>
-      <td>{device.deviceName}（ID {device.id}）</td><td>{deviceStatus(device, now)}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
+    <table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{(pageView?.token===accessToken?pageView.items:[]).filter(d=>d.dashboardId===dashboardId).map(device => <tr key={device.id}>
+      <td>{device.deviceName}（ID {device.id}）</td><td>{deviceListLabels[device.status]}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
       <td><button type="button" disabled={busy} onClick={() => void readPlacement(device.id)}>檢視 {device.deviceName} 播放位置（唯讀）</button><button type="button" disabled={busy || !canIssue(device, now)} onClick={() => void credential(device)}>核發／重新核發 {device.deviceName}</button>
       <span>暫停、永久撤銷與封存請使用上方版本化裝置管理區。</span></td>
     </tr>)}</tbody></table>

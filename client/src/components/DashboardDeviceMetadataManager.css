@@ -23,3 +23,7 @@
 .uqp-expiry-row > input { flex: 1; min-width: 0; }
 .uqp-expiry-input input, .uqp-expiry-input select, .uqp-expiry-input button { min-height: 44px; padding: 8px; font: inherit; box-sizing: border-box; }
 .uqp-expiry-input dialog label { display: grid; gap: 6px; margin: 12px 0; }
+.uqp-device-list-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; min-width: 0; }
+.uqp-device-list-tools label { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
+.uqp-device-list-tools input, .uqp-device-list-tools select, .uqp-device-list-tools button { min-height: 44px; padding: 8px; font: inherit; max-width: 100%; box-sizing: border-box; }
+.uqp-device-list-tools input { width: min(260px, 100%); }
