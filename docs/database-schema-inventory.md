@@ -5,18 +5,18 @@
 未連線正式 SQL Server、未執行 Migration、未變更既有 SQL、未操作 C:\UQP。
 正式 Ledger 資訊來自本次任務提供的事實，未聲稱已獨立實測。
 
-## D5-C-4-C 正式證據補註
+## D5-C-4-C／D5-C-4-D 正式證據補註
 
-本輪基準 `9f8dfb244c5b5b831df021e955bad27cd6f30b8b`；完整核對見 [正式 Drift／依賴報告](database-schema-production-drift-d5-c4.md)。
+分析基準 `9f8dfb244c5b5b831df021e955bad27cd6f30b8b`；D5-C-4-D補正基準 `69c319292c30e0a5473e12874be2175a3995f178`；完整核對見 [正式 Drift／依賴報告](database-schema-production-drift-d5-c4.md)。
 以下數字與分類仍是 **Repository 預期宣告／用途**，不重算為正式已安裝數量。
 正式事實依使用者提供：UniversalQueryPlatform／SQL Server 15.0.2180.2 Express／uqp，未由本代理連線。
 
 - 923：四表 87 欄位、24 CHECK、4 DEFAULT、7 PK/UQ、10 FK、9 明確 Index 與 Sequence 參數結構比對 PASS；Ledger 923_dataset_metadata.sql 於 2026-10-23 13:08:48。四表均0筆不改變使用分類；當年原始部署檔仍 UNKNOWN。
 - 924：ScopeBinding NOT_FOUND、Ledger 無紀錄、Permission 資料未確認；此處列 ACTIVE 指 Repository Scope／欄位初始化依賴，不表示正式表存在，也不授權安裝。
-- 925：三表存在；DatasetMaskTemplate.CreatedBy／UpdatedBy 正式允許 NULL，與現行 DDL 相符，**不是 Schema Drift**；其餘完整 Catalog 尚缺，不判完整 EXACT_MATCH。
-- 922：尚缺獨立正式 Ledger 證據，正式歷史狀態 UNKNOWN；不能沿用先前「無紀錄」作本輪已證實事實。
-- 926：本輪未提供當前正式 Ledger／新增欄位／Constraint／Trigger，安裝狀態 UNKNOWN；來源 ACTIVE／MIGRATION_ONLY 與正式安裝狀態分開。
-- 可安全清理候選仍無；UNUSED_CONFIRMED 維持0。以下原始欄位／Constraint／來源 SHA 清冊不變。
+- 925：已提供三表、34欄位、8 CHECK、8 DEFAULT、3 PK、2 UQ、2 FK、7索引（含backing）、0 Trigger及欄位／Collation／Default／FK動作／鍵／INCLUDE等明細，**正式證據已取得、可人工比對**。CreatedBy／UpdatedBy NULL相符、非Drift；exact validator尚未執行，Identity seed/increment等補充屬性未驗收，不宣告完整EXACT_MATCH，也不將34欄位全列UNKNOWN。
+- Ledger：使用者已執行包含922～926的正式唯讀查詢，當次只有923_dataset_metadata.sql（2026-10-23 13:08:48）；922／924／925／926當次無紀錄。無紀錄不等於物件不存在或從未以其他方式安裝；925 installer原設計不寫Ledger。
+- 922歷史內容／相關物件仍UNKNOWN；926當次Ledger無紀錄已確認，新增欄位／Constraint／Trigger存在性仍待Catalog。來源ACTIVE／MIGRATION_ONLY分類不等於正式安裝事實。
+- 可安全清理候選仍無；UNUSED_CONFIRMED 維持0。以下原始欄位／Constraint／來源SHA清冊不變；其中UNKNOWN屬用途／外部依賴分類，不表示925已取得的正式欄位結果未知或未提供。
 
 ## 計數與分類口徑
 

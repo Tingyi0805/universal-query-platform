@@ -1,12 +1,12 @@
-# Migration Inventory 與獨立安裝來源（D5-C-3／D5-C-4-C）
+# Migration Inventory 與獨立安裝來源（D5-C-3／D5-C-4-C／D5-C-4-D）
 
 基準 `ae1b367`；2026-10-31。這份文件補充 [原有 machine inventory](../database/acceptance/migration-inventory.json)，不修改其中歷史 SHA／requires。
 [Schema 清冊](database-schema-inventory.md) 是 Repository 結構索引，舊 R0／923／924／925 文件仍是各階段證據，不用新文件改寫歷史。
 
-## D5-C-4-C 證據更新
+## D5-C-4-C／D5-C-4-D 證據更新
 
 本輪Repository基準 `9f8dfb244c5b5b831df021e955bad27cd6f30b8b`；[正式核對報告](database-schema-production-drift-d5-c4.md) 區分使用者提供的正式事實、來源DDL、Runtime與歷史證明。
-原49份Migration／SHA／requires不變；922無獨立正式Ledger證據，923結構PASS不代表原始檔證明，924獨立installer會寫既有Ledger，925不寫Ledger，926當前正式狀態待確認。
+D5-C-4-D補正基準 `69c319292c30e0a5473e12874be2175a3995f178`；原49份Migration／SHA／requires不變。正式Ledger查詢包含922～926，當次只有923（2026-10-23 13:08:48）；922／924／925／926無紀錄已確認。無紀錄不代表物件不存在或歷史上從未採其他安裝方式；923結構PASS不證明原始檔，925 installer原設計不寫Ledger。
 
 ## 已知執行事實與來源身分
 
@@ -14,11 +14,11 @@
 |---|---|---|---|
 | 001–026 | database/migrations，26 份 | Ledger 有紀錄 | 保留原 byte／hash，MIGRATION_ONLY（腳本） |
 | 900–921 | database/migrations，22 份 | Ledger 有紀錄 | 保留原 byte／hash，MIGRATION_ONLY（腳本） |
-| 922 | 沒有 SQL／scanner entry；可達歷史未找到路徑 | 本輪尚無獨立 Ledger 證據，UNKNOWN（取代先前無紀錄假設） | 不推定已安裝／不需要，不新增空 Migration |
+| 922 | 沒有 SQL／scanner entry；可達歷史未找到路徑 | 當次正式Ledger無紀錄（查詢明確涵蓋922～926） | 不推定已安裝／不需要，不新增空 Migration |
 | 923 | renderer＋tools/sqlserver-acceptance/drafts/923/923_dataset_metadata.draft.sql；非 scanner SQL | Ledger 923_dataset_metadata.sql：2026-10-23 13:08:48；結構比對 PASS（本輪提供） | 四表0筆仍保留；原始部署檔／byte仍UNKNOWN，不補登 |
 | 924 | database/drafts/924_dataset_security_scope_binding.sql＋專用 installer／既有SchemaMigration紀錄 | ScopeBinding NOT_FOUND；924 Ledger無紀錄；Permission未確認 | 可選Scope管理與923欄位初始化需要；非啟動必備。部署必要性待功能／安全審查，不重跑或授權 |
-| 925 | tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql＋專用 installer | 三表存在；CreatedBy／UpdatedBy允許NULL相符；本輪未補充Ledger | installer本來不寫Ledger；其餘完整Catalog待證據，不能判EXACT_MATCH，不重新安裝 |
-| 926 | database/migrations/926_dashboard_device_lifecycle.sql；runner／Runtime attestation | 先前曾提供尚未執行；本輪當前Ledger／Schema未提供，UNKNOWN | 保留原Migration；不從現有表存在推定新增欄位／Constraint／Trigger已安裝 |
+| 925 | tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql＋專用 installer | 三表／34欄位及Constraint／7索引／0 Trigger明細已提供；CreatedBy／UpdatedBy允許NULL相符；當次Ledger無紀錄 | installer不寫Ledger；已提供結果可人工比對，exact validator未執行；補充Identity seed/increment等未驗收，不宣告EXACT_MATCH、不重裝 |
+| 926 | database/migrations/926_dashboard_device_lifecycle.sql；runner／Runtime attestation | 當次正式Ledger無紀錄；相關Schema存在性仍待Catalog | 保留原Migration；不從現有表存在推定新增欄位／Constraint／Trigger已安裝 |
 
 ## 923 原始來源追查
 
@@ -44,8 +44,8 @@ ScopeVersion、subject/parent TokenVersion、DefinitionVersion、ConfigurationVe
 `installDisplay925` 及 Runtime `requireDisplaySchema` 共用 displayDdlUrl 與 validateDisplayCatalog：檢查 columns/type/null/identity/collation、DEFAULT/CHECK、PK/UQ/Index/include、FK/action、extra Trigger 等。
 installer 只接受 ABSENT 或 EXACT_MATCH，SERIALIZABLE＋applock，重驗後 commit；不寫 SchemaMigration。
 Windows installer 與 release 將同一來源複製到相容路徑，不是第二份可移除的 Schema 來源。
-正式三表存在且 Ledger 無紀錄，與獨立安裝模式相容；**正式結構是否一致仍 UNKNOWN，不能以此回報已驗證一致**。
-本輪正式CreatedBy／UpdatedBy允許NULL已確認相符，不是Drift；未提供其他完整Catalog，不補造EXACT_MATCH。本次不連線、不 apply、不 verify。
+正式三表存在且當次Ledger無紀錄，與獨立安裝模式相容。已取得34欄位、8 CHECK、8 DEFAULT、3 PK、2 UQ、2 FK、7索引（含backing）、0 Trigger，及型別／NULL／Collation／Default／FK動作／鍵／INCLUDE等結果，可人工比對；不是整批UNKNOWN。
+CreatedBy／UpdatedBy允許NULL已確認相符，非Drift；**exact validator尚未執行，不宣告完整EXACT_MATCH**。Identity seed/increment等為補充證據／驗收缺口，不能反向抹除已提供結果。本次不連線、不 apply、不 verify。
 
 ## 歷史 Migration 明細
 
@@ -101,7 +101,7 @@ Windows installer 與 release 將同一來源複製到相容路徑，不是第�
 | 919 | [919_dashboard_dataset_security_contract.sql](../database/migrations/919_dashboard_dataset_security_contract.sql) | 3, 6, 7, 907, 910, 913 | 有紀錄（使用者提供） |
 | 920 | [920_dataset_definition_rowversion.sql](../database/migrations/920_dataset_definition_rowversion.sql) | 3, 907, 910, 919 | 有紀錄（使用者提供） |
 | 921 | [921_datasource_native_parameter_versions.sql](../database/migrations/921_datasource_native_parameter_versions.sql) | 2, 3, 4, 9, 10, 13, 920 | 有紀錄（使用者提供） |
-| 926 | [926_dashboard_device_lifecycle.sql](../database/migrations/926_dashboard_device_lifecycle.sql) | 25, 900, 918 | 先前曾提供尚未執行；本輪當前狀態待證據 |
+| 926 | [926_dashboard_device_lifecycle.sql](../database/migrations/926_dashboard_device_lifecycle.sql) | 25, 900, 918 | 當次正式Ledger無紀錄；Schema存在性另待Catalog |
 
 ## 驗證方式
 

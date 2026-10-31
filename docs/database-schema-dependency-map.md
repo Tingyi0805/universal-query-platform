@@ -2,7 +2,7 @@
 
 基準 `ae1b367`。這份來源相依圖不替代正式 Catalog、外部消費者與 workload 證據。
 
-## D5-C-4-C 新增核對（不變更 Runtime）
+## D5-C-4-C／D5-C-4-D 核對與證據補正（不變更Runtime）
 
 [正式證據／用途／歷史分離報告](database-schema-production-drift-d5-c4.md) 補充：
 
@@ -12,7 +12,8 @@
 - CONFIRM_DATASET_CLASSIFICATION 同時用於欄位初始化、eligibility與923 guard；MANAGE_DATASET_SECURITY_SCOPE 用於Scope route／交易重驗。兩者非僅預留定義，也不自動授予SYSTEM_ADMIN。
 - `Dashboard query mode／device management／device page／query source execution → PublicDisplayPolicy.get/getInTransaction`：925管理旗標關閉不能證明播放端不用925。
 - `datasetSensitiveColumn.replace → recordTemplateApplications` 會讀模板並追加Use歷史；無Runtime UPDATE/DELETE不構成未使用。
-- 925 CreatedBy／UpdatedBy 的正式 NULL 設定相符；922／926正式當前Ledger仍需獨立證據，未從Repository推定安裝。
+- D5-C-4-D補正：包含922～926的正式Ledger查詢當次只有923；922／924／925／926無紀錄已確認，不能推論物件不存在或歷史上從未以其他方式安裝。
+- 925三表、34欄位、8 CHECK／8 DEFAULT／3 PK／2 UQ／2 FK／7索引／0 Trigger與型別／NULL／Collation／Default／FK動作／鍵／INCLUDE等結果已提供，可人工比對；CreatedBy／UpdatedBy NULL相符。exact validator未執行與補充Identity seed/increment缺口另列，不把正式34欄位全標UNKNOWN。
 - 下方FK圖是來源宣告，外部View／SP／Trigger／Job／報表仍未有全量證據；無可安全清理候選。
 
 ## 已追查的執行路徑
@@ -113,7 +114,7 @@
 
 完整欄位型別／NULL／鍵／宣告相依逐項見 [清冊](database-schema-inventory.md)。ACTIVE 的結構依賴可由同表 Constraint／Index 核對；UNKNOWN 欄位不能視為無讀寫。
 
-正式環境未提供：sys.sql_expression_dependencies／sql_modules、FK 的實際 trusted/disabled 狀態、完整索引 key direction/filter/INCLUDE 與 DMV 基準、SQL Agent job steps、報表 definition、ETL／ODBC consumer 清冊、Query Store 與已儲存 SqlText 的安全摘要。
+既有證據已包括923 CHECK/FK啟用且Trusted，以及925 FK動作／索引鍵與INCLUDE等正式明細；不再全域標示未提供。尚未閉合的是全量sys.sql_expression_dependencies／sql_modules、其他未驗收物件屬性、DMV／Query Store基準、外部排程／報表／ETL／ODBC consumer與已儲存SqlText的依賴證據；不能拿缺少全量外部證據否定既有925欄位與結構結果。
 跨 DB／OPENQUERY／動態物件名／同義字／來源端 SP 及外部排程仍 UNKNOWN。
 現有 production-schema-readonly-inventory.sql 能提供部分 metadata，但不含完整 View/SP/Trigger body 與外部依賴，不能當作完成相依性證明；本次未執行該查詢。
 
