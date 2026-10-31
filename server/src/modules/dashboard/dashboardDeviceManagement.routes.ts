@@ -29,6 +29,10 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
       res.json(await enrollment.issue(c.id,deviceId.data,c.actor,input.data));
     } catch(error) { failure(error,res,req.id); }
   });
+  router.get("/:id/device-management/v1/list", async (req,res) => {
+    try { const c=context(req);res.json(await service.list(c.id,c.actor,req.query)); }
+    catch(error){failure(error,res,req.id);}
+  });
   router.get("/:id/device-management/v1/lifecycle", async (req, res) => {
     try { const c = context(req); res.json(await service.safetyRead(c.id, c.actor)); }
     catch (error) { failure(error, res, req.id); }

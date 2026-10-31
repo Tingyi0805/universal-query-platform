@@ -1,3 +1,4 @@
+import { readDeviceList } from "./dashboardDeviceList.js";
 import { datasetPublicDisplayRepository } from "../dataset/datasetPublicDisplay.repository.js";
 import { parsePatientAuditKeyring } from "../audit/patientAuditKeyring.js";
 import { requireDeviceLifecycleSchema } from "./dashboardDeviceLifecycleSchema.js";
@@ -52,6 +53,7 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
       .input("enforceIpRestriction", sql.Bit, value.enforceIpRestriction).input("allowedIp", sql.NVarChar(64), value.allowedIp)
       .input("allowedCidr", sql.NVarChar(64), value.allowedCidr).input("expiresAtUtc", sql.DateTime2(0), value.expiresAtUtc === null ? null : new Date(value.expiresAtUtc));
     return Object.assign(base, {
+      listDevices: (id, query, asOf) => readDeviceList(request(), id, query, asOf),
       async credentialOwner(device) {
         await this.delegation!(device);
         const owner=await deps.session(device.createdByUserId,transaction);
@@ -214,6 +216,7 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
   return { async transaction(work) {
     try { return await store.transaction(tx => work(tx as DeviceManagementTransaction)); }
     catch (error) {
+      if (Number((error as {number?:number})?.number) === 51031) throw new QuerySourceError("DASHBOARD_DEVICE_STATE_INVALID",503);
       if ([1205, 1222, 51030].includes(Number((error as { number?: number })?.number))) throw new QuerySourceError("DASHBOARD_DEVICE_VERSION_CONFLICT");
       throw error;
     }

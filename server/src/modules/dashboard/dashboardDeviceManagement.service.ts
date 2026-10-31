@@ -1,3 +1,4 @@
+import { createDeviceListReader, type DeviceListQuery, type ListRead } from "./dashboardDeviceList.js";
 import { assertDeviceLifecycleTransition, type DeviceLifecycleRecord } from "./dashboardDeviceLifecycle.js";
 import { createHash } from "node:crypto";
 import { dashboardQueryParameters } from "./dashboardDeviceMasking.js";
@@ -9,6 +10,7 @@ export type DeviceRecord = DeviceMetadata & { id: number; dashboardId: number; c
   isActive: boolean; suspendedAtUtc: string | null; reenrollmentRequired: boolean | null; revokedAtUtc: string | null; archivedAtUtc: string | null; queryModeGrantVersion: number | null;
   delegatorTokenVersion: number | null; credentialFingerprint: string; placement: DevicePlacement | null };
 export interface DeviceManagementTransaction extends SourceTransaction {
+  listDevices?(id:number, query:DeviceListQuery, asOf:string|null):Promise<ListRead & {asOfUtc:string}>;
   credentialOwner(device: DeviceRecord): Promise<number>;
   credentialPolicy(datasetId: number): Promise<void>;
   writeCredential(id: number, deviceId: number, action: "ISSUE" | "ENROLL", hash: string, modeVersion: number, ownerVersion: number): Promise<string>;
@@ -91,6 +93,7 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
     return { ...project(await snapshot(tx, id)), deviceId, credentialIssued: false, deviceCredentialsInvalidated: true };
   }, true, action !== "RESTORE");
   return {
+    list: createDeviceListReader(store, enabled),
     safetyRead: (id: number, actor: DeviceActor) => run(id, actor, async (_tx, current) => project(current), true, true),
     revoke: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("REVOKE", id, deviceId, actor, input),
     archive: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("ARCHIVE", id, deviceId, actor, input),
