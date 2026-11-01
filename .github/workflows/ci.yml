@@ -455,3 +455,79 @@ jobs:
         if: always()
         shell: bash
         run: docker rm -f uqp75-sql >/dev/null 2>&1 || true
+
+  pr83-926-release:
+    # A staging artifact, never an authorization to overwrite production or run a migration.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 83
+    needs: [server, client, device-lifecycle-d1-sql, windows-node24-dependencies, windows-kiosk-launcher, dependency-sql-smoke]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.15.0
+      - run: npm install --global npm@12.2.1
+      - name: Bind current PR heads and successful prerequisite jobs
+        uses: actions/github-script@v7
+        env:
+          UQP_RELEASE_NEEDS: ${{ toJSON(needs) }}
+          UQP_RELEASE_HEAD: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const fs=require('node:fs');
+            const [pr83,pr66]=await Promise.all([83,66].map(pull_number=>github.rest.pulls.get({...context.repo,pull_number})));
+            if(!pr83.data.draft||pr83.data.merged||pr83.data.head.sha!==process.env.UQP_RELEASE_HEAD)throw Error('PR83_HEAD_MOVED_OR_NOT_DRAFT');
+            fs.writeFileSync('release926-evidence.json',JSON.stringify({sourceCommit:pr83.data.head.sha,pr83Draft:true,pr66Head:pr66.data.head.sha,url:`https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,jobs:JSON.parse(process.env.UQP_RELEASE_NEEDS)},null,2));
+      - name: Build Windows server and client from locked dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location server
+          npm ci
+          if($LASTEXITCODE){throw '926_SERVER_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw '926_SERVER_BUILD_FAILED'}
+          npm prune --omit=dev --ignore-scripts
+          if($LASTEXITCODE){throw '926_PRODUCTION_DEPENDENCIES_FAILED'}
+          Pop-Location
+          Push-Location client
+          npm ci
+          if($LASTEXITCODE){throw '926_CLIENT_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw '926_CLIENT_BUILD_FAILED'}
+          Pop-Location
+      - name: Package matching source, built runtime, SQL resources and checksums
+        shell: pwsh
+        run: |
+          node tools/package-pr83-926.mjs release926 release926-evidence.json
+          if($LASTEXITCODE){throw '926_PACKAGE_FAILED'}
+      - name: Verify ZIP round trip and Windows PowerShell 5.1 rejection guards
+        shell: powershell
+        run: .\tools\test-uqp-pr83-926-package.ps1 -PackageRoot .\release926 -ZipPath .\release926.zip
+      - name: Recheck latest heads before publishing staging artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const e=JSON.parse(require('node:fs').readFileSync('release926-evidence.json','utf8'));
+            const [a,b]=await Promise.all([83,66].map(pull_number=>github.rest.pulls.get({...context.repo,pull_number})));
+            if(!a.data.draft||a.data.merged||a.data.head.sha!==e.sourceCommit||b.data.head.sha!==e.pr66Head)throw Error('RELEASE_HEAD_CHANGED_REBUILD_REQUIRED');
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr83-926-windows-staging-${{ github.event.pull_request.head.sha }}
+          path: |
+            release926.zip
+            release926.zip.sha256
+          retention-days: 7
+          if-no-files-found: error

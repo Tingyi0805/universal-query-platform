@@ -148,6 +148,7 @@ export async function verify926Upgrade(admin:sql.ConnectionPool,config:sql.confi
   await check("ledger-insert-failure-rolls-back-successful-inner-ddl",async()=>{const d=await fixture();await q(d.pool,`ALTER TABLE uqp.SchemaMigration ADD CONSTRAINT CK_D5C5_Reject926 CHECK(FileName<>N'${migration}')`);await unchangedFailure(d.pool,()=>applyOwned(d.pool),[547]);assert.equal(await ready(d.pool),false);});
   await check("recorded-ledger-missing-schema-blocked-by-acceptance-preflight",async()=>{const d=await fixture();await q(d.pool,`INSERT uqp.SchemaMigration(FileName) VALUES(N'${migration}')`);await unchangedFailure(d.pool,()=>applyOwned(d.pool));});
   await check("manual-schema-missing-ledger-blocked-without-auto-adoption",async()=>{const d=await fixture();await raw(d.pool);await unchangedFailure(d.pool,()=>applyOwned(d.pool));});
+  await (await import("./deviceLifecycle926ReconciliationAcceptance.js")).verify926Reconciliation(fixture,raw,snapshot,config,machine);
   assert.deepEqual([...executed].sort(),sourceFiles.slice().sort());
   console.log(`D5_C5A_SQL_UPGRADE_RECOVERY_PASS:cases=${count};major=${identity.Major};926sha=${pinned926};executed=025,900,918,926;baseline=${baselineName};synthetic-only`);
  }finally{
