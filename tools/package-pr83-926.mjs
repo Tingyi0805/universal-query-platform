@@ -10,7 +10,7 @@ const sha=x=>createHash('sha256').update(x).digest('hex');
 const git=(...a)=>execFileSync('git',a,{encoding:'utf8'}).trim();
 git('diff','--exit-code');
 const source=git('rev-parse','HEAD'),migration='f2d17b2a24963860e646a620f9548b22ff6a1a296e077071e8fb50237c8cfd43';
-if(process.platform!=='win32'||process.arch!=='x64'||process.version!=='v24.15.0')throw Error('WINDOWS_NODE24_15_X64_REQUIRED');
+if(process.platform!=='win32'||process.arch!=='x64'||process.version!=='v24.22.1'||process.versions.modules!=='137')throw Error('WINDOWS_NODE24_22_1_ABI137_X64_REQUIRED');
 if(!/^[a-f0-9]{40}$/.test(evidence.pr66Head)||evidence.sourceCommit!==source||evidence.pr83Draft!==true||!/^https:\/\/github.com\/Tingyi0805\/universal-query-platform\/actions\/runs\/\d+$/.test(evidence.url))throw Error('RELEASE_IDENTITY_INVALID');
 git('merge-base','--is-ancestor',evidence.pr66Head,source);
 const [behind,ahead]=git('rev-list','--left-right','--count',`${evidence.pr66Head}...${source}`).split(/\s+/).map(Number);
@@ -19,7 +19,7 @@ if(behind!==0||jobs.some(k=>evidence.jobs?.[k]?.result!=='success'))throw Error(
 if(sha(await readFile('database/migrations/926_dashboard_device_lifecycle.sql'))!==migration)throw Error('926_SOURCE_CHANGED');
 try{await lstat(out);throw Error('RELEASE_OUTPUT_MUST_BE_NEW');}catch(e){if(e.code!=='ENOENT')throw e;}
 await mkdir(out,{recursive:true});
-const sources=['server/dist','server/src','server/node_modules','server/package.json','server/package-lock.json','server/tsconfig.json','server/tsconfig.build.json','client/dist','client/src','client/package.json','client/package-lock.json','client/index.html','client/vite.config.ts','client/tsconfig.json','client/tsconfig.app.json','client/tsconfig.node.json','client/tsconfig.e2e.json','database/migrations','database/drafts/924_dataset_security_scope_binding.sql','tools/sqlserver-acceptance/drafts','docs/dashboard-device-lifecycle-d5-c6.md'];
+const sources=['server/dist','server/src','server/node_modules','server/package.json','server/package-lock.json','server/tsconfig.json','server/tsconfig.build.json','client/dist','client/src','client/package.json','client/package-lock.json','client/index.html','client/vite.config.ts','client/tsconfig.json','client/tsconfig.app.json','client/tsconfig.node.json','client/tsconfig.e2e.json','database/migrations','database/drafts/924_dataset_security_scope_binding.sql','tools/sqlserver-acceptance/drafts','docs/dashboard-device-lifecycle-d5-c6.md','tools/test-pr83-node-runtime.mjs'];
 for(const rel of sources){const dest=path.join(out,'payload',rel);await mkdir(path.dirname(dest),{recursive:true});await cp(path.join(root,rel),dest,{recursive:true,dereference:false});}
 await cp('tools/verify-uqp-pr83-926.ps1',path.join(out,'verify-uqp-pr83-926.ps1'));
 const files=[];

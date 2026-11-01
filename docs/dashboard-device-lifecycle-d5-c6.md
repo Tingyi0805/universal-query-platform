@@ -1,5 +1,7 @@
 # D5-C-6 — Migration 926 Ledger 採認與相容交付
 
+**D5-C-7A 交付目標更新：Node v24.22.1／ABI 137／win32／x64，精確比對四項，不降版、不放寬。下方 CI #1252 與 5582671 artifact 是 Node v24.15.0 的歷史證據，不適用於目前正式 Node。新交付來源、CI 與下載以新 artifact manifest 為準。**
+
 PR #83 保持 Draft、不合併 main。本階段不連線正式 SQL Server、不讀取正式 `.env`，不操作 `C:\UQP`。**正式覆蓋結論：BLOCKED，尚待人工核准及交付驗收；CI 成功及 ZIP 雜湊通過不等於部署授權。**
 
 ## 已有事實與版本
@@ -71,7 +73,7 @@ PR #83 保持 Draft、不合併 main。本階段不連線正式 SQL Server、不
 
 ## 交付與停寫／回復計畫
 
-`pr83-926-release` 僅在 Server、Client（含Browser）、SQL2019/2022、Windows Node24 dependencies、kiosk launcher、dependency SQL smoke 全部成功後執行。在 Windows x64/Node24.15.0/npm12.2.1 重新以鎖檔安裝／建置，Server保留原生production依賴，Client交付同一commit的dist及src；同包包含Server dist/src、兩邊package lock、Runtime需要的SQL資源、此報告與唯讀 verifier。SQL資源只是檔案，**解壓不執行Migration或Installer**。
+`pr83-926-release` 僅在 Server、Client（含Browser）、SQL2019/2022、Windows Node24 dependencies、kiosk launcher、dependency SQL smoke 全部成功後執行。在 Windows x64/Node24.22.1/ABI137/npm12.2.1 重新以鎖檔安裝／建置，Server保留原生production依賴，Client交付同一commit的dist及src；同包包含Server dist/src、兩邊package lock、Runtime需要的SQL資源、此報告與唯讀 verifier。SQL資源只是檔案，**解壓不執行Migration或Installer**。
 
 `manifest.json` 包含source/tree、最新PR66、ahead/behind、Node ABI、平台、CI URL及必要jobs結果、926 SHA、每檔SHA256/bytes；`SHA256SUMS.txt` 另涵蓋manifest；外層ZIP另有SHA。ZIP採用保留dotfiles的archiver，不沿用只針對925的舊更新腳本。套件固定標示 `BLOCKED_PENDING_MANUAL_ACCEPTANCE`，無自動覆蓋或安裝入口；檔案雜湊是完整性證據，不是數位簽章，下載來源與核准書仍須可信。
 
@@ -106,3 +108,12 @@ PR #83 保持 Draft、不合併 main。本階段不連線正式 SQL Server、不
 - 上傳前及完成後確認PR83仍Draft、未合併；PR66最新HEAD仍為`a4e9cf64b258802ab992ec004a0aad9c5fbd2133`。本次未改Runtime或任何Migration；926 SHA保持上述固定值。
 
 本節是在CI完成後以純文件commit補記；交付manifest/source仍固定為上述已測Runtime commit，沒有重新標記ZIP來源。已審查這個後續差異僅為本報告，server/client/database/tools/workflow與已測commit完全相同，無既有修正遺失。純文件補記只執行文件連結／清冊一致性與diff檢查，不重跑完整CI。人工核准書必須綁定**交付manifest的source與hash**，不得把後續文件HEAD冒充ZIP建置版本。
+
+
+## D5-C-7A — Node v24.22.1 交付相容性
+
+- 只調整目前適用PR83的七個CI Node pin、Windows打包精確版本/ABI guard、交付測試及說明；PR66-only歷史Node22流程不改。server/client既有engines範圍`>=24.15.0 <25`已包含24.22.1，鎖檔與套件版本不變，不修改Runtime業務功能。
+- Manifest仍從實際Windows建置執行環境記錄Node/ABI/platform/arch，打包前必須精確等於`v24.22.1`/`137`/`win32`/`x64`。Verifier仍逐項完整比對，僅提前拒絕不符環境以避免無效的全包雜湊掃描；成功回傳前仍須通過原有全部SHA及檔案檢查。
+- Windows regression job、prune後production dependencies及ZIP解壓後，均執行`tools/test-pr83-node-runtime.mjs`：載入真實ODBC Node-API addon、Oracle win32-x64原生addon與mssql模組；不讀.env、不連DB、不呼叫initOracleClient。Oracle Instant Client及特定ODBC driver的正式連線/設定不由此smoke保證，仍遵循既有人工部署驗收。
+- PowerShell5.1增加四個精確錯誤案例：Node24.15.0、錯ABI、錯platform、錯arch均須回報各自的`926_NODE_RUNTIME_MISMATCH`。原有ZIP往返、防竄改及路徑安全測試保留。新的Server/Client/Browser回歸、Typecheck/Build及CI門檻維持不變。
+- 新包重建Manifest、每檔SHA256及ZIP SHA256，不修改舊包Manifest來假裝相容，不重用舊Windows原生依賴作新版本建置證據。CI成功只代表此相容性驗收通過，正式覆蓋仍需D6既有人工核准；925/926已安裝，不重新執行Migration或改SchemaMigration。
