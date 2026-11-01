@@ -2,15 +2,26 @@
 import sql from "mssql";
 import assert from "node:assert/strict";
 import {randomBytes} from "node:crypto";
-import {reconcile926,sha926,ledger926,Reconcile926Error} from "./deviceLifecycle926Reconciliation.js";
+import {reconcile926,sha926,ledger926,Reconcile926Error,parse926Approval,resolve926Tls} from "./deviceLifecycle926Reconciliation.js";
 type Fixture=()=>Promise<{name:string;pool:sql.ConnectionPool}>;
 export async function verify926Reconciliation(fixture:Fixture,raw:(pool:sql.ConnectionPool)=>Promise<void>,snapshot:(pool:sql.ConnectionPool)=>Promise<unknown>,config:sql.config,machine:string){
  assert.equal(config.server,"127.0.0.1");assert.equal(config.port,14336);assert.match(machine,/^uqp-d1-[a-f0-9]{12}$/);
  let count=0;const q=(p:sql.ConnectionPool,s:string)=>p.request().query(s);
  const prepare=async()=>{const f=await fixture();await q(f.pool,`ALTER DATABASE [${f.name}] SET COMPATIBILITY_LEVEL=150`);await raw(f.pool);return f;};
- const approved=async(p:sql.ConnectionPool)=>{const r=(await q(p,"SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) S,CONVERT(nvarchar(128),SERVERPROPERTY('MachineName')) M,DB_NAME() D,ORIGINAL_LOGIN() L,USER_NAME() U,CONVERT(int,SERVERPROPERTY('ProductMajorVersion')) V")).recordset[0];assert.equal(r.M,machine);return {format:"UQP_926_LEDGER_APPROVAL_V1",approved:true,scope:"DISPOSABLE_ONLY",applicationSourceSha:"1".repeat(40),packageManifestSha256:"2".repeat(64),migrationSha256:sha926,serverName:r.S,machineName:r.M,databaseName:r.D,loginName:r.L,databaseUser:r.U,engineMajor:r.V,approvedAtUtc:new Date(Date.now()-1000).toISOString(),expiresAtUtc:new Date(Date.now()+600000).toISOString(),approvalReference:"CI-synthetic-review",maintenanceReference:"CI-no-production-writers",existingBackupReference:"CI-synthetic-checkpoint"};};
+ const approved=async(p:sql.ConnectionPool)=>{const r=(await q(p,"SELECT CONVERT(nvarchar(128),SERVERPROPERTY('ServerName')) S,CONVERT(nvarchar(128),SERVERPROPERTY('MachineName')) M,DB_NAME() D,ORIGINAL_LOGIN() L,USER_NAME() U,CONVERT(int,SERVERPROPERTY('ProductMajorVersion')) V")).recordset[0];assert.equal(r.M,machine);return {format:"UQP_926_LEDGER_APPROVAL_V1",approved:true,scope:"DISPOSABLE_ONLY",connectionMode:"ENCRYPT_TRUST_CERT",tlsTrustApprovalReference:"CI-self-signed-disposable-only",applicationSourceSha:"1".repeat(40),packageManifestSha256:"2".repeat(64),migrationSha256:sha926,serverName:r.S,machineName:r.M,databaseName:r.D,loginName:r.L,databaseUser:r.U,engineMajor:r.V,approvedAtUtc:new Date(Date.now()-1000).toISOString(),expiresAtUtc:new Date(Date.now()+600000).toISOString(),approvalReference:"CI-synthetic-review",maintenanceReference:"CI-no-production-writers",existingBackupReference:"CI-synthetic-checkpoint"};};
  const check=async(name:string,work:()=>Promise<void>)=>{try{await work();}catch(e){console.error(`D6_RECONCILE_CASE_FAILED:${name}:${e instanceof Reconcile926Error?e.code:"assertion-or-sql"}`);throw e;}count++;console.log(`D6_RECONCILE_CASE_PASS:${name}`);};
  const denyUnchanged=async(p:sql.ConnectionPool,work:()=>Promise<unknown>)=>{const before=await snapshot(p);await assert.rejects(work);assert.deepEqual(await snapshot(p),before);};
+ await check("strict-tls-untrusted-cert-fails-without-fallback",async()=>{const f=await prepare(),a=parse926Approval({...await approved(f.pool),connectionMode:"STRICT_TLS",tlsTrustApprovalReference:undefined});
+  const tls=resolve926Tls(a),strict=new sql.ConnectionPool({...config,database:f.name,options:{...config.options,...tls.options}});
+  const before=await snapshot(f.pool);
+  try{await assert.rejects(()=>strict.connect(),/certificate|self.signed|issuer|verify|altname/i);assert.deepEqual(await snapshot(f.pool),before);}
+  finally{await strict.close();}
+ });
+ await check("approved-trust-cert-encrypted-session-and-receipt",async()=>{const f=await prepare(),a=parse926Approval(await approved(f.pool));
+  const tls=resolve926Tls(a,"ENCRYPT_TRUST_CERT");assert.equal(tls.options.encrypt,true);assert.equal(tls.options.trustServerCertificate,true);
+  const encrypted=(await q(f.pool,"SELECT encrypt_option E FROM sys.dm_exec_connections WHERE session_id=@@SPID")).recordset[0]?.E;assert.equal(encrypted,"TRUE");
+  const before=await snapshot(f.pool),r=await reconcile926(f.pool,a,"preflight");assert.equal(r.connectionMode,"ENCRYPT_TRUST_CERT");assert.equal(r.encrypt,true);assert.equal(r.trustServerCertificate,true);assert.equal(r.tlsTrustApprovalReference,a.tlsTrustApprovalReference);assert.deepEqual(await snapshot(f.pool),before);
+ });
  await check("missing-ledger-preflight-no-write",async()=>{const f=await prepare(),a=await approved(f.pool),before=await snapshot(f.pool);assert.equal((await reconcile926(f.pool,a,"preflight")).status,"READY_LEDGER_ONLY");assert.deepEqual(await snapshot(f.pool),before);});
  await check("exact-schema-ledger-only-adopt-and-repeat",async()=>{const f=await prepare(),a=await approved(f.pool),before=await snapshot(f.pool) as any;
   const r=await reconcile926(f.pool,a,"adopt");assert.equal(r.status,"ADOPTED");assert.equal(r.historicalExecutionTimeBackdated,false);

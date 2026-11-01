@@ -12,16 +12,25 @@ const approvalSchema=z.object({format:z.literal("UQP_926_LEDGER_APPROVAL_V1"),ap
  scope:z.enum(["PRODUCTION","DISPOSABLE_ONLY"]),applicationSourceSha:sha,packageManifestSha256:z.string().regex(/^[a-f0-9]{64}$/),
  migrationSha256:z.literal(sha926),serverName:z.string().min(1),machineName:z.string().min(1),databaseName:z.string().min(1),
  loginName:z.string().min(1),databaseUser:z.string().min(1),engineMajor:z.union([z.literal(15),z.literal(16)]),
+ connectionMode:z.enum(["STRICT_TLS","ENCRYPT_TRUST_CERT"]).default("STRICT_TLS"),tlsTrustApprovalReference:reference.optional(),
  approvedAtUtc:z.iso.datetime(),expiresAtUtc:z.iso.datetime(),approvalReference:reference,maintenanceReference:reference,existingBackupReference:reference}).strict();
 export type ReconcileApproval=z.infer<typeof approvalSchema>;
 export class Reconcile926Error extends Error{constructor(readonly code:string){super(code);}}
 export function parse926Approval(value:unknown,now=Date.now()):ReconcileApproval{
  const result=approvalSchema.safeParse(value);if(!result.success)throw new Reconcile926Error("926_APPROVAL_INVALID");const a=result.data;
+ if(a.connectionMode==="ENCRYPT_TRUST_CERT"&&!a.tlsTrustApprovalReference)throw new Reconcile926Error("926_TLS_TRUST_APPROVAL_REQUIRED");
  const issued=Date.parse(a.approvedAtUtc),expires=Date.parse(a.expiresAtUtc);
  if(issued>now+60000||expires<=now||expires<=issued||expires-issued>86400000)throw new Reconcile926Error("926_APPROVAL_EXPIRED_OR_INVALID_WINDOW");
  if(a.scope==="PRODUCTION"&&(a.databaseName!=="UniversalQueryPlatform"||a.engineMajor!==15))throw new Reconcile926Error("926_PRODUCTION_PROFILE_NOT_APPROVED");
  if(a.scope==="DISPOSABLE_ONLY"&&(!/^UQP_D1_UPGRADE_[a-f0-9]{12}$/.test(a.databaseName)||!/^uqp-d1-[a-f0-9]{12}$/.test(a.machineName)))throw new Reconcile926Error("926_DISPOSABLE_TARGET_INVALID");
  return a;
+}
+/** Explicit operator selection must match reviewed approval; no unencrypted or fallback mode. */
+export function resolve926Tls(a:ReconcileApproval,selected?:string){
+ const mode=selected??"STRICT_TLS";
+ if(mode!=="STRICT_TLS"&&mode!=="ENCRYPT_TRUST_CERT")throw new Reconcile926Error("926_TLS_MODE_INVALID");
+ if(mode!==a.connectionMode)throw new Reconcile926Error("926_TLS_MODE_APPROVAL_MISMATCH");
+ return {mode,options:{encrypt:true as const,trustServerCertificate:mode==="ENCRYPT_TRUST_CERT"}};
 }
 export async function verify926Source(){const data=await readFile(new URL("../../../database/migrations/926_dashboard_device_lifecycle.sql",import.meta.url));if(createHash("sha256").update(data).digest("hex")!==sha926)throw new Reconcile926Error("926_SOURCE_HASH_MISMATCH");}
 const fail=(code:string):never=>{throw new Reconcile926Error(code);};
@@ -88,6 +97,9 @@ async function legalData(tx:sql.Transaction){
 }
 export async function reconcile926(pool:sql.ConnectionPool,input:unknown,mode:"preflight"|"adopt"){
  const a=parse926Approval(input);if(!["preflight","adopt"].includes(mode))fail("926_MODE_INVALID");await verify926Source();
+ const tls=resolve926Tls(a,a.connectionMode);
+ const options=(pool as sql.ConnectionPool & {readonly config?:sql.config}).config?.options;
+ if(options?.encrypt!==true||options?.trustServerCertificate!==tls.options.trustServerCertificate)fail("926_TLS_CONNECTION_MISMATCH");
  const tx=new sql.Transaction(pool);let begun=false,aborted=false,committing=false;tx.on("rollback",()=>{aborted=true;});
  try{
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);begun=true;
@@ -105,6 +117,7 @@ export async function reconcile926(pool:sql.ConnectionPool,input:unknown,mode:"p
   const status=prior?"ALREADY_RECORDED":mode==="adopt"?"ADOPTED":"READY_LEDGER_ONLY";
   committing=true;await tx.commit();begun=false;
   return {format:"UQP_926_RECONCILIATION_RECEIPT_V1",status,applicationSourceSha:a.applicationSourceSha,packageManifestSha256:a.packageManifestSha256,
+   connectionMode:tls.mode,encrypt:true,trustServerCertificate:tls.options.trustServerCertificate,tlsTrustApprovalReference:a.tlsTrustApprovalReference??null,
    migration:ledger926,migrationSha256:sha926,approvalReference:a.approvalReference,database:a.databaseName,
    appliedAtUtc:appliedAtUtc instanceof Date?appliedAtUtc.toISOString():appliedAtUtc??null,historicalExecutionTimeBackdated:false};
  }catch(error){if(begun&&!aborted)try{await tx.rollback();}catch{throw new Reconcile926Error("926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY");}
