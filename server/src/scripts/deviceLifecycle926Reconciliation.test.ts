@@ -1,7 +1,9 @@
 import test from "node:test";
+import {spawnSync} from "node:child_process";
+import {fileURLToPath} from "node:url";
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
-import {parse926Approval,sha926,verify926Source,resolve926Tls,reconcile926,Reconcile926Error} from "./deviceLifecycle926Reconciliation.js";
+import {parse926Approval,sha926,verify926Source,resolve926Tls,reconcile926,Reconcile926Error,failure926,diagnostic926,type Reconcile926Stage} from "./deviceLifecycle926Reconciliation.js";
 const approval=()=>({format:"UQP_926_LEDGER_APPROVAL_V1",approved:true,scope:"PRODUCTION",applicationSourceSha:"a".repeat(40),packageManifestSha256:"b".repeat(64),migrationSha256:sha926,serverName:"approved-server",machineName:"approved-machine",databaseName:"UniversalQueryPlatform",loginName:"reviewed-deployer",databaseUser:"reviewed-user",engineMajor:15,approvedAtUtc:new Date(Date.now()-1000).toISOString(),expiresAtUtc:new Date(Date.now()+60000).toISOString(),approvalReference:"approval-reviewed",maintenanceReference:"maintenance-reviewed",existingBackupReference:"existing-backup-reviewed"});
 test("926 approval binds identity, release hashes, expiry and explicit approval",()=>{
  assert.equal(parse926Approval(approval()).engineMajor,15);
@@ -41,4 +43,35 @@ test("926 CLI selects reviewed TLS options and has exactly one connection attemp
  const source=await readFile(new URL("./reconcileDeviceLifecycle926.ts",import.meta.url),"utf8");
  assert.match(source,/resolve926Tls\(a,process.env.UQP_926_ADOPT_TLS_MODE\)/);assert.match(source,/options:tls.options/);
  assert.equal((source.match(/\.connect\(/g)??[]).length,1);
+});
+
+test("926 diagnostic emits only fixed codes and bounded numeric SQL facts",()=>{
+ const secret="PASSWORD_TOKEN_PATIENT_CONNECTION_STRING_SENTINEL";
+ const error:any={code:secret,message:secret,stack:secret,config:{password:secret},originalError:{info:{number:229,message:secret}},precedingErrors:[{number:3621,code:"EREQUEST",message:secret}]};error.cause=error;
+ const d=diagnostic926(failure926(error,"SCHEMA","ROLLED_BACK"));
+ assert.equal(d.category,"PERMISSION");assert.equal(d.stage,"SCHEMA");assert.deepEqual(d.sqlNumbers,[229,3621]);assert.deepEqual(d.driverCodes,["EREQUEST"]);assert.equal(d.noRetry,true);
+ assert(!JSON.stringify(d).includes(secret));assert(!JSON.stringify(d).includes("stack"));
+ assert(!JSON.stringify(diagnostic926(new Reconcile926Error(secret))).includes(secret));
+});
+test("926 diagnostics distinguish connection, approval, permission, schema, ledger, transaction and timeouts",()=>{
+ const cases:[Reconcile926Stage,unknown,string][]=[
+  ["CONNECTION",{code:"ELOGIN",number:18456},"CONNECTION"],["APPROVAL",new SyntaxError("untrusted-json-secret"),"APPROVAL"],
+  ["IDENTITY",new Reconcile926Error("926_DEPLOYMENT_PERMISSION_REQUIRED"),"PERMISSION"],["SCHEMA",{code:"EREQUEST",originalError:{info:{number:51926}}},"SCHEMA"],
+  ["LEDGER_WRITE",{code:"EREQUEST",number:2627},"LEDGER"],["TRANSACTION_BEGIN",{code:"ENOTBEGUN"},"TRANSACTION"],
+  ["DATA",{code:"ETIMEOUT"},"TIMEOUT"],["DATA",{number:1222},"TIMEOUT"],["LEDGER_WRITE",{number:1205},"TRANSACTION"],
+  ["LOCK",new Reconcile926Error("926_LOCK_TIMEOUT_NO_RETRY"),"TIMEOUT"]];
+ for(const [stage,error,category] of cases){const d=diagnostic926(failure926(error,stage));assert.equal(d.stage,stage);assert.equal(d.category,category);assert.equal(d.noRetry,true);}
+});
+test("926 outer CLI context cannot overwrite the original stage or transaction outcome",()=>{
+ const e=failure926(new Reconcile926Error("926_APPROVAL_INVALID"),"APPROVAL");
+ assert.equal(failure926(e,"RECONCILIATION"),e);assert.equal(diagnostic926(e).code,"926_APPROVAL_INVALID");
+ assert.equal(diagnostic926(failure926({code:"ECONNRESET"},"CONNECTION_CLOSE","COMMITTED")).transactionOutcome,"COMMITTED");
+});
+test("926 commit/rollback uncertainty preserves safe primary and rollback facts and forbids retry",()=>{
+ const e=failure926({number:547,message:"private SQL"},"LEDGER_WRITE","UNKNOWN","926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY",{code:"ENOTBEGUN",message:"private connection"});
+ const d=diagnostic926(e);assert.equal(e.code,"926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY");assert.equal(d.stage,"LEDGER_WRITE");assert.equal(d.transactionOutcome,"UNKNOWN");assert.deepEqual(d.sqlNumbers,[547]);assert.deepEqual(d.rollbackError,{sqlNumbers:[],driverCodes:["ENOTBEGUN"]});assert.equal(d.noRetry,true);assert(!JSON.stringify(d).includes("private"));
+});
+test("926 CLI prints one safe JSON diagnostic with exit 1 before any connection on invalid arguments",()=>{
+ const result=spawnSync(process.execPath,["--import","tsx",fileURLToPath(new URL("./reconcileDeviceLifecycle926.ts",import.meta.url))],{encoding:"utf8",timeout:15000});
+ assert.equal(result.status,1);assert.equal(result.stdout,"");const d=JSON.parse(result.stderr.trim());assert.equal(d.format,"UQP_926_ERROR_V1");assert.equal(d.code,"926_EXPLICIT_INVOCATION_REQUIRED");assert.equal(d.stage,"INPUT");assert.equal(d.transactionOutcome,"NOT_STARTED");assert.equal(d.noRetry,true);
 });

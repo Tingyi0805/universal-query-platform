@@ -15,7 +15,54 @@ const approvalSchema=z.object({format:z.literal("UQP_926_LEDGER_APPROVAL_V1"),ap
  connectionMode:z.enum(["STRICT_TLS","ENCRYPT_TRUST_CERT"]).default("STRICT_TLS"),tlsTrustApprovalReference:reference.optional(),
  approvedAtUtc:z.iso.datetime(),expiresAtUtc:z.iso.datetime(),approvalReference:reference,maintenanceReference:reference,existingBackupReference:reference}).strict();
 export type ReconcileApproval=z.infer<typeof approvalSchema>;
-export class Reconcile926Error extends Error{constructor(readonly code:string){super(code);}}
+export type Reconcile926Stage="INPUT"|"APPROVAL"|"RELEASE"|"SOURCE"|"TLS"|"CONNECTION"|"CONNECTION_CLOSE"|"RECONCILIATION"|"TRANSACTION_BEGIN"|"TRANSACTION_SETUP"|"IDENTITY"|"LOCK"|"SCHEMA"|"LEDGER_READ"|"DATA"|"LEDGER_WRITE"|"TRANSACTION_COMMIT"|"INTERNAL";
+type Outcome926="NOT_STARTED"|"ROLLED_BACK"|"COMMITTED"|"UNKNOWN";
+type SqlFacts926={sqlNumbers:number[];driverCodes:string[]};
+type Diagnostic926=SqlFacts926 & {format:"UQP_926_ERROR_V1";code:string;stage:Reconcile926Stage;category:string;transactionOutcome:Outcome926;noRetry:true;rollbackError?:SqlFacts926};
+export class Reconcile926Error extends Error{constructor(readonly code:string,readonly diagnostic?:Diagnostic926){super(code);}}
+// App and driver codes are fixed allowlists; raw error strings never reach stderr.
+const known926Codes=new Set([
+ "926_APPROVAL_EXPIRED_OR_INVALID_WINDOW", "926_APPROVAL_INVALID", "926_CLI_MUST_RUN_FROM_VERIFIED_RELEASE",
+ "926_COLUMN_ATTRIBUTE_MISMATCH", "926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY", "926_DEPLOYMENT_PERMISSION_REQUIRED",
+ "926_DISPOSABLE_TARGET_INVALID", "926_DUPLICATE_LEDGER", "926_EXISTING_DATA_INVALID",
+ "926_EXPLICIT_CONNECTION_REQUIRED", "926_EXPLICIT_INVOCATION_REQUIRED", "926_FOUNDATION_OR_LEDGER_SHAPE_MISMATCH",
+ "926_LEDGER_FILENAME_MISMATCH", "926_LEDGER_WRITE_UNCONFIRMED", "926_MODE_INVALID",
+ "926_PREREQUISITE_CHECK_MISMATCH", "926_PREREQUISITE_COLUMN_MISMATCH", "926_PREREQUISITE_LEDGER_MISMATCH",
+ "926_PRODUCTION_PROFILE_NOT_APPROVED", "926_RECONCILIATION_FAILED_NO_RETRY", "926_RECONCILIATION_LOCK_REQUIRED",
+ "926_LOCK_TIMEOUT_NO_RETRY", "926_RELEASE_BINDING_INVALID", "926_RELEASE_FILES_REQUIRED",
+ "926_RELEASE_FILE_HASH_MISMATCH", "926_RELEASE_MANIFEST_HASH_MISMATCH", "926_RELEASE_PATH_INVALID",
+ "926_SOURCE_HASH_MISMATCH", "926_TARGET_IDENTITY_MISMATCH", "926_TLS_CONNECTION_MISMATCH",
+ "926_TLS_MODE_APPROVAL_MISMATCH", "926_TLS_MODE_INVALID", "926_TLS_TRUST_APPROVAL_REQUIRED",
+ "926_UNREVIEWED_TRIGGER"
+]);
+const driver926Codes=new Set("ELOGIN ESOCKET ECONNCLOSED ENOTOPEN ETIMEOUT ETIMEDOUT ECANCEL EREQUEST EABORT ENOTBEGUN EREQINPROG EINVALIDSTATE ECONNREFUSED ECONNRESET ENOTFOUND EHOSTUNREACH ERR_TLS_CERT_ALTNAME_INVALID SELF_SIGNED_CERT_IN_CHAIN DEPTH_ZERO_SELF_SIGNED_CERT UNABLE_TO_VERIFY_LEAF_SIGNATURE CERT_HAS_EXPIRED UNABLE_TO_GET_ISSUER_CERT_LOCALLY ENOENT EACCES EPERM".split(" "));
+// Inspect only numeric SQL errors and fixed driver codes, never message/stack/query/config.
+function sqlFacts926(error:unknown):SqlFacts926{
+ const numbers=new Set<number>(),codes=new Set<string>(),seen=new Set<object>();
+ const visit=(e:unknown,depth:number)=>{if(!e||typeof e!=="object"||depth>6||seen.size>=32||seen.has(e))return;seen.add(e);
+  const x=e as Record<string,unknown>;if(typeof x.number==="number"&&Number.isInteger(x.number)&&x.number>0&&x.number<=2147483647)numbers.add(x.number);
+  if(typeof x.code==="string"&&driver926Codes.has(x.code))codes.add(x.code);
+  for(const key of ["originalError","info","cause"])visit(x[key],depth+1);
+  for(const key of ["precedingErrors","errors"])if(Array.isArray(x[key]))for(const child of x[key].slice(0,8))visit(child,depth+1);
+ };visit(error,0);return {sqlNumbers:[...numbers].sort((a,b)=>a-b).slice(0,8),driverCodes:[...codes].slice(0,8)};
+}
+export function failure926(error:unknown,stage:Reconcile926Stage,outcome:Outcome926="NOT_STARTED",overrideCode?:string,rollbackError?:unknown):Reconcile926Error{
+ if(error instanceof Reconcile926Error&&error.diagnostic&&!overrideCode)return error;
+ const facts=sqlFacts926(error),known=error instanceof Reconcile926Error&&known926Codes.has(error.code)?error.code:undefined;
+ let category:string=stage;
+ if(known?.includes("TIMEOUT")||facts.driverCodes.some(c=>c==="ETIMEOUT"||c==="ETIMEDOUT")||facts.sqlNumbers.includes(1222))category="TIMEOUT";
+ else if(known?.includes("PERMISSION")||facts.sqlNumbers.some(n=>[229,230,262,297,300,916,15151,15247].includes(n)))category="PERMISSION";
+ else if(facts.sqlNumbers.includes(1205)||stage.startsWith("TRANSACTION_"))category="TRANSACTION";
+ else if(facts.sqlNumbers.includes(51926))category="SCHEMA";
+ else if(stage.startsWith("LEDGER_")||known?.includes("LEDGER"))category="LEDGER";
+ else if(stage==="SOURCE"||stage==="RELEASE")category="RELEASE";
+ else if(stage==="CONNECTION_CLOSE")category="CONNECTION";
+ const code=overrideCode??known??`926_${category}_FAILED_NO_RETRY`;
+ const safeCode=known926Codes.has(code)||code===`926_${category}_FAILED_NO_RETRY`?code:"926_INTERNAL_FAILED_NO_RETRY";
+ return new Reconcile926Error(safeCode,{format:"UQP_926_ERROR_V1",code:safeCode,stage,category,...facts,transactionOutcome:outcome,noRetry:true,...(rollbackError===undefined?{}:{rollbackError:sqlFacts926(rollbackError)})});
+}
+export function diagnostic926(error:unknown){return failure926(error,"INTERNAL").diagnostic!;}
+
 export function parse926Approval(value:unknown,now=Date.now()):ReconcileApproval{
  const result=approvalSchema.safeParse(value);if(!result.success)throw new Reconcile926Error("926_APPROVAL_INVALID");const a=result.data;
  if(a.connectionMode==="ENCRYPT_TRUST_CERT"&&!a.tlsTrustApprovalReference)throw new Reconcile926Error("926_TLS_TRUST_APPROVAL_REQUIRED");
@@ -49,7 +96,8 @@ async function identity(tx:sql.Transaction,a:ReconcileApproval){
  if([r.Visible,r.LedgerRead,r.LedgerInsert,r.DeviceRead,r.LockExecute].some(v=>v!==1))fail("926_DEPLOYMENT_PERMISSION_REQUIRED");
  return r;
 }
-async function schema(tx:sql.Transaction){
+async function schema(tx:sql.Transaction,mark:(stage:Reconcile926Stage)=>void){
+ mark("SCHEMA");
  await requireDeviceLifecycleSchema(new sql.Request(tx));
  const r=await new sql.Request(tx).query(`
  SELECT c.name,c.system_type_id TypeId,c.user_type_id UserTypeId,c.max_length Length,c.scale Scale,c.is_nullable Nullable,c.is_computed Computed,c.is_identity IdentityColumn,c.default_object_id DefaultId,c.is_sparse SparseColumn,c.generated_always_type GeneratedAlways
@@ -67,9 +115,12 @@ async function schema(tx:sql.Transaction){
  THEN 1 ELSE 0 END Foundation;
  SELECT name FROM sys.triggers WHERE parent_id=OBJECT_ID('uqp.SchemaMigration') OR
  (parent_id=OBJECT_ID('uqp.DashboardDisplayDevice') AND object_id<>OBJECT_ID('uqp.TR_DashboardDevice_Lifecycle'));
- SELECT FileName,AppliedAtUtc FROM uqp.SchemaMigration WITH(UPDLOCK,HOLDLOCK)
+`);
+ mark("LEDGER_READ");
+ const ledger=await new sql.Request(tx).query(` SELECT FileName,AppliedAtUtc FROM uqp.SchemaMigration WITH(UPDLOCK,HOLDLOCK)
  WHERE LEFT(FileName,4) IN(N'025_',N'900_',N'918_',N'926_');`);
- const sets=r.recordsets as unknown as Record<string,any>[][];
+ mark("SCHEMA");
+ const sets=[...(r.recordsets as unknown as Record<string,any>[][]),ledger.recordset];
  const expected:[string,number,number|undefined,boolean,boolean?][]=[
   ["Id",127,8,false,true],["DashboardId",127,8,false],["DeviceName",231,400,false],["TokenHash",175,64,false],
   ["IsActive",104,1,false],["ExpiresAtUtc",42,undefined,true],["LastUsedAtUtc",42,undefined,true],["CreatedByUserId",127,8,false],
@@ -81,6 +132,7 @@ async function schema(tx:sql.Transaction){
  if(sets[4]!.length)fail("926_UNREVIEWED_TRIGGER");
  const predicates:Record<string,string>={CK_DashboardDevice_QueryModeGrant:"(QueryModeGrantVersion IS NULL AND DelegatorTokenVersion IS NULL) OR (QueryModeGrantVersion IS NOT NULL AND DelegatorTokenVersion IS NOT NULL AND QueryModeGrantVersion>0 AND DelegatorTokenVersion>0)",CK_Dashboard_QueryMode:"QueryMode IN ('LEGACY','QUERY_ONLY','QUERY_ONLY_DISABLED') AND QueryModeVersion>=0 AND (QueryMode='LEGACY' OR QueryModeVersion>0)"};
  for(const [name,predicate] of Object.entries(predicates)){const c=sets[2]!.filter(c=>c.name===name);if(c.length!==1||c[0]!.Disabled||c[0]!.Untrusted||c[0]!.Nfr||canonicalDisplayExpression(c[0]!.definition)!==canonicalDisplayExpression(predicate))fail("926_PREREQUISITE_CHECK_MISMATCH");}
+ mark("LEDGER_READ");
  const prerequisites=["025_dashboard_display_device.sql","900_dashboard_device_archive.sql","918_dashboard_query_playback_mode.sql"];
  for(const f of prerequisites)if(sets[5]!.filter(c=>c.FileName===f).length!==1)fail("926_PREREQUISITE_LEDGER_MISMATCH");
  if(sets[5]!.some(c=>![...prerequisites,ledger926].includes(c.FileName)))fail("926_LEDGER_FILENAME_MISMATCH");
@@ -96,30 +148,36 @@ async function legalData(tx:sql.Transaction){
  if(!r||[r.TerminalValid,r.SuspendedValid,r.EnrollmentValid,r.GrantValid].some(n=>String(n)!==String(r.DeviceCount)))fail("926_EXISTING_DATA_INVALID");
 }
 export async function reconcile926(pool:sql.ConnectionPool,input:unknown,mode:"preflight"|"adopt"){
- const a=parse926Approval(input);if(!["preflight","adopt"].includes(mode))fail("926_MODE_INVALID");await verify926Source();
+ let stage:Reconcile926Stage="APPROVAL";const mark=(next:Reconcile926Stage)=>{stage=next;};
+ try{
+ const a=parse926Approval(input);if(!["preflight","adopt"].includes(mode))fail("926_MODE_INVALID");mark("SOURCE");await verify926Source();mark("TLS");
  const tls=resolve926Tls(a,a.connectionMode);
  const options=(pool as sql.ConnectionPool & {readonly config?:sql.config}).config?.options;
  if(options?.encrypt!==true||options?.trustServerCertificate!==tls.options.trustServerCertificate)fail("926_TLS_CONNECTION_MISMATCH");
  const tx=new sql.Transaction(pool);let begun=false,aborted=false,committing=false;tx.on("rollback",()=>{aborted=true;});
  try{
-  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);begun=true;
-  await new sql.Request(tx).query("SET XACT_ABORT ON; SET LOCK_TIMEOUT 5000");
-  await identity(tx,a);
-  const lock=(await new sql.Request(tx).query("DECLARE @result int; EXEC @result=sys.sp_getapplock @Resource=N'UQP:926:DeviceLifecycle',@LockMode=N'Exclusive',@LockOwner=N'Transaction',@LockTimeout=5000; SELECT @result Code")).recordset[0]?.Code;
-  if(typeof lock!=="number"||lock<0)fail("926_RECONCILIATION_LOCK_REQUIRED");
-  let prior=await schema(tx);await legalData(tx);await identity(tx,a);prior=await schema(tx);
+  mark("TRANSACTION_BEGIN");await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);begun=true;
+  mark("TRANSACTION_SETUP");await new sql.Request(tx).query("SET XACT_ABORT ON; SET LOCK_TIMEOUT 5000");
+  mark("IDENTITY");await identity(tx,a);
+  mark("LOCK");const lock=(await new sql.Request(tx).query("DECLARE @result int; EXEC @result=sys.sp_getapplock @Resource=N'UQP:926:DeviceLifecycle',@LockMode=N'Exclusive',@LockOwner=N'Transaction',@LockTimeout=5000; SELECT @result Code")).recordset[0]?.Code;
+  if(typeof lock!=="number"||lock<0)fail(lock===-1?"926_LOCK_TIMEOUT_NO_RETRY":"926_RECONCILIATION_LOCK_REQUIRED");
+  let prior=await schema(tx,mark);mark("DATA");await legalData(tx);mark("IDENTITY");await identity(tx,a);prior=await schema(tx,mark);
   let appliedAtUtc=prior?.AppliedAtUtc;
   if(!prior&&mode==="adopt"){
-   const result=await new sql.Request(tx).input("file",sql.NVarChar(255),ledger926).query("INSERT uqp.SchemaMigration(FileName,AppliedAtUtc) OUTPUT INSERTED.AppliedAtUtc VALUES(@file,SYSUTCDATETIME())");
+   mark("LEDGER_WRITE");const result=await new sql.Request(tx).input("file",sql.NVarChar(255),ledger926).query("INSERT uqp.SchemaMigration(FileName,AppliedAtUtc) OUTPUT INSERTED.AppliedAtUtc VALUES(@file,SYSUTCDATETIME())");
    if(result.recordset.length!==1)fail("926_LEDGER_WRITE_UNCONFIRMED");appliedAtUtc=result.recordset[0].AppliedAtUtc;
   }
-  await identity(tx,a);await requireDeviceLifecycleSchema(new sql.Request(tx));
+  mark("IDENTITY");await identity(tx,a);mark("SCHEMA");await requireDeviceLifecycleSchema(new sql.Request(tx));
   const status=prior?"ALREADY_RECORDED":mode==="adopt"?"ADOPTED":"READY_LEDGER_ONLY";
-  committing=true;await tx.commit();begun=false;
+  mark("TRANSACTION_COMMIT");committing=true;await tx.commit();begun=false;
   return {format:"UQP_926_RECONCILIATION_RECEIPT_V1",status,applicationSourceSha:a.applicationSourceSha,packageManifestSha256:a.packageManifestSha256,
    connectionMode:tls.mode,encrypt:true,trustServerCertificate:tls.options.trustServerCertificate,tlsTrustApprovalReference:a.tlsTrustApprovalReference??null,
    migration:ledger926,migrationSha256:sha926,approvalReference:a.approvalReference,database:a.databaseName,
    appliedAtUtc:appliedAtUtc instanceof Date?appliedAtUtc.toISOString():appliedAtUtc??null,historicalExecutionTimeBackdated:false};
- }catch(error){if(begun&&!aborted)try{await tx.rollback();}catch{throw new Reconcile926Error("926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY");}
-  if(committing)throw new Reconcile926Error("926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY");if(error instanceof Reconcile926Error)throw error;throw new Reconcile926Error("926_RECONCILIATION_FAILED_NO_RETRY");}
+ }catch(error){
+  let outcome:Outcome926=aborted?"ROLLED_BACK":begun?"UNKNOWN":"NOT_STARTED";
+  if(begun&&!aborted)try{await tx.rollback();outcome="ROLLED_BACK";}catch(rollbackError){throw failure926(error,stage,"UNKNOWN","926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY",rollbackError);}
+  throw failure926(error,stage,committing?"UNKNOWN":outcome,committing?"926_COMMIT_OR_ROLLBACK_UNKNOWN_NO_RETRY":undefined);
+ }
+ }catch(error){throw failure926(error,stage);}
 }
