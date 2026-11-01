@@ -18,6 +18,16 @@
 - 922歷史內容／相關物件仍UNKNOWN；926當次Ledger無紀錄已確認，新增欄位／Constraint／Trigger存在性仍待Catalog。來源ACTIVE／MIGRATION_ONLY分類不等於正式安裝事實。
 - 可安全清理候選仍無；UNUSED_CONFIRMED 維持0。以下原始欄位／Constraint／來源SHA清冊不變；其中UNKNOWN屬用途／外部依賴分類，不表示925已取得的正式欄位結果未知或未提供。
 
+## D5-C-5B 新增唯讀驗收來源
+
+基準 `8b27dac43d9b362dc0d5d266686bb7d41bd96f98`。本輪新增兩份由使用者在SSMS手動執行的SELECT-only檢查；[結果組與PASS／BLOCKED條件](dashboard-device-lifecycle-d5-c5b.md)。
+D5-C-3的58份SQL是當時來源快照；加入本輪兩份後，目前SQL來源指紋共**60份**，49份Migration及所有物件分類／計數不變。沒有新增或修改DB物件，也未連正式環境。
+
+| SQL來源 | 檔案用途分類 | 作用 |
+|---|---|---|
+| database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | ACTIVE（人工唯讀驗收） | 前置／Ledger／926 Catalog／舊資料／容量／權限／既有備份歷史；不安裝、不備份 |
+| database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | ACTIVE（人工唯讀驗收） | 僅在兩個926欄位存在且型別正確時統計三個CHECK違規 |
+
 ## 計數與分類口徑
 
 一個應用 Schema：`uqp`。SQL Server 系統 Schema、外部資料來源 Schema、測試臨時 Schema 不納入此數字。
@@ -1915,4 +1925,6 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | tools/sqlserver-acceptance/drafts/923/923_dataset_metadata.draft.sql | a6569770d1e2a3b553814d540df640081c50f60a8a7ef9f53d3d278b2810815f |
 | SOURCE | tools/sqlserver-acceptance/drafts/923/923_f1a_environment_readonly.sql | 5417d5e861c7816742b395517a9ecbd29d781f1481ec1c9da7ee246637f9052e |
 | SOURCE | tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql | c073e595eb56d6e11b8b2c46ef168711d4aae61ee6c370800b6da5c4e33f0a0c |
+| SOURCE | database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | 7c5dc7aad1a593a2cc409aa0b596042e180dc5e09ad695f44c49252000f65432 |
+| SOURCE | database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | 66e61f3ec190e12d1369b3ae6848e73250b8eecbe855ddcf9b957c81da17d74f |
 | SOURCE | server/src/scripts/migrate.ts | 52a3831f2af648d60c6df95275fe4b8b8f87716a5eb9c9684332915e5f21e794 |
