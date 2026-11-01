@@ -141,7 +141,7 @@ SELECT N'06_926_TRIGGER' AS Section,N'uqp.TR_DashboardDevice_Lifecycle' AS Trigg
  tr.is_disabled,tr.is_instead_of_trigger,tr.is_not_for_replication,
  (SELECT COUNT_BIG(*) FROM sys.trigger_events ev WHERE ev.object_id=tr.object_id) AS EventCount,
  CONVERT(varchar(64),HASHBYTES('SHA2_256',LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(m.definition,N'[',N''),N']',N''),N' ',N''),CHAR(13),N''),CHAR(10),N''),CHAR(9),N''))),2) AS NormalizedDefinitionSha256,
- N0f3259251e812fdc2e3acc303e0c469cf2aaf4590035099336da72b0dae4abfb AS ExpectedSha256,
+ N'0f3259251e812fdc2e3acc303e0c469cf2aaf4590035099336da72b0dae4abfb' AS ExpectedSha256,
  N'NOT_APPLICABLE_TRIGGER_HAS_NO_TRUSTED_FLAG' AS TrustedAssessment,
  CASE WHEN COALESCE(HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'VIEW DEFINITION'),0)<>1 THEN N'BLOCKED_VISIBILITY'
  WHEN tr.object_id IS NULL THEN N'ABSENT_926_TRIGGER'

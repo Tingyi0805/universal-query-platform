@@ -109,3 +109,9 @@ msdb備份／還原時間沿用SQL Server紀錄原值，不冒稱UTC；CapturedA
 已執行離線T-SQL parser（sqlglot 28.0.0）確認所有可執行AST均為SELECT、無INTO；另查禁DDL／DML／EXEC／設定／備份還原命令、確認三個CASE與固定CHECK／Trigger簽章來自未改的926／Runtime。
 這是**靜態語法／唯讀性檢查**，不是SQL Server 2019實機執行或正式查詢PASS。沒有啟動完整CI或重新執行C5-A。
 任何結果尚未取得前，正式部署均待審查；產出後停止，等待使用者提供SSMS結果與既有非SQL證據。
+
+### ExpectedSha256字串補正
+
+修正基準 `474916bcb520304a0806f72f3492bd34c06f995a`。06_926_TRIGGER的ExpectedSha256原先缺少字串引號，已改為 `N'0f3259251e812fdc2e3acc303e0c469cf2aaf4590035099336da72b0dae4abfb'`；原SHA、正規化與兩處0x二進位比較均未變。
+先前parser將未加引號的N0f…當合法識別字，單靠語法樹可解析不能證明欄位綁定正確。本次補充預期常數的literal節點／值與未限定欄位作用域檢查，並以舊版本重現誤判；兩份SQL仍共26個SELECT AST，無其他靜態語法問題或寫入指令。
+只做離線靜態檢查與清冊hash／連結一致性檢查；未在SQL Server實例執行，不能把靜態檢查當正式編譯／查詢結果。沒有修改Runtime、Migration或正式環境，也未重跑完整CI。

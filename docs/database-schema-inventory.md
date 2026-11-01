@@ -1925,6 +1925,6 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | tools/sqlserver-acceptance/drafts/923/923_dataset_metadata.draft.sql | a6569770d1e2a3b553814d540df640081c50f60a8a7ef9f53d3d278b2810815f |
 | SOURCE | tools/sqlserver-acceptance/drafts/923/923_f1a_environment_readonly.sql | 5417d5e861c7816742b395517a9ecbd29d781f1481ec1c9da7ee246637f9052e |
 | SOURCE | tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql | c073e595eb56d6e11b8b2c46ef168711d4aae61ee6c370800b6da5c4e33f0a0c |
-| SOURCE | database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | 7c5dc7aad1a593a2cc409aa0b596042e180dc5e09ad695f44c49252000f65432 |
+| SOURCE | database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | ee06ae0c9eeccba7e1e75894c10542e0c2fb40ad45258a03b9fb58fa0ad9c518 |
 | SOURCE | database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | 66e61f3ec190e12d1369b3ae6848e73250b8eecbe855ddcf9b957c81da17d74f |
 | SOURCE | server/src/scripts/migrate.ts | 52a3831f2af648d60c6df95275fe4b8b8f87716a5eb9c9684332915e5f21e794 |
