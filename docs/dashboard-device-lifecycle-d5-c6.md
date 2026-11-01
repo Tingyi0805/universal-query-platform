@@ -43,7 +43,7 @@ PR #83 保持 Draft、不合併 main。本階段不連線正式 SQL Server、不
 1. 從該次成功 GitHub CI 取得 Windows staging ZIP 與 `.zip.sha256`，用可信 CI 下載來源核對外層 SHA。解壓至正式目錄外，不以 Windows 檔案總管直接覆蓋 `C:\UQP`。
 2. 使用 Repository／可信交付來源的 `verify-uqp-pr83-926.ps1 -PackageRoot <staging>` 核對完整檔案、manifest、CI 證據、Node/ABI/Windows x64。此工具只讀取交付套件及 Node 版本，不讀 `.env`、不連 SQL、不操作服務，不會核准部署。
 3. 核准者建立放在 package **外**的 JSON，`format=UQP_926_LEDGER_APPROVAL_V1`、`approved=true`、`scope=PRODUCTION`、`applicationSourceSha`、`packageManifestSha256`、`migrationSha256`，及精確 `serverName/machineName/databaseName/loginName/databaseUser/engineMajor`；`approvedAtUtc/expiresAtUtc` 使用 UTC ISO，核准窗最多24小時；`approvalReference/maintenanceReference/existingBackupReference` 必填。這不是自動授權模板，需審查簽核並保護檔案。
-4. 維護人員確認停寫及現有已驗證備份，再於自己管理的 session 設定專用 `UQP_926_ADOPT_HOST`、`UQP_926_ADOPT_PORT`、`UQP_926_ADOPT_PASSWORD`；帳號與 DB 取自核准書，禁止使用一般 app `.env` 或將密碼寫入參數／紀錄。CLI 使用 encrypt=true、trustServerCertificate=false；正式 TLS 信任不符時 BLOCKED，不自動降級連線安全或改正式憑證。
+4. 維護人員確認停寫及現有已驗證備份，再於自己管理的 session 設定專用 `UQP_926_ADOPT_HOST`、`UQP_926_ADOPT_PORT`、`UQP_926_ADOPT_PASSWORD`；帳號與 DB 取自核准書，禁止使用一般 app `.env` 或將密碼寫入參數／紀錄。CLI 使用 encrypt=true、trustServerCertificate=false；正式 TLS 信任不符時 BLOCKED，不自動降級連線安全或改正式憑證。此 CLI 使用既有 SQL login；若正式環境僅允許 Windows 整合驗證且無可用的既有核准身份，也維持 BLOCKED，不新增帳號、不開啟 SQL authentication。
 5. 以核准套件的 Node 執行 `node <staging>/payload/server/dist/scripts/reconcileDeviceLifecycle926.js preflight <staging> <approval.json>`。這是受控採認的完整交易驗證，會取鎖；不是要求再次手動執行已完成的基本存在性查詢。
 6. 僅在人工核准後執行相同命令的 `adopt` 模式，最後加 `CONFIRM_LEDGER_ONLY_926`。保存 receipt；`ADOPTED` 或精確驗證後 `ALREADY_RECORDED` 才能繼續。異常／結果不明由維護人員查核交易結果，不重跑926、不無條件INSERT、不停用Trigger、不修造歷史資料。
 
@@ -55,7 +55,7 @@ PR #83 保持 Draft、不合併 main。本階段不連線正式 SQL Server、不
 
 另有3項單元測試：核准資料/時效/身份約束、disposable與production範圍隔離、固定926來源及無migration/config執行入口。交付包在Windows PowerShell5.1測試正常、ZIP往返、竄改、多餘檔案、路徑穿越拒絕及修復後驗證。
 
-本文件的實際執行結果與 CI URL 於驗證完成後補記；未完成前不宣告 PASS。
+實際結果見下方「本次執行證據」。交付套件內 manifest.ci 綁定該次完整核心測試結果；正式部署核准仍獨立於 CI。
 
 ## UPDATE 路徑覆核
 
@@ -91,3 +91,18 @@ PR #83 保持 Draft、不合併 main。本階段不連線正式 SQL Server、不
 - 核准書與該manifest綁定的完整採認preflight/receipt，以及實際部署後功能驗收及回復責任人。
 
 上述不是要求重新執行已完成的926存在性檢查。**目前只能下載CI產物至隔離staging檢視；不可認定已核准直接下載覆蓋 `C:\UQP`。**
+
+
+## 本次執行證據
+
+**Repository／隔離驗收：PASS；正式覆蓋：BLOCKED（等待上述人工核准）。**
+
+- Runtime／交付 source：`55826718c9c1f7d0d292338ec7f159364e792697`。
+- [完整 CI #1252](https://github.com/Tingyi0805/universal-query-platform/actions/runs/41278310026)：completed / success；8個適用jobs全部成功，PR66專用jobs按既有條件略過。
+- Server 2,192／2,192（Linux及Windows各通過）；Client 69／69；Browser 263／263。兩邊Typecheck/Build、依賴稽核、Migration/Schema inventory validation、SQL adapter smoke及Windows kiosk launcher全部通過。
+- SQL2019：`uqp-d1-33881cb490da`，新增採認13／13、原C5A 22／22。SQL2022：`uqp-d1-3045b36e2284`，新增採認13／13、原C5A 22／22。D1/D3/D4-C1/D4-D SQL回歸均成功，兩個disposable容器已移除。
+- Windows PowerShell5.1交付驗證：正常、ZIP往返、防竄改、多餘檔案、路徑穿越及修復後驗證全部成功；14,298個檔案。manifest SHA256：`69e62768835ed7530af28aad792f75dd9e47384f15fae3e0f5163f052d117e9a`。
+- [Staging artifact](https://github.com/Tingyi0805/universal-query-platform/actions/runs/41278310026/artifacts/13072855491)：`uqp-pr83-926-windows-staging-55826718c9c1f7d0d292338ec7f159364e792697`，內含`release926.zip`及其SHA256檔；保留至2026-11-08。GitHub外層artifact digest為`88d9e1b4e6487094c031c534d34d3e6d41c2433d9e972bb27d5aca09d5f73cd2`，**不可混作內層release926.zip雜湊**。
+- 上傳前及完成後確認PR83仍Draft、未合併；PR66最新HEAD仍為`a4e9cf64b258802ab992ec004a0aad9c5fbd2133`。本次未改Runtime或任何Migration；926 SHA保持上述固定值。
+
+本節是在CI完成後以純文件commit補記；交付manifest/source仍固定為上述已測Runtime commit，沒有重新標記ZIP來源。已審查這個後續差異僅為本報告，server/client/database/tools/workflow與已測commit完全相同，無既有修正遺失。純文件補記只執行文件連結／清冊一致性與diff檢查，不重跑完整CI。人工核准書必須綁定**交付manifest的source與hash**，不得把後續文件HEAD冒充ZIP建置版本。
