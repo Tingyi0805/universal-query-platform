@@ -51,8 +51,8 @@ export async function verify926Reconciliation(fixture:Fixture,raw:(pool:sql.Conn
  });
  await check("safe-diagnostic-real-lock-timeout-rollback",async()=>{const f=await prepare(),a=await approved(f.pool),before=await snapshot(f.pool);
   const other=await new sql.ConnectionPool({...config,database:f.name}).connect(),blocker=new sql.Transaction(other);let begun=false;
-  try{await blocker.begin();begun=true;await new sql.Request(blocker).query("SELECT Id FROM uqp.DashboardDisplayDevice WITH(TABLOCKX,HOLDLOCK)");
-   await assert.rejects(()=>reconcile926(f.pool,a,"preflight"),(e:unknown)=>{const d=diagnostic926(e);assert.equal(d.stage,"DATA");assert.equal(d.category,"TIMEOUT");assert(d.sqlNumbers.includes(1222));assert.equal(d.transactionOutcome,"ROLLED_BACK");assert.equal(d.noRetry,true);return true;});
+  try{await blocker.begin();begun=true;const held=await new sql.Request(blocker).query("DECLARE @r int; EXEC @r=sys.sp_getapplock @Resource=N'UQP:926:DeviceLifecycle',@LockMode=N'Exclusive',@LockOwner=N'Transaction',@LockTimeout=1000; SELECT @r R");assert(held.recordset[0].R>=0);
+   await assert.rejects(()=>reconcile926(f.pool,a,"preflight"),(e:unknown)=>{const d=diagnostic926(e);assert.equal(d.stage,"LOCK");assert.equal(d.category,"TIMEOUT");assert.equal(d.code,"926_LOCK_TIMEOUT_NO_RETRY");assert.equal(d.transactionOutcome,"ROLLED_BACK");assert.equal(d.noRetry,true);return true;});
   }finally{if(begun)await blocker.rollback();await other.close();}
   assert.deepEqual(await snapshot(f.pool),before);
  });
