@@ -34,3 +34,5 @@
 ## 再部署邊界
 
 可下載新CI staging ZIP到隔離目錄核對manifest/hash並人工驗收上述六項；不可直接將整包盲目解壓覆蓋C:\UQP。沿用既有備份/停寫/檔案保留及回復計畫，server/client/dist/Windows native dependencies使用同一manifest，保留.env、業務檔案、資料及Audit；不執行Migration/Installer/db:migrate:status或再採認926。正式覆蓋仍需維護核准及既有部署驗收；OR_001患者稽核須維持BLOCKED，不能將本包宣稱為七項全部正式PASS。回復程式僅使用既有926相容版本，保留不可逆撤銷/封存及新增Audit。
+
+CI另發現既有dashboardKiosk單元測試以固定`AA`覆蓋隨機密文，偶爾替換前後相同而沒有真正竄改。本次只將該測試改為必定翻轉中段一個有效base64url字元並確認值不同；加密/Cookie/Token Runtime完全未改，原拒絕竄改的斷言保留。該檔47項本地回歸通過。

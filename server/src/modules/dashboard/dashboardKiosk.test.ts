@@ -21,7 +21,9 @@ const grant={dashboardId:1,deviceId:7,token:"A".repeat(43),version:4,expires:Dat
 test("encrypted enrollment is origin, purpose, expiry, dashboard, device and key bound",()=>{
  const a=kioskCodec("https://kiosk.test","a1".repeat(32)),value=a.seal(grant);assert(!value.includes(grant.token));assert.deepEqual(a.open(value,"enrollment",1,7),grant);
  for(const args of [["session",1,7],["enrollment",2,7],["enrollment",1,8]] as const)assert.throws(()=>a.open(value,args[0],args[1],args[2]));
- assert.throws(()=>a.open(value.slice(0,30)+"AA"+value.slice(32),"enrollment",1,7));for(const b of [kioskCodec("https://other.test","a1".repeat(32)),kioskCodec("https://kiosk.test","b1".repeat(32))])assert.throws(()=>b.open(value,"enrollment",1,7));assert.throws(()=>a.open(a.seal({...grant,expires:Date.now()-1}),"enrollment",1,7));
+ // Flip a significant base64url character; a fixed replacement could equal random ciphertext.
+ const tampered=value.slice(0,30)+(value[30]==="A"?"B":"A")+value.slice(31);assert.notEqual(tampered,value);
+ assert.throws(()=>a.open(tampered,"enrollment",1,7));for(const b of [kioskCodec("https://other.test","a1".repeat(32)),kioskCodec("https://kiosk.test","b1".repeat(32))])assert.throws(()=>b.open(value,"enrollment",1,7));assert.throws(()=>a.open(a.seal({...grant,expires:Date.now()-1}),"enrollment",1,7));
 });
 test("restart restoration uses enrollment; only short sessions reach audited delivery",async t=>{
  const f=await setup(t),r=await f.enroll();assert.equal(r.status,200);
