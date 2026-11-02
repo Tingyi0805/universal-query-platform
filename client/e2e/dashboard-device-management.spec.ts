@@ -534,3 +534,31 @@ test.describe("touch history",()=>{test.use({hasTouch:true});test("history filte
  await expect(dialog).toContainText("共 25 筆");const size=await dialog.evaluate(e=>({width:e.clientWidth,scroll:e.scrollWidth}));expect(size.scroll).toBeLessThanOrEqual(size.width+1);
  await dialog.getByRole("button",{name:"下一頁歷史"}).tap();await expect(dialog).toContainText("第 2／2 頁");await dialog.getByRole("button",{name:"關閉操作歷史"}).tap();
 });});
+
+test("D6-3 first Token uses the full lifecycle CAS and one-time dialog",async({page})=>{
+ const {state,panel}=await setup(page);
+ await expect(panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true})).toBeEnabled();
+ await panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true}).click();
+ await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toBeVisible();
+ expect(state.writes.filter(w=>w.path.endsWith("/credential"))).toHaveLength(1);
+ expect(state.writes.at(-1)!.body).toEqual({expectedVersion:initialVersion,confirmed:true});expect(state.oldWrites).toBe(0);
+ await expect(page.getByText(/完成 Enrollment 後才可播放/).first()).toBeVisible();
+ await page.getByRole("button",{name:"關閉並清除新 Token",exact:true}).click();
+ expect(await page.locator("body").innerHTML()).not.toContain("L".repeat(43));expect(await page.evaluate(()=>JSON.stringify([localStorage,sessionStorage]))).not.toContain("L".repeat(43));
+});
+for(const archived of [false,true])test(`D6-3 terminal expiry is not applicable archived=${archived}`,async({page})=>{
+ const {state,panel}=await setup(page);state.devices[0]!.expiresAtUtc="2099-01-01T00:00:00Z";state.revoked=true;state.archived=archived;
+ await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+ await expect(panel.getByText(archived?"不適用（已封存）":"不適用（已撤銷）",{exact:false})).toBeVisible();
+ const table=page.getByRole("region",{name:"裝置操作表格"});await expect(table).toContainText(archived?"不適用（已封存）":"不適用（已撤銷）");await expect(table).not.toContainText("剩餘");
+ expect(state.devices[0]!.expiresAtUtc).toBe("2099-01-01T00:00:00Z");await expect(panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true})).toHaveCount(0);
+});
+for(const width of [360,768])test(`D6-3 settings wrap on a touch viewport ${width}px without page overflow`,async({browser})=>{
+ const context=await browser.newContext({baseURL:"http://127.0.0.1:4173",viewport:{width,height:1000},hasTouch:true});const page=await context.newPage();
+ try{const {panel}=await setup(page);await panel.getByRole("button",{name:"重新載入裝置設定"}).tap();
+  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+  const button=panel.getByRole("button",{name:"建立未授權裝置",exact:true});await button.focus();await page.keyboard.press("Shift+Tab");await page.keyboard.press("Tab");await expect(button).toBeFocused();await expect(button).toHaveCSS("outline-style","solid");
+  await expect(page.getByRole("region",{name:"裝置操作表格"})).toHaveCSS("overflow-x","auto");
+  const disabled=page.locator(".dashboard-designer-page button:disabled").first();await expect(disabled).toHaveCSS("border-top-style","dashed");
+ }finally{await context.close();}
+});

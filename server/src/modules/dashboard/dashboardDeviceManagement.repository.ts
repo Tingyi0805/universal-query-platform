@@ -89,7 +89,8 @@ export function createDeviceManagementStore(deps = defaultDeviceManagementDepend
           UPDATE uqp.DashboardDisplayDevice SET ${action==="ISSUE" ? "TokenHash=@hash,QueryModeGrantVersion=@modeVersion,DelegatorTokenVersion=@ownerVersion,ReenrollmentRequired=1" : "ReenrollmentRequired=0"}
           OUTPUT INSERTED.Id INTO @credential
           WHERE DashboardId=@dashboardId AND Id=@deviceId AND IsActive=1 AND SuspendedAtUtc IS NULL
-            AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL AND ReenrollmentRequired=1
+            AND RevokedAtUtc IS NULL AND ArchivedAtUtc IS NULL
+            AND ${action==="ISSUE" ? "(ReenrollmentRequired=1 OR (ReenrollmentRequired IS NULL AND QueryModeGrantVersion IS NULL AND DelegatorTokenVersion IS NULL))" : "ReenrollmentRequired=1"}
             AND (ExpiresAtUtc IS NULL OR ExpiresAtUtc>SYSUTCDATETIME())
             ${action==="ENROLL" ? "AND TokenHash=@hash AND QueryModeGrantVersion=@modeVersion AND DelegatorTokenVersion=@ownerVersion" : ""}
             AND EXISTS(SELECT 1 FROM uqp.Dashboard WHERE Id=@dashboardId AND IsActive=1 AND QueryMode='QUERY_ONLY' AND QueryModeVersion=@modeVersion);

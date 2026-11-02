@@ -19,7 +19,7 @@ export function createQuerySourceExecutionRouter(service: ReturnType<typeof crea
       const input = z.object({ page: z.number().int().min(1).max(100000), snapshotId: z.string().uuid().optional() }).strict().safeParse(req.body);
       if (!id.success || !key.success || !input.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
       const adminPreview = req.path.endsWith("/preview");
-      if (adminPreview && (input.data.page !== 1 || input.data.snapshotId !== undefined)) throw new QuerySourceError("VALIDATION_ERROR", 400);
+      if (adminPreview && (input.data.page !== 1 && input.data.snapshotId === undefined)) throw new QuerySourceError("VALIDATION_ERROR", 400);
       const token = req.header("Authorization")?.slice(7) ?? "";
       const payload = jwt.decode(token);
       if (!payload || typeof payload === "string" || Number(payload.sub) !== req.authUser!.id || !Number.isSafeInteger(payload.tokenVersion) || adminPreview && !Number.isSafeInteger(payload.exp))

@@ -11,6 +11,7 @@ export function lifecycleStatus(d: LifecycleDevice, now = Date.now()) {
   if (d.reenrollmentRequired === true) return "待重新授權";
   return d.isActive ? "啟用設定／無法驗證播放授權" : "無法驗證";
 }
+export function firstCredentialCandidate(d: ManagedDevice) { return d.reenrollmentRequired === null && d.queryModeGrantVersion === null && d.delegatorTokenVersion === null; }
 // A management snapshot has no live token/ACL proof. Never infer normal playback.
 export function lifecycleActions(d: LifecycleDevice, design: boolean, execute: boolean, now = Date.now()): LifecycleAction[] {
   if (!design || d.archivedAtUtc) return [];
@@ -18,7 +19,7 @@ export function lifecycleActions(d: LifecycleDevice, design: boolean, execute: b
   const actions: LifecycleAction[] = ["revoke"];
   if (d.expiresAtUtc !== null && (!d.expiresAtUtc || !Number.isFinite(Date.parse(d.expiresAtUtc)) || Date.parse(d.expiresAtUtc) <= now)) return actions;
   if (d.suspendedAtUtc) { if (execute) actions.unshift("restore"); }
-  else if (d.isActive) { actions.unshift("suspend"); if (execute && d.reenrollmentRequired === true) actions.unshift("credential"); }
+  else if (d.isActive) { actions.unshift("suspend"); if (execute && (d.reenrollmentRequired === true || firstCredentialCandidate(d))) actions.unshift("credential"); }
   return actions;
 }
 export function lifecycleConfirmation(action: LifecycleAction, name: string) {

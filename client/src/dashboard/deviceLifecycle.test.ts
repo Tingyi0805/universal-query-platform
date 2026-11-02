@@ -34,3 +34,10 @@ test("confirmations describe destructive and reenrollment consequences", () => {
   assert.match(lifecycleConfirmation("restore", "X"), /待重新授權/);
   assert.match(lifecycleConfirmation("credential", "X"), /只顯示一次/);
 });
+
+test("D6-3 first issue requires explicit full-snapshot null grant evidence and never revives terminal devices",()=>{
+ const fresh={...device,queryModeGrantVersion:null,delegatorTokenVersion:null};
+ assert(lifecycleActions(fresh,true,true,now).includes("credential"));
+ for(const value of [{...fresh,queryModeGrantVersion:4,delegatorTokenVersion:1},{...fresh,isActive:false},{...fresh,revokedAtUtc:"2026-10-30T00:00:00Z"},{...fresh,archivedAtUtc:"2026-10-30T00:00:00Z"},{...fresh,expiresAtUtc:"2020-01-01T00:00:00Z"}])assert(!lifecycleActions(value,true,true,now).includes("credential"));
+ assert(!lifecycleActions(device,true,true,now).includes("credential"));assert(!lifecycleActions(fresh,true,false,now).includes("credential"));
+});

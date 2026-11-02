@@ -41,15 +41,17 @@ type ReportColumn = {
 };
 
 type PreviewResult = {
-  dashboard: DashboardRow;
+  dashboard: Pick<DashboardRow,"id"|"name"|"refreshSeconds"|"pageSeconds"|"pageSize">;
+  refreshSeconds?:number; pageSeconds?:number; pageSize?:number;
+  page: number; totalPages: number; totalRows?: number; snapshotId: string;
   query: { id: number; code: string; name: string };
   reportColumns: ReportColumn[];
   result: {
     columns: { name: string; dataType?: string }[];
     rows: Record<string, unknown>[];
-    rowCount: number;
+    rowCount?: number;
     truncated: boolean;
-    elapsedMs: number;
+    elapsedMs?: number | null;
   };
 };
 
@@ -71,7 +73,8 @@ export function DashboardDesignerPage() {
 
   const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
-  const [preview, setPreview] = useState<PreviewResult | null>(null);
+  const [previewValue, setPreview] = useState<(PreviewResult & {viewer:string|null}) | null>(null);
+  const preview=previewValue?.viewer===accessToken?previewValue:null;
   const [previewDashboardId, setPreviewDashboardId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -120,40 +123,55 @@ export function DashboardDesignerPage() {
     if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; editDashboard(selected); }
   }, [dashboards, requestedEditor]);
 
-  const previewSequence = useRef(0);
-  const loadPreview = useCallback(async (dashboardId: number, silent = false) => {
+  const previewSequence = useRef(0), previewRequest=useRef<AbortController|null>(null), previewPage=useRef(1), previewLive=useRef<PreviewResult|null>(null);
+  const loadPreview = useCallback(async (dashboardId: number, silent = false, requestedPage=previewPage.current) => {
     const sequence = ++previewSequence.current;
+    previewRequest.current?.abort();const controller=new AbortController();previewRequest.current=controller;
     if (!silent) setPreviewLoading(true);
     setError("");
     try {
-      const configuration = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken));
-      const page = await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/preview`, { method: "POST", body: JSON.stringify({ page: 1 }) }, accessToken);
-      const result = { ...page, reportColumns: [], dashboard: { id: dashboardId, code: "", name: configuration.presentation?.name ?? "Query-only 設計預覽", refreshSeconds: configuration.primary.refreshSeconds } } as unknown as PreviewResult;
+      const configuration = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {signal:controller.signal}, accessToken));
+      const fetchPage=(body:{page:number;snapshotId?:string})=>apiRequest<Omit<PreviewResult,"dashboard"|"reportColumns">>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/preview`, {method:"POST",signal:controller.signal,body:JSON.stringify(body)},accessToken);
+      // Refresh the short-lived snapshot, then select the desired page within it. The page clock is independent.
+      const first=await fetchPage({page:1});
+      if(!Number.isSafeInteger(first.totalPages)||first.totalPages<1||first.page!==1||typeof first.snapshotId!=="string"||!first.snapshotId)throw new Error("PREVIEW_INVALID");
+      const wanted=Math.min(Math.max(1,requestedPage),first.totalPages);
+      const page=wanted===1?first:await fetchPage({page:wanted,snapshotId:first.snapshotId});
+      if(page.page!==wanted||page.snapshotId!==first.snapshotId||page.totalPages!==first.totalPages||!Array.isArray(page.result?.rows)||!Array.isArray(page.result.columns))throw new Error("PREVIEW_INVALID");
+      const result:PreviewResult={...page,reportColumns:[],dashboard:{id:dashboardId,name:configuration.presentation?.name??"Query-only 設計預覽",refreshSeconds:page.refreshSeconds??configuration.primary.refreshSeconds,pageSeconds:page.pageSeconds??configuration.primary.pageSeconds,pageSize:page.pageSize??configuration.primary.pageSize}};
       if (sequence !== previewSequence.current) return;
-      setPreview(result);
+      previewPage.current=wanted;previewLive.current=result;setPreview({...result,viewer:accessToken});
     } catch (e) {
       if (sequence !== previewSequence.current) return;
       const code = (e as { code?: string })?.code;
       setError(code === "QUERY_SOURCE_MANAGEMENT_DISABLED" || code === "QUERY_DEVICE_PLAYBACK_DISABLED" ? dashboardOperationError(e) : sourcePreviewFailure("PRIMARY", e));
-      setPreview(null);
+      previewLive.current=null;setPreview(null);
     } finally {
       if (sequence === previewSequence.current) setPreviewLoading(false);
     }
   }, [accessToken]);
 
-  useEffect(() => {
-    if (!previewDashboardId) return;
-
-    const dashboard = dashboards.find((item) => item.id === previewDashboardId);
-    if (!dashboard) return;
-
-    const timer = window.setInterval(
-      () => void loadPreview(previewDashboardId, true),
-      Math.max(5, dashboard.refreshSeconds) * 1000,
-    );
-
-    return () => window.clearInterval(timer);
-  }, [dashboards, loadPreview, previewDashboardId]);
+  const refreshSeconds=preview?.dashboard.refreshSeconds??dashboards.find(d=>d.id===previewDashboardId)?.refreshSeconds??0;
+  const pageSeconds=preview?.dashboard.pageSeconds??0;
+  useEffect(()=>{
+    if(!previewDashboardId||!refreshSeconds)return;
+    const timer=window.setInterval(()=>void loadPreview(previewDashboardId,true),Math.max(5,refreshSeconds)*1000);
+    return()=>window.clearInterval(timer);
+  },[previewDashboardId,refreshSeconds,loadPreview]);
+  useEffect(()=>{
+    if(!previewDashboardId||!pageSeconds)return;
+    const timer=window.setInterval(()=>{const current=previewLive.current;if(!current||current.totalPages<2)return;
+      previewPage.current=previewPage.current%current.totalPages+1;void loadPreview(previewDashboardId,true,previewPage.current);
+    },Math.max(5,pageSeconds)*1000);
+    return()=>window.clearInterval(timer);
+  },[previewDashboardId,pageSeconds,loadPreview]);
+  function stopPreview(){++previewSequence.current;previewRequest.current?.abort();previewLive.current=null;previewPage.current=1;setPreview(null);setPreviewDashboardId(null);setPreviewLoading(false);}
+  useEffect(()=>{
+    stopPreview();
+    const changed=(event:Event)=>{if((event as CustomEvent).detail?.dashboardId===previewLive.current?.dashboard.id)stopPreview();};
+    window.addEventListener("uqp.dashboard.configuration.changed",changed);
+    return()=>{++previewSequence.current;previewRequest.current?.abort();window.removeEventListener("uqp.dashboard.configuration.changed",changed);};
+  },[accessToken]);
 
   function editDashboard(item: DashboardRow) {
     setForm({ id: item.id, code: item.code });
@@ -168,7 +186,7 @@ export function DashboardDesignerPage() {
   }
 
   async function startPreview(item: DashboardRow) {
-    setPreviewDashboardId(item.id);
+    previewPage.current=1;previewLive.current=null;setPreview(null);setPreviewDashboardId(item.id);
     await loadPreview(item.id);
   }
 
@@ -313,8 +331,8 @@ export function DashboardDesignerPage() {
                   <h2>{preview?.dashboard.name ?? "Dashboard 預覽"}</h2>
                   {preview && (
                     <p>
-                      {preview.result.rowCount} 筆 · {preview.result.elapsedMs} ms ·
-                      每 {preview.dashboard.refreshSeconds} 秒自動更新
+                      {typeof preview.totalRows==="number"&&Number.isSafeInteger(preview.totalRows)&&preview.totalRows>=0?`快照共 ${preview.totalRows} 筆`:"總筆數未提供"}；本頁 {preview.result.rows.length} 筆 · 查詢 {typeof preview.result.elapsedMs==="number"&&Number.isFinite(preview.result.elapsedMs)&&preview.result.elapsedMs>=0?`${preview.result.elapsedMs} ms`:"時間未提供"} ·
+                      每 {preview.dashboard.refreshSeconds} 秒自動更新；每 {preview.dashboard.pageSeconds} 秒換頁{preview.result.truncated?"（資料已截斷）":""}
                     </p>
                   )}
                 </div>
@@ -330,16 +348,17 @@ export function DashboardDesignerPage() {
                   <button
                     className="secondary-button"
                     type="button"
-                    onClick={() => {
-                      setPreviewDashboardId(null);
-                      setPreview(null);
-                    }}
+                    onClick={stopPreview}
                   >
                     關閉預覽
                   </button>
                 </div>
               </div>
 
+              {preview && <nav className="uqp-device-actions" aria-label="LIVE PREVIEW 分頁"><span>第 {preview.page}／{preview.totalPages} 頁</span>
+                <button type="button" disabled={previewLoading||preview.page<=1} onClick={()=>{previewPage.current=preview.page-1;void loadPreview(previewDashboardId,false,previewPage.current);}}>上一頁預覽</button>
+                <button type="button" disabled={previewLoading||preview.page>=preview.totalPages} onClick={()=>{previewPage.current=preview.page+1;void loadPreview(previewDashboardId,false,previewPage.current);}}>下一頁預覽</button>
+              </nav>}
               {preview && (
                 <div className="dashboard-preview-table-wrap">
                   <table>

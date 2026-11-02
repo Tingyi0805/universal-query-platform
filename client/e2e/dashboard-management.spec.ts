@@ -86,3 +86,29 @@ test("Query-only independent preview uses JWT-only Query pages and preserves fix
   expect(popup.url()).toContain("queryPreview=1");expect(popup.url()).not.toContain("synthetic");
   await popup.close();
 });
+
+async function livePreviewFixture(page:Page){
+ const state=await setup(page);Object.assign(state.config.primary,{refreshSeconds:10,pageSeconds:20,pageSize:2});
+ const data={rows:[1,2,3,4,5],missingMetrics:false,denied:false,delay:0,calls:[] as {page:number;snapshotId?:string}[]};let serial=0;
+ await page.route('**/api/dashboards/1/query-sources/v1/PRIMARY/preview',async route=>{
+  const body=route.request().postDataJSON();data.calls.push(body);if(data.delay)await new Promise(r=>setTimeout(r,data.delay));
+  if(data.denied){await route.fulfill({status:403,json:{error:{code:"FORBIDDEN",message:"PRIVATE SQL PATIENT"}}});return;}
+  const snapshotId=body.snapshotId??`00000000-0000-4000-8000-${String(++serial).padStart(12,"0")}`;
+  await route.fulfill({json:{page:body.page,totalPages:Math.max(1,Math.ceil(data.rows.length/2)),snapshotId,...(!data.missingMetrics?{totalRows:data.rows.length}:{}),result:{columns:[{name:"NAME"}],rows:data.rows.slice((body.page-1)*2,body.page*2).map(n=>({NAME:`PREVIEW_SYNTHETIC_${n}`})),...(!data.missingMetrics?{rowCount:Math.min(2,data.rows.length),elapsedMs:37,truncated:false}:{})}}});
+ });return data;
+}
+test("D6-3 LIVE PREVIEW rotates despite 10s refresh, uses scoped snapshots, and clamps after shrink",async({page})=>{
+ await page.clock.install();const data=await livePreviewFixture(page);await page.goto("/designer/dashboards");await page.getByRole("button",{name:"預覽",exact:true}).click();
+ const preview=page.locator(".dashboard-preview-card");await expect(preview).toContainText("快照共 5 筆；本頁 2 筆 · 查詢 37 ms");await expect(preview).toContainText("PREVIEW_SYNTHETIC_1");
+ await page.clock.fastForward(10000);await expect.poll(()=>data.calls.length).toBeGreaterThan(1);await expect(preview).toContainText("第 1／3 頁");
+ await page.clock.fastForward(10000);await expect(preview).toContainText("第 2／3 頁");await expect(preview).toContainText("PREVIEW_SYNTHETIC_3");await expect(preview).not.toContainText("PREVIEW_SYNTHETIC_1");
+ expect(data.calls.some(c=>c.page===2&&!!c.snapshotId)).toBe(true);
+ await preview.getByRole("button",{name:"下一頁預覽"}).click();await expect(preview).toContainText("第 3／3 頁");await expect(preview).toContainText("PREVIEW_SYNTHETIC_5");
+ data.rows=[1];await preview.getByRole("button",{name:"立即更新"}).click();await expect(preview).toContainText("第 1／1 頁");
+ data.denied=true;await preview.getByRole("button",{name:"立即更新"}).click();await expect(preview).not.toContainText("PREVIEW_SYNTHETIC_1");await expect(page.locator("body")).not.toContainText("PRIVATE SQL PATIENT");
+});
+test("D6-3 preview missing statistics show placeholders and closing ignores late replies",async({page})=>{
+ const data=await livePreviewFixture(page);data.missingMetrics=true;await page.goto("/designer/dashboards");await page.getByRole("button",{name:"預覽",exact:true}).click();
+ const preview=page.locator(".dashboard-preview-card");await expect(preview).toContainText("總筆數未提供");await expect(preview).toContainText("查詢 時間未提供");await expect(preview).not.toContainText("undefined");
+ data.delay=300;await preview.getByRole("button",{name:"立即更新"}).click();await preview.getByRole("button",{name:"關閉預覽"}).click();await page.waitForTimeout(450);await expect(preview).toHaveCount(0);
+});

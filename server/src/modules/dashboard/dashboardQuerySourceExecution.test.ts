@@ -798,9 +798,27 @@ for (const reason of ["success", "page", "snapshot", "context", "permission", "e
         body: JSON.stringify({ page: reason === "page" ? 2 : 1,
           ...(reason === "snapshot" ? { snapshotId: "11111111-1111-4111-8111-111111111111" } : {}), ...(reason === "context" ? { context: "designer" } : {}) }),
       });
-      assert.equal(response.status, reason === "success" ? 200 : reason === "permission" ? 403 : reason === "expired" ? 401 : 400);
+      assert.equal(response.status, reason === "success" ? 200 : reason === "permission" ? 403 : reason === "expired" ? 401 : reason === "snapshot" ? 409 : 400);
       if (reason !== "expired") assert.equal(response.headers.get("cache-control"), "no-store");
       const body = await response.json(); assert.ok(!JSON.stringify(body).includes("00000123"));
       if (reason !== "success") { assert.equal(body.result, undefined); assert.equal(f.control.executions.length, 0); }
     } finally { env.JWT_SECRET = oldSecret; await new Promise<void>(resolve => server.close(() => resolve())); }
   });
+
+test("D6-3 admin preview pages share a scoped snapshot, truthful statistics, and recheck ACL",async()=>{
+ const f=activeAdminFixture(),admin=adminPreviewSubject();
+ const first=await f.service.page(1,"WARD",admin,{page:1});assert.equal(first.totalRows,2);assert.equal(first.result.rowCount,1);assert.equal(first.result.elapsedMs,1);
+ const second=await f.service.page(1,"WARD",admin,{page:2,snapshotId:first.snapshotId});assert.equal(second.snapshotId,first.snapshotId);assert.equal(second.page,2);assert.notDeepEqual(second.result.rows,first.result.rows);assert.equal(second.result.elapsedMs,1);assert.equal(f.control.executions.length,1);assert.equal(second.result.rows[0]!.MRN,undefined);
+ Object.assign(f.control.bindings.ROOM!,{mode:"QUERY_ONLY",modeRevision:1,dashboardActive:true});
+ await assert.rejects(f.service.page(1,"ROOM",admin,{page:2,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+ await assert.rejects(f.service.page(1,"WARD",{...admin,tokenHash:"other-authenticated-session"},{page:2,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
+ f.control.denied.add(21);await assert.rejects(f.service.page(1,"WARD",admin,{page:2,snapshotId:first.snapshotId}));
+});
+
+test("D6-3 authenticated preview HTTP accepts owned continuation and audits each delivered page",async()=>{
+ const f=activeAdminFixture(),old=env.JWT_SECRET;env.JWT_SECRET="synthetic-d63-preview";const app=express();app.use(express.json());app.use(createAuthenticateJwt(f.deps.getSession));app.use(createQuerySourceExecutionRouter(f.service));
+ const server=createServer(app);await new Promise<void>(r=>server.listen(0,"127.0.0.1",r));
+ try{const token=jwt.sign({sub:"1",tokenVersion:1},env.JWT_SECRET,{expiresIn:3600});const request=(body:unknown)=>fetch(`http://127.0.0.1:${(server.address() as import("node:net").AddressInfo).port}/1/query-sources/v1/WARD/preview`,{method:"POST",headers:{Authorization:`Bearer ${token}`,"Content-Type":"application/json"},body:JSON.stringify(body)});
+  const first=await (await request({page:1})).json();const response=await request({page:2,snapshotId:first.snapshotId});assert.equal(response.status,200);const second=await response.json();assert.equal(second.page,2);assert.equal(second.totalRows,2);assert.equal(second.result.elapsedMs,1);assert.equal(second.snapshotId,first.snapshotId);assert.equal(f.control.audits.length,2);
+ }finally{env.JWT_SECRET=old;await new Promise<void>(r=>server.close(()=>r()));}
+});

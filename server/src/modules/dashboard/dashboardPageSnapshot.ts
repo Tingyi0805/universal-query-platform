@@ -19,6 +19,8 @@ export type DashboardPageSnapshot = {
   createdAt: number;
   ttlMs: number;
   byteSize: number;
+  executionMs?: number | null;
+  truncated?: boolean | null;
   columns: { name: string }[];
   rows: Record<string, unknown>[];
 };

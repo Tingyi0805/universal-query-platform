@@ -39,3 +39,10 @@
  .uqp-device-history .history-table tr { border-bottom: 1px solid #dde5f0; padding: 8px 0; }
  .uqp-device-history .history-table td::before { content: attr(data-label) "："; font-weight: 700; }
 }
+/* Keep wide device operations local to their table, including touch tablets. */
+.uqp-device-table-scroll { min-width:0; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; }
+.uqp-device-table-scroll table { width:100%; table-layout:fixed; min-width:640px; }
+.uqp-device-table-scroll :is(th,td) { white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
+.uqp-device-table-scroll td:last-child { width:32%; }
+.uqp-device-table-scroll td button { display:inline-block; margin:4px 8px 4px 0; }
+.uqp-device-table-scroll td span { display:block; line-height:1.7; }

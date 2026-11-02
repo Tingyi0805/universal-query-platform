@@ -70,10 +70,10 @@ export function deviceManagementFixture() {
           fail("history");return {recordset:[{Archived:1}]};
         }
         if (s.includes("DECLARE @credential TABLE")) {
-          assert.match(s,/OUTPUT INSERTED.Id INTO @credential/);assert.match(s,/SuspendedAtUtc IS NULL/);assert.match(s,/AND ReenrollmentRequired=1/);
+          assert.match(s,/OUTPUT INSERTED.Id INTO @credential/);assert.match(s,/SuspendedAtUtc IS NULL/);assert.match(s,/ReenrollmentRequired=1/);
           const d=staged.devices.find(d=>d.Id===v.deviceId&&d.DashboardId===v.dashboardId),issue=s.includes("SET TokenHash=@hash");
           const now=new Date(Math.round(Date.now()/1000)*1000).toISOString();
-          if(!d||!d.IsActive||d.RevokedAtUtc||d.ArchivedAtUtc||d.SuspendedAtUtc||d.ReenrollmentRequired!==true||d.ExpiresAtUtc&&Date.parse(d.ExpiresAtUtc)<=Date.now()||
+          if(!d||!d.IsActive||d.RevokedAtUtc||d.ArchivedAtUtc||d.SuspendedAtUtc||!(d.ReenrollmentRequired===true||issue&&d.ReenrollmentRequired===null&&d.QueryModeGrantVersion===null&&d.DelegatorTokenVersion===null)||d.ExpiresAtUtc&&Date.parse(d.ExpiresAtUtc)<=Date.now()||
             !issue&&(d.TokenHash.toLowerCase()!==v.hash||d.QueryModeGrantVersion!==v.modeVersion||d.DelegatorTokenVersion!==v.ownerVersion))return {recordset:[]};
           if(issue)Object.assign(d,{TokenHash:v.hash,QueryModeGrantVersion:v.modeVersion,DelegatorTokenVersion:v.ownerVersion,ReenrollmentRequired:true});
           else d.ReenrollmentRequired=false;
@@ -110,7 +110,7 @@ export function deviceManagementFixture() {
           assert.match(s, /CRYPT_GEN_RANDOM\(32\)/); assert.match(s, /NULL,1,@expiresAtUtc/); assert.doesNotMatch(s, /OUTPUT INSERTED\.\*/);
           staged.devices.push({ Id: 8, DashboardId: v.dashboardId, DeviceName: v.deviceName, CreatedByUserId: v.ownerId, SharedWorkstationId: null,
             IsActive: true, ExpiresAtUtc: v.expiresAtUtc, EnforceIpRestriction: v.enforceIpRestriction, AllowedIp: v.allowedIp, AllowedCidr: v.allowedCidr,
-            TokenHash: "b".repeat(64), QueryModeGrantVersion: null, DelegatorTokenVersion: null, RevokedAtUtc: null, ArchivedAtUtc: null });
+            TokenHash: "b".repeat(64), SuspendedAtUtc:null, ReenrollmentRequired:null, QueryModeGrantVersion: null, DelegatorTokenVersion: null, RevokedAtUtc: null, ArchivedAtUtc: null });
           fail("create"); return { recordset: [{ Id: 8 }] };
         }
         if (s.startsWith("UPDATE uqp.DashboardDisplayDevice SET")) {

@@ -24,9 +24,9 @@ export function createDeviceEnrollmentService(store: DeviceManagementStore, enab
     if (!/^[a-f0-9]{64}$/.test(evidence)) throw new QuerySourceError("SECURITY_SCHEMA_REQUIRED",503);
     return {state,devices,version:deviceManagementVersion(state,evidence,devices)};
   };
-  const target = (devices:DeviceRecord[],deviceId:number) => {
+  const target = (devices:DeviceRecord[],deviceId:number,issuing=false) => {
     const d=devices.find(d=>d.id===deviceId);
-    if (!d || !d.isActive || d.revokedAtUtc!==null || d.archivedAtUtc!==null || d.suspendedAtUtc!==null || d.reenrollmentRequired!==true)
+    if (!d || !d.isActive || d.revokedAtUtc!==null || d.archivedAtUtc!==null || d.suspendedAtUtc!==null || !(d.reenrollmentRequired===true || issuing && d.reenrollmentRequired===null && d.queryModeGrantVersion===null && d.delegatorTokenVersion===null))
       throw new QuerySourceError("DASHBOARD_DEVICE_UNAUTHORIZED",401);
     const {deviceName,enforceIpRestriction,allowedIp,allowedCidr,expiresAtUtc}=d;
     if (!deviceMetadataSchema.safeParse({deviceName,enforceIpRestriction,allowedIp,allowedCidr,expiresAtUtc}).success)
@@ -61,7 +61,7 @@ export function createDeviceEnrollmentService(store: DeviceManagementStore, enab
       const current=await snapshot(tx,id);
       if (input.confirmed!==true) throw new QuerySourceError("VALIDATION_ERROR",400);
       if (input.expectedVersion!==current.version) throw new QuerySourceError("DASHBOARD_DEVICE_VERSION_CONFLICT");
-      const device=target(current.devices,deviceId),revision=await authority(tx,current.state,device,actor);
+      const device=target(current.devices,deviceId,true),revision=await authority(tx,current.state,device,actor);
       const token=randomBytes(32).toString("base64url"),hash=digest(token);
       const time=await tx.writeCredential(id,deviceId,"ISSUE",hash,current.state.dashboard.modeVersion!,revision);
       const after=await snapshot(tx,id),updated=after.devices.find(d=>d.id===deviceId)!;

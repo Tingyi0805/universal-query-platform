@@ -112,14 +112,14 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
         <p role="status">PRIMARY 尚未完成新版資料來源轉換。請在 Dashboard 停用時，選取 PRIMARY 並確認 Query、參數及資料量上限；首次儲存前會再次要求確認。未完成轉換前，資料揭露更新可能會被安全機制阻擋。</p>
       )}
       {!configuration.editable && <p role="status">目前不可編輯，請透過既有安全流程停用看板。</p>}
-      <table className="preview-table"><thead><tr><th>來源</th><th>Query</th><th>更新／換頁秒數</th><th>狀態</th><th>操作</th></tr></thead>
+      <div className="dashboard-table-wrap" role="region" aria-label="資料來源設定表格" tabIndex={0}><table className="preview-table"><thead><tr><th>來源</th><th>Query</th><th>更新／換頁秒數</th><th>狀態</th><th>操作</th></tr></thead>
         <tbody>{[configuration.primary, ...configuration.sources].map(source => <tr key={source.sourceKey}>
           <td>{source.sourceKey}</td><td>{queries.find(query => query.id === source.queryDefinitionId)?.name ?? source.queryDefinitionId ?? "待明確選取 Query"}</td>
           <td>{source.refreshSeconds}／{source.pageSeconds}</td><td>{source.errorCode ?? source.bindingState ?? "PRIMARY"}</td>
           <td><button type="button" disabled={busy || !configuration.editable} onClick={() => edit(source)}>編輯 {source.sourceKey}</button>
             {source.id && source.queryDefinitionId === null && <button type="button" disabled={busy || !configuration.editable} onClick={() => void revokePending(source)}>撤銷 {source.sourceKey} 舊核准</button>}
             {source.id && <button type="button" disabled={busy || !configuration.editable} onClick={() => setRemove(source)}>移除 {source.sourceKey}</button>}</td>
-        </tr>)}</tbody></table>
+        </tr>)}</tbody></table></div>
       <fieldset disabled={busy || !configuration.editable} className="dashboard-editor-form"><legend>{draft.sourceKey === "PRIMARY" ? "PRIMARY 設定" : "來源設定"}</legend>
         <label>來源代碼<input value={draft.sourceKey} disabled={Boolean(draft.id) || draft.sourceKey === "PRIMARY"} onChange={event => setDraft({ ...draft, sourceKey: event.target.value })}/></label>
         <label>已發布 Query<select aria-label="已發布 Query" value={draft.queryDefinitionId ?? ""} onChange={event => setDraft({ ...draft, queryDefinitionId: Number(event.target.value) || null })}>

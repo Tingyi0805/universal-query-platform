@@ -8,3 +8,8 @@ export function deviceExpiry(expiresAtUtc: string | null | undefined, now=Date.n
   if(delta<=30*86400000)return{band:"DUE30",days,text:`30 天內到期（剩餘 ${days} 天）`} as const;
   return{band:"ACTIVE",days,text:`剩餘 ${days} 天`} as const;
 }
+
+// Terminal status takes precedence over a preserved historical expiry date.
+export function deviceExpiryApplicability(device:{archivedAtUtc?:string|null;revokedAtUtc?:string|null;isArchived?:boolean}) {
+  return device.isArchived||device.archivedAtUtc ? "不適用（已封存）" : device.revokedAtUtc ? "不適用（已撤銷）" : null;
+}

@@ -68,7 +68,7 @@ for(const revokeFirst of [true,false])test(`D2-B proof/revoke serialization revo
  const f=await pendingFixture(),a=await issue(f);
  const results=await Promise.allSettled(revokeFirst?[f.revoke(),f.enrollment.enroll(1,7,a.token,ip)]:[f.enrollment.enroll(1,7,a.token,ip),f.revoke()]);
  assert.equal(results[revokeFirst?0:1]!.status,"fulfilled");if(revokeFirst)assert.equal(results[1]!.status,"rejected");
- const d=f.db().devices[0]!;assert(d.RevokedAtUtc);assert.equal(d.IsActive,false);assert.equal(d.ReenrollmentRequired,null);assert.notEqual(d.TokenHash,hash(a.token));
+ const d=f.db().devices[0]!;assert(d.RevokedAtUtc);assert.equal(d.IsActive,false);assert.equal(d.ReenrollmentRequired??null,null);assert.notEqual(d.TokenHash,hash(a.token));
  await assert.rejects(f.enrollment.enroll(1,7,a.token,ip));
 });
 test("D2-B metadata invalidation reopens pending and invalidates enrolled Token",async()=>{
@@ -156,4 +156,31 @@ test("D2-B management HTTP requires verified JWT, explicit confirmation and full
  for(const body of [{expectedVersion:version},{confirmed:true},{expectedVersion:version,confirmed:true,token:"forbidden"}])assert.equal((await h.request(path,body,auth)).status,400);
  assert.equal((await h.request(path,{expectedVersion:"0".repeat(64),confirmed:true},auth)).status,409);
  assert.equal(f.db().devices[0]!.QueryModeGrantVersion,null);
+});
+
+test("D6-3 new metadata device issues once through versioned CAS then requires IP-bound Enrollment",async()=>{
+ const f=deviceManagementFixture();Object.assign(f.db().parent,{IsActive:false,QueryMode:"LEGACY",QueryModeVersion:0});
+ const created=await f.service.create(1,actor,{expectedVersion:await f.version(),confirmed:true,metadata:{deviceName:"Synthetic first device",enforceIpRestriction:true,allowedIp:ip.ipAddress,allowedCidr:null,expiresAtUtc:null}});
+ const d=f.db().devices.find(d=>d.Id===created.deviceId)!;assert.equal(d.ReenrollmentRequired??null,null);assert.equal(d.QueryModeGrantVersion,null);
+ const before=f.snapshot();await assert.rejects(f.enrollment.issue(1,d.Id,actor,{expectedVersion:await f.version(),confirmed:true}));assert.deepEqual(f.snapshot(),before);
+ Object.assign(f.db().parent,{IsActive:true,QueryMode:"QUERY_ONLY",QueryModeVersion:4});
+ const expectedVersion=await f.version(),issued=await f.enrollment.issue(1,d.Id,actor,{expectedVersion,confirmed:true});
+ const updated=()=>f.db().devices.find(v=>v.Id===d.Id)!;
+ assert.equal(updated().ReenrollmentRequired,true);assert.equal(updated().TokenHash,hash(issued.token));assert.equal(updated().QueryModeGrantVersion,4);
+ assert.equal(f.db().audits.at(-1)!.eventType,"DASHBOARD_DEVICE_TOKEN_ISSUED_PENDING");
+ await assert.rejects(f.enrollment.issue(1,d.Id,actor,{expectedVersion,confirmed:true}),{code:"DASHBOARD_DEVICE_VERSION_CONFLICT"});
+ await assert.rejects(f.enrollment.enroll(1,d.Id,issued.token,{ipAddress:"192.0.2.3"}));
+ await f.enrollment.enroll(1,d.Id,issued.token,ip);assert.equal(updated().ReenrollmentRequired,false);
+ assert(!JSON.stringify(f.db().audits).includes(issued.token));
+});
+for(const reason of ["revoked","archived","suspended","inactive","expired","grant","manager","acl","policy","commit"] as const)test(`D6-3 first issue rejects ${reason} without mutation`,async()=>{
+ const f=deviceManagementFixture();Object.assign(f.db().parent,{IsActive:true,QueryMode:"QUERY_ONLY",QueryModeVersion:4});
+ const d=f.db().devices[0]!;Object.assign(d,{ReenrollmentRequired:null,QueryModeGrantVersion:null,DelegatorTokenVersion:null});
+ if(reason==="revoked")Object.assign(d,{IsActive:false,RevokedAtUtc:"2020-01-01T00:00:00Z"});
+ if(reason==="archived")Object.assign(d,{IsActive:false,ArchivedAtUtc:"2020-01-01T00:00:00Z"});
+ if(reason==="suspended")Object.assign(d,{IsActive:false,SuspendedAtUtc:"2020-01-01T00:00:00Z",ReenrollmentRequired:true});
+ if(reason==="inactive")d.IsActive=false;if(reason==="expired")d.ExpiresAtUtc="2000-01-01T00:00:00Z";
+ if(reason==="grant"){d.QueryModeGrantVersion=4;d.DelegatorTokenVersion=1;}
+ const version=await f.version();if(reason==="manager")f.control.permissions=["DESIGN_QUERY"];if(reason==="acl")f.control.query=false;if(reason==="policy")f.control.policy=false;if(reason==="commit")f.control.failAt="commit";
+ const before=f.snapshot();await assert.rejects(f.enrollment.issue(1,d.Id,actor,{expectedVersion:version,confirmed:true}));assert.deepEqual(f.snapshot(),before);
 });

@@ -427,3 +427,6 @@
 .dashboard-editor-form > .dashboard-source-enabled span {
   line-height: 1.5;
 }
+.dashboard-designer-page, .dashboard-designer-page > *, .dashboard-designer-page .preview-panel { min-width:0; max-width:100%; box-sizing:border-box; }
+.dashboard-designer-page .uqp-device-manager > ul { max-width:100%; box-sizing:border-box; }
+.dashboard-designer-page .dashboard-preview-heading > * { min-width:0; overflow-wrap:anywhere; }

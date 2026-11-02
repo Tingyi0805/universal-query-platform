@@ -44,6 +44,13 @@ export async function verifyD3(pool:sql.ConnectionPool) {
  const input=async()=>({expectedVersion:(await service.safetyRead(1,actor)).version,confirmed:true as const});
  const insert=async(suspended=false,pending=false)=>Number((await query(`INSERT uqp.DashboardDisplayDevice(TokenHash,IsActive,SuspendedAtUtc,ReenrollmentRequired,QueryModeGrantVersion,DelegatorTokenVersion)
  OUTPUT INSERTED.Id VALUES(CONVERT(char(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),${suspended?0:1},${suspended?'SYSUTCDATETIME()':'NULL'},${suspended||pending?1:0},${suspended?'NULL':'1'},${suspended?'NULL':'1'})`)).recordset[0].Id);
+ // D6-3 first issuance must work with the installed 926 trigger, without changing it.
+ const firstId=Number((await query("INSERT uqp.DashboardDisplayDevice(TokenHash,IsActive,ReenrollmentRequired,QueryModeGrantVersion,DelegatorTokenVersion) OUTPUT INSERTED.Id VALUES(CONVERT(char(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),1,NULL,NULL,NULL)")).recordset[0].Id);
+ const firstHash="d".repeat(64);
+ await production.transaction(async tx=>{await tx.lifecycleReady();await tx.records(1);await tx.writeCredential(1,firstId,"ISSUE",firstHash,1,1);});
+ const first=(await query(`SELECT ReenrollmentRequired,TokenHash,QueryModeGrantVersion FROM uqp.DashboardDisplayDevice WHERE Id=${firstId}`)).recordset[0];
+ assert.equal(first.ReenrollmentRequired,true);assert.equal(first.TokenHash,firstHash);assert.equal(Number(first.QueryModeGrantVersion),1);
+ console.log("D6_3_FIRST_ISSUE_OUTPUT_INTO_926_TRIGGER_PASS");
  // Exercise the existing D2-A / D2-B SQL against the same 926 trigger.
  const enrollmentId=await insert();
  await production.transaction(async tx=>{

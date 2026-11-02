@@ -76,3 +76,9 @@ test("missing trusted metadata cannot be replaced by an identifier assertion or 
   await expect(panel.getByRole("button", { name: "確認並儲存患者稽核設定" })).toBeDisabled();
   expect(state.writes).toEqual([]);
 });
+
+test("D6-3 guidance blocks owner-unknown identity and never substitutes a bed number",async({page})=>{
+ const {state,panel}=await setup(page);state.metadata=false;await panel.getByRole("button",{name:"重新載入稽核版本"}).click();
+ await expect(panel).toContainText("不得以姓名、床號或候選 metadata 代替");
+ await expect(panel.getByLabel("患者識別欄位",{exact:true})).toBeDisabled();await expect(panel.getByRole("button",{name:"確認並儲存患者稽核設定"})).toBeDisabled();expect(state.writes).toEqual([]);
+});

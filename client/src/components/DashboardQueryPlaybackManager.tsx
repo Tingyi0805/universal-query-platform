@@ -1,7 +1,7 @@
 import { deviceListLabels, type ListDevice } from "../dashboard/deviceList";
 import { taipeiDateTime } from "../dashboard/taipeiDateTime";
 import { useAuth } from "../auth/AuthContext";
-import { deviceExpiry } from "../dashboard/deviceExpiry";
+import { deviceExpiry, deviceExpiryApplicability } from "../dashboard/deviceExpiry";
 import { DashboardDeviceMetadataManager } from "./DashboardDeviceMetadataManager";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -183,11 +183,11 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。下方版本化管理區顯示已儲存工作站關聯；即時有效性仍以預檢與核發時的後端委派驗證為準。</p>
     <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage}/>
     <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
-    <table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{(pageView?.token===accessToken?pageView.items:[]).filter(d=>d.dashboardId===dashboardId).map(device => <tr key={device.id}>
-      <td>{device.deviceName}（ID {device.id}）</td><td>{deviceListLabels[device.status]}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供"}{device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
+    <div className="uqp-device-table-scroll" role="region" aria-label="裝置操作表格" tabIndex={0}><table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{(pageView?.token===accessToken?pageView.items:[]).filter(d=>d.dashboardId===dashboardId).map(device => <tr key={device.id}>
+      <td>{device.deviceName}（ID {device.id}）</td><td>{deviceListLabels[device.status]}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{deviceExpiryApplicability(device) ?? (device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供")}{!deviceExpiryApplicability(device)&&device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
       <td><button type="button" disabled={busy} onClick={() => void readPlacement(device.id)}>檢視 {device.deviceName} 播放位置（唯讀）</button><button type="button" disabled={busy || !canIssue(device, now)} onClick={() => void credential(device)}>核發／重新核發 {device.deviceName}</button>
-      <span>暫停、永久撤銷與封存請使用上方版本化裝置管理區。</span></td>
-    </tr>)}</tbody></table>
+      <span>首次核發、暫停、永久撤銷與封存請使用上方版本化裝置管理區；首次核發後須完成 Enrollment。</span></td>
+    </tr>)}</tbody></table></div>
     {placement && <p role="status">裝置 {placement.deviceId} 已保存播放位置（唯讀）：{placement.settings.browser}，螢幕 {placement.settings.screenNumber}，{placement.settings.fullscreen ? "全螢幕" : "視窗"}，位置 {placement.settings.windowX}／{placement.settings.windowY}，尺寸 {placement.settings.windowWidth}×{placement.settings.windowHeight}。修改須先補齊版本化安全 API。</p>}
     {issuedDeviceId !== null && issued.current && <dialog ref={tokenDialog} aria-labelledby="issued-device-token-title"
       onCancel={event => { event.preventDefault(); clearCredential(); }}
