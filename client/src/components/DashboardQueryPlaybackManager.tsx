@@ -14,6 +14,8 @@ const labels: Record<string, string> = { inactive: "停用狀態", capacity: "�
 export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
   const { hasPermission } = useAuth();
   const [pageView,setPageView]=useState<{token:string|null;items:ListDevice[]}|null>(null);
+  const [firstCredentials,setFirstCredentials]=useState<number[]>([]);
+  const onFirstCredentials=useCallback((ids:number[])=>setFirstCredentials(ids),[]);
   const onDevicePage=useCallback((items:ListDevice[])=>setPageView({token:accessToken,items}),[accessToken]);
   const [mode, setMode] = useState<DashboardMode | null>(null), [configuration, setConfiguration] = useState<QuerySourceConfiguration | null>(null);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
@@ -108,7 +110,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     if (issued.current && !devices.some(device => device.id === issued.current!.deviceId && deviceMayIssue(device, now))) clearCredential();
   }, [devices, now]);
   const canActivate = readMessages.length === 0 && !!mode && !!configuration?.editable && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
-  const canIssue = (device: ManagedDevice, time = Date.now()) => hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time) && devices.some(d=>d.id===device.id&&deviceMayIssue(d,time));
+  const canIssue = (device: ManagedDevice, time = Date.now()) => !firstCredentials.includes(device.id) && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time) && devices.some(d=>d.id===device.id&&deviceMayIssue(d,time));
   function failed(error: unknown) { clearCredential(); setPreflight(null); setMode(null); setMessage(dashboardOperationError(error)); }
   async function check() {
     if (busy || !mode) return;
@@ -181,7 +183,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <button type="button" disabled={busy || !canActivate || mode?.mode === "QUERY_ONLY"} onClick={() => void change(true)}>啟用 Query-only</button>
     <button type="button" disabled={busy || mode?.mode !== "QUERY_ONLY"} onClick={() => void change(false)}>停用 Query-only</button>
     <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。下方版本化管理區顯示已儲存工作站關聯；即時有效性仍以預檢與核發時的後端委派驗證為準。</p>
-    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage}/>
+    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage} onFirstCredentials={onFirstCredentials}/>
     <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
     <div className="uqp-device-table-scroll" role="region" aria-label="裝置操作表格" tabIndex={0}><table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{(pageView?.token===accessToken?pageView.items:[]).filter(d=>d.dashboardId===dashboardId).map(device => <tr key={device.id}>
       <td>{device.deviceName}（ID {device.id}）</td><td>{deviceListLabels[device.status]}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{deviceExpiryApplicability(device) ?? (device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供")}{!deviceExpiryApplicability(device)&&device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>

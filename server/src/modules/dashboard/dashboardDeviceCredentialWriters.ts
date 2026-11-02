@@ -18,6 +18,7 @@ export async function requireUnmanagedDeviceCredential(request: sql.Request, das
   const row=(await request.input("credentialDashboardId",sql.BigInt,dashboardId).input("credentialDeviceId",sql.BigInt,deviceId)
     .query(`SELECT * FROM uqp.DashboardDisplayDevice WITH(UPDLOCK,HOLDLOCK)
       WHERE DashboardId=@credentialDashboardId AND Id=@credentialDeviceId`)).recordset[0];
-  if (!row || row.SuspendedAtUtc!=null || row.ReenrollmentRequired!=null || row.RevokedAtUtc!=null || row.ArchivedAtUtc!=null)
+  const unissued926=row?.ReenrollmentRequired===null&&row.QueryModeGrantVersion===null&&row.DelegatorTokenVersion===null;
+  if (!row || unissued926 || row.SuspendedAtUtc!=null || row.ReenrollmentRequired!=null || row.RevokedAtUtc!=null || row.ArchivedAtUtc!=null)
     throw new QuerySourceError("DASHBOARD_DEVICE_VERSIONED_API_REQUIRED");
 }

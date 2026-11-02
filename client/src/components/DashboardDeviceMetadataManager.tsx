@@ -16,7 +16,7 @@ type Device = ManagedDevice & Metadata & { dashboardId: number; createdByUserId:
 type Snapshot = { dashboardId: number; version: string; canCreate: boolean; devices: Device[] };
 const empty: Metadata = { deviceName: "", enforceIpRestriction: false, allowedIp: null, allowedCidr: null, expiresAtUtc: null };
 const defaultPlacement: PlaybackPlacement = { browser: "edge", screenNumber: 2, fullscreen: true, windowX: 1920, windowY: 0, windowWidth: 1920, windowHeight: 1080 };
-export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void }) {
+export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage, onFirstCredentials }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void; onFirstCredentials?:(ids:number[])=>void }) {
   const { hasPermission } = useAuth();
   const [history,setHistory]=useState<{dashboardId:number;deviceId:number;name:string;token:string|null}|null>(null);
   const closeHistory=useCallback(()=>setHistory(null),[]);
@@ -28,6 +28,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
   useEffect(()=>setSearchText(""),[dashboardId,accessToken]);
   const [lifecycle, setLifecycle] = useState<Snapshot | null>(null), [lifecycleVersion, setLifecycleVersion] = useState<string | null>(null);
   const [lifecycleMessage, setLifecycleMessage] = useState("");
+  useEffect(()=>{onFirstCredentials?.(lifecycle?.devices.filter(firstCredentialCandidate).map(d=>d.id)??[]);},[lifecycle,onFirstCredentials]);
   const [issuedId, setIssuedId] = useState<number | null>(null), [copyMessage, setCopyMessage] = useState("");
   const secret = useRef<string | null>(null), tokenField = useRef<HTMLTextAreaElement>(null), tokenDialog = useRef<HTMLDialogElement>(null);
   const mutation = useRef(false);

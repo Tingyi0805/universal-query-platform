@@ -46,6 +46,8 @@ export async function verifyD3(pool:sql.ConnectionPool) {
  OUTPUT INSERTED.Id VALUES(CONVERT(char(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),${suspended?0:1},${suspended?'SYSUTCDATETIME()':'NULL'},${suspended||pending?1:0},${suspended?'NULL':'1'},${suspended?'NULL':'1'})`)).recordset[0].Id);
  // D6-3 first issuance must work with the installed 926 trigger, without changing it.
  const firstId=Number((await query("INSERT uqp.DashboardDisplayDevice(TokenHash,IsActive,ReenrollmentRequired,QueryModeGrantVersion,DelegatorTokenVersion) OUTPUT INSERTED.Id VALUES(CONVERT(char(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),1,NULL,NULL,NULL)")).recordset[0].Id);
+ const {requireUnmanagedDeviceCredential}=await import("../modules/dashboard/dashboardDeviceCredentialWriters.js");
+ await assert.rejects(()=>requireUnmanagedDeviceCredential(pool.request(),1,firstId),{code:"DASHBOARD_DEVICE_VERSIONED_API_REQUIRED"});
  const firstHash="d".repeat(64);
  await production.transaction(async tx=>{await tx.lifecycleReady();await tx.records(1);await tx.writeCredential(1,firstId,"ISSUE",firstHash,1,1);});
  const first=(await query(`SELECT ReenrollmentRequired,TokenHash,QueryModeGrantVersion FROM uqp.DashboardDisplayDevice WHERE Id=${firstId}`)).recordset[0];

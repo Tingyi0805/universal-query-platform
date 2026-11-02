@@ -6,7 +6,7 @@
 
 | Issue 項目 | 判定 | 修改及回歸 |
 |---|---|---|
-| FUNC-01 首次Token | DONE | 沿用版本化credential service/writer；只額外接受active、未暫停/撤銷/封存、NULL marker且兩個grant版本皆NULL的未授權裝置。完整管理snapshot/CAS、確認、Query-only啟用、操作者/委派者token version/Query ACL、公共政策、Audit與提交後一次性Token回傳均保留。核發後pending=true，Enrollment仍只接受pending、正確新Token/IP與完整授權。前端從完整lifecycle snapshot判斷首次核發，絕不從分頁清單猜測grant。單元測create→未啟用拒絕→首次issue→錯IP拒絕→Enroll；10項拒絕/rollback；E2E單次呈現/清除/完整CAS；兩版disposable SQL使用真實writer與926 Trigger驗證NULL首次核發。 |
+| FUNC-01 首次Token | DONE | 沿用版本化credential service/writer；只額外接受active、未暫停/撤銷/封存、NULL marker且兩個grant版本皆NULL的未授權裝置。完整管理snapshot/CAS、確認、Query-only啟用、操作者/委派者token version/Query ACL、公共政策、Audit與提交後一次性Token回傳均保留。舊端點對926未核發裝置明確拒絕（pre-926/已有grant的Legacy相容保留），核發後pending=true，Enrollment仍只接受pending、正確新Token/IP與完整授權。前端從完整lifecycle snapshot判斷首次核發，絕不從分頁清單猜測grant。單元測create→未啟用拒絕→首次issue→錯IP拒絕→Enroll；10項拒絕/rollback；E2E單次呈現/清除/完整CAS；兩版disposable SQL使用真實writer與926 Trigger驗證NULL首次核發。 |
 | FUNC-02 預覽換頁 | DONE | admin-preview允許帶同一snapshot的續頁，page>1無snapshot仍拒絕。後端沿用使用者/session/來源/context/fingerprint/ACL/遮蔽及每頁揭露Audit檢查。刷新先取新snapshot、再取得所需頁，換頁時鐘不因10秒刷新重設；20秒換頁、5筆/每頁2筆、手動換頁、資料縮減clamp、權限失敗清除、關閉後舊回應防護均有E2E。續頁不讀全量資料到Client。 |
 | UI-01 裝置管理溢出 | DONE | 裝置操作表與來源設定表使用局部水平捲動；文字/按鈕換行、max-width與min-width保護。360/768px觸控情境檢查document不溢出、鍵盤focus及局部scroll，保留控制項操作。 |
 | UI-02 終止裝置期限 | DONE | 主清單及操作表改顯示「不適用（已撤銷／已封存）」，不再呈現剩餘有效天數；原到期值、DB與Audit均保留。單元與兩種終止狀態E2E驗證。 |
@@ -20,7 +20,7 @@
 2. 明確完成Query-only預檢/啟用，重新載入取得最新完整管理版本。建立時isActive只是設定，沒有Token/grant，狀態維持未驗證，不代表可播放。
 3. 在上方版本化區點「首次核發新 Token」，只顯示一次。關閉、pagehide、切換、過期回應不保留Token；沒有歷史讀回、不存URL/localStorage/sessionStorage。
 4. 使用該裝置原BAT專用瀏覽器及原播放網址，依既有「使用恢復後的新 Token 重新授權」選項輸入新Token完成Enrollment。這個選項也適用首次版本化核發，不改BAT/Cookie/HTTPS協定或原有Token handoff ACK。未Enrollment、錯IP、舊Token、過期、撤銷/封存一律不可播放。
-5. 409重新載入，不自動重送核發。撤銷裝置不可藉首次核發復活；已Enrolled裝置重新授權仍使用既有暫停/恢復流程。舊版核發入口及ACK協定未改，首次核發以本次版本化入口為準。
+5. 409重新載入，不自動重送核發。撤銷裝置不可藉首次核發復活；已Enrolled裝置重新授權仍使用既有暫停/恢復流程。已核發Legacy裝置的ACK協定不改；926下NULL marker且NULL grants的新裝置，舊核發writer也會拒絕，避免繞過完整CAS及Enrollment。前端同時停用該裝置的重複舊入口，首次核發只能使用本次版本化入口。
 
 ## OR_001 患者稽核：必要前置及目前缺口
 

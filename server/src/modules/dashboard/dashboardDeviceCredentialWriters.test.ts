@@ -20,3 +20,9 @@ for(const marker of [{ReenrollmentRequired:true},{ReenrollmentRequired:false},{S
 for(const row of [{},{ReenrollmentRequired:null,SuspendedAtUtc:null}])test(`old unmarked credentials remain compatible ${JSON.stringify(row)}`,async()=>{
  await requireUnmanagedDeviceCredential(request(row).r,1,7);
 });
+
+test("D6-3 926 unissued rows cannot bypass full CAS and Enrollment via old credential writers",async()=>{
+ const row={ReenrollmentRequired:null,SuspendedAtUtc:null,QueryModeGrantVersion:null,DelegatorTokenVersion:null};
+ const f=request(row);await assert.rejects(requireUnmanagedDeviceCredential(f.r,1,7),{code:"DASHBOARD_DEVICE_VERSIONED_API_REQUIRED"});assert(f.statements.every(s=>s.trimStart().startsWith("SELECT")));
+ await requireUnmanagedDeviceCredential(request({...row,QueryModeGrantVersion:4,DelegatorTokenVersion:1}).r,1,7);
+});

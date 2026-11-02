@@ -538,6 +538,7 @@ test.describe("touch history",()=>{test.use({hasTouch:true});test("history filte
 test("D6-3 first Token uses the full lifecycle CAS and one-time dialog",async({page})=>{
  const {state,panel}=await setup(page);
  await expect(panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true})).toBeEnabled();
+ await expect(page.getByRole("button",{name:"核發／重新核發 合成裝置",exact:true})).toBeDisabled();
  await panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true}).click();
  await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toBeVisible();
  expect(state.writes.filter(w=>w.path.endsWith("/credential"))).toHaveLength(1);
