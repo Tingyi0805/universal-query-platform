@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHmac, scryptSync } from "node:crypto";
 import { hashPin, verifyPin, parsePinPepper } from "./pinVerifier.js";
 
 const pepper = parsePinPepper("test-v1", Buffer.alloc(32, 17).toString("base64"));
@@ -35,4 +36,18 @@ test("concurrent KDF jobs are bounded and release slots after completion", async
   await assert.rejects(hashPin("739206", pepper), /PIN_VERIFIER_BUSY/);
   await Promise.all(jobs);
   assert.ok(await verifyPin("739204", await hashPin("739204", pepper), pepper));
+});
+
+test("new scrypt hashes use approved p=1; earlier p=3 hashes remain verifiable", async () => {
+  const current = await hashPin("739204", pepper);
+  assert.match(current, /\$32768\$8\$1\$/);
+  const salt = Buffer.alloc(16, 4);
+  const input = createHmac("sha256", pepper.key).update("uqp:pin:v1\0").update("739204", "utf8").digest();
+  const legacyKey = scryptSync(input, salt, 32, { N: 32768, r: 8, p: 3, maxmem: 64 * 1024 * 1024 });
+  input.fill(0);
+  const legacy = `$uqp-scrypt$1$${pepper.id}$32768$8$3$${salt.toString("base64url")}$${legacyKey.toString("base64url")}`;
+  legacyKey.fill(0);
+  assert.equal(await verifyPin("739204", legacy, pepper), true);
+  assert.equal(await verifyPin("739205", legacy, pepper), false);
+  assert.equal(await verifyPin("739204", legacy.replace("$8$3$", "$8$2$"), pepper), false);
 });

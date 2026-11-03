@@ -47,7 +47,7 @@ export function createWorkstationPinService(deps = defaults) {
         && input.pin.length === user.PinLength && isScryptPinHash(String(user.PinHash));
       // Unknown/ineligible accounts also consume one bounded KDF. The dummy
       // verifier carries no real PIN and is never eligible to create a Session.
-      const dummy = `$uqp-scrypt$1$${pepper.id}$32768$8$3$${Buffer.alloc(16).toString("base64url")}$${Buffer.alloc(32).toString("base64url")}`;
+      const dummy = `$uqp-scrypt$1$${pepper.id}$32768$8$1$${Buffer.alloc(16).toString("base64url")}$${Buffer.alloc(32).toString("base64url")}`;
       const compared = await deps.verify(input.pin, eligible ? String(user.PinHash) : dummy, pepper);
       const valid = eligible && compared;
       if (!valid) { await audit("AUTH_PIN_LOGIN_FAILED", tx, undefined, "PIN_INVALID"); return false; }

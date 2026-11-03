@@ -15,8 +15,8 @@ PR #83 保持 Draft、不合併。本文件是程式契約，**不是正式部�
 - 每次 Session 讀取重驗工作站啟用、PIN 開關、用途、未退役、credential 未撤銷／版本、live LOCAL 使用者與 TokenVersion、PIN 啟用與 PinVersion、有效允許名單。權限只保留 VIEW_QUERY／EXECUTE_QUERY，不授予管理、匯出或 PIN 管理能力。
 - 固定 idle 180 秒、absolute 28800 秒（8 小時，依既定核准規格）；SQL Server 時間裁決。讀取、QueryDelivery 重驗與背景 poll 不延長 idle；只有前端實際操作觸發的受 CSRF 保護 activity 才更新。Session status 在同一交易撤銷到期 Session 並寫 Audit；Audit 失敗拒絕交付。Query 讀取亦獨立檢查到期，不依賴 poll 正常運作。
 - 登入與切換先提交 generation 增加、A 撤銷與必要 Audit，再取得 B verifier／驗證。最終 generation CAS、B Session INSERT 與登入 Audit 同交易提交。B 失敗、CAS 過期、第二階段 Audit／commit 失敗都不恢復 A；格式錯誤的 B 切換也先撤銷 A。
-- 沿用固定成本 scrypt／外置 pepper、4–12 政策（當次須符合 live PinLength），不接受 legacy bcrypt 兌換 PIN Session。無帳號／不適用帳號亦執行 dummy KDF；所有錯誤回覆不帶 verifier 或原始 DB 例外。KDF 併發上限沿用既有兩個工作。
-- 帳號 bucket 優先採 DB collation 解析到的 AppUser ID，避免帳號拼法 alias 分散失敗計數；未知帳號使用固定長度不可逆 key。跨實例 SQL 帳號／工作站／可信網路三種 bucket、漸進延遲、封鎖與 generation Repository 沿用恢復成果，不用記憶體 Map 取代。
+- 沿用固定成本 scrypt（N=32768、r=8，新雜湊 p=1；既有 p=3 版本僅驗證相容）／外置 pepper、4–12 政策（當次須符合 live PinLength），不接受 legacy bcrypt 兌換 PIN Session。無帳號／不適用帳號亦執行 dummy KDF；所有錯誤回覆不帶 verifier 或原始 DB 例外。KDF 併發上限沿用既有兩個工作。
+- 登入失敗門檻依核准規格採帳號 5 次、工作站 20 次、可信網路 100 次（15 分鐘窗）；帳號 bucket 優先採 DB collation 解析到的 AppUser ID，避免帳號拼法 alias 分散失敗計數；未知帳號使用固定長度不可逆 key。跨實例 SQL 帳號／工作站／可信網路三種 bucket、漸進延遲、封鎖與 generation Repository 沿用恢復成果，不用記憶體 Map 取代。
 
 ## Cookie／CSRF 邊界與 API
 

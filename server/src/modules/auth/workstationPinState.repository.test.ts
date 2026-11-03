@@ -33,7 +33,7 @@ test("attempt digests are stable across instances, domain separated, and contain
   const a = buckets(), b = buckets();
   assert.deepEqual(a, b);
   assert.equal(new Set(a.map(x => x.digest.toString("hex"))).size, 3);
-  assert.deepEqual(a.map(x => x.limit), [5, 50, 20]);
+  assert.deepEqual(a.map(x => x.limit), [5, 100, 20]);
   assert.notDeepEqual(a, pinAttemptBuckets("synthetic-account", 7, "synthetic-network", Buffer.alloc(32, 20)));
   assert.throws(() => pinAttemptBuckets("", 7, "synthetic-network", Buffer.alloc(32)), /INPUT_INVALID/);
 });

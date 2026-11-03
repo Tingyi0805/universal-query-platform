@@ -11,7 +11,7 @@ export function pinAttemptBuckets(account: string, workstationId: number, networ
   const bucket = (scope: Scope, value: string, limit: number): PinBucket => ({ scope, limit,
     digest: createHmac("sha256", key).update(`uqp:pin-attempt:v1\0${scope}\0`).update(value).digest() });
   // Caller supplies canonical account and trusted-resolver network identities.
-  return [bucket("ACCOUNT", account, 5), bucket("NETWORK", network, 50), bucket("WORKSTATION", String(workstationId), 20)];
+  return [bucket("ACCOUNT", account, 5), bucket("NETWORK", network, 100), bucket("WORKSTATION", String(workstationId), 20)];
 }
 
 export type PinStateDependencies = {
@@ -50,7 +50,7 @@ export function createWorkstationPinState(deps: PinStateDependencies = defaults)
   async function attempt(buckets: PinBucket[], verifyAndAudit: (tx: sql.Transaction) => Promise<boolean>): Promise<"OK" | "INVALID" | "LOCKED"> {
     const ordered = [...buckets].sort((a, b) => a.scope.localeCompare(b.scope, "en"));
     if (ordered.length !== 3 || ordered.map(b => b.scope).join(",") !== "ACCOUNT,NETWORK,WORKSTATION" ||
-        ordered.some(b => b.digest.length !== 32 || b.limit !== ({ ACCOUNT: 5, NETWORK: 50, WORKSTATION: 20 })[b.scope]))
+        ordered.some(b => b.digest.length !== 32 || b.limit !== ({ ACCOUNT: 5, NETWORK: 100, WORKSTATION: 20 })[b.scope]))
       throw new Error("PIN_ATTEMPT_INPUT_INVALID");
     return transaction(async tx => {
       // Lock exact logical keys before any range reads/inserts, including missing accounts.
