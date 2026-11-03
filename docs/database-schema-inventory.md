@@ -1927,4 +1927,5 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql | c073e595eb56d6e11b8b2c46ef168711d4aae61ee6c370800b6da5c4e33f0a0c |
 | SOURCE | database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | ee06ae0c9eeccba7e1e75894c10542e0c2fb40ad45258a03b9fb58fa0ad9c518 |
 | SOURCE | database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | 66e61f3ec190e12d1369b3ae6848e73250b8eecbe855ddcf9b957c81da17d74f |
+| SOURCE | database/acceptance/production-workstation-pin-readonly.sql | b24733deaa2f7a0f39d2187156b25a4dac457be2b93985a93515c6bc1590d160 |
 | SOURCE | server/src/scripts/migrate.ts | 52a3831f2af648d60c6df95275fe4b8b8f87716a5eb9c9684332915e5f21e794 |
