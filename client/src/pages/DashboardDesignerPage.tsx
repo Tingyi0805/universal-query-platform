@@ -1,3 +1,5 @@
+import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
+import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
 import { dashboardOperationError } from "../dashboard/managementStatus";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { DashboardBasicSettingsEditor } from "../components/DashboardBasicSettingsEditor";
@@ -42,6 +44,7 @@ type ReportColumn = {
 
 type PreviewResult = {
   dashboard: Pick<DashboardRow,"id"|"name"|"refreshSeconds"|"pageSeconds"|"pageSize">;
+  deliveredAtUtc?:string;
   refreshSeconds?:number; pageSeconds?:number; pageSize?:number;
   page: number; totalPages: number; totalRows?: number; snapshotId: string;
   query: { id: number; code: string; name: string };
@@ -123,6 +126,7 @@ export function DashboardDesignerPage() {
     if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; editDashboard(selected); }
   }, [dashboards, requestedEditor]);
 
+  const [lastDelivery,setLastDelivery]=useState<{dashboardId:number;viewer:string|null;at:string|null;config:Record<string,unknown>}|null>(null);
   const previewSequence = useRef(0), previewRequest=useRef<AbortController|null>(null), previewPage=useRef(1), previewLive=useRef<PreviewResult|null>(null);
   const loadPreview = useCallback(async (dashboardId: number, silent = false, requestedPage=previewPage.current) => {
     const sequence = ++previewSequence.current;
@@ -138,8 +142,11 @@ export function DashboardDesignerPage() {
       const wanted=Math.min(Math.max(1,requestedPage),first.totalPages);
       const page=wanted===1?first:await fetchPage({page:wanted,snapshotId:first.snapshotId});
       if(page.page!==wanted||page.snapshotId!==first.snapshotId||page.totalPages!==first.totalPages||!Array.isArray(page.result?.rows)||!Array.isArray(page.result.columns))throw new Error("PREVIEW_INVALID");
+      const layout=await apiRequest<{profiles:{isDefault:boolean;config:Record<string,unknown>}[]}>(`/dashboards/${dashboardId}/layout`,{signal:controller.signal},accessToken);
+      const profile=layout.profiles.find(p=>p.isDefault)??layout.profiles[0];
       const result:PreviewResult={...page,reportColumns:[],dashboard:{id:dashboardId,name:configuration.presentation?.name??"Query-only 設計預覽",refreshSeconds:page.refreshSeconds??configuration.primary.refreshSeconds,pageSeconds:page.pageSeconds??configuration.primary.pageSeconds,pageSize:page.pageSize??configuration.primary.pageSize}};
       if (sequence !== previewSequence.current) return;
+      setLastDelivery({dashboardId,viewer:accessToken,at:deliveryTime(page.deliveredAtUtc),config:profile?.config??{}});
       previewPage.current=wanted;previewLive.current=result;setPreview({...result,viewer:accessToken});
     } catch (e) {
       if (sequence !== previewSequence.current) return;
@@ -165,7 +172,7 @@ export function DashboardDesignerPage() {
     },Math.max(5,pageSeconds)*1000);
     return()=>window.clearInterval(timer);
   },[previewDashboardId,pageSeconds,loadPreview]);
-  function stopPreview(){++previewSequence.current;previewRequest.current?.abort();previewLive.current=null;previewPage.current=1;setPreview(null);setPreviewDashboardId(null);setPreviewLoading(false);}
+  function stopPreview(){setLastDelivery(null);++previewSequence.current;previewRequest.current?.abort();previewLive.current=null;previewPage.current=1;setPreview(null);setPreviewDashboardId(null);setPreviewLoading(false);}
   useEffect(()=>{
     stopPreview();
     const changed=(event:Event)=>{if((event as CustomEvent).detail?.dashboardId===previewLive.current?.dashboard.id)stopPreview();};
@@ -325,6 +332,7 @@ export function DashboardDesignerPage() {
 
           {previewDashboardId && (
             <section className="dashboard-preview-card">
+              <LastSuccessfulUpdate at={lastDelivery?.dashboardId===previewDashboardId&&lastDelivery.viewer===accessToken?lastDelivery.at:null} config={lastDelivery?.dashboardId===previewDashboardId&&lastDelivery.viewer===accessToken?lastDelivery.config:undefined}/>
               <div className="dashboard-preview-heading">
                 <div>
                   <p className="eyebrow">Live Preview</p>
@@ -387,7 +395,7 @@ export function DashboardDesignerPage() {
                     </tbody>
                   </table>
                   {preview.result.rows.length === 0 && (
-                    <div className="empty-state">目前沒有資料。</div>
+                    <div className="empty-state">目前無符合條件資料。</div>
                   )}
                 </div>
               )}

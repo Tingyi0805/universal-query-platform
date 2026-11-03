@@ -14,8 +14,8 @@ const labels: Record<string, string> = { inactive: "停用狀態", capacity: "�
 export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
   const { hasPermission } = useAuth();
   const [pageView,setPageView]=useState<{token:string|null;items:ListDevice[]}|null>(null);
-  const [firstCredentials,setFirstCredentials]=useState<number[]>([]);
-  const onFirstCredentials=useCallback((ids:number[])=>setFirstCredentials(ids),[]);
+  const [legacyCredentials,setLegacyCredentials]=useState<number[]|null>(null);
+  const onLegacyCredentials=useCallback((ids:number[]|null)=>setLegacyCredentials(ids),[]);
   const onDevicePage=useCallback((items:ListDevice[])=>setPageView({token:accessToken,items}),[accessToken]);
   const [mode, setMode] = useState<DashboardMode | null>(null), [configuration, setConfiguration] = useState<QuerySourceConfiguration | null>(null);
   const [preflight, setPreflight] = useState<Preflight | null>(null);
@@ -110,7 +110,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     if (issued.current && !devices.some(device => device.id === issued.current!.deviceId && deviceMayIssue(device, now))) clearCredential();
   }, [devices, now]);
   const canActivate = readMessages.length === 0 && !!mode && !!configuration?.editable && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
-  const canIssue = (device: ManagedDevice, time = Date.now()) => !firstCredentials.includes(device.id) && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time) && devices.some(d=>d.id===device.id&&deviceMayIssue(d,time));
+  const canIssue = (device: ManagedDevice, time = Date.now()) => legacyCredentials?.includes(device.id)===true && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time) && devices.some(d=>d.id===device.id&&deviceMayIssue(d,time));
   function failed(error: unknown) { clearCredential(); setPreflight(null); setMode(null); setMessage(dashboardOperationError(error)); }
   async function check() {
     if (busy || !mode) return;
@@ -177,20 +177,20 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <p role="status">公共顯示政策統一於 Dataset 確認；後端預檢、啟用、裝置核發與逐頁交付都會驗證目前政策，不讀取 Dashboard 的第二套欄位核准。</p>
     <p>建立停用草稿 → 來源 → Dataset 公共政策 → <Link to={`/designer/dashboards/${dashboardId}/layout`}>版型設計／預覽</Link> → 預檢 → 啟用 → 裝置授權。順序不代表授權證據，預檢只代表檢查當下。</p>
     <button type="button" disabled={busy} onClick={() => { setMessage(""); void refresh(); }}>重新載入播放狀態</button>
-    <button type="button" disabled={busy || !mode} onClick={() => void check()}>執行啟用前檢查</button>
+    <button id="uqp-query-preflight" type="button" disabled={busy || !mode} onClick={() => void check()}>執行啟用前檢查</button>
     {preflight && <div role="status"><p>來源：{preflight.sourceCount}/8；待轉換：{preflight.pendingCount}。{preflight.ready ? "後端預檢通過，啟用與核發仍會重新驗證。" : "後端預檢未通過，禁止啟用。"}</p>
       <ul>{preflight.checks.map(item => <li key={item.name}>{labels[item.name] ?? "安全檢查"}：{result(item)}</li>)}{preflight.queries.map(item => <li key={item.sourceKey}>{item.sourceKey} Query ACL／必要參數／遮蔽與稽核：{result(item)}</li>)}{preflight.delegators.map(item => <li key={item.deviceId}>裝置 {item.deviceId} 委派者／工作站／Query ACL：{result(item)}</li>)}</ul></div>}
     <button type="button" disabled={busy || !canActivate || mode?.mode === "QUERY_ONLY"} onClick={() => void change(true)}>啟用 Query-only</button>
     <button type="button" disabled={busy || mode?.mode !== "QUERY_ONLY"} onClick={() => void change(false)}>停用 Query-only</button>
     <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。下方版本化管理區顯示已儲存工作站關聯；即時有效性仍以預檢與核發時的後端委派驗證為準。</p>
-    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage} onFirstCredentials={onFirstCredentials}/>
+    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage} onLegacyCredentials={onLegacyCredentials} playbackReady={mode?.mode==="QUERY_ONLY"&&configuration?.isActive===true&&configuration.version===mode.version}/>
     <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
     <div className="uqp-device-table-scroll" role="region" aria-label="裝置操作表格" tabIndex={0}><table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{(pageView?.token===accessToken?pageView.items:[]).filter(d=>d.dashboardId===dashboardId).map(device => <tr key={device.id}>
-      <td>{device.deviceName}（ID {device.id}）</td><td>{deviceListLabels[device.status]}</td><td>委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td>{deviceExpiryApplicability(device) ?? (device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供")}{!deviceExpiryApplicability(device)&&device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
-      <td><button type="button" disabled={busy} onClick={() => void readPlacement(device.id)}>檢視 {device.deviceName} 播放位置（唯讀）</button><button type="button" disabled={busy || !canIssue(device, now)} onClick={() => void credential(device)}>核發／重新核發 {device.deviceName}</button>
-      <span>首次核發、暫停、永久撤銷與封存請使用上方版本化裝置管理區；首次核發後須完成 Enrollment。</span></td>
+      <td data-label="裝置">{device.deviceName}（ID {device.id}）</td><td data-label="狀態">{deviceListLabels[device.status]}{device.status==="UNVERIFIED"&&"（即時播放未驗證；Enrollment 證據請見上方）"}</td><td data-label="委派者／IP">委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td data-label="到期時間">{deviceExpiryApplicability(device) ?? (device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供")}{!deviceExpiryApplicability(device)&&device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>
+      <td data-label="操作"><button type="button" disabled={busy} onClick={() => void readPlacement(device.id)}>檢視 {device.deviceName} 播放位置（唯讀）</button>{legacyCredentials?.includes(device.id)===true && <div aria-label="Legacy 相容核發"><p>Legacy 相容核發（已核發舊裝置）</p><p>僅供未進入版本化生命週期的既有 Legacy 憑證交接，非首次建立流程。</p><button type="button" disabled={busy || !canIssue(device, now)} onClick={() => void credential(device)}>核發／重新核發 {device.deviceName}</button></div>}
+      <span>首次核發、重新授權、暫停、永久撤銷與封存統一使用上方版本化裝置管理區。</span></td>
     </tr>)}</tbody></table></div>
-    {placement && <p role="status">裝置 {placement.deviceId} 已保存播放位置（唯讀）：{placement.settings.browser}，螢幕 {placement.settings.screenNumber}，{placement.settings.fullscreen ? "全螢幕" : "視窗"}，位置 {placement.settings.windowX}／{placement.settings.windowY}，尺寸 {placement.settings.windowWidth}×{placement.settings.windowHeight}。修改須先補齊版本化安全 API。</p>}
+    {placement && <p role="status">裝置 {placement.deviceId} 已保存播放位置（唯讀）：{placement.settings.browser}，螢幕 {placement.settings.screenNumber}，{placement.settings.fullscreen ? "全螢幕" : "視窗"}，位置 {placement.settings.windowX}／{placement.settings.windowY}，尺寸 {placement.settings.windowWidth}×{placement.settings.windowHeight}。修改請使用上方版本化裝置管理區。</p>}
     {issuedDeviceId !== null && issued.current && <dialog ref={tokenDialog} aria-labelledby="issued-device-token-title"
       onCancel={event => { event.preventDefault(); clearCredential(); }}
       onClose={event => { if (event.currentTarget === tokenDialog.current) clearCredential(); }}

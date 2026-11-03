@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-async function setup(page: Page, single = false, hold = false) {
+async function setup(page: Page, single = false, hold = false, updatePosition?:string) {
   const state = { failA: false, failAStatus: 503, failPrimary: false, failPrimaryStatus: 503, revoked: false,
     sql: { PRIMARY: 0, A: 0, B: 0 }, pages: { PRIMARY: [] as number[], A: [] as number[], B: [] as number[] } };
   await page.clock.install({ time: new Date("2026-10-12T00:00:00Z") });
@@ -11,7 +11,7 @@ async function setup(page: Page, single = false, hold = false) {
     const url = new URL(route.request().url());
     if (state.revoked) { await route.fulfill({ status: 401, json: { error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } } }); return; }
     if (url.pathname.endsWith("/layout")) {
-      await route.fulfill({ json: { profiles: [{ id: 1, isDefault: true, canvasWidth: 1280, canvasHeight: 720, config: {},
+      await route.fulfill({ json: { profiles: [{ id: 1, isDefault: true, canvasWidth: 1280, canvasHeight: 720, config: updatePosition?{lastSuccessPosition:updatePosition,lastSuccessFormat:"DATE_TIME"}:{},
         widgets: [{ id: 4, widgetType: "TEXT", staticText: "固定測試標題", x: 0, y: 0, width: 500, height: 60,
           fontSize: 24, alignment: "LEFT", config: {}, sortOrder: 0 }, widget(1, "PRIMARY", 0),
           ...(single ? [] : [widget(2, "A", 400), widget(3, "B", 800)])] }] } }); return;
@@ -25,7 +25,7 @@ async function setup(page: Page, single = false, hold = false) {
     state.pages[key].push(body.page);
     const result = { columns: [{ name: `${key}_NAME` }], rows: [{ [`${key}_NAME`]: `${key}○頁${body.page}` }] };
     if (key === "PRIMARY") {
-      await route.fulfill({ json: { page: body.page, totalPages: hold ? 1 : 2, snapshotId: body.snapshotId ?? `PRIMARY-${state.sql.PRIMARY}`,
+      await route.fulfill({ json: { ...(updatePosition?{deliveredAtUtc:"2026-11-02T16:01:02Z"}:{}), page: body.page, totalPages: hold ? 1 : 2, snapshotId: body.snapshotId ?? `PRIMARY-${state.sql.PRIMARY}`,
         dashboard: { id: 1, name: "Synthetic", refreshSeconds: hold ? 3600 : 30, pageSeconds: hold ? 3600 : 5, pageSize: 1, parameters: {} }, reportColumns: [], result } });
     } else {
       await route.fulfill({ json: { page: body.page, totalPages: 2, snapshotId: body.snapshotId ?? `${key}-${state.sql[key]}`,
@@ -140,4 +140,30 @@ test("device authorization pulse stops revoked playback despite hour-long source
   await expect(page.getByRole("heading",{name:"啟用 Dashboard 播放裝置"})).toBeVisible();
   await expect(page.getByText("PRIMARY○頁1",{exact:true})).toHaveCount(0);
   expect(state.sql.PRIMARY).toBe(queries);
+});
+
+test("D6-3 second round device refresh keeps valid rows, uses server time, distinguishes zero and fails closed",async({page})=>{
+ await setup(page,true,true);let delivered="2026-11-02T16:01:02Z",empty=false,fail=false,delay=0,serial=0;
+ await page.route('**/api/dashboards/device/1/page',async route=>{
+  if(delay)await new Promise(r=>setTimeout(r,delay));
+  if(fail){await route.fulfill({status:403,json:{error:{code:"DASHBOARD_EXECUTE_FORBIDDEN",message:"PRIVATE SQL PATIENT"}}});return;}
+  const body=route.request().postDataJSON();await route.fulfill({json:{deliveredAtUtc:delivered,page:body.page,totalPages:1,snapshotId:body.snapshotId??`refresh-snapshot-${++serial}`,dashboard:{id:1,name:"Synthetic",refreshSeconds:5,pageSeconds:20,pageSize:1,parameters:{}},reportColumns:[],result:{columns:[{name:"PRIMARY_NAME"}],rows:empty?[]:[{PRIMARY_NAME:"REFRESH_SYNTHETIC"}]}}});
+ });
+ await page.clock.fastForward(3600000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toBeVisible();
+ const stamp=page.locator(".uqp-last-success");await expect(stamp).toHaveAttribute("data-position","BOTTOM_RIGHT");await expect(stamp).toContainText("00:01:02");
+ delivered="2026-11-02T16:01:12Z";delay=200;await page.clock.runFor(5000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toBeVisible();await expect(stamp).toContainText("00:01:12");
+ empty=true;delay=0;await page.clock.runFor(5000);await expect(page.getByText("目前無符合條件資料",{exact:true})).toBeVisible();
+ empty=false;await page.clock.runFor(5000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toBeVisible();
+ fail=true;await page.clock.runFor(5000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toHaveCount(0);await expect(page.locator("body")).not.toContainText("PRIVATE SQL PATIENT");await expect(stamp).toContainText("00:01:12");
+});
+
+test.describe("D6-3 second round device timestamp positions",()=>{
+ test.use({viewport:{width:360,height:800},hasTouch:true,timezoneId:"America/Los_Angeles"});
+ for(const position of ["BOTTOM_RIGHT","BOTTOM_LEFT","TOP_RIGHT","TOP_LEFT"])test(`${position} is Taipei, touch-safe and outside patient canvas`,async({page})=>{
+   await setup(page,true,true,position);const stamp=page.locator(".uqp-last-success");
+   await expect(stamp).toHaveAttribute("data-position",position);await expect(stamp).toContainText("2026-11-03 00:01:02");
+   const box=await stamp.boundingBox(),canvas=await page.locator(".dashboard-display-profile-shell").boundingBox();expect(box).not.toBeNull();expect(canvas).not.toBeNull();
+   expect(position.startsWith("TOP")?box!.y+box!.height<=canvas!.y:box!.y>=canvas!.y+canvas!.height).toBe(true);
+   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+ });
 });

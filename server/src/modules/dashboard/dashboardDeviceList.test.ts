@@ -60,10 +60,13 @@ test("HTTP list uses JWT/role guards, no-store, strict query and leaves complete
   for(const query of ["?page=2","?pageSize=5","?page=1&page=2","?sort=Id;DROP","?search[x]=y"])assert.equal((await get("/list"+query)).status,400);
   assert.equal((await get("/list",false)).status,401);
   const complete=await get("/lifecycle");assert.equal(complete.status,200);const body=await complete.json();assert(body.version);assert(Array.isArray(body.devices));assert.equal(body.items,undefined);
+  const evidence=await get("/7/authorization-evidence");assert.equal(evidence.status,200);assert.equal(evidence.headers.get("cache-control"),"no-store");assert.equal((await evidence.json()).playbackAuthority,"NOT_VERIFIED");
+  assert.equal((await get("/7/authorization-evidence",false)).status,401);
+  assert.equal((await get("/99/authorization-evidence")).status,404);
   f.f.control.failAt="lifecycle-schema";
   const failure=await get("/list");assert.equal(failure.status,503);assert.doesNotMatch(await failure.text(),/synthetic-private|SQL|TokenHash/);f.f.control.failAt="";
   f.f.control.enabled=false;assert.equal((await get("/list")).status,404);f.f.control.enabled=true;
-  session.permissions=[];assert.equal((await get("/list")).status,403);
+  session.permissions=[];assert.equal((await get("/list")).status,403);assert.equal((await get("/7/authorization-evidence")).status,403);
   assert.equal(f.f.db().audits.length,0);
  }finally{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));env.JWT_SECRET=old;}
 });

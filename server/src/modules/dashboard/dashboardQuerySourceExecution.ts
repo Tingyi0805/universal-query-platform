@@ -184,7 +184,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
         throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       await current();
       if (!getDashboardPageSnapshot(snapshot.id, ownerId, id)) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
-      return { sourceKey: key, modeVersion, query: { id: query.id, code: query.code, name: query.name }, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
+      return { deliveredAtUtc:new Date().toISOString(), sourceKey: key, modeVersion, query: { id: query.id, code: query.code, name: query.name }, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
         pageSize: binding.pageSize, page: input.page, totalPages, totalRows: snapshot.rows.length,
         snapshotId: snapshot.id, snapshotExpiresAt: snapshot.createdAt + snapshot.ttlMs, disclosureId, result: { columns, rows, ...(subject.context==="admin-preview"?{rowCount:rows.length,elapsedMs:snapshot.executionMs??null,truncated:snapshot.truncated??null}:{}) } };
     },

@@ -291,3 +291,14 @@ test("D3 HTTP versioned safety revoke/archive requires live JWT and strict confi
   assert.doesNotMatch(JSON.stringify(archived.body),/TokenHash|credentialFingerprint|"token"/);
  }finally{await f.close();}
 });
+
+test("D6-3 evidence separates stored Enrollment from live authority without executing or returning credentials",async()=>{
+ const f=fixture();const d=f.db().devices[0]!;d.ReenrollmentRequired=false;d.QueryModeGrantVersion=1;d.DelegatorTokenVersion=1;
+ f.control.permissions=["DESIGN_QUERY"];f.control.query=false;
+ const before=f.snapshot(),value=await f.service.authorizationEvidence(1,7,actor);
+ assert.equal(value.enrollmentState,"ENROLLED");assert.equal(value.playbackAuthority,"NOT_VERIFIED");assert(value.unchecked.includes("SOURCE_IP"));
+ assert.equal((await f.service.safetyRead(1,actor)).devices[0]!.enrollmentState,"ENROLLED");
+ assert.deepEqual(f.snapshot(),before);assert.doesNotMatch(JSON.stringify(value),/TokenHash|credentialFingerprint|cookieValue|"token"|SQL/);
+ await assert.rejects(f.service.authorizationEvidence(1,99,actor),{code:"DASHBOARD_DEVICE_NOT_FOUND"});
+ f.control.permissions=[];await assert.rejects(f.service.authorizationEvidence(1,7,actor),{code:"FORBIDDEN"});
+});

@@ -13,7 +13,7 @@ async function setup(page:Page){
     }
     if(path.includes("/device-management/v1")) {
       if(path.endsWith("/revoke")) state.revoked=true;
-      await route.fulfill({json:{dashboardId:1,version,canCreate:false,devices:[{id:7,dashboardId:1,deviceName:"合成平板",isActive:!state.revoked,createdByUserId:1,sharedWorkstationId:null,enforceIpRestriction:false,allowedIp:null,allowedCidr:null,expiresAtUtc:state.expiry ?? null,suspendedAtUtc:null,reenrollmentRequired:null,revokedAtUtc:state.revoked?"2026-10-20T00:00:00Z":null,archivedAtUtc:state.archived?"2026-10-20T00:00:00Z":null,placement:null}],...(path.endsWith("/revoke")?{deviceId:7,credentialIssued:false,deviceCredentialsInvalidated:true}:{})}});return;
+      await route.fulfill({json:{dashboardId:1,version,canCreate:false,devices:[{id:7,dashboardId:1,deviceName:"合成平板",isActive:!state.revoked,createdByUserId:1,sharedWorkstationId:null,enforceIpRestriction:false,allowedIp:null,allowedCidr:null,expiresAtUtc:state.expiry ?? null,suspendedAtUtc:null,reenrollmentRequired:null,queryModeGrantVersion:1,delegatorTokenVersion:1,revokedAtUtc:state.revoked?"2026-10-20T00:00:00Z":null,archivedAtUtc:state.archived?"2026-10-20T00:00:00Z":null,placement:null}],...(path.endsWith("/revoke")?{deviceId:7,credentialIssued:false,deviceCredentialsInvalidated:true}:{})}});return;
     }
     if(path.endsWith("/preflight")){
       if(state.preflightDenied){await route.fulfill({status:403,json:{error:{code:"FORBIDDEN",message:"SQL SECRET TOKEN"}}});return;}

@@ -4,7 +4,7 @@ import { deviceListLabels, type ListStatus, type ListDevice } from "../dashboard
 import { DeviceExpiryInput } from "./DeviceExpiryInput";
 import { taipeiDateTime, validDeviceExpiry } from "../dashboard/taipeiDateTime";
 import { useAuth } from "../auth/AuthContext";
-import { firstCredentialCandidate, lifecycleActions, lifecycleConfirmation, lifecycleLabels, type LifecycleAction, type LifecycleDevice } from "../dashboard/deviceLifecycle";
+import { firstCredentialCandidate, lifecycleStatus, lifecycleActions, lifecycleConfirmation, lifecycleLabels, type LifecycleAction, type LifecycleDevice } from "../dashboard/deviceLifecycle";
 import { deviceExpiry, deviceExpiryApplicability } from "../dashboard/deviceExpiry";
 import "./DashboardDeviceMetadataManager.css";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -16,7 +16,7 @@ type Device = ManagedDevice & Metadata & { dashboardId: number; createdByUserId:
 type Snapshot = { dashboardId: number; version: string; canCreate: boolean; devices: Device[] };
 const empty: Metadata = { deviceName: "", enforceIpRestriction: false, allowedIp: null, allowedCidr: null, expiresAtUtc: null };
 const defaultPlacement: PlaybackPlacement = { browser: "edge", screenNumber: 2, fullscreen: true, windowX: 1920, windowY: 0, windowWidth: 1920, windowHeight: 1080 };
-export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage, onFirstCredentials }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void; onFirstCredentials?:(ids:number[])=>void }) {
+export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage, onLegacyCredentials, playbackReady = false }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void; onLegacyCredentials?:(ids:number[]|null)=>void; playbackReady?:boolean }) {
   const { hasPermission } = useAuth();
   const [history,setHistory]=useState<{dashboardId:number;deviceId:number;name:string;token:string|null}|null>(null);
   const closeHistory=useCallback(()=>setHistory(null),[]);
@@ -27,8 +27,11 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
   const [searchText, setSearchText] = useState("");
   useEffect(()=>setSearchText(""),[dashboardId,accessToken]);
   const [lifecycle, setLifecycle] = useState<Snapshot | null>(null), [lifecycleVersion, setLifecycleVersion] = useState<string | null>(null);
+  const [guideDeviceId,setGuideDeviceId]=useState<number|null>(null);
+  const evidenceSequence=useRef(0);
+  const [authorizationEvidence,setAuthorizationEvidence]=useState<{deviceId:number;text:string}|null>(null);
   const [lifecycleMessage, setLifecycleMessage] = useState("");
-  useEffect(()=>{onFirstCredentials?.(lifecycle?.devices.filter(firstCredentialCandidate).map(d=>d.id)??[]);},[lifecycle,onFirstCredentials]);
+  useEffect(()=>{onLegacyCredentials?.(lifecycle?.devices.filter(d=>d.reenrollmentRequired===null&&Number.isSafeInteger(d.queryModeGrantVersion)&&d.queryModeGrantVersion!>0&&Number.isSafeInteger(d.delegatorTokenVersion)&&d.delegatorTokenVersion!>0).map(d=>d.id)??null);},[lifecycle,onLegacyCredentials]);
   const [issuedId, setIssuedId] = useState<number | null>(null), [copyMessage, setCopyMessage] = useState("");
   const secret = useRef<string | null>(null), tokenField = useRef<HTMLTextAreaElement>(null), tokenDialog = useRef<HTMLDialogElement>(null);
   const mutation = useRef(false);
@@ -155,7 +158,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
   async function load(discard = false) {
     if (discard && draft && !window.confirm("重新載入會捨棄本區裝置草稿，確定繼續？")) return;
     if(discard)list.reset();
-    const read = ++sequence.current; clearToken(); setLifecycleVersion(null); setLifecycle(null); setLifecycleMessage(""); clearLinks(); setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
+    const read = ++sequence.current; clearToken(); setAuthorizationEvidence(null); setLifecycleVersion(null); setLifecycle(null); setLifecycleMessage(""); clearLinks(); setBusy(true); setVersion(null); setMessage("");setAlerts(null);setAlertMessage("");
     try {
       const [metadata,reminders,safety]=await Promise.allSettled([apiRequest<Snapshot>(base,{},accessToken),apiRequest<{asOfUtc?:string;devices:{id:number;dashboardId:number;expiresAtUtc:string|null}[]}>("/dashboards/device-alerts?days=30",{},accessToken),apiRequest<Snapshot>(`${base}/lifecycle`,{},accessToken)]);
       if (read !== sequence.current) return;
@@ -179,7 +182,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
     if (issuedId !== null && lifecycle?.devices.some(d => d.id === issuedId && d.expiresAtUtc !== null && Date.parse(d.expiresAtUtc ?? "") <= now)) clearToken();
   }, [issuedId, lifecycle, now]);
   useEffect(()=>{const timer=setInterval(()=>setNow(Date.now()+serverOffset.current),60000);return()=>clearInterval(timer);},[]);
-  useEffect(() => { setSnapshot(null); setDraft(null); void load(); return () => { ++sequence.current;for(const request of linkRequests.current.values())request.abort();linkRequests.current.clear(); }; }, [dashboardId, accessToken]);
+  useEffect(() => { setSnapshot(null); setGuideDeviceId(null); setDraft(null); void load(); return () => { ++sequence.current;for(const request of linkRequests.current.values())request.abort();linkRequests.current.clear(); }; }, [dashboardId, accessToken]);
   useEffect(() => {
     const changed = (event: Event) => {
       if ((event as CustomEvent).detail?.dashboardId !== dashboardId) return;
@@ -222,22 +225,50 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
         (draft.deviceId === null ? result.credentialIssued !== false : result.deviceCredentialsInvalidated !== (draft.operation === "metadata"))) throw new Error("DEVICE_RESULT_INVALID");
       setSnapshot(value); setLifecycle(null); setDraft(null); setVersion(null);
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "device-management" } }));
+      setGuideDeviceId(result.deviceId);
       void playbackLink(result.deviceId);
       setMessage(draft.operation === "placement" ? "播放位置已保存；資料授權與遮蔽政策未變更。請重新載入後再編輯。" : "裝置設定已保存；未核發憑證。新裝置請明確完成 Query-only 預檢與啟用，重新載入後使用「首次核發新 Token」；既有裝置須明確重新授權。");
     } catch (error) { if (read === sequence.current) { setVersion(null); setMessage(`${dashboardOperationError(error)} 草稿已保留；請明確重新載入，不會自動覆寫。`); } }
     finally { if (read === sequence.current) setBusy(false); }
   }
-  return <section className="uqp-device-manager" aria-label="版本化裝置基本管理">
+  async function readEvidence(deviceId:number) {
+    const read=sequence.current,evidenceRead=++evidenceSequence.current;setAuthorizationEvidence(null);
+    try {
+      const value=await apiRequest<{dashboardId:number;deviceId:number;asOfUtc:string;enrollmentState:string;modeVersionMatches:boolean;playbackAuthority:string}>(`${base}/${deviceId}/authorization-evidence`,{},accessToken);
+      if(read!==sequence.current||evidenceRead!==evidenceSequence.current)return;
+      if(value.dashboardId!==dashboardId||value.deviceId!==deviceId||value.playbackAuthority!=="NOT_VERIFIED"||!Number.isFinite(Date.parse(value.asOfUtc)))throw new Error("EVIDENCE_INVALID");
+      const stage={NOT_ISSUED:"尚未核發",PENDING_ENROLLMENT:"待 Enrollment",ENROLLED:"已完成 Enrollment（持久 marker）",UNKNOWN:"持久證據不足"}[value.enrollmentState]??"證據未知";
+      setAuthorizationEvidence({deviceId,text:`${taipeiDateTime(value.asOfUtc)}（Asia/Taipei）查詢：${stage}；模式版本${value.modeVersionMatches?"相符":"不相符或未核發"}。這不是有效播放證明；未驗證目標 Cookie、來源 IP、工作站、委派者 session／ACL、逐頁遮蔽與患者稽核。請在原 BAT 瀏覽器確認，勿因未驗證而重核 Token。`});
+    }catch(error){if(read===sequence.current&&evidenceRead===evidenceSequence.current)setAuthorizationEvidence({deviceId,text:dashboardOperationError(error)});}
+  }
+  const guideDevice=lifecycle?.devices.find(d=>d.id===guideDeviceId)??snapshot?.devices.find(d=>d.id===guideDeviceId);
+  return <section id="uqp-versioned-devices" className="uqp-device-manager" aria-label="版本化裝置基本管理">
     <h3>裝置建立與基本設定</h3>
     <p>新建僅保存 metadata，委派者固定為目前操作人員，不會取得播放權限。名稱／IP／到期修改會使舊憑證失效；已失效裝置不可在此恢復。工作站換綁仍為唯讀；生命週期操作以安全快照及後端重新驗證為準。</p>
     {alerts && <p role="status">到期提醒：30 天內 {alerts.due30} 台；7 天內 {alerts.due7} 台；已到期 {alerts.expired} 台。</p>}
     {alertMessage && <p role="status">{alertMessage}</p>}
     <button type="button" disabled={busy} onClick={() => void load(true)}>重新載入裝置設定</button>
     <button type="button" disabled={busy || !version || !design || !execute || !snapshot?.canCreate} onClick={() => edit(null, "metadata")}>建立未授權裝置</button>
+    <ol aria-label="首次裝置設定流程" className="uqp-device-steps">
+      <li>建立未授權裝置，確認名稱、到期與來源 IP，保存時獨立確認。</li>
+      <li>編輯並保存播放位置；BAT 不含 Token，也不授權播放。</li>
+      <li><a href="#uqp-query-preflight">執行啟用前檢查</a>，明確確認啟用 Query-only，再重新載入裝置設定。</li>
+      <li>在本區首次核發新 Token，僅顯示一次；不寫入 BAT 或任何下載檔。</li>
+      <li>顯示播放網址／下載 BAT，以原 BAT 專用瀏覽器輸入新 Token，完成 Enrollment。</li>
+      <li>重新載入本區並查詢授權證據；持久 Enrollment 與當前播放有效性分開呈現。</li>
+    </ol>
     <p>首次核發：先保存裝置及確認到期設定，明確完成 Query-only 預檢與啟用，再重新載入裝置設定，使用「首次核發新 Token」。核發只進入待重新授權；啟用設定不代表正常播放；無法驗證表示管理快照未提供即時播放授權證據。恢復或核發後，須在原 BAT 專用瀏覽器勾選「使用恢復後的新 Token 重新授權」並輸入新 Token，完成 Enrollment 後才可播放。</p>
+    {guideDeviceId!==null&&<section className="uqp-device-guide" aria-label="選定裝置設定引導">
+      <h4>裝置 #{guideDeviceId} 設定進度</h4>
+      <p>基本設定：{version&&guideDevice?"已重新載入核對":"等待重新載入核對"}；播放位置：{guideDevice?.placement?"已保存":"尚未確認"}；Query-only：{playbackReady?"已啟用，核發仍重新驗證":"尚未確認，請明確預檢及啟用"}。</p>
+      <p>Enrollment：{guideDevice?lifecycleStatus(guideDevice as LifecycleDevice,now):"請重新載入持久證據"}。首次核發、設定修改及重新授權各自保留原確認，不自動重試。</p>
+      <a href="#uqp-query-preflight">前往預檢／啟用</a>{" · "}
+      <a href={`#uqp-device-${guideDeviceId}`} onClick={()=>{setSearchText(String(guideDeviceId));list.change({search:String(guideDeviceId),status:"ALL"});}}>前往此裝置唯一版本化核發／播放網址／BAT 入口</a>
+      <p>Token 不會隨 BAT 下載；使用該 BAT 原瀏覽器完成 Enrollment 後，回本區重新載入並查詢授權證據。</p>
+    </section>}
     {lifecycleMessage && <p role="status">{lifecycleMessage}</p>}
     <form className="uqp-device-list-tools" aria-label="搜尋裝置" onSubmit={e=>{e.preventDefault();list.change({search:searchText.trim()});}}>
-      <label>裝置名稱或精確 ID<input aria-label="裝置搜尋關鍵字" maxLength={200} value={searchText} onChange={e=>setSearchText(e.target.value)}/></label>
+      <label>裝置名稱或精確 ID（輸入純數字 ID）<input aria-label="裝置搜尋關鍵字" maxLength={200} value={searchText} onChange={e=>setSearchText(e.target.value)}/></label>
       <button type="submit">搜尋裝置</button>
       <label>狀態<select aria-label="裝置狀態篩選" value={list.query.status} onChange={e=>list.change({status:e.target.value as ListStatus})}>{Object.entries(deviceListLabels).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
       <label>每頁筆數<select aria-label="裝置每頁筆數" value={list.query.pageSize} onChange={e=>list.change({pageSize:Number(e.target.value)})}>{[10,20,50,100].map(size=><option key={size} value={size}>{size}</option>)}</select></label>
@@ -252,11 +283,14 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
       <button type="button" disabled={list.loading||list.data.page>=Math.ceil(list.data.total/list.data.pageSize)||(list.data.page)*list.data.pageSize>1_000_000} onClick={()=>list.go(list.data!.page+1)}>下一頁裝置</button>
     </nav>}
     {list.data?.items.length===0 && <p role="status">沒有符合條件的裝置。</p>}
-    <ul aria-label="裝置分頁清單" aria-busy={list.loading}>{list.data?.items.map(row => {const device:Device={...row,placement:null};const managed=lifecycle?.devices.find(d=>d.id===row.id);return <li key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
+    <ul aria-label="裝置分頁清單" aria-busy={list.loading}>{list.data?.items.map(row => {const device:Device={...row,placement:null};const managed=lifecycle?.devices.find(d=>d.id===row.id);return <li id={`uqp-device-${device.id}`} key={device.id}>{device.deviceName}；委派者 {device.createdByUserId}；工作站 {device.sharedWorkstationId ?? "未綁定（新建不自動綁定）"}
+      <button type="button" onClick={()=>setGuideDeviceId(device.id)}>引導設定 {device.deviceName}</button>
       <div aria-label={`裝置 ${device.id} 生命週期`}>
-        <span>狀態：{deviceListLabels[row.status]}</span>
+        <span>狀態：{deviceListLabels[row.status]}{managed && `；${lifecycleStatus({...managed,...row} as LifecycleDevice,now)}`}</span>
         {managed && lifecycleActions(managed as LifecycleDevice, design, execute, now).map(action => <button key={action} type="button" disabled={busy || !lifecycleVersion || !!draft || renewId !== null} onClick={() => void lifecycleWrite(managed, action)}>{action==="credential"&&firstCredentialCandidate(managed)?"首次核發新 Token":lifecycleLabels[action]} {device.deviceName}</button>)}
       </div>
+      <button type="button" disabled={busy} onClick={()=>void readEvidence(device.id)}>查詢 {device.deviceName} 授權證據</button>
+      {authorizationEvidence?.deviceId===device.id&&<p role="status">{authorizationEvidence.text}</p>}
       {hasPermission("VIEW_AUDIT")&&<details><summary>更多操作</summary><button type="button" onClick={()=>setHistory({dashboardId,deviceId:device.id,name:device.deviceName,token:accessToken})}>查看操作歷史 {device.deviceName}</button></details>}
       <span>；到期：{deviceExpiryApplicability(device) ?? (device.expiresAtUtc === null ? "未設定到期日" : `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）`)}{!deviceExpiryApplicability(device)&&device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</span>
       <button type="button" disabled={busy||!design||!execute||!version||!!draft||!deviceMayIssue(device,now)||device.expiresAtUtc===null} onClick={()=>{setRenewId(device.id);setRenewDays(30);}}>續期 {device.deviceName}</button>

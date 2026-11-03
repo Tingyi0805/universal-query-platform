@@ -538,7 +538,7 @@ test.describe("touch history",()=>{test.use({hasTouch:true});test("history filte
 test("D6-3 first Token uses the full lifecycle CAS and one-time dialog",async({page})=>{
  const {state,panel}=await setup(page);
  await expect(panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true})).toBeEnabled();
- await expect(page.getByRole("button",{name:"核發／重新核發 合成裝置",exact:true})).toBeDisabled();
+ await expect(page.getByRole("button",{name:"核發／重新核發 合成裝置",exact:true})).toHaveCount(0);
  await panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true}).click();
  await expect(page.getByRole("dialog",{name:"一次性新 Token"})).toBeVisible();
  expect(state.writes.filter(w=>w.path.endsWith("/credential"))).toHaveLength(1);
@@ -559,7 +559,19 @@ for(const width of [360,768])test(`D6-3 settings wrap on a touch viewport ${widt
  try{const {panel}=await setup(page);await panel.getByRole("button",{name:"重新載入裝置設定"}).tap();
   await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
   const button=panel.getByRole("button",{name:"建立未授權裝置",exact:true});await button.focus();await page.keyboard.press("Shift+Tab");await page.keyboard.press("Tab");await expect(button).toBeFocused();await expect(button).toHaveCSS("outline-style","solid");
-  await expect(page.getByRole("region",{name:"裝置操作表格"})).toHaveCSS("overflow-x","auto");
+  await expect(page.getByRole("region",{name:"裝置操作表格"})).toHaveCSS("overflow-x","visible");
   const disabled=page.locator(".dashboard-designer-page button:disabled").first();await expect(disabled).toHaveCSS("border-top-style","dashed");
  }finally{await context.close();}
+});
+
+test("D6-3 second round persisted Enrollment explains UNVERIFIED and reads evidence without issuing",async({page})=>{
+ const {state,panel}=await setup(page);Object.assign(state.devices[0]!,{reenrollmentRequired:false,queryModeGrantVersion:1,delegatorTokenVersion:1,enrollmentState:"ENROLLED"});
+ await page.route('**/api/dashboards/1/device-management/v1/7/authorization-evidence',route=>route.fulfill({json:{dashboardId:1,deviceId:7,asOfUtc:"2026-11-03T00:00:00Z",enrollmentState:"ENROLLED",modeVersionMatches:true,playbackAuthority:"NOT_VERIFIED"}}));
+ await panel.getByRole("button",{name:"重新載入裝置設定"}).click();
+ await panel.getByRole("button",{name:"引導設定 合成裝置",exact:true}).click();
+ await expect(panel.getByRole("region",{name:"選定裝置設定引導"})).toContainText("裝置 #7 設定進度");
+ await expect(panel).toContainText("已完成 Enrollment（持久狀態；即時播放授權未驗證）");
+ await panel.getByRole("button",{name:"查詢 合成裝置 授權證據"}).click();await expect(panel).toContainText("目標 Cookie、來源 IP");
+ await expect(page.getByRole("button",{name:"核發／重新核發 合成裝置",exact:true})).toHaveCount(0);
+ expect(state.writes).toHaveLength(0);await expect(panel.getByText("裝置名稱或精確 ID（輸入純數字 ID）",{exact:false})).toBeVisible();
 });

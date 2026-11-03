@@ -801,13 +801,13 @@ for (const reason of ["success", "page", "snapshot", "context", "permission", "e
       assert.equal(response.status, reason === "success" ? 200 : reason === "permission" ? 403 : reason === "expired" ? 401 : reason === "snapshot" ? 409 : 400);
       if (reason !== "expired") assert.equal(response.headers.get("cache-control"), "no-store");
       const body = await response.json(); assert.ok(!JSON.stringify(body).includes("00000123"));
-      if (reason !== "success") { assert.equal(body.result, undefined); assert.equal(f.control.executions.length, 0); }
+      if (reason !== "success") { assert.equal(body.deliveredAtUtc,undefined);assert.equal(body.result, undefined); assert.equal(f.control.executions.length, 0); }
     } finally { env.JWT_SECRET = oldSecret; await new Promise<void>(resolve => server.close(() => resolve())); }
   });
 
 test("D6-3 admin preview pages share a scoped snapshot, truthful statistics, and recheck ACL",async()=>{
  const f=activeAdminFixture(),admin=adminPreviewSubject();
- const first=await f.service.page(1,"WARD",admin,{page:1});assert.equal(first.totalRows,2);assert.equal(first.result.rowCount,1);assert.equal(first.result.elapsedMs,1);
+ const first=await f.service.page(1,"WARD",admin,{page:1});assert(Number.isFinite(Date.parse(first.deliveredAtUtc)));assert.equal(first.totalRows,2);assert.equal(first.result.rowCount,1);assert.equal(first.result.elapsedMs,1);
  const second=await f.service.page(1,"WARD",admin,{page:2,snapshotId:first.snapshotId});assert.equal(second.snapshotId,first.snapshotId);assert.equal(second.page,2);assert.notDeepEqual(second.result.rows,first.result.rows);assert.equal(second.result.elapsedMs,1);assert.equal(f.control.executions.length,1);assert.equal(second.result.rows[0]!.MRN,undefined);
  Object.assign(f.control.bindings.ROOM!,{mode:"QUERY_ONLY",modeRevision:1,dashboardActive:true});
  await assert.rejects(f.service.page(1,"ROOM",admin,{page:2,snapshotId:first.snapshotId}),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});

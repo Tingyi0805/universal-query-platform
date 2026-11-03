@@ -82,11 +82,11 @@ export function createDashboardPreviewRouter(deps: DashboardPreviewDependencies)
         throw new PreviewFailure("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       if ((await readState(req, id, key)).fingerprint !== initial.fingerprint) throw new PreviewFailure("DASHBOARD_PREVIEW_STATE_CHANGED", 409);
       const result = { ...raw, columns, rows };
-      if (source) res.json({ sourceKey: key, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize,
+      if (source) res.json({ deliveredAtUtc:new Date().toISOString(), sourceKey: key, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize,
         pageSeconds: source.pageSeconds, sensitivityVersion: policy.version, result, disclosureId });
       else {
         const { parameters: _private, ...safeDashboard } = dashboard;
-        res.json({ dashboard: safeDashboard, query: { id: query.id, code: query.code, name: query.name },
+        res.json({ deliveredAtUtc:new Date().toISOString(), dashboard: safeDashboard, query: { id: query.id, code: query.code, name: query.name },
           reportColumns: initial.reportColumns.filter(c => columns.some(column => column.name.toUpperCase() === c.columnName.toUpperCase())),
           result, disclosureId });
       }

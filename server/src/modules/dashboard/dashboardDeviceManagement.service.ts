@@ -1,6 +1,6 @@
 import { deviceHistoryQuery, type DeviceHistoryQuery, type DeviceHistoryResult } from "../audit/deviceAuditHistory.js";
 import { createDeviceListReader, type DeviceListQuery, type ListRead } from "./dashboardDeviceList.js";
-import { assertDeviceLifecycleTransition, type DeviceLifecycleRecord } from "./dashboardDeviceLifecycle.js";
+import { deviceEnrollmentEvidence, assertDeviceLifecycleTransition, type DeviceLifecycleRecord } from "./dashboardDeviceLifecycle.js";
 import { createHash } from "node:crypto";
 import { dashboardQueryParameters } from "./dashboardDeviceMasking.js";
 import { QuerySourceError, sourceVersion, type SourceState, type SourceTransaction } from "./dashboardQuerySources.service.js";
@@ -59,7 +59,7 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
     }
   };
   const project = (value: Awaited<ReturnType<typeof snapshot>>) => ({ dashboardId: value.state.dashboard.id, version: value.version, canCreate: !value.state.dashboard.isActive && value.state.dashboard.mode !== "QUERY_ONLY",
-    devices: value.devices.map(({ credentialFingerprint: _private, ...device }) => device) });
+    devices: value.devices.map(({ credentialFingerprint: _private, ...device }) => ({...device,enrollmentState:deviceEnrollmentEvidence(device)})) });
   const validate = (current: Awaited<ReturnType<typeof snapshot>>, input: { expectedVersion: string; confirmed: true }) => {
     if (input.confirmed !== true) throw new QuerySourceError("VALIDATION_ERROR", 400);
     if (input.expectedVersion !== current.version) throw new QuerySourceError("DASHBOARD_DEVICE_VERSION_CONFLICT");
@@ -107,6 +107,14 @@ export function createDeviceManagementService(store: DeviceManagementStore, enab
         return tx.history(id,deviceId,actor,parsed.data);
       });
     },
+    authorizationEvidence: (id:number, deviceId:number, actor:DeviceActor) => run(id,actor,async (_tx,current) => {
+      const d=current.devices.find(d=>d.id===deviceId);
+      if(!d)throw new QuerySourceError("DASHBOARD_DEVICE_NOT_FOUND",404);
+      return {dashboardId:id,deviceId,asOfUtc:new Date().toISOString(),enrollmentState:deviceEnrollmentEvidence(d),
+        enrollmentMarked:d.reenrollmentRequired===false,modeVersionMatches:d.queryModeGrantVersion!==null&&d.queryModeGrantVersion===current.state.dashboard.modeVersion,
+        isActive:d.isActive,expiresAtUtc:d.expiresAtUtc,revokedAtUtc:d.revokedAtUtc,archivedAtUtc:d.archivedAtUtc,suspendedAtUtc:d.suspendedAtUtc,
+        playbackAuthority:"NOT_VERIFIED" as const,unchecked:["DEVICE_COOKIE","SOURCE_IP","WORKSTATION_LIVE","DELEGATOR_SESSION_ACL","MASKING_PATIENT_AUDIT"]};
+    },true,true),
     safetyRead: (id: number, actor: DeviceActor) => run(id, actor, async (_tx, current) => project(current), true, true),
     revoke: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("REVOKE", id, deviceId, actor, input),
     archive: (id: number, deviceId: number, actor: DeviceActor, input: { expectedVersion: string; confirmed: true }) => lifecycle("ARCHIVE", id, deviceId, actor, input),

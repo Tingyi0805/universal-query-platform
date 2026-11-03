@@ -67,3 +67,12 @@ for(const patch of [
  {expiresAtUtc:"2030-02-30T00:00:00Z"}, {expiresAtUtc:"2030-01-01T08:00:00+08:00"},
  {tokenHash:"not-a-hash"},
 ] as Partial<Row>[])test(`invalid lifecycle combination ${JSON.stringify(patch)}`,()=>assert.throws(()=>assertDeviceLifecycleRecord({...legacy(),...patch}),DeviceLifecycleContractError));
+
+test("D6-3 persisted Enrollment stages never become live ACTIVE evidence",async()=>{
+ const {deviceEnrollmentEvidence}=await import("./dashboardDeviceLifecycle.js");
+ const row=legacy();assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:null,queryModeGrantVersion:null,delegatorTokenVersion:null}),"NOT_ISSUED");
+ assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:true}),"PENDING_ENROLLMENT");
+ assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:false}),"ENROLLED");
+ assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:false,delegatorTokenVersion:null}),"UNKNOWN");
+ assert.equal(state({...row,reenrollmentRequired:false},now),"UNVERIFIED");
+});

@@ -95,3 +95,11 @@ export function assertDeviceLifecycleTransition(before: DeviceLifecycleRecord, a
       break;
   }
 }
+
+// Persisted Enrollment is not proof of the device's current Cookie/IP/ACL authority.
+export function deviceEnrollmentEvidence(row: Pick<DeviceLifecycleRecord,"reenrollmentRequired"|"queryModeGrantVersion"|"delegatorTokenVersion">) {
+  if (row.reenrollmentRequired === true) return "PENDING_ENROLLMENT" as const;
+  if (row.reenrollmentRequired === false && positive(row.queryModeGrantVersion) && positive(row.delegatorTokenVersion)) return "ENROLLED" as const;
+  if (row.reenrollmentRequired === null && row.queryModeGrantVersion === null && row.delegatorTokenVersion === null) return "NOT_ISSUED" as const;
+  return "UNKNOWN" as const;
+}

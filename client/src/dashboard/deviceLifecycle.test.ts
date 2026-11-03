@@ -41,3 +41,10 @@ test("D6-3 first issue requires explicit full-snapshot null grant evidence and n
  for(const value of [{...fresh,queryModeGrantVersion:4,delegatorTokenVersion:1},{...fresh,isActive:false},{...fresh,revokedAtUtc:"2026-10-30T00:00:00Z"},{...fresh,archivedAtUtc:"2026-10-30T00:00:00Z"},{...fresh,expiresAtUtc:"2020-01-01T00:00:00Z"}])assert(!lifecycleActions(value,true,true,now).includes("credential"));
  assert(!lifecycleActions(device,true,true,now).includes("credential"));assert(!lifecycleActions(fresh,true,false,now).includes("credential"));
 });
+
+test("D6-3 stored Enrollment label never overrides terminal/expiry/pending states or implies live authority",()=>{
+ const enrolled={...device,enrollmentState:"ENROLLED" as const,reenrollmentRequired:false};
+ assert.match(lifecycleStatus(enrolled,now),/已完成 Enrollment.*未驗證/);
+ for(const patch of [{revokedAtUtc:"2026-10-30T00:00:00Z"},{archivedAtUtc:"2026-10-30T00:00:00Z"},{suspendedAtUtc:"2026-10-30T00:00:00Z"},{expiresAtUtc:"2026-10-30T00:00:00Z"},{reenrollmentRequired:true}])assert.doesNotMatch(lifecycleStatus({...enrolled,...patch},now),/已完成 Enrollment/);
+ assert.equal(lifecycleStatus({...device,enrollmentState:"NOT_ISSUED"},now),"尚未核發 Token（未授權）");
+});

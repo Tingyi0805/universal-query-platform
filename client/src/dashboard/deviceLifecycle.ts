@@ -9,6 +9,8 @@ export function lifecycleStatus(d: LifecycleDevice, now = Date.now()) {
   if (d.expiresAtUtc && Date.parse(d.expiresAtUtc) <= now) return "已到期";
   if (d.suspendedAtUtc) return "已暫停";
   if (d.reenrollmentRequired === true) return "待重新授權";
+  if(d.enrollmentState==="ENROLLED")return "已完成 Enrollment（持久狀態；即時播放授權未驗證）";
+  if(d.enrollmentState==="NOT_ISSUED")return "尚未核發 Token（未授權）";
   return d.isActive ? "啟用設定／無法驗證播放授權" : "無法驗證";
 }
 export function firstCredentialCandidate(d: ManagedDevice) { return d.reenrollmentRequired === null && d.queryModeGrantVersion === null && d.delegatorTokenVersion === null; }

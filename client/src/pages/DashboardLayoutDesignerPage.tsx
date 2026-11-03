@@ -1,3 +1,4 @@
+import { updatePositions, updateSettings } from "../dashboard/lastSuccessfulUpdate";
 import { dashboardOperationError } from "../dashboard/managementStatus";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
@@ -779,6 +780,8 @@ export function DashboardLayoutDesignerPage() {
                   })}
                 />
               </label>
+              <label>最後成功更新時間位置<select aria-label="最後成功更新時間位置" value={updateSettings(activeProfile.config).position} onChange={e=>updateActiveProfile({config:{...activeProfile.config,lastSuccessPosition:e.target.value}})}>{Object.entries(updatePositions).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
+              <label>最後成功更新時間格式<select aria-label="最後成功更新時間格式" value={updateSettings(activeProfile.config).format} onChange={e=>updateActiveProfile({config:{...activeProfile.config,lastSuccessFormat:e.target.value}})}><option value="TIME">時分秒</option><option value="DATE_TIME">日期與時分秒</option></select></label>
               <button type="button" disabled={activeProfile.isDefault} onClick={setDefaultProfile}>設為預設</button>
               <button type="button" disabled={profiles.length <= 1} onClick={deleteProfile}>刪除版型</button>
             </div>

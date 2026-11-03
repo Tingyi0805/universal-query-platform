@@ -39,6 +39,12 @@ export function createDeviceManagementRouter(service: ReturnType<typeof createDe
     try { const c=context(req);res.json(await service.list(c.id,c.actor,req.query)); }
     catch(error){failure(error,res,req.id);}
   });
+  router.get("/:id/device-management/v1/:deviceId/authorization-evidence", async(req,res)=>{
+    try{const c=context(req),deviceId=idSchema.safeParse(req.params.deviceId);
+      if(!deviceId.success)throw new QuerySourceError("VALIDATION_ERROR",400);
+      res.json(await service.authorizationEvidence(c.id,deviceId.data,c.actor));
+    }catch(error){failure(error,res,req.id);}
+  });
   router.get("/:id/device-management/v1/lifecycle", async (req, res) => {
     try { const c = context(req); res.json(await service.safetyRead(c.id, c.actor)); }
     catch (error) { failure(error, res, req.id); }
