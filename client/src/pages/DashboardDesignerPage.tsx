@@ -2,16 +2,14 @@ import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
 import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
 import { dashboardOperationError } from "../dashboard/managementStatus";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
-import { DashboardBasicSettingsEditor } from "../components/DashboardBasicSettingsEditor";
+import { DashboardAdminWorkspace, type DashboardAdminTab } from "../components/DashboardAdminWorkspace";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
-import { DashboardQueryPlaybackManager } from "../components/DashboardQueryPlaybackManager";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { trustedConfiguration, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
-import { DashboardDataSourcesEditor } from "../components/DashboardDataSourcesEditor";
 import "./DashboardDesignerPage.css";
 
 type DashboardRow = {
@@ -76,6 +74,9 @@ export function DashboardDesignerPage() {
 
   const [dashboards, setDashboards] = useState<DashboardRow[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [adminTab,setAdminTab]=useState<DashboardAdminTab>("data");
+  const workspaceDirty=useRef(false);
+  const onWorkspaceDirty=useCallback((dirty:boolean)=>{workspaceDirty.current=dirty;},[]);
   const [previewValue, setPreview] = useState<(PreviewResult & {viewer:string|null}) | null>(null);
   const preview=previewValue?.viewer===accessToken?previewValue:null;
   const [previewDashboardId, setPreviewDashboardId] = useState<number | null>(null);
@@ -187,19 +188,26 @@ export function DashboardDesignerPage() {
     return()=>{++previewSequence.current;previewRequest.current?.abort();window.removeEventListener("uqp.dashboard.configuration.changed",changed);};
   },[accessToken]);
 
-  function editDashboard(item: DashboardRow) {
+  useEffect(()=>{if(adminTab!=="playback"&&previewDashboardId===form.id)stopPreview();},[adminTab,form.id]);
+  function leaveDevices(){window.dispatchEvent(new CustomEvent("uqp.dashboard.management.leaving",{detail:{dashboardId:form.id}}));}
+  function editDashboard(item: DashboardRow,nextTab:DashboardAdminTab="data") {
+    if(form.id!==item.id&&workspaceDirty.current&&!window.confirm("切換 Dashboard 會捨棄未儲存草稿，確定繼續？"))return;
+    leaveDevices();setAdminTab(nextTab);
     setForm({ id: item.id, code: item.code });
     setNotice("");
     setError("");
   }
 
   function newDashboard() {
+    if(workspaceDirty.current&&!window.confirm("取消編輯會捨棄未儲存草稿，確定繼續？"))return;
+    leaveDevices();setAdminTab("data");
     setForm(emptyForm);
     setNotice("");
     setError("");
   }
 
-  async function startPreview(item: DashboardRow) {
+  async function startPreview(item: Pick<DashboardRow,"id">) {
+    if(item.id===form.id)setAdminTab("playback");
     previewPage.current=1;previewLive.current=null;setPreview(null);setPreviewDashboardId(item.id);
     await loadPreview(item.id);
   }
@@ -224,6 +232,78 @@ export function DashboardDesignerPage() {
     }));
   }, [preview]);
 
+  const previewCard=previewDashboardId?(
+            <section className="dashboard-preview-card">
+              <LastSuccessfulUpdate at={lastDelivery?.dashboardId===previewDashboardId&&lastDelivery.viewer===accessToken?lastDelivery.at:null} config={lastDelivery?.dashboardId===previewDashboardId&&lastDelivery.viewer===accessToken?lastDelivery.config:undefined}/>
+              <div className="dashboard-preview-heading">
+                <div>
+                  <p className="eyebrow">Live Preview</p>
+                  <h2>{preview?.dashboard.name ?? "Dashboard 預覽"}</h2>
+                  {preview && (
+                    <p>
+                      {typeof preview.totalRows==="number"&&Number.isSafeInteger(preview.totalRows)&&preview.totalRows>=0?`快照共 ${preview.totalRows} 筆`:"總筆數未提供"}；本頁 {preview.result.rows.length} 筆 · 查詢 {typeof preview.result.elapsedMs==="number"&&Number.isFinite(preview.result.elapsedMs)&&preview.result.elapsedMs>=0?`${preview.result.elapsedMs} ms`:"時間未提供"} ·
+                      每 {preview.dashboard.refreshSeconds} 秒自動更新；每 {preview.dashboard.pageSeconds} 秒換頁{preview.result.truncated?"（資料已截斷）":""}
+                    </p>
+                  )}
+                </div>
+                <div className="actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={previewLoading}
+                    onClick={() => void loadPreview(previewDashboardId)}
+                  >
+                    {previewLoading ? "更新中…" : "立即更新"}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={stopPreview}
+                  >
+                    關閉預覽
+                  </button>
+                </div>
+              </div>
+
+              {preview && <nav className="uqp-device-actions" aria-label="LIVE PREVIEW 分頁"><span>第 {preview.page}／{preview.totalPages} 頁</span>
+                <button type="button" disabled={previewLoading||preview.page<=1} onClick={()=>{previewPage.current=preview.page-1;void loadPreview(previewDashboardId,false,previewPage.current);}}>上一頁預覽</button>
+                <button type="button" disabled={previewLoading||preview.page>=preview.totalPages} onClick={()=>{previewPage.current=preview.page+1;void loadPreview(previewDashboardId,false,previewPage.current);}}>下一頁預覽</button>
+              </nav>}
+              {preview && (
+                <div className="dashboard-preview-table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        {previewColumns.map((column) => (
+                          <th key={column.columnName}>{column.displayLabel}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.result.rows.map((row, rowIndex) => (
+                        <tr key={rowIndex}>
+                          {previewColumns.map((column) => (
+                            <td
+                              key={column.columnName}
+                              style={{
+                                textAlign: column.alignment.toLowerCase() as "left" | "center" | "right",
+                              }}
+                            >
+                              {displayValue(row[column.columnName])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {preview.result.rows.length === 0 && (
+                    <div className="empty-state">目前無符合條件資料。</div>
+                  )}
+                </div>
+              )}
+            </section>
+  ):null;
+
   return (
     <main className="page-shell dashboard-designer-page">
       <div className="page-toolbar">
@@ -239,14 +319,14 @@ export function DashboardDesignerPage() {
       {error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={form.id} /></section>}
       {notice && <section className="notice">{notice}</section>}
 
-      {!loading && (
+      {(
         <>
           <button type="button" onClick={newDashboard}>新增另一個／取消編輯</button>
-          <DashboardBasicSettingsEditor key={`basic-${form.id}`} dashboardId={form.id} code={form.code} accessToken={accessToken}
-            onCreated={(id, code) => { setForm({ id, code }); setNotice("已建立停用草稿；請完成 PRIMARY 設定，公共顯示政策請在 Dataset 管理。"); void load(); }} />
-          {form.id && <nav aria-label="Dashboard 管理步驟"><p>停用草稿 → PRIMARY／額外來源 → <Link to={`/designer/dashboards/${form.id}/layout`}>版型設計／設計預覽</Link> → <a href="#dashboard-device-management">預檢、啟用與裝置授權</a></p><p>操作順序不代表已完成核准；以各區後端版本、核准與預檢結果為準。</p></nav>}
-          {form.id && <DashboardDataSourcesEditor key={form.id} dashboardId={form.id} accessToken={accessToken} />}
-          {form.id && <DashboardQueryPlaybackManager key={`playback-${form.id}`} dashboardId={form.id} accessToken={accessToken} />}
+          <DashboardAdminWorkspace key={`${form.id??"new"}:${accessToken??"none"}`} dashboardId={form.id} code={form.code} accessToken={accessToken}
+            tab={adminTab} onTabChange={setAdminTab} onDirtyChange={onWorkspaceDirty}
+            onCreated={(id,code)=>{setForm({id,code});setNotice("已建立停用草稿；請完成資料、版面、播放及裝置設定。");void load(true);}}
+            preview={previewDashboardId===form.id?previewCard:null} onPreview={()=>{if(form.id)void startPreview({id:form.id});}}/>
+
 
           <section className="dashboard-list-card">
             <h2>Dashboard 清單</h2>
@@ -321,13 +401,8 @@ export function DashboardDesignerPage() {
                         <button className="secondary-button" type="button" onClick={() => void startPreview(item)}>
                           預覽
                         </button>
-                        <Link
-                          className="secondary-button link-button"
-                          to={`/designer/dashboards/${item.id}/layout`}
-                        >
-                          版面設計
-                        </Link>
-                        <button className="secondary-button" type="button" onClick={() => { editDashboard(item); window.setTimeout(() => document.getElementById("dashboard-device-management")?.scrollIntoView(), 0); }}>裝置管理</button>
+                        <button className="secondary-button" type="button" onClick={()=>editDashboard(item,"layout")}>版面設計</button>
+                        <button className="secondary-button" type="button" onClick={() => editDashboard(item,"devices")}>裝置管理</button>
                       </td>
                     </tr>
                   ))}
@@ -337,77 +412,7 @@ export function DashboardDesignerPage() {
             {dashboards.length === 0 && <div className="empty-state">尚未建立 Dashboard。</div>}
           </section>
 
-          {previewDashboardId && (
-            <section className="dashboard-preview-card">
-              <LastSuccessfulUpdate at={lastDelivery?.dashboardId===previewDashboardId&&lastDelivery.viewer===accessToken?lastDelivery.at:null} config={lastDelivery?.dashboardId===previewDashboardId&&lastDelivery.viewer===accessToken?lastDelivery.config:undefined}/>
-              <div className="dashboard-preview-heading">
-                <div>
-                  <p className="eyebrow">Live Preview</p>
-                  <h2>{preview?.dashboard.name ?? "Dashboard 預覽"}</h2>
-                  {preview && (
-                    <p>
-                      {typeof preview.totalRows==="number"&&Number.isSafeInteger(preview.totalRows)&&preview.totalRows>=0?`快照共 ${preview.totalRows} 筆`:"總筆數未提供"}；本頁 {preview.result.rows.length} 筆 · 查詢 {typeof preview.result.elapsedMs==="number"&&Number.isFinite(preview.result.elapsedMs)&&preview.result.elapsedMs>=0?`${preview.result.elapsedMs} ms`:"時間未提供"} ·
-                      每 {preview.dashboard.refreshSeconds} 秒自動更新；每 {preview.dashboard.pageSeconds} 秒換頁{preview.result.truncated?"（資料已截斷）":""}
-                    </p>
-                  )}
-                </div>
-                <div className="actions">
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    disabled={previewLoading}
-                    onClick={() => void loadPreview(previewDashboardId)}
-                  >
-                    {previewLoading ? "更新中…" : "立即更新"}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    type="button"
-                    onClick={stopPreview}
-                  >
-                    關閉預覽
-                  </button>
-                </div>
-              </div>
-
-              {preview && <nav className="uqp-device-actions" aria-label="LIVE PREVIEW 分頁"><span>第 {preview.page}／{preview.totalPages} 頁</span>
-                <button type="button" disabled={previewLoading||preview.page<=1} onClick={()=>{previewPage.current=preview.page-1;void loadPreview(previewDashboardId,false,previewPage.current);}}>上一頁預覽</button>
-                <button type="button" disabled={previewLoading||preview.page>=preview.totalPages} onClick={()=>{previewPage.current=preview.page+1;void loadPreview(previewDashboardId,false,previewPage.current);}}>下一頁預覽</button>
-              </nav>}
-              {preview && (
-                <div className="dashboard-preview-table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        {previewColumns.map((column) => (
-                          <th key={column.columnName}>{column.displayLabel}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {preview.result.rows.map((row, rowIndex) => (
-                        <tr key={rowIndex}>
-                          {previewColumns.map((column) => (
-                            <td
-                              key={column.columnName}
-                              style={{
-                                textAlign: column.alignment.toLowerCase() as "left" | "center" | "right",
-                              }}
-                            >
-                              {displayValue(row[column.columnName])}
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {preview.result.rows.length === 0 && (
-                    <div className="empty-state">目前無符合條件資料。</div>
-                  )}
-                </div>
-              )}
-            </section>
-          )}
+          {previewDashboardId!==form.id&&previewCard}
         </>
       )}
     </main>

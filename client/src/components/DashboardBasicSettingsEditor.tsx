@@ -3,9 +3,11 @@ import { apiRequest } from "../api/client";
 import { managementError, trustedConfiguration, type DashboardPresentation, type QuerySourceConfiguration } from "../dashboard/querySourceManagement";
 
 const defaults: DashboardPresentation = { name: "", description: null, displayMode: "BIG_SCREEN", displayTitle: null, showClock: true, showPageNumber: true, showCountdown: true };
-export function DashboardBasicSettingsEditor({ dashboardId, code, accessToken, onCreated }: {
-  dashboardId: number | null; code: string; accessToken: string | null; onCreated: (id: number, code: string) => void;
+export function DashboardBasicSettingsEditor({ dashboardId, code, accessToken, onCreated, onDirtyChange }: {
+  dashboardId: number | null; code: string; accessToken: string | null; onCreated: (id: number, code: string) => void; onDirtyChange?:(dirty:boolean)=>void;
 }) {
+  const [dirty,setDirty]=useState(false);
+  useEffect(()=>{onDirtyChange?.(dirty);},[dirty,onDirtyChange]);
   const [draft, setDraft] = useState(defaults);
   const [draftCode, setDraftCode] = useState("");
   const [queryId, setQueryId] = useState("");
@@ -27,12 +29,12 @@ export function DashboardBasicSettingsEditor({ dashboardId, code, accessToken, o
         || !["TABLE", "BIG_SCREEN"].includes(p.displayMode)
         || [p.showClock, p.showPageNumber, p.showCountdown, value.editable, value.isActive].some(v => typeof v !== "boolean")) throw new Error("CONFIGURATION_INVALID");
       if (current !== epoch.current || request !== read.current) return;
-      setConfiguration(value); setDraft(p); setMessage(""); return true;
+      setDirty(false);setConfiguration(value); setDraft(p); setMessage(""); return true;
     } catch (error) { if (current === epoch.current && request === read.current) setMessage(managementError(error)); }
     finally { if (current === epoch.current && request === read.current) setBusy(false); }
   }
   useEffect(() => {
-    ++epoch.current; setDraft(defaults); setConfiguration(null); setMessage(""); setDraftCode(""); setQueryId(""); setQueries([]);
+    ++epoch.current; setDirty(false);setDraft(defaults); setConfiguration(null); setMessage(""); setDraftCode(""); setQueryId(""); setQueries([]);
     if (dashboardId) void reload();
     else {
       const current = epoch.current;
@@ -75,7 +77,7 @@ export function DashboardBasicSettingsEditor({ dashboardId, code, accessToken, o
         const result = await apiRequest<{ id: number }>("/dashboards", { method: "POST", body: JSON.stringify({ code: draftCode.trim().toUpperCase(), ...presentation, queryDefinitionId: Number(queryId), isActive: false }) }, accessToken);
         if (current !== epoch.current) return;
         if (!Number.isSafeInteger(result.id) || result.id < 1) throw new Error("RESPONSE_INVALID");
-        onCreated(result.id, draftCode.trim().toUpperCase());
+        setDirty(false);onCreated(result.id, draftCode.trim().toUpperCase());
       }
     } catch (error) { if (current === epoch.current) { setConfiguration(null); setMessage(managementError(error)); } }
     finally { if (current === epoch.current) setBusy(false); }
@@ -85,7 +87,7 @@ export function DashboardBasicSettingsEditor({ dashboardId, code, accessToken, o
     {dashboardId && <button type="button" disabled={busy} onClick={() => {
       if (window.confirm("重新載入會取代本區未儲存內容，是否繼續？")) void reload();
     }}>重新載入基本設定</button>}
-    <form onSubmit={save} className="dashboard-editor-form">
+    <form onSubmit={save} className="dashboard-editor-form" onChange={()=>setDirty(true)}>
       <label className="dashboard-draft-code">代碼<input value={dashboardId ? code : draftCode} disabled={!!dashboardId || busy} required onChange={e => setDraftCode(e.target.value.toUpperCase())}/></label>
       <fieldset className="dashboard-draft-fields" disabled={busy || (!!dashboardId && !configuration?.editable)}>
         <label>名稱<input required value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}/></label>

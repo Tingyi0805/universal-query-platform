@@ -11,7 +11,7 @@ import { playbackPlacement, type PlaybackPlacement, dashboardMode, dashboardPref
 import { forgetDashboardToken, prepareDashboardTokenHandoff } from "../security/dashboardToken";
 import { DashboardLegacyDisable } from "./DashboardLegacyDisable";
 const labels: Record<string, string> = { inactive: "停用狀態", capacity: "含 PRIMARY 最多 8 個來源", primaryConversion: "PRIMARY 資料來源已完成轉換", bindings: "來源已轉換與識別有效", references: "元件來源引用", devices: "有效裝置綁定" };
-export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
+export function DashboardQueryPlaybackManager({ dashboardId, accessToken, active=true, onDirtyChange }: { dashboardId: number; accessToken: string | null; active?:boolean;onDirtyChange?:(dirty:boolean)=>void }) {
   const { hasPermission } = useAuth();
   const [pageView,setPageView]=useState<{token:string|null;items:ListDevice[]}|null>(null);
   const [legacyCredentials,setLegacyCredentials]=useState<number[]|null>(null);
@@ -92,6 +92,14 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     if (d.status === "fulfilled") setDevices(d.value);
     setReadMessages([...new Set(results.flatMap(r => r.status === "rejected" ? [dashboardOperationError(r.reason)] : []))]); setBusy(false);
   }
+  const wasActive=useRef(active);
+  useEffect(()=>{
+    const leave=(event?:Event)=>{if(event&&(event as CustomEvent).detail?.dashboardId!==dashboardId)return;++epoch.current;++readSequence.current;clearCredential();setPreflight(null);setBusy(false);};
+    window.addEventListener("uqp.dashboard.management.leaving",leave);
+    if(!active)leave();else if(!wasActive.current)void refresh();
+    wasActive.current=active;
+    return()=>window.removeEventListener("uqp.dashboard.management.leaving",leave);
+  },[active,dashboardId]);
   useEffect(() => {
     ++epoch.current; setMessage(""); void refresh();
     const leave = () => { ++epoch.current; ++readSequence.current; clearCredential(); setBusy(false); };
@@ -175,7 +183,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <p>目前模式：{mode?.mode ?? configuration?.dashboardMode ?? "尚未取得可信狀態"}{mode ? `（版本 ${mode.modeVersion}）` : ""}</p>
     {configuration && <p role="status">{configuration.primary.requiresConversion || configuration.sources.some(s => s.queryDefinitionId === null) ? "尚有 Legacy／pending 來源，須先明確轉換。" : "來源已完成 Query 綁定。"} {configuration.editable ? "停用草稿可進行版型設計；設計預覽仍須通過執行安全驗證。" : "目前僅供查看；修改前須安全停用。"}</p>}
     <p role="status">公共顯示政策統一於 Dataset 確認；後端預檢、啟用、裝置核發與逐頁交付都會驗證目前政策，不讀取 Dashboard 的第二套欄位核准。</p>
-    <p>建立停用草稿 → 來源 → Dataset 公共政策 → <Link to={`/designer/dashboards/${dashboardId}/layout`}>版型設計／預覽</Link> → 預檢 → 啟用 → 裝置授權。順序不代表授權證據，預檢只代表檢查當下。</p>
+    <details><summary>操作流程與安全說明</summary><p>建立停用草稿 → 來源 → Dataset 公共政策 → <Link to={`/designer/dashboards/${dashboardId}/layout`}>版型設計／預覽</Link> → 預檢 → 啟用 → 裝置授權。順序不代表授權證據，預檢只代表檢查當下。</p></details>
     <button type="button" disabled={busy} onClick={() => { setMessage(""); void refresh(); }}>重新載入播放狀態</button>
     <button id="uqp-query-preflight" type="button" disabled={busy || !mode} onClick={() => void check()}>執行啟用前檢查</button>
     {preflight && <div role="status"><p>來源：{preflight.sourceCount}/8；待轉換：{preflight.pendingCount}。{preflight.ready ? "後端預檢通過，啟用與核發仍會重新驗證。" : "後端預檢未通過，禁止啟用。"}</p>
@@ -183,7 +191,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken }: { da
     <button type="button" disabled={busy || !canActivate || mode?.mode === "QUERY_ONLY"} onClick={() => void change(true)}>啟用 Query-only</button>
     <button type="button" disabled={busy || mode?.mode !== "QUERY_ONLY"} onClick={() => void change(false)}>停用 Query-only</button>
     <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。下方版本化管理區顯示已儲存工作站關聯；即時有效性仍以預檢與核發時的後端委派驗證為準。</p>
-    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage} onLegacyCredentials={onLegacyCredentials} playbackReady={mode?.mode==="QUERY_ONLY"&&configuration?.isActive===true&&configuration.version===mode.version}/>
+    <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage} active={active} onDirtyChange={onDirtyChange} onLegacyCredentials={onLegacyCredentials} playbackReady={mode?.mode==="QUERY_ONLY"&&configuration?.isActive===true&&configuration.version===mode.version}/>
     <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
     <div className="uqp-device-table-scroll" role="region" aria-label="裝置操作表格" tabIndex={0}><table className="preview-table"><thead><tr><th>裝置</th><th>狀態</th><th>委派者／IP</th><th>到期時間</th><th>操作</th></tr></thead><tbody>{(pageView?.token===accessToken?pageView.items:[]).filter(d=>d.dashboardId===dashboardId).map(device => <tr key={device.id}>
       <td data-label="裝置">{device.deviceName}（ID {device.id}）</td><td data-label="狀態">{deviceListLabels[device.status]}{device.status==="UNVERIFIED"&&"（即時播放未驗證；Enrollment 證據請見上方）"}</td><td data-label="委派者／IP">委派者 {device.createdByUserId ?? "尚未提供"}；IP：{device.enforceIpRestriction === true ? device.allowedIp ?? device.allowedCidr ?? "限制證據不完整，核發由後端拒絕" : device.enforceIpRestriction === false ? "未設定 IP 限制" : "尚未提供"}</td><td data-label="到期時間">{deviceExpiryApplicability(device) ?? (device.expiresAtUtc===null?"未設定到期日":device.expiresAtUtc ? `${taipeiDateTime(device.expiresAtUtc)}（Asia/Taipei）` : "尚未提供")}{!deviceExpiryApplicability(device)&&device.expiresAtUtc!==null && `；${deviceExpiry(device.expiresAtUtc,now).text}`}</td>

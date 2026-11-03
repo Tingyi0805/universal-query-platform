@@ -75,6 +75,7 @@ async function setup(page: Page, execute = true, audit = false) {
   });
   page.on("dialog", dialog => void dialog.accept());
   await page.goto("/designer/dashboards"); await page.getByRole("button", { name: "編輯", exact: true }).first().click();
+  await page.getByRole("tab",{name:"裝置管理",exact:true}).click();
   const panel = page.getByRole("region", { name: "版本化裝置基本管理" });
   await expect(panel.getByRole("button", { name: execute ? "建立未授權裝置" : "暫停 合成裝置", exact: true })).toBeEnabled();
   return { state, panel };
@@ -460,11 +461,11 @@ test("Dashboard switch rejects the former Dashboard's delayed response",async({p
  const {state}=await setup(page);state.listDelay=500;
  await page.context().route(url=>url.pathname==="/api/dashboards",route=>route.fulfill({json:{dashboards:[1,2].map(id=>({id,code:`D${id}`,name:`看板 ${id}`,queryDefinitionId:20,parameters:{},refreshSeconds:5,pageSize:1,pageSeconds:5,isActive:false})),total:2,totalPages:1}}));
  await page.context().route(url=>url.pathname==="/api/dashboards/2/device-management/v1/list",route=>route.fulfill({json:{items:[{...state.devices[0]!,dashboardId:2,deviceName:"第二看板裝置",status:"UNVERIFIED"}],total:1,page:1,pageSize:20,snapshot:"dashboard-two",asOfUtc:"2026-10-31T00:00:00Z",validUntilUtc:"2026-10-31T00:05:00Z",sort:"ID_ASC",consistency:"CONTENT_CHECKED_UNTIL_EXPIRY",writeVersionIncluded:false}}));
- await page.reload();await page.getByRole("button",{name:"編輯",exact:true}).first().click();
+ await page.reload();await page.getByRole("button",{name:"編輯",exact:true}).first().click();await page.getByRole("tab",{name:"裝置管理",exact:true}).click();
  const panel=page.getByRole("region",{name:"版本化裝置基本管理"});
  await panel.getByLabel("裝置搜尋關鍵字").fill("slow");await panel.getByRole("button",{name:"搜尋裝置",exact:true}).click();
  await expect(panel.getByText("裝置清單載入中…",{exact:true})).toBeVisible();
- await page.getByRole("button",{name:"編輯",exact:true}).nth(1).click();
+ await page.getByRole("button",{name:"編輯",exact:true}).nth(1).click();await page.getByRole("tab",{name:"裝置管理",exact:true}).click();
  const rows=panel.getByRole("list",{name:"裝置分頁清單"});await expect(rows).toContainText("第二看板裝置");
  await page.waitForTimeout(600);await expect(rows).toContainText("第二看板裝置");await expect(rows).not.toContainText("合成裝置");
  await expect(panel.getByLabel("裝置搜尋關鍵字")).toHaveValue("");

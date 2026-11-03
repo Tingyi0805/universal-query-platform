@@ -16,7 +16,7 @@ type Device = ManagedDevice & Metadata & { dashboardId: number; createdByUserId:
 type Snapshot = { dashboardId: number; version: string; canCreate: boolean; devices: Device[] };
 const empty: Metadata = { deviceName: "", enforceIpRestriction: false, allowedIp: null, allowedCidr: null, expiresAtUtc: null };
 const defaultPlacement: PlaybackPlacement = { browser: "edge", screenNumber: 2, fullscreen: true, windowX: 1920, windowY: 0, windowWidth: 1920, windowHeight: 1080 };
-export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage, onLegacyCredentials, playbackReady = false }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void; onLegacyCredentials?:(ids:number[]|null)=>void; playbackReady?:boolean }) {
+export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPage, onLegacyCredentials, playbackReady = false, active=true, onDirtyChange }: { dashboardId: number; accessToken: string | null; onPage?: (items:ListDevice[])=>void; onLegacyCredentials?:(ids:number[]|null)=>void; playbackReady?:boolean;active?:boolean;onDirtyChange?:(dirty:boolean)=>void }) {
   const { hasPermission } = useAuth();
   const [history,setHistory]=useState<{dashboardId:number;deviceId:number;name:string;token:string|null}|null>(null);
   const closeHistory=useCallback(()=>setHistory(null),[]);
@@ -88,6 +88,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
   const [metadata, setMetadata] = useState<Metadata>(empty), [placement, setPlacement] = useState(defaultPlacement);
   const [busy, setBusy] = useState(false), [message, setMessage] = useState("");
   const [renewId,setRenewId]=useState<number|null>(null),[renewDays,setRenewDays]=useState(30);
+  useEffect(()=>{onDirtyChange?.(draft!==null||renewId!==null);},[draft,renewId,onDirtyChange]);
   const [alerts,setAlerts]=useState<{due30:number;due7:number;expired:number}|null>(null),[alertMessage,setAlertMessage]=useState("");
   const [now,setNow]=useState(Date.now());const serverOffset=useRef(0);
   type PlaybackLink = {dashboardId:number;deviceId:number;url:string;bat:string};
@@ -155,6 +156,18 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
     }
     return value;
   }
+  const busyRef=useRef(busy);busyRef.current=busy;
+  useEffect(()=>{
+    const leave=(event?:Event)=>{
+      if(event&&(event as CustomEvent).detail?.dashboardId!==dashboardId)return;
+      ++sequence.current;clearToken();setHistory(null);clearLinks();
+      if(busyRef.current||mutation.current){setVersion(null);setLifecycleVersion(null);setMessage("離開頁籤時作業尚未確認；請重新載入，不會自動重送。請保留並核對目前草稿。");}
+      setBusy(false);
+    };
+    window.addEventListener("uqp.dashboard.management.leaving",leave);
+    if(!active)leave();
+    return()=>window.removeEventListener("uqp.dashboard.management.leaving",leave);
+  },[active,dashboardId]);
   async function load(discard = false) {
     if (discard && draft && !window.confirm("重新載入會捨棄本區裝置草稿，確定繼續？")) return;
     if(discard)list.reset();
@@ -244,20 +257,20 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
   const guideDevice=lifecycle?.devices.find(d=>d.id===guideDeviceId)??snapshot?.devices.find(d=>d.id===guideDeviceId);
   return <section id="uqp-versioned-devices" className="uqp-device-manager" aria-label="版本化裝置基本管理">
     <h3>裝置建立與基本設定</h3>
-    <p>新建僅保存 metadata，委派者固定為目前操作人員，不會取得播放權限。名稱／IP／到期修改會使舊憑證失效；已失效裝置不可在此恢復。工作站換綁仍為唯讀；生命週期操作以安全快照及後端重新驗證為準。</p>
+    <p>建立只保存設定，不授權播放。修改名稱／IP／到期會使舊憑證失效；工作站關聯唯讀。</p>
     {alerts && <p role="status">到期提醒：30 天內 {alerts.due30} 台；7 天內 {alerts.due7} 台；已到期 {alerts.expired} 台。</p>}
     {alertMessage && <p role="status">{alertMessage}</p>}
     <button type="button" disabled={busy} onClick={() => void load(true)}>重新載入裝置設定</button>
     <button type="button" disabled={busy || !version || !design || !execute || !snapshot?.canCreate} onClick={() => edit(null, "metadata")}>建立未授權裝置</button>
-    <ol aria-label="首次裝置設定流程" className="uqp-device-steps">
+    <details><summary>首次建立與重新授權流程</summary><ol aria-label="首次裝置設定流程" className="uqp-device-steps">
       <li>建立未授權裝置，確認名稱、到期與來源 IP，保存時獨立確認。</li>
       <li>編輯並保存播放位置；BAT 不含 Token，也不授權播放。</li>
       <li><a href="#uqp-query-preflight">執行啟用前檢查</a>，明確確認啟用 Query-only，再重新載入裝置設定。</li>
       <li>在本區首次核發新 Token，僅顯示一次；不寫入 BAT 或任何下載檔。</li>
       <li>顯示播放網址／下載 BAT，以原 BAT 專用瀏覽器輸入新 Token，完成 Enrollment。</li>
       <li>重新載入本區並查詢授權證據；持久 Enrollment 與當前播放有效性分開呈現。</li>
-    </ol>
-    <p>首次核發：先保存裝置及確認到期設定，明確完成 Query-only 預檢與啟用，再重新載入裝置設定，使用「首次核發新 Token」。核發只進入待重新授權；啟用設定不代表正常播放；無法驗證表示管理快照未提供即時播放授權證據。恢復或核發後，須在原 BAT 專用瀏覽器勾選「使用恢復後的新 Token 重新授權」並輸入新 Token，完成 Enrollment 後才可播放。</p>
+    </ol></details>
+    <p>首次核發：保存設定、完成 Query-only 預檢與啟用後，重新載入再核發。Token 只顯示一次；在原 BAT 專用瀏覽器輸入新 Token，完成 Enrollment 後才可播放。未驗證不等於有效授權。</p>
     {guideDeviceId!==null&&<section className="uqp-device-guide" aria-label="選定裝置設定引導">
       <h4>裝置 #{guideDeviceId} 設定進度</h4>
       <p>基本設定：{version&&guideDevice?"已重新載入核對":"等待重新載入核對"}；播放位置：{guideDevice?.placement?"已保存":"尚未確認"}；Query-only：{playbackReady?"已啟用，核發仍重新驗證":"尚未確認，請明確預檢及啟用"}。</p>

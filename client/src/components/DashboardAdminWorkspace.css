@@ -1,0 +1,15 @@
+.uqp-admin-workspace { min-width:0; max-width:100%; }
+.uqp-admin-tabs { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0; }
+.uqp-admin-tabs [role=tab] { min-height:44px; padding:10px 16px; border:1px solid #94a3b8; border-radius:8px; background:#fff; color:#172033; }
+.uqp-admin-tabs [aria-selected=true] { background:#172033; color:white; border-color:#172033; }
+.uqp-admin-workspace [role=tabpanel][hidden] { display:none!important; }
+.uqp-admin-workspace [role=tabpanel] { min-width:0; }
+.uqp-admin-workspace [role=tabpanel] > * { margin-bottom:16px; }
+.dashboard-layout-embedded { width:100%; min-width:0; padding:0; }
+.dashboard-layout-embedded .page-toolbar :is(h1,h2) { font-size:1.4rem; }
+@media(max-width:600px){.uqp-admin-tabs [role=tab]{flex:1 1 calc(50% - 8px);min-width:0;} }
+
+.uqp-admin-context { overflow-wrap:anywhere; font-weight:600; }
+
+.uqp-admin-workspace .dashboard-editor-card > label { display:grid; gap:6px; margin:12px 0; }
+.uqp-admin-workspace .dashboard-editor-card > label > select { min-height:44px; padding:8px; max-width:100%; font:inherit; }

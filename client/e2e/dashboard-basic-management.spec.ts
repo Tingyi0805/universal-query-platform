@@ -75,19 +75,23 @@ test("presentation loads canonical values and saves only its persistent fields",
 
 test("PRIMARY persists Query parameters maxRows and timing through v1 and reload", async ({ page }) => {
   const state = await setup(page); await edit(page); await page.getByRole("button", { name: "編輯 PRIMARY", exact: true }).click();
+  await page.getByRole("tab",{name:"播放設定",exact:true}).click();
   await expect(page.getByLabel("更新秒數", { exact: true })).toHaveValue("41");
+  await page.getByRole("tab",{name:"資料設定",exact:true}).click();
   await page.getByLabel("已發布 Query", { exact: true }).selectOption("21");
-  await page.getByLabel("更新秒數", { exact: true }).fill("55"); await page.getByLabel("換頁秒數", { exact: true }).fill("23"); await page.getByLabel("每頁筆數", { exact: true }).fill("11"); await page.getByLabel("資料量上限", { exact: true }).fill("456");
+  await page.getByRole("tab",{name:"播放設定",exact:true}).click();
+  await page.getByLabel("更新秒數", { exact: true }).fill("55"); await page.getByLabel("換頁秒數", { exact: true }).fill("23"); await page.getByLabel("每頁筆數", { exact: true }).fill("11"); await page.getByRole("tab",{name:"資料設定",exact:true}).click();await page.getByLabel("資料量上限", { exact: true }).fill("456");
   await page.getByRole("textbox", { name: "查詢參數 JSON", exact: true }).fill('{"WARD":"NEW","LIST":[1,2],"LEGACY":{"keep":true}}');
   await page.getByRole("button", { name: "儲存目前來源", exact: true }).click(); await expect(page.getByText("設定已儲存。", { exact: true })).toBeVisible();
   expect(state.writes[0]!.path).toMatch(/\/primary$/); expect(state.primary).toMatchObject({ queryDefinitionId: 21, refreshSeconds: 55, pageSeconds: 23, pageSize: 11, maxRows: 456 });
   await page.reload(); await page.getByRole("button", { name: "編輯", exact: true }).click(); await page.getByRole("button", { name: "編輯 PRIMARY", exact: true }).click();
-  await expect(page.getByLabel("更新秒數", { exact: true })).toHaveValue("55"); await expect(page.getByLabel("每頁筆數", { exact: true })).toHaveValue("11"); await expect(page.getByLabel("資料量上限", { exact: true })).toHaveValue("456");
+  await page.getByRole("tab",{name:"播放設定",exact:true}).click();await expect(page.getByLabel("更新秒數", { exact: true })).toHaveValue("55"); await expect(page.getByLabel("每頁筆數", { exact: true })).toHaveValue("11");await page.getByRole("tab",{name:"資料設定",exact:true}).click(); await expect(page.getByLabel("資料量上限", { exact: true })).toHaveValue("456");
   await expect(page.getByRole("spinbutton", { name: "快照秒數（選填）", exact: true })).toHaveCount(0);
 });
 
 test("Legacy disable confirms the latest dedicated version and cannot re-enable or modify settings", async ({ page }) => {
   const state = await setup(page); state.active = true; await page.goto("/designer/dashboards?dashboardId=1");
+  await page.getByRole("tab",{name:"裝置管理",exact:true}).click();
   const stop = page.getByRole("button", { name: "安全停用 Legacy Dashboard（撤銷裝置憑證）", exact: true }); await expect(stop).toBeVisible();
   page.once("dialog", d => void d.dismiss()); await stop.click(); await expect(stop).toBeEnabled(); expect(state.writes).toEqual([]);
   state.transitionRevision = 8; page.once("dialog", d => void d.accept()); await stop.click();
@@ -134,6 +138,7 @@ test("missing managed configuration fails closed without default-value writes", 
 test("Legacy disable permission refusal never reports success and reload never retries the mutation", async ({ page }) => {
   const state = await setup(page); state.active = true;
   await page.goto("/designer/dashboards?dashboardId=1");
+  await page.getByRole("tab",{name:"裝置管理",exact:true}).click();
   const stop = page.getByRole("button", { name: "安全停用 Legacy Dashboard（撤銷裝置憑證）", exact: true });
   await expect(stop).toBeVisible();
   // The read succeeds; permission is revoked immediately after the explicit confirmation.

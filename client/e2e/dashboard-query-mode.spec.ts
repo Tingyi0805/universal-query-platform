@@ -42,6 +42,7 @@ async function setup(page:Page){
   });
   page.on("dialog",dialog=>void dialog.accept());
   await page.goto("/designer/dashboards");await page.getByRole("button",{name:"編輯",exact:true}).first().click();
+  await page.getByRole("tab",{name:"裝置管理",exact:true}).click();
   await expect(page.getByText(/目前模式：LEGACY/)).toBeVisible();return state;
 }
 test("manual preflight, enable, credential handoff, reload waiting, revoke and disable",async({page})=>{

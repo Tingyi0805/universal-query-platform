@@ -6,7 +6,41 @@ on:
   pull_request:
 
 jobs:
+  dashboard-ui-scope:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      ui_only: ${{ steps.scope.outputs.ui_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate explicitly requested PR83 UI-only scope against the verified baseline
+        id: scope
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {execFileSync}=require('node:child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'});
+            const baseline='cb73828defbb0aff86f8e6366c75b2fbe8584b24'; // Full CI #1262, including SQL 2019/2022.
+            const requested=context.eventName==='pull_request'&&context.payload.pull_request.number===83&&git('log','-1','--format=%B').includes('[ui-only-no-migrations]');
+            if(requested){
+              const base=context.payload.pull_request.base.sha;
+              if(!/^[a-f0-9]{40}$/.test(base))throw Error('UI_ONLY_BASE_INVALID');
+              git('merge-base','--is-ancestor',baseline,'HEAD');
+              git('merge-base','--is-ancestor',base,baseline);
+              const files=git('diff','--name-only','-z',baseline,'HEAD').split('\0').filter(Boolean);
+              if(files.some(file=>!file.startsWith('client/')&&!file.startsWith('docs/')&&file!=='.github/workflows/ci.yml'))throw Error('UI_ONLY_SCOPE_REJECTED');
+              core.notice('UI-only: verified unchanged Server/SQL baseline; no SQL acceptance, migration, or staging packaging. Server/Client unit, typecheck, build and Browser regression remain required.');
+            }
+            core.setOutput('ui_only',String(requested));
+
   device-lifecycle-d1-sql:
+    needs: dashboard-ui-scope
+    if: needs.dashboard-ui-scope.outputs.ui_only != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -425,6 +459,8 @@ jobs:
       - run: npm run build
 
   dependency-sql-smoke:
+    needs: dashboard-ui-scope
+    if: needs.dashboard-ui-scope.outputs.ui_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -460,8 +496,8 @@ jobs:
 
   pr83-926-release:
     # A staging artifact, never an authorization to overwrite production or run a migration.
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 83
-    needs: [server, client, device-lifecycle-d1-sql, windows-node24-dependencies, windows-kiosk-launcher, dependency-sql-smoke]
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 83 && needs.dashboard-ui-scope.outputs.ui_only != 'true'
+    needs: [dashboard-ui-scope, server, client, device-lifecycle-d1-sql, windows-node24-dependencies, windows-kiosk-launcher, dependency-sql-smoke]
     runs-on: windows-latest
     timeout-minutes: 25
     permissions:
