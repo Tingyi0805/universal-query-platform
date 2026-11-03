@@ -50,3 +50,19 @@ Parser 靜態檢查不等同 SQL Server 編譯或執行；未宣稱隔離 SQL �
 Node v24.19.0，Server 全套 **2263／2263 PASS**，0 skipped；Typecheck／Build PASS。初輪因安裝時未建置 ODBC native 元件而有兩個依賴測試失敗，`npm rebuild odbc` 後 11 項相關案例及完整重跑通過；沒有修改依賴版本、lockfile 或測試規則。
 
 本輪沒有 Client／Browser 變更，尚未執行完整 Client／Browser、Windows Node v24.22.1 或實機觸控驗收。沒有推送／觸發 CI；不把本機 Server 綠燈當作整體 PIN 可交付。
+
+## 第四批：共享失敗計數與 generation Repository（未接登入）
+
+依最新使用者指示，不下載 SQL Server 映像、不要求調整網路允許清單；不把容器隔離驗證當作繼續編寫程式的前置條件。先前 Docker 測試受阻的紀錄不代表需要使用者安裝 SQL Server，也不代表正式資料庫有變動。SQL 實際鎖定與回滾語意仍屬未驗證。
+
+新增 `workstationPinState.repository.ts`，預設旗標關閉時不存取 DB。這是待 Session 流程使用的內部 Repository，沒有新增或開放登入路由：
+
+- 使用外置 32-byte key 的 domain-separated HMAC digest，涵蓋 ACCOUNT／WORKSTATION／NETWORK，含不存在的帳號。呼叫端必須提供正規化帳號與既有可信 IP resolver 的網路識別，不接受直接採信任意 forwarded header。
+- SERIALIZABLE 交易先取得既有 workstation config shared lock，再按固定順序取得三個 bucket 的 transaction applock；同一交易持鎖穿過驗證／Audit callback 與計數寫入。查完所有封鎖狀態才分配新 bucket，避免封鎖的網路持續製造帳號資料列。
+- 帳號 5 次、工作站 20 次、網路 50 次失敗封鎖 15 分鐘；帳號第 3／4 次分別延遲 5／30 秒。使用 SQL Server 時間；視窗到期且封鎖已解除才重置。成功只重置帳號，不清除共享工作站／網路失敗紀錄。
+- 第一階段原子增加 SwitchVersion、撤銷 A 並要求 Audit callback 成功才 commit；第二階段在呼叫端同一交易以 generation CAS 防止過期意圖。BIGINT generation 使用十進位字串，不轉 JS Number；停用／退役／用途與 PIN 旗標亦限制 claim。
+- 呼叫端仍須先驗工作站憑證，驗證 live user／PIN／TokenVersion／有效授權，寫入新 Session、Audit，並記錄 LOCKED 拒絕；這些接線尚未完成。Repository 本身不能當作身份驗證 API。
+
+本批測試是離線交易模擬，不能證明真實 SQL Server 的跨 instance 併發與鎖定行為。沒有執行 SQL／Migration，沒有修改 CI 或正式環境。
+
+第四批驗證：新增 Repository 9 項交易模擬測試，連同 scrypt／PIN 管理共 **22／22 PASS**；Server Typecheck／Build、既有清冊 validator 及 diff whitespace 檢查通過。本批沒有重跑完整 Server／Client／Browser，不沿用前批 2263 項結果宣稱本批完整回歸。
