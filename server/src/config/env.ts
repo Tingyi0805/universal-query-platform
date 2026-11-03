@@ -31,6 +31,7 @@ const envSchema = z.object({
   TRUST_PROXY_ADDRESSES: z.string().refine(value => value.split(",").map(v => v.trim()).filter(Boolean).every(v => isIP(v) !== 0 && !v.includes("%"))).default("127.0.0.1,::1"),
   CLIENT_IP_DIAGNOSTICS: envBoolean(false),
   WORKSTATION_PIN_RUNTIME: envBoolean(false),
+  WORKSTATION_PIN_ORIGIN: optionalString,
   WORKSTATION_PIN_PEPPER_ID: optionalString,
   WORKSTATION_PIN_PEPPER: optionalString,
   DASHBOARD_QUERY_SOURCE_MANAGEMENT: envBoolean(false),
