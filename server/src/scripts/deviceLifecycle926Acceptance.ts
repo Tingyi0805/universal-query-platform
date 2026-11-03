@@ -19,6 +19,7 @@ async function main(){
   const identity=(await admin.request().query("SELECT CONVERT(nvarchar(128),SERVERPROPERTY('MachineName')) AS Machine,DB_NAME() AS Db")).recordset[0];
   assert.equal(identity.Machine,machine);assert.equal(identity.Db,"master");
   stage="D5-C5A-upgrade-and-recovery";await (await import("./deviceLifecycleUpgradeAcceptance.js")).verify926Upgrade(admin,config,machine);
+  stage="PIN-927-isolated-real-SQL";await (await import("./workstationPin927Acceptance.js")).verify927(admin,config,machine);
   stage="create-disposable-fixture";await admin.request().query(`CREATE DATABASE [${name}]`);created=true;
   db=await new sql.ConnectionPool({...config,database:name}).connect();const query=(text:string)=>db!.request().query(text);
   await query(`CREATE SCHEMA uqp`);
