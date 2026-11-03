@@ -5,7 +5,7 @@
 ## #86：持久證據與管理流程
 
 - **原因已確認**：D1 `deviceLifecycleState` 的 ACTIVE 必須有既有播放安全檢查提供的 live Token proof；D4-C1 SQL 清單沒有 Cookie、來源 IP、工作站及 live session/ACL 證據，因此非終止／暫停／過期／pending 的裝置仍為 UNVERIFIED。清單沒有程式錯把 ACTIVE 改成 UNVERIFIED 的分支，不能僅從 BAT 有畫面推定 ACTIVE。
-- **DONE**：管理完整快照額外投影 `enrollmentState`：NULL marker＋NULL grants 為 NOT_ISSUED；true 為 PENDING_ENROLLMENT；false＋正整數 grant pair 為 ENROLLED；其他為 UNKNOWN。終止、到期、暫停優先呈現，不由 marker 復活。ENROLLED 只表示926持久 marker，**不是 Cookie 仍存在、grant 仍有效或當前可播放的證明**。
+- **DONE**：管理完整快照額外投影 `enrollmentState`：NULL marker＋NULL grants 為 NOT_ISSUED；true＋grants尚未核發為 PENDING_CREDENTIAL，核發後為 PENDING_ENROLLMENT；false＋正整數 grant pair 為 ENROLLED；其他為 UNKNOWN。終止、到期、暫停優先呈現，不由 marker 復活。ENROLLED 只表示926持久 marker，**不是 Cookie 仍存在、grant 仍有效或當前可播放的證明**。
 - **DONE**：新增 `GET /api/dashboards/:id/device-management/v1/:deviceId/authorization-evidence`，no-store、沿用 live JWT／TokenVersion、DESIGN_QUERY、Dashboard/device scope 及 lifecycle/schema attestation；與安全管理讀取相同，不要求 EXECUTE_QUERY，不增加寫入權限或執行患者 Query。只回傳當前查詢時間、持久 Enrollment、儲存 grant 與 Dashboard mode version 的相符性、既有終止/期限標記及固定 `playbackAuthority=NOT_VERIFIED`。明列未驗證的 Cookie、來源 IP、工作站、委派者 session/ACL、逐頁遮蔽／患者稽核，不回傳 Token、Hash、Credential、Cookie 或 Audit JSON。此回應不可替代完整 expectedVersion 或播放授權。
 - **DONE**：在原管理區整合六步引導；建立／保存後選定裝置並顯示已保存設定、播放位置、Query-only 啟用及 Enrollment 進度；連到原預檢／啟用與唯一版本化核發／網址／BAT 入口。每一步仍由原 API 獨立確認與 CAS，409明確重載，不自動重核、重送或啟用。
 - **DONE**：尚未核發及版本化生命週期裝置不再顯示重複舊核發按鈕。只有完整快照證明 NULL marker＋既有正整數 grant pair 的 Legacy 裝置才顯示明確標示的相容區，未載入／證據不足即隱藏；既有 ACK、一次性交接保留。`VERSIONED_API_REQUIRED` 改為前往版本化入口／重載的提示，禁止建議因錯誤而重核 Token。
@@ -15,7 +15,7 @@
 ## #85：刷新與後端交付時間
 
 - **DONE**：LIVE PREVIEW 保留成功結果至新請求完成，20秒換頁時計保持獨立；裝置／使用者播放在新頁請求中保留仍有效的已交付頁與其頁碼，不以暫時空陣列顯示假零筆。真正零筆顯示「目前無符合條件資料」，未交付顯示更新中；失敗清除受影響內容，沿用原授權撤銷／遮蔽／Audit失敗全域或來源隔離規則，絕不回退舊未遮蔽 API。
-- **DONE**：Query-only使用者播放在 snapshot 到期前1秒預取；PRIMARY及額外來源仍有獨立硬到期清除，慢請求不得延長舊資料有效期限。來源時鐘不再被 PRIMARY 刷新重設，20秒換頁及頁次縮減邊界保留。裝置 Cookie lease／IP／安全輪詢原契約不變。
+- **DONE**：管理LIVE PREVIEW及提供snapshot期限的播放端在到期前1秒預取；PRIMARY及額外來源仍有獨立硬到期清除，慢請求不得延長舊資料有效期限。來源時鐘不再被 PRIMARY 刷新重設，20秒換頁及頁次縮減邊界保留。裝置 Cookie lease／IP／安全輪詢原契約不變；Legacy device回應也附原snapshot期限。接收時已過期的回應拒絕顯示，管理預覽掛起刷新／逾期晚到回應另有專項測試，不能以不斷取消請求來延後硬期限。
 - **DONE**：成功交付 API 在原最後安全檢查、遮蔽與 Audit 完成後回傳 `deliveredAtUtc`（UTC ISO）；包含共用 Query-only service 及 Legacy device/preview delivery。失敗不回傳成功時間。不以 snapshot 建立時間或瀏覽器時鐘冒充交付時間。
 - **DONE**：管理 LIVE PREVIEW 與播放端共用「PRIMARY 最後成功更新」；明確只表示 PRIMARY，而非保證所有額外來源都已更新。固定 Asia/Taipei，缺證據／舊 Server 回應顯示 placeholder。預設右下／時分秒；版型設計可設定四角及日期＋時分秒，沿用原 profile ConfigJson 和版本化 layout 保存，不新增 DB Migration。未設定的舊版型採預設，其他 config 原樣保留。
 - **DONE**：播放畫布預留時間條空間；360px觸控、四角、不同行為及美西瀏覽器時區測試，時間不遮擋患者畫布。原播放警告、清除持久授權按鈕與安全停止仍保留。

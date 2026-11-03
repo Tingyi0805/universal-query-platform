@@ -72,6 +72,7 @@ test("D6-3 persisted Enrollment stages never become live ACTIVE evidence",async(
  const {deviceEnrollmentEvidence}=await import("./dashboardDeviceLifecycle.js");
  const row=legacy();assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:null,queryModeGrantVersion:null,delegatorTokenVersion:null}),"NOT_ISSUED");
  assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:true}),"PENDING_ENROLLMENT");
+ assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:true,queryModeGrantVersion:null,delegatorTokenVersion:null}),"PENDING_CREDENTIAL");
  assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:false}),"ENROLLED");
  assert.equal(deviceEnrollmentEvidence({...row,reenrollmentRequired:false,delegatorTokenVersion:null}),"UNKNOWN");
  assert.equal(state({...row,reenrollmentRequired:false},now),"UNVERIFIED");

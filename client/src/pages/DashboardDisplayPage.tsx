@@ -325,7 +325,7 @@ export function DashboardDisplayPage() {
     const previewCache = new Map<string, { id: string; data: SupplementalPage }>();
     let previewRevision = 0;
     const stops = keys.map((key) => startSourcePlayback<SupplementalPage>({
-      refreshBeforeExpiry:userRoute&&userMode==="QUERY_ONLY",
+      refreshBeforeExpiry:serverPaged,
       fetchPage: async (requestedPage, snapshotId, signal) => {
         if (deviceMode) return apiRequest<SupplementalPage>(
           `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
@@ -363,8 +363,9 @@ export function DashboardDisplayPage() {
       },
       show: (result) => {
         if (generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
-        if (userRoute && userMode === "QUERY_ONLY") {
-          if (!Number.isFinite(result.snapshotExpiresAt) || result.snapshotExpiresAt! <= Date.now()) { clearUserPlayback("快照期限證據失效，已停止播放。"); return; }
+        if(userRoute&&userMode==="QUERY_ONLY"&&(!Number.isFinite(result.snapshotExpiresAt)||result.snapshotExpiresAt!<=Date.now())){clearUserPlayback("快照期限證據失效，已停止播放。");return;}
+        if (Number.isFinite(result.snapshotExpiresAt)) {
+          if(result.snapshotExpiresAt!<=Date.now())throw Object.assign(new Error("DASHBOARD_SNAPSHOT_EXPIRED"),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
           window.clearTimeout(userSourceExpiry.current.get(key));
           userSourceExpiry.current.set(key, window.setTimeout(() => {
             if (generation !== supplementalRequestGeneration.current) return;
@@ -402,7 +403,7 @@ export function DashboardDisplayPage() {
       },
     }));
     return () => { ++supplementalRequestGeneration.current; stops.forEach(stop => stop()); };
-  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken, queryPreview, previewAuthorized, userRoute, userMode, clearUserPlayback, intendedDeviceId]);
+  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken, queryPreview, previewAuthorized, userRoute, userMode, clearUserPlayback, intendedDeviceId, serverPaged]);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId) || (userRoute && userMode === null)) return;
@@ -447,6 +448,7 @@ export function DashboardDisplayPage() {
         pageSnapshotId.current = result.snapshotId ?? null;
       }
       if (userRoute && userMode === "QUERY_ONLY" && (!Number.isFinite(result.snapshotExpiresAt) || result.snapshotExpiresAt! <= Date.now())) throw new Error("SNAPSHOT_EXPIRY_INVALID");
+      if(serverPaged&&result.snapshotExpiresAt!==undefined&&(!Number.isFinite(result.snapshotExpiresAt)||result.snapshotExpiresAt<=Date.now()))throw new Error("SNAPSHOT_EXPIRY_INVALID");
       setPreview(result);
       setLastUpdatedAt(deliveryTime(result.deliveredAtUtc)?new Date(result.deliveredAtUtc!):null);
       setDataWarning("");
@@ -513,10 +515,10 @@ export function DashboardDisplayPage() {
 
   // Retain only a still-valid delivered page while refreshing; expiry never waits for a slow request.
   useEffect(()=>{
-    if(!userRoute||userMode!=="QUERY_ONLY"||!preview?.snapshotExpiresAt)return;
-    const timer=window.setTimeout(()=>{pageSnapshotId.current=null;setPreview(null);setCountdown(0);setDataWarning("資料交付期限已到，等待安全重新載入。");},Math.max(0,preview.snapshotExpiresAt-Date.now()));
+    if(!serverPaged||!Number.isFinite(preview?.snapshotExpiresAt))return;
+    const timer=window.setTimeout(()=>{pageSnapshotId.current=null;setPreview(null);setCountdown(0);setDataWarning("資料交付期限已到，等待安全重新載入。");},Math.max(0,preview!.snapshotExpiresAt!-Date.now()));
     return()=>window.clearTimeout(timer);
-  },[userRoute,userMode,preview]);
+  },[serverPaged,preview]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId) || (userRoute && userMode !== "LEGACY")) return;
@@ -795,7 +797,7 @@ export function DashboardDisplayPage() {
     const timer = window.setTimeout(() => {
       pageSnapshotId.current = null;
       setSnapshotReloadKey((key) => key + 1);
-    }, Math.max(1, (userRoute && preview.snapshotExpiresAt ? preview.snapshotExpiresAt - Date.now() - 1000 : refreshSeconds * 1000 - (Date.now() - pageSnapshotCreatedAt.current))));
+    }, Math.max(1, (preview.snapshotExpiresAt ? preview.snapshotExpiresAt - Date.now() - 1000 : refreshSeconds * 1000 - (Date.now() - pageSnapshotCreatedAt.current))));
     return () => window.clearTimeout(timer);
   }, [deviceMode, queryPreview, previewAuthorized, activationRequired, deviceToken, online, dataWarning, preview, totalPages, refreshSeconds, serverPaged, userRoute]);
 

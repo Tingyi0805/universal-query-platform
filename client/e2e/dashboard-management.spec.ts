@@ -92,12 +92,12 @@ test("Query-only independent preview uses JWT-only Query pages and preserves fix
 
 async function livePreviewFixture(page:Page){
  const state=await setup(page);Object.assign(state.config.primary,{refreshSeconds:10,pageSeconds:20,pageSize:2});
- const data={deliveredAtUtc:"2026-11-02T16:01:02.000Z",rows:[1,2,3,4,5],missingMetrics:false,denied:false,delay:0,calls:[] as {page:number;snapshotId?:string}[]};let serial=0;
+ const data={expiresAt:undefined as number|undefined,deliveredAtUtc:"2026-11-02T16:01:02.000Z",rows:[1,2,3,4,5],missingMetrics:false,denied:false,delay:0,calls:[] as {page:number;snapshotId?:string}[]};let serial=0;
  await page.route('**/api/dashboards/1/query-sources/v1/PRIMARY/preview',async route=>{
   const body=route.request().postDataJSON();data.calls.push(body);if(data.delay)await new Promise(r=>setTimeout(r,data.delay));
   if(data.denied){await route.fulfill({status:403,json:{error:{code:"FORBIDDEN",message:"PRIVATE SQL PATIENT"}}});return;}
   const snapshotId=body.snapshotId??`00000000-0000-4000-8000-${String(++serial).padStart(12,"0")}`;
-  await route.fulfill({json:{deliveredAtUtc:data.deliveredAtUtc,page:body.page,totalPages:Math.max(1,Math.ceil(data.rows.length/2)),snapshotId,...(!data.missingMetrics?{totalRows:data.rows.length}:{}),result:{columns:[{name:"NAME"}],rows:data.rows.slice((body.page-1)*2,body.page*2).map(n=>({NAME:`PREVIEW_SYNTHETIC_${n}`})),...(!data.missingMetrics?{rowCount:Math.min(2,data.rows.length),elapsedMs:37,truncated:false}:{})}}});
+  await route.fulfill({json:{snapshotExpiresAt:data.expiresAt,deliveredAtUtc:data.deliveredAtUtc,page:body.page,totalPages:Math.max(1,Math.ceil(data.rows.length/2)),snapshotId,...(!data.missingMetrics?{totalRows:data.rows.length}:{}),result:{columns:[{name:"NAME"}],rows:data.rows.slice((body.page-1)*2,body.page*2).map(n=>({NAME:`PREVIEW_SYNTHETIC_${n}`})),...(!data.missingMetrics?{rowCount:Math.min(2,data.rows.length),elapsedMs:37,truncated:false}:{})}}});
  });return data;
 }
 test("D6-3 LIVE PREVIEW rotates despite 10s refresh, uses scoped snapshots, and clamps after shrink",async({page})=>{
@@ -127,4 +127,12 @@ for(const position of ["BOTTOM_RIGHT","BOTTOM_LEFT","TOP_RIGHT","TOP_LEFT"])test
  data.rows=[8,9];await preview.getByRole("button",{name:"立即更新"}).click();await expect(preview).toContainText("PREVIEW_SYNTHETIC_8");await expect(preview).not.toContainText("PREVIEW_SYNTHETIC_1");
  data.rows=[];await preview.getByRole("button",{name:"立即更新"}).click();await expect(preview).toContainText("目前無符合條件資料");
  data.denied=true;await preview.getByRole("button",{name:"立即更新"}).click();await expect(preview.locator("table")).toHaveCount(0);await expect(stamp).toContainText("00:01:12");await expect(preview).not.toContainText("PRIVATE SQL PATIENT");
+});
+
+test("D6-3 second round preview hard expiry clears a hanging refresh and rejects its expired reply",async({page})=>{
+ const base=Date.parse("2026-11-03T00:00:00Z");await page.clock.install({time:new Date(base)});await page.clock.pauseAt(new Date(base+1000));const data=await livePreviewFixture(page);data.expiresAt=base+11000;
+ await page.goto("/designer/dashboards");await page.getByRole("button",{name:"預覽",exact:true}).click();const preview=page.locator(".dashboard-preview-card");await expect(preview).toContainText("PREVIEW_SYNTHETIC_1");
+ data.delay=400;await page.clock.fastForward(9000);await expect.poll(()=>data.calls.length).toBeGreaterThan(1);await expect(preview).toContainText("PREVIEW_SYNTHETIC_1");
+ await page.clock.fastForward(1000);await expect(preview).not.toContainText("PREVIEW_SYNTHETIC_1");await page.waitForTimeout(500);await expect(preview).not.toContainText("PREVIEW_SYNTHETIC_1");
+ data.delay=0;data.expiresAt=base+21000;await preview.getByRole("button",{name:"立即更新"}).click();await expect(preview).toContainText("PREVIEW_SYNTHETIC_1");
 });

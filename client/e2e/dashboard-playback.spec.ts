@@ -143,18 +143,19 @@ test("device authorization pulse stops revoked playback despite hour-long source
 });
 
 test("D6-3 second round device refresh keeps valid rows, uses server time, distinguishes zero and fails closed",async({page})=>{
- await setup(page,true,true);let delivered="2026-11-02T16:01:02Z",empty=false,fail=false,delay=0,serial=0;
+ await setup(page,true,true);let delivered="2026-11-02T16:01:02Z",empty=false,fail=false,delay=0,serial=0,expiresAt: number|undefined;
  await page.route('**/api/dashboards/device/1/page',async route=>{
   if(delay)await new Promise(r=>setTimeout(r,delay));
   if(fail){await route.fulfill({status:403,json:{error:{code:"DASHBOARD_EXECUTE_FORBIDDEN",message:"PRIVATE SQL PATIENT"}}});return;}
-  const body=route.request().postDataJSON();await route.fulfill({json:{deliveredAtUtc:delivered,page:body.page,totalPages:1,snapshotId:body.snapshotId??`refresh-snapshot-${++serial}`,dashboard:{id:1,name:"Synthetic",refreshSeconds:5,pageSeconds:20,pageSize:1,parameters:{}},reportColumns:[],result:{columns:[{name:"PRIMARY_NAME"}],rows:empty?[]:[{PRIMARY_NAME:"REFRESH_SYNTHETIC"}]}}});
+  const body=route.request().postDataJSON();await route.fulfill({json:{snapshotExpiresAt:expiresAt,deliveredAtUtc:delivered,page:body.page,totalPages:1,snapshotId:body.snapshotId??`refresh-snapshot-${++serial}`,dashboard:{id:1,name:"Synthetic",refreshSeconds:5,pageSeconds:20,pageSize:1,parameters:{}},reportColumns:[],result:{columns:[{name:"PRIMARY_NAME"}],rows:empty?[]:[{PRIMARY_NAME:"REFRESH_SYNTHETIC"}]}}});
  });
  await page.clock.fastForward(3600000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toBeVisible();
  const stamp=page.locator(".uqp-last-success");await expect(stamp).toHaveAttribute("data-position","BOTTOM_RIGHT");await expect(stamp).toContainText("00:01:02");
  delivered="2026-11-02T16:01:12Z";delay=200;await page.clock.runFor(5000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toBeVisible();await expect(stamp).toContainText("00:01:12");
  empty=true;delay=0;await page.clock.runFor(5000);await expect(page.getByText("目前無符合條件資料",{exact:true})).toBeVisible();
  empty=false;await page.clock.runFor(5000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toBeVisible();
- fail=true;await page.clock.runFor(5000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toHaveCount(0);await expect(page.locator("body")).not.toContainText("PRIVATE SQL PATIENT");await expect(stamp).toContainText("00:01:12");
+ delivered="2026-11-02T16:01:22Z";expiresAt=await page.evaluate(()=>Date.now()-1);await page.clock.runFor(5000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toHaveCount(0);await expect(stamp).toContainText("00:01:12");
+ fail=true;expiresAt=undefined;await page.clock.runFor(10000);await expect(page.getByText("REFRESH_SYNTHETIC",{exact:true})).toHaveCount(0);await expect(page.locator("body")).not.toContainText("PRIVATE SQL PATIENT");await expect(stamp).toContainText("00:01:12");
 });
 
 test.describe("D6-3 second round device timestamp positions",()=>{

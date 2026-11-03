@@ -44,7 +44,7 @@ type ReportColumn = {
 
 type PreviewResult = {
   dashboard: Pick<DashboardRow,"id"|"name"|"refreshSeconds"|"pageSeconds"|"pageSize">;
-  deliveredAtUtc?:string;
+  deliveredAtUtc?:string; snapshotExpiresAt?:number;
   refreshSeconds?:number; pageSeconds?:number; pageSize?:number;
   page: number; totalPages: number; totalRows?: number; snapshotId: string;
   query: { id: number; code: string; name: string };
@@ -143,6 +143,7 @@ export function DashboardDesignerPage() {
       const page=wanted===1?first:await fetchPage({page:wanted,snapshotId:first.snapshotId});
       if(page.page!==wanted||page.snapshotId!==first.snapshotId||page.totalPages!==first.totalPages||!Array.isArray(page.result?.rows)||!Array.isArray(page.result.columns))throw new Error("PREVIEW_INVALID");
       const layout=await apiRequest<{profiles:{isDefault:boolean;config:Record<string,unknown>}[]}>(`/dashboards/${dashboardId}/layout`,{signal:controller.signal},accessToken);
+      if(page.snapshotExpiresAt!==undefined&&(!Number.isFinite(page.snapshotExpiresAt)||page.snapshotExpiresAt<=Date.now()))throw new Error("PREVIEW_EXPIRED");
       const profile=layout.profiles.find(p=>p.isDefault)??layout.profiles[0];
       const result:PreviewResult={...page,reportColumns:[],dashboard:{id:dashboardId,name:configuration.presentation?.name??"Query-only 設計預覽",refreshSeconds:page.refreshSeconds??configuration.primary.refreshSeconds,pageSeconds:page.pageSeconds??configuration.primary.pageSeconds,pageSize:page.pageSize??configuration.primary.pageSize}};
       if (sequence !== previewSequence.current) return;
@@ -162,9 +163,15 @@ export function DashboardDesignerPage() {
   const pageSeconds=preview?.dashboard.pageSeconds??0;
   useEffect(()=>{
     if(!previewDashboardId||!refreshSeconds)return;
-    const timer=window.setInterval(()=>void loadPreview(previewDashboardId,true),Math.max(5,refreshSeconds)*1000);
-    return()=>window.clearInterval(timer);
-  },[previewDashboardId,refreshSeconds,loadPreview]);
+    const remaining=Number.isFinite(preview?.snapshotExpiresAt)?preview!.snapshotExpiresAt!-Date.now()-1000:Math.max(5,refreshSeconds)*1000;
+    const timer=window.setTimeout(()=>void loadPreview(previewDashboardId,true),Math.max(1,remaining));
+    return()=>window.clearTimeout(timer);
+  },[previewDashboardId,refreshSeconds,loadPreview,preview]);
+  useEffect(()=>{
+    if(!Number.isFinite(preview?.snapshotExpiresAt))return;
+    const timer=window.setTimeout(()=>{previewLive.current=null;setPreview(null);setError("預覽交付期限已到，已清除資料，等待安全重新載入。");},Math.max(0,preview!.snapshotExpiresAt!-Date.now()));
+    return()=>window.clearTimeout(timer);
+  },[preview]);
   useEffect(()=>{
     if(!previewDashboardId||!pageSeconds)return;
     const timer=window.setInterval(()=>{const current=previewLive.current;if(!current||current.totalPages<2)return;

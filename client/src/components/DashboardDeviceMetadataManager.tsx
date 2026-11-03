@@ -237,7 +237,7 @@ export function DashboardDeviceMetadataManager({ dashboardId, accessToken, onPag
       const value=await apiRequest<{dashboardId:number;deviceId:number;asOfUtc:string;enrollmentState:string;modeVersionMatches:boolean;playbackAuthority:string}>(`${base}/${deviceId}/authorization-evidence`,{},accessToken);
       if(read!==sequence.current||evidenceRead!==evidenceSequence.current)return;
       if(value.dashboardId!==dashboardId||value.deviceId!==deviceId||value.playbackAuthority!=="NOT_VERIFIED"||!Number.isFinite(Date.parse(value.asOfUtc)))throw new Error("EVIDENCE_INVALID");
-      const stage={NOT_ISSUED:"尚未核發",PENDING_ENROLLMENT:"待 Enrollment",ENROLLED:"已完成 Enrollment（持久 marker）",UNKNOWN:"持久證據不足"}[value.enrollmentState]??"證據未知";
+      const stage={NOT_ISSUED:"尚未核發",PENDING_CREDENTIAL:"待核發新 Token，尚不能 Enrollment",PENDING_ENROLLMENT:"待 Enrollment",ENROLLED:"已完成 Enrollment（持久 marker）",UNKNOWN:"持久證據不足"}[value.enrollmentState]??"證據未知";
       setAuthorizationEvidence({deviceId,text:`${taipeiDateTime(value.asOfUtc)}（Asia/Taipei）查詢：${stage}；模式版本${value.modeVersionMatches?"相符":"不相符或未核發"}。這不是有效播放證明；未驗證目標 Cookie、來源 IP、工作站、委派者 session／ACL、逐頁遮蔽與患者稽核。請在原 BAT 瀏覽器確認，勿因未驗證而重核 Token。`});
     }catch(error){if(read===sequence.current&&evidenceRead===evidenceSequence.current)setAuthorizationEvidence({deviceId,text:dashboardOperationError(error)});}
   }

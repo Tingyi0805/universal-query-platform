@@ -8,7 +8,7 @@ export function lifecycleStatus(d: LifecycleDevice, now = Date.now()) {
   if (d.expiresAtUtc !== null && (!d.expiresAtUtc || !Number.isFinite(Date.parse(d.expiresAtUtc)))) return "無法驗證（到期證據無效）";
   if (d.expiresAtUtc && Date.parse(d.expiresAtUtc) <= now) return "已到期";
   if (d.suspendedAtUtc) return "已暫停";
-  if (d.reenrollmentRequired === true) return "待重新授權";
+  if (d.reenrollmentRequired === true) return d.enrollmentState==="PENDING_CREDENTIAL"?"待重新授權（待核發新 Token）":"待重新授權";
   if(d.enrollmentState==="ENROLLED")return "已完成 Enrollment（持久狀態；即時播放授權未驗證）";
   if(d.enrollmentState==="NOT_ISSUED")return "尚未核發 Token（未授權）";
   return d.isActive ? "啟用設定／無法驗證播放授權" : "無法驗證";
