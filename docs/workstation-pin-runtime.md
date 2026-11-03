@@ -18,6 +18,12 @@ PR #83 保持 Draft、不合併。本文件是程式契約，**不是正式部�
 - 沿用固定成本 scrypt（N=32768、r=8，新雜湊 p=1；既有 p=3 版本僅驗證相容）／外置 pepper、4–12 政策（當次須符合 live PinLength），不接受 legacy bcrypt 兌換 PIN Session。無帳號／不適用帳號亦執行 dummy KDF；所有錯誤回覆不帶 verifier 或原始 DB 例外。KDF 併發上限沿用既有兩個工作。
 - 登入失敗門檻依核准規格採帳號 5 次、工作站 20 次、可信網路 100 次（15 分鐘窗）；帳號 bucket 優先採 DB collation 解析到的 AppUser ID，避免帳號拼法 alias 分散失敗計數；未知帳號使用固定長度不可逆 key。跨實例 SQL 帳號／工作站／可信網路三種 bucket、漸進延遲、封鎖與 generation Repository 沿用恢復成果，不用記憶體 Map 取代。
 
+### Session 時限未來可設定（需求註記，尚未實作）
+
+- 保留後續由授權管理者調整共用工作站 PIN Session 時間的需求，至少區分「閒置鎖定時間（idle）」與「絕對有效期限（absolute）」。實作前須另行確認設定層級（全站／工作站）、允許範圍、預設值、權限、Audit 與變更生效方式；不得讓使用者自行延長安全期限。
+- **現階段仍固定 idle=180 秒、absolute=28800 秒（8 小時）**，由 SQL Server 判定到期；活動僅能延長 idle，不延長 absolute。這是後續可調整性備註，不是已提供管理 UI／API／環境變數或資料庫欄位。
+- 未取得後續明確需求及安全驗收前，不修改目前 Session 常數、Migration 927、PIN Runtime 開關、既有權限／Audit、CI 或正式部署；不得因新增設定而使既有 Session 被無意延長。
+
 ## Cookie／CSRF 邊界與 API
 
 啟用前須由管理者另外配置既有外置 pepper 及 `WORKSTATION_PIN_ORIGIN`（純 HTTPS origin，無路徑／尾斜線），並確認 CLIENT_ORIGIN、站台 Host 與既有可信代理 resolver 設定一致。本次未讀取、產生或配置正式 pepper，未啟用 Runtime。
