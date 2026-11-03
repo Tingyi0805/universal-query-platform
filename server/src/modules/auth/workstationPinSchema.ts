@@ -30,10 +30,33 @@ export const workstationPinSchemaSql = String.raw` -- Complete-state attestation
   (@bucket,N'CK_PinAttempt_Failed',N'FAILEDATTEMPTS>=0'),
   (@bucket,N'CK_PinAttempt_Blocked',N'BLOCKEDUNTILUTCISNULLORBLOCKEDUNTILUTC>=WINDOWSTARTEDATUTC');
  IF EXISTS (SELECT 1 FROM @checks e LEFT JOIN sys.check_constraints c ON c.parent_object_id=e.ParentId AND c.name=e.Name
+    CROSS APPLY (SELECT UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(c.definition,N'[',N''),N']',N''),N'(',N''),N')',N''),N' ',N''),CHAR(13),N''),CHAR(10),N'')) AS Definition) normalized
     WHERE c.object_id IS NULL OR c.is_disabled=1 OR c.is_not_trusted=1 OR c.is_not_for_replication=1
-     OR UPPER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(c.definition,N'[',N''),N']',N''),N'(',N''),N')',N''),N' ',N''),CHAR(13),N''),CHAR(10),N''))<>e.Definition)
+     OR (normalized.Definition<>e.Definition AND NOT (e.Name=N'CK_PinAttempt_Scope' AND normalized.Definition IN (
+       -- SQL Server may persist IN as an OR equality tree. Accept only the six
+       -- exact permutations of these three equalities, never arbitrary expressions.
+       N'SCOPECODE=N''ACCOUNT''ORSCOPECODE=N''WORKSTATION''ORSCOPECODE=N''NETWORK''',
+       N'SCOPECODE=N''ACCOUNT''ORSCOPECODE=N''NETWORK''ORSCOPECODE=N''WORKSTATION''',
+       N'SCOPECODE=N''WORKSTATION''ORSCOPECODE=N''ACCOUNT''ORSCOPECODE=N''NETWORK''',
+       N'SCOPECODE=N''WORKSTATION''ORSCOPECODE=N''NETWORK''ORSCOPECODE=N''ACCOUNT''',
+       N'SCOPECODE=N''NETWORK''ORSCOPECODE=N''ACCOUNT''ORSCOPECODE=N''WORKSTATION''',
+       N'SCOPECODE=N''NETWORK''ORSCOPECODE=N''WORKSTATION''ORSCOPECODE=N''ACCOUNT'''))))
   OR (SELECT COUNT(*) FROM sys.check_constraints WHERE parent_object_id=@bucket)<>3
   THROW 51927,'PIN_SCHEMA_CHECKS_INVALID',1;
+ -- Whitespace/case normalization above must not change quoted scope values,
+ -- particularly on a case-sensitive database. Verify these literals byte-wise.
+ IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE parent_object_id=@bucket AND name=N'CK_PinAttempt_Scope'
+   AND definition COLLATE Latin1_General_100_BIN2 LIKE N'%N''ACCOUNT''%'
+   AND definition COLLATE Latin1_General_100_BIN2 LIKE N'%N''WORKSTATION''%'
+   AND definition COLLATE Latin1_General_100_BIN2 LIKE N'%N''NETWORK''%')
+  THROW 51927,'PIN_SCHEMA_SCOPE_LITERALS_INVALID',1;
+ IF EXISTS (SELECT 1 FROM sys.index_columns ic JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+     WHERE c.object_id=@workstation AND c.name=N'SwitchVersion')
+  OR EXISTS (SELECT 1 FROM sys.sql_expression_dependencies d
+    JOIN sys.check_constraints ck ON ck.object_id=d.referencing_id AND ck.parent_object_id=@workstation
+    JOIN sys.columns c ON c.object_id=d.referenced_id AND c.column_id=d.referenced_minor_id
+    WHERE c.object_id=@workstation AND c.name=N'SwitchVersion' AND ck.name<>N'CK_Workstation_SwitchVersion')
+  THROW 51927,'PIN_SCHEMA_GENERATION_DEPENDENCIES_INVALID',1;
  DECLARE @defaults table (ParentId int,Name sysname,ColumnName sysname,Definition nvarchar(100));
  INSERT INTO @defaults VALUES
   (@workstation,N'DF_Workstation_SwitchVersion',N'SwitchVersion',N'0'),

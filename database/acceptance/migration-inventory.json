@@ -426,7 +426,7 @@
   {
     "id": 927,
     "file": "927_workstation_pin_runtime.sql",
-    "sha256": "2b49d9a84ef62d6dc6eb69f30c99da97c5ef4180757917add2713bbf8efdf574",
+    "sha256": "ed321356d52469a9b578ed3b340d6d4c5bbee583b13a6172ae479806dc6b1743",
     "requires": [
       902,
       903,

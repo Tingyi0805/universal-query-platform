@@ -7,7 +7,7 @@ import { matchesDeviceSecret } from "./workstationCredential.service.js";
 import { parseOpaqueToken, pinSessionHash } from "./workstationCookies.js";
 
 export const pinIdleSeconds = 180;
-export const pinAbsoluteSeconds = 8 * 60 * 60;
+export const pinAbsoluteSeconds = 60 * 60;
 export type WorkstationBinding = { workstationId: number; credentialVersion: number; generation: string };
 export type PinActor = WorkstationBinding & { sessionId: string; userId: number; username: string; displayName: string;
   tokenVersion: number; pinVersion: number; permissions: string[]; authMethod: "PIN" };

@@ -1961,9 +1961,9 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | ee06ae0c9eeccba7e1e75894c10542e0c2fb40ad45258a03b9fb58fa0ad9c518 |
 | SOURCE | database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | 66e61f3ec190e12d1369b3ae6848e73250b8eecbe855ddcf9b957c81da17d74f |
 | SOURCE | database/acceptance/production-workstation-pin-readonly.sql | b24733deaa2f7a0f39d2187156b25a4dac457be2b93985a93515c6bc1590d160 |
-| SOURCE | database/drafts/workstation_pin_runtime.forward.sql | e4c00d2b54b5684fc2fc4cede3aa929a746ac014f2b9ce4c0b939f71258c6895 |
+| SOURCE | database/drafts/workstation_pin_runtime.forward.sql | 3b201b41d2a65450b2205ddf54454186d11f81e72e93aca8eb117e7f1c2dcd10 |
 | SOURCE | server/src/scripts/migrate.ts | e73ecdcb52e3e3b357cb0fac701ab31e159c9347f9902480a6a57e8b84835f0e |
 
-| SOURCE | database/migrations/927_workstation_pin_runtime.sql | 2b49d9a84ef62d6dc6eb69f30c99da97c5ef4180757917add2713bbf8efdf574 |
+| SOURCE | database/migrations/927_workstation_pin_runtime.sql | ed321356d52469a9b578ed3b340d6d4c5bbee583b13a6172ae479806dc6b1743 |
 
 PIN Runtime 新增正式來源 927（尚未執行），Migration 來源共 50，原 49 份 SHA 不變。草稿與正式檔共享相同 additive 結構，物件分類及數量不重複計算。SQL Server 重跑／鎖定／回滾實測待驗證；scanner／來源清冊同步不代表部署核准。

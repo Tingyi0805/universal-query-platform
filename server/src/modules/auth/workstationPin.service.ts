@@ -3,7 +3,7 @@ import type sql from "mssql";
 import { env } from "../../config/env.js";
 import { writeAuditEvent, type AuditStartInput } from "../audit/audit.repository.js";
 import { createDeviceSecret } from "./workstationCredential.service.js";
-import { parsePinPepper, verifyPin } from "./pinVerifier.js";
+import { isScryptPinHash, parsePinPepper, verifyPin } from "./pinVerifier.js";
 import { createWorkstationPinState, pinAttemptBuckets } from "./workstationPinState.repository.js";
 import { workstationSessions } from "./workstationSession.repository.js";
 
@@ -43,8 +43,13 @@ export function createWorkstationPinService(deps = defaults) {
       if (!current || current.credentialVersion !== binding.credentialVersion || current.generation !== generation)
         throw new Error("PIN_SWITCH_STALE");
       const user = await deps.sessions.candidate(input.username.trim(), current, tx);
-      const valid = !!user && Number.isInteger(user.PinLength) && user.PinLength >= 4 && user.PinLength <= 12
-        && input.pin.length === user.PinLength && await deps.verify(input.pin, String(user.PinHash), pepper);
+      const eligible = !!user && Number.isInteger(user.PinLength) && user.PinLength >= 4 && user.PinLength <= 12
+        && input.pin.length === user.PinLength && isScryptPinHash(String(user.PinHash));
+      // Unknown/ineligible accounts also consume one bounded KDF. The dummy
+      // verifier carries no real PIN and is never eligible to create a Session.
+      const dummy = `$uqp-scrypt$1$${pepper.id}$32768$8$3$${Buffer.alloc(16).toString("base64url")}$${Buffer.alloc(32).toString("base64url")}`;
+      const compared = await deps.verify(input.pin, eligible ? String(user.PinHash) : dummy, pepper);
+      const valid = eligible && compared;
       if (!valid) { await audit("AUTH_PIN_LOGIN_FAILED", tx, undefined, "PIN_INVALID"); return false; }
       if (!await deps.state.claimGeneration(tx, binding.workstationId, generation)) throw new Error("PIN_SWITCH_STALE");
       await deps.sessions.insert(token, input.credential, current, user, tx);

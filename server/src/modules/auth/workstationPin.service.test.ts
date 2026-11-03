@@ -8,7 +8,7 @@ function fixture() {
   const tx = {} as sql.Transaction;
   const state = { enabled: true, valid: true, candidate: true, active: "A", generation: "1", failAudit: "", failCommit: false, stale: false, blocked: false, expired: false };
   const binding = () => ({ workstationId: 7, credentialVersion: 2, generation: state.generation });
-  const user = { Id: 8, TokenVersion: 3, PinVersion: 4, PinLength: 6, PinHash: "synthetic" };
+  const user = { Id: 8, TokenVersion: 3, PinVersion: 4, PinLength: 6, PinHash: "$uqp-scrypt$1$synthetic" };
   const service = createWorkstationPinService({ enabled: () => state.enabled, pepper: () => ({ id: "test", key: Buffer.alloc(32, 7) }),
     sessions: {
       credential: async () => binding(), candidate: async () => { calls.push("candidate"); return state.candidate ? user : null; },
