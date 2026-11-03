@@ -39,6 +39,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     const handleAuthInvalid = () => {
+      window.dispatchEvent(new Event("uqp-interactive-clear"));
       setUser(null);
       setAccessToken(null);
       sessionStorage.removeItem(STORAGE_KEY);
@@ -52,6 +53,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     user,
     accessToken,
     async login(username, password) {
+      window.dispatchEvent(new Event("uqp-interactive-clear"));
       const result = await apiRequest<{
         user: AuthUser;
         accessToken: string;
@@ -65,6 +67,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(result));
     },
     logout() {
+      window.dispatchEvent(new Event("uqp-interactive-clear"));
       setUser(null);
       setAccessToken(null);
       sessionStorage.removeItem(STORAGE_KEY);

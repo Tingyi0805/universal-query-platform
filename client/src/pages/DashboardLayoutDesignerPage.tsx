@@ -1,3 +1,5 @@
+import { DashboardDrilldownEditor } from "../components/DashboardDrilldownEditor";
+import { graphIssue, type DrillGraph } from "../dashboard/drilldown";
 import { createPortal } from "react-dom";
 import { updatePositions, updateSettings } from "../dashboard/lastSuccessfulUpdate";
 import { dashboardOperationError } from "../dashboard/managementStatus";
@@ -174,6 +176,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [savedProfiles,setSavedProfiles]=useState<string|null>(null);
   const { accessToken } = useAuth();
 
+  const [drillPending,setDrillPending]=useState(false);
+  const [rootQueryId,setRootQueryId]=useState(0);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   const [activeProfileKey, setActiveProfileKey] = useState("");
   const [selectedWidgetKey, setSelectedWidgetKey] = useState("");
@@ -275,6 +279,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       setSavedProfiles(JSON.stringify(loadedProfiles));setProfiles(loadedProfiles);
       setActiveProfileKey(loadedProfiles.find(profile => profile.isDefault)?.clientKey ?? loadedProfiles[0]?.clientKey ?? "");
       if (configuration) {
+        setRootQueryId(configuration.primary.queryDefinitionId ?? 0);
         const after = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken));
         if (sequence !== loadSequence.current) return;
         if (after.version !== configuration.version) throw Object.assign(new Error(), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
@@ -653,6 +658,11 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
   async function saveLayout() {
     if (saving) return;
+    if(drillPending){setError("下鑽設定尚未完成，請加入層級或取消新增。");return;}
+    for(const profile of profiles) {
+      const g=profile.config.interactiveDrilldown as DrillGraph|undefined;
+      if(g){const issue=graphIssue(g);if(issue||profile.widgets.filter(w=>w.widgetType==="TABLE"&&w.config.drilldownRoot===true&&String(w.config.dataSourceKey??"PRIMARY")==="PRIMARY").length!==1){setError(issue??"每個下鑽版型必須有且只有一個 PRIMARY TABLE 入口。");return;}}
+    }
     if (unavailableReferences.length) { setError(`Widget 引用來源不可用：${unavailableReferences.join("、")}。請先修正引用或來源，既有版型保留。`); return; }
     if (sourceVersion === undefined) { setError("來源版本不可用或看板仍啟用，禁止儲存。請先安全停用並重新載入。"); return; }
     setSaving(true);
@@ -974,6 +984,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                 </>
               )}
 
+              {selectedWidget.widgetType === "TABLE" && activeProfile && rootQueryId>0 && String(selectedWidget.config.dataSourceKey??"PRIMARY")==="PRIMARY" &&
+                <DashboardDrilldownEditor key={`${activeProfile.clientKey}:${selectedWidget.clientKey}`} value={activeProfile.config.interactiveDrilldown} rootQueryId={rootQueryId} token={accessToken} onPending={setDrillPending}
+                  onChange={g=>{setProfiles(current=>current.map(p=>{if(p.clientKey!==activeProfile.clientKey)return p;const config={...p.config};if(g)config.interactiveDrilldown=g;else delete config.interactiveDrilldown;
+                    return {...p,config,widgets:p.widgets.map(w=>({...w,config:{...w.config,drilldownRoot:!!g&&w.clientKey===selectedWidget.clientKey}}))};}));}}/>}
               {selectedWidget.widgetType === "TABLE" && (
                 <div className="layout-mask-settings">
                   <strong>表格欄位顯示格式</strong>

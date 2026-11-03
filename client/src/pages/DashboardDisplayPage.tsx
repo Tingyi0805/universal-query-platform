@@ -1,3 +1,4 @@
+import { DashboardDrilldownHost } from "../components/DashboardDrilldownHost";
 import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
 import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
@@ -153,7 +154,7 @@ export function DashboardDisplayPage() {
       setActivationError(""); setDeviceToken(token); setActivationRequired(false);
     }, () => setActivationError("安全交接未完成或已逾時。請保持管理頁開啟，重新核發並從管理頁開啟播放。"), handoffRequestId.current);
   },[dashboardId,deviceMode,deviceToken]);
-  const { accessToken } = useAuth();
+  const { accessToken, user, hasPermission, logout } = useAuth();
   const userRoute = !deviceMode && !queryPreview && !window.location.pathname.startsWith("/designer/");
   const [userMode, setUserMode] = useState<"LEGACY" | "QUERY_ONLY" | null>(null);
   const userSourceExpiry = useRef(new Map<string, number>());
@@ -918,6 +919,8 @@ export function DashboardDisplayPage() {
             "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
           } as CSSProperties}
         >
+          {userRoute&&!previewKey&&!deviceMode&&accessToken&&user&&hasPermission("VIEW_QUERY")&&hasPermission("EXECUTE_QUERY")&&sourceKey==="PRIMARY"&&widget.config.drilldownRoot===true&&activeProfile&&
+            <DashboardDrilldownHost key={`${dashboardId}:${activeProfile.id}:${user.id}:${accessToken}`} dashboardId={dashboardId} profileId={activeProfile.id} token={accessToken} onLogout={logout}/>}
           <table>
             <thead>
               <tr>
