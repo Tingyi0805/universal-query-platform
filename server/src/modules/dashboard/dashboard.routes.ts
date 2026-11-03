@@ -1,3 +1,4 @@
+import { createDrilldownRouter, validateDrillLayout } from "./dashboardDrilldown.routes.js";
 import { createDeviceEnrollmentService } from "./dashboardDeviceEnrollment.service.js";
 import { createKioskRouter } from "./dashboardKiosk.routes.js";
 import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
@@ -299,6 +300,8 @@ dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, ch
   auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createDrilldownRouter());
+dashboardRouter.use("/:id/query-sources/v1/layout", requirePermission("DESIGN_QUERY"), validateDrillLayout);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
@@ -775,7 +778,7 @@ dashboardRouter.get("/:id/layout", async (req, res, next) => {
       }
     }
 
-    res.json(await getDashboardLayout(id.data));
+    res.json(await getDashboardLayout(id.data, canDesign));
   } catch (error) {
     next(error);
   }
@@ -827,6 +830,9 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
       return;
     }
 
+    if (parsed.data.profiles.some(p => Object.hasOwn(p.config,"interactiveDrilldown"))) {
+      res.status(409).json({error:{code:"VERSIONED_API_REQUIRED",message:"下鑽設定須使用版本化版型 API。"}}); return;
+    }
     const defaults = parsed.data.profiles.filter((profile) => profile.isDefault).length;
     if (defaults > 1) {
       res.status(400).json({

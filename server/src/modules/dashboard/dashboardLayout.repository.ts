@@ -44,6 +44,11 @@ function parseConfig(value: unknown): Record<string, unknown> {
   }
 }
 
+export function publicConfig(value: unknown) {
+  const { interactiveDrilldown: _graph, interactiveRoot: _root, ...safe } = parseConfig(value);
+  return safe;
+}
+
 function mapWidget(row: any) {
   return {
     id: Number(row.Id),
@@ -58,12 +63,12 @@ function mapWidget(row: any) {
     height: Number(row.Height),
     fontSize: Number(row.FontSize),
     alignment: String(row.Alignment),
-    config: parseConfig(row.ConfigJson),
+    config: publicConfig(row.ConfigJson),
     sortOrder: Number(row.SortOrder),
   };
 }
 
-export async function getDashboardLayout(dashboardId: number) {
+export async function getDashboardLayout(dashboardId: number, includeInteractive = false) {
   const pool = await requirePool();
 
   const profileResult = await pool.request()
@@ -108,7 +113,7 @@ export async function getDashboardLayout(dashboardId: number) {
       canvasHeight: Number(row.CanvasHeight),
       isDefault: Boolean(row.IsDefault),
       sortOrder: Number(row.SortOrder),
-      config: parseConfig(row.ConfigJson),
+      config: includeInteractive ? parseConfig(row.ConfigJson) : publicConfig(row.ConfigJson),
       widgets: widgetsByProfile.get(Number(row.Id)) ?? [],
     })),
   };
