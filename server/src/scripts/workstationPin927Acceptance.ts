@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import sql from "mssql";
 import { workstationPinSchemaSql } from "../modules/auth/workstationPinSchema.js";
+import { createWorkstationPinState, pinAttemptBuckets } from "../modules/auth/workstationPinState.repository.js";
 
 const migrations = [
   "902_shared_workstation_foundation.sql",
@@ -156,6 +157,115 @@ export async function verify927(
       WHERE Id=1 AND SwitchVersion=CONVERT(bigint,@generation)
         AND IsActive=1 AND PinLoginEnabled=1 AND RetiredAtUtc IS NULL AND PurposeCode=N'SHARED_QUERY'`);
     assert.equal(latest.rowsAffected[0], 1);
+
+
+    stage = "real-SQL-PIN-repository-shared-buckets-and-revocation";
+    // These two independent repository objects share a real SQL Server pool, not
+    // an in-memory failure map. Full multi-process HTTP/KDF testing is separate.
+    const dependencies = {
+      enabled: () => true, getPool: async () => pool,
+      transaction: (connection: sql.ConnectionPool) => new sql.Transaction(connection),
+      request: (tx: sql.Transaction) => new sql.Request(tx),
+    };
+    const first = createWorkstationPinState(dependencies);
+    const second = createWorkstationPinState(dependencies);
+    const buckets = pinAttemptBuckets("user:8", 1, "192.0.2.100", Buffer.alloc(32, 23));
+    assert.deepEqual(buckets.map(b => b.limit), [5, 100, 20]);
+    const bucketRecord = async (b: (typeof buckets)[number]) =>
+      (await pool.request().input("scope", sql.NVarChar(16), b.scope)
+        .input("digest", sql.VarBinary(32), b.digest)
+        .query("SELECT FailedAttempts AS Failures,BlockedUntilUtc AS Blocked FROM uqp.WorkstationPinAttemptBucket WHERE ScopeCode=@scope AND KeyDigest=@digest"))
+        .recordset[0] as { Failures: number; Blocked: Date | null } | undefined;
+    const auditInsert = async (tx: sql.Transaction, id: number) =>
+      new sql.Request(tx).input("id", sql.BigInt, id)
+        .query("INSERT INTO uqp.AuditLog(Id) VALUES(@id)");
+    const wrong = (state: typeof first, id: number) => state.attempt(buckets, async tx => {
+      await auditInsert(tx, id);
+      return false;
+    });
+    assert.deepEqual(await Promise.all([wrong(first, 92701), wrong(second, 92702)]), ["INVALID", "INVALID"]);
+    for (const b of buckets) assert.equal((await bucketRecord(b))?.Failures, 2);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.AuditLog WHERE Id IN (92701,92702)")).recordset[0].N, 2);
+
+    stage = "real-SQL-bucket-and-audit-rollback";
+    await assert.rejects(first.attempt(buckets, async tx => {
+      await auditInsert(tx, 92703);
+      throw new Error("SYNTHETIC_AUDIT_ABORT");
+    }), /SYNTHETIC_AUDIT_ABORT/);
+    for (const b of buckets) assert.equal((await bucketRecord(b))?.Failures, 2);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.AuditLog WHERE Id=92703")).recordset[0].N, 0);
+
+    stage = "real-SQL-account-lock-and-shared-network";
+    assert.equal(await wrong(second, 92704), "INVALID");
+    assert((await bucketRecord(buckets[0]!))?.Blocked != null);
+    // Stabilize the blocked window rather than depending on a 5-second wall-clock.
+    await pool.request().input("digest", sql.VarBinary(32), buckets[0]!.digest)
+      .query("UPDATE uqp.WorkstationPinAttemptBucket SET BlockedUntilUtc=DATEADD(MINUTE,15,SYSUTCDATETIME()) WHERE ScopeCode=N'ACCOUNT' AND KeyDigest=@digest");
+    assert.equal(await first.attempt(buckets, async () => { throw Error("blocked verifier must not run"); }), "LOCKED");
+    await pool.request().input("digest", sql.VarBinary(32), buckets[0]!.digest)
+      .query("UPDATE uqp.WorkstationPinAttemptBucket SET BlockedUntilUtc=NULL WHERE ScopeCode=N'ACCOUNT' AND KeyDigest=@digest");
+    assert.equal(await second.attempt(buckets, async tx => {
+      await auditInsert(tx, 92705);
+      return true;
+    }), "OK");
+    assert.equal((await bucketRecord(buckets[0]!))?.Failures, 0);
+    assert.equal((await bucketRecord(buckets[1]!))?.Failures, 3);
+    assert.equal((await bucketRecord(buckets[2]!))?.Failures, 3);
+    await pool.request().input("digest", sql.VarBinary(32), buckets[1]!.digest)
+      .query("UPDATE uqp.WorkstationPinAttemptBucket SET BlockedUntilUtc=DATEADD(MINUTE,15,SYSUTCDATETIME()) WHERE ScopeCode=N'NETWORK' AND KeyDigest=@digest");
+    const alternate = pinAttemptBuckets("user:999", 1, "192.0.2.100", Buffer.alloc(32, 23));
+    assert.equal(await first.attempt(alternate, async () => { throw Error("blocked verifier must not run"); }), "LOCKED");
+    assert.equal(await bucketRecord(alternate[0]!), undefined);
+
+    stage = "real-SQL-revocation-audit-rollback-and-serial-intents";
+    const versionBefore = (await query("SELECT CONVERT(varchar(20),SwitchVersion) AS V FROM uqp.SharedWorkstation WHERE Id=1")).recordset[0].V;
+    await assert.rejects(first.revokeForIntent(1, async tx => {
+      await auditInsert(tx, 92706);
+      throw Error("SYNTHETIC_REVOCATION_AUDIT_ABORT");
+    }), /SYNTHETIC_REVOCATION_AUDIT_ABORT/);
+    assert.equal((await query("SELECT CONVERT(varchar(20),SwitchVersion) AS V FROM uqp.SharedWorkstation WHERE Id=1")).recordset[0].V, versionBefore);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.SharedWorkstationSession WHERE RevokedAtUtc IS NULL")).recordset[0].N, 1);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.AuditLog WHERE Id=92706")).recordset[0].N, 0);
+    const intents = await Promise.all([
+      first.revokeForIntent(1, tx => auditInsert(tx, 92707).then(() => undefined)),
+      second.revokeForIntent(1, tx => auditInsert(tx, 92708).then(() => undefined)),
+    ]);
+    assert.deepEqual([...intents].sort(), ["3", "4"]);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.SharedWorkstationSession WHERE RevokedAtUtc IS NULL")).recordset[0].N, 0);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.AuditLog WHERE Id IN (92707,92708)")).recordset[0].N, 2);
+    assert.equal(await first.transaction(tx => first.claimGeneration(tx, 1, "3")), false);
+    assert.equal(await second.transaction(tx => second.claimGeneration(tx, 1, "4")), true);
+
+    stage = "real-SQL-phase-two-insert-and-audit-atomicity";
+    const fresh = pinAttemptBuckets("user:8", 1, "192.0.2.101", Buffer.alloc(32, 24));
+    const newId = "22345678-1234-4234-8234-123456789abd";
+    const insertSession = (tx: sql.Transaction) => new sql.Request(tx)
+      .input("id", sql.UniqueIdentifier, newId).query(
+        "INSERT INTO uqp.SharedWorkstationSession(Id,WorkstationId,UserId,SessionSecretHash,AuthMethod,AuthenticatedAtUtc,LastActivityAtUtc,ExpiresAtUtc,TokenVersion,PinVersion) VALUES(@id,1,8,0x010203,N'PIN',SYSUTCDATETIME(),SYSUTCDATETIME(),DATEADD(HOUR,1,SYSUTCDATETIME()),1,1)"
+      );
+    await assert.rejects(second.attempt(fresh, async tx => {
+      assert.equal(await second.claimGeneration(tx, 1, "4"), true);
+      await insertSession(tx);
+      await auditInsert(tx, 92709);
+      throw Error("SYNTHETIC_PHASE_TWO_ABORT");
+    }), /SYNTHETIC_PHASE_TWO_ABORT/);
+    assert.equal((await pool.request().input("id",sql.UniqueIdentifier,newId)
+      .query("SELECT COUNT(*) AS N FROM uqp.SharedWorkstationSession WHERE Id=@id")).recordset[0].N, 0);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.AuditLog WHERE Id=92709")).recordset[0].N, 0);
+    assert.equal(await bucketRecord(fresh[0]!), undefined);
+    assert.equal(await second.attempt(fresh, async tx => {
+      assert.equal(await second.claimGeneration(tx, 1, "4"), true);
+      await insertSession(tx);
+      await auditInsert(tx, 92710);
+      return true;
+    }), "OK");
+    assert.equal((await pool.request().input("id",sql.UniqueIdentifier,newId)
+      .query("SELECT COUNT(*) AS N FROM uqp.SharedWorkstationSession WHERE Id=@id AND RevokedAtUtc IS NULL")).recordset[0].N, 1);
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.AuditLog WHERE Id=92710")).recordset[0].N, 1);
+    assert.equal(await first.revokeForIntent(1, async tx => { await auditInsert(tx, 92711); }), "5");
+    assert.equal((await query("SELECT COUNT(*) AS N FROM uqp.SharedWorkstationSession WHERE RevokedAtUtc IS NULL")).recordset[0].N, 0);
+    assert.equal(await second.transaction(tx => second.claimGeneration(tx, 1, "4")), false);
+    console.log("PIN_RUNTIME_SQL_REAL_SHARED_BUCKET_AUDIT_ROLLBACK_REVOKE_CAS_SESSION_PASS (disposable synthetic DB; two repository instances, not multi-process HTTP)");
 
     stage = "disabled-and-mutated-catalog-refusal";
     await query("ALTER TABLE uqp.WorkstationPinAttemptBucket NOCHECK CONSTRAINT CK_PinAttempt_Failed");
