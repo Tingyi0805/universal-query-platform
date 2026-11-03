@@ -21,15 +21,18 @@ export function createWorkstationQueryRouter(sessions = workstationSessions,
       const actor = await identity(req);
       const queries = await deps.listAccessibleQueries(actor.userId);
       const safe: { id: number; code: string; name: string }[] = [];
+      const contexts: Awaited<ReturnType<typeof delivery.open>>[] = [];
       for (const query of queries) {
         try {
           const context = await delivery.open(query.id, "VIEW", tx => identity(req, tx));
           if (context.actor.pinSession?.sessionId !== actor.pinSession?.sessionId) throw new QueryDeliveryError("PIN_SESSION_INVALID", 401);
           safe.push({ id: context.query.id, code: context.query.code, name: context.query.name });
+          contexts.push(context);
         } catch (error) {
           if (!(error instanceof QueryDeliveryError) || error.status !== 403) throw error;
         }
       }
+      for (const context of contexts) await context.revalidate();
       const current = await identity(req);
       if (JSON.stringify(current) !== JSON.stringify(actor)) throw new QueryDeliveryError("PIN_SESSION_INVALID", 401);
       res.json({ queries: safe });

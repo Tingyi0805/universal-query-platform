@@ -7,12 +7,12 @@ import { hashDeviceSecret } from "./workstationCredential.service.js";
 const credential = `12345678-1234-4234-8234-123456789abc.${Buffer.alloc(32, 7).toString("base64url")}`;
 const token = `12345678-1234-4234-8234-123456789abd.${Buffer.alloc(32, 8).toString("base64url")}`;
 function fixture() {
-  const state = { enabled: true, calls: 0, version: 1, generation: "9007199254740993", active: true, tokenVersion: 2, missing: false };
+  const state = { enabled: true, calls: 0, version: 1, generation: "9007199254740993", active: true, tokenVersion: 2, missing: false, accountId: "8" };
   const tx = {} as sql.Transaction;
   const request = () => {
     const req = { input: () => req, query: async (text: string) => {
       state.calls++;
-      return { recordset: state.missing ? [] : text.includes("c.SecretHash")
+      return { recordset: state.missing ? [] : text.includes("AS AccountId") ? [{ AccountId: state.accountId }] : text.includes("c.SecretHash")
         ? [{ Id: 7, CredentialVersion: state.version, Generation: state.generation, SecretHash: hashDeviceSecret(credential.split(".")[1]!) }]
         : [{ UserId: 8, TokenVersion: 2, PinVersion: 3, Username: "synthetic", DisplayName: "Synthetic",
           SessionSecretHash: pinSessionHash(token, credential, 1, "9007199254740993") }] };
@@ -41,4 +41,12 @@ test("malformed tokens do not reach DB; disabled runtime rejects valid opaque cr
   const f = fixture();
   assert.equal(await f.sessions.read("invalid", credential, f.tx), null); assert.equal(f.state.calls, 0);
   f.state.enabled = false; await assert.rejects(f.sessions.read(token, credential, f.tx), /DISABLED/); assert.equal(f.state.calls, 0);
+});
+test("database-resolved account ID binds username aliases to one bucket; unknown identities are bounded opaque keys", async () => {
+  const f = fixture();
+  assert.equal(await f.sessions.accountBucketIdentity("Synthetic"), "user:8");
+  assert.equal(await f.sessions.accountBucketIdentity("synthetic"), "user:8");
+  f.state.missing = true;
+  const unknown = await f.sessions.accountBucketIdentity("missing-synthetic-user");
+  assert.match(unknown, /^missing:[a-f0-9]{64}$/); assert.ok(!unknown.includes("synthetic"));
 });

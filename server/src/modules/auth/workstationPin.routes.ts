@@ -56,11 +56,11 @@ export function createWorkstationPinRouter(deps = defaultWorkstationPinRouteDepe
       res.json({ status: "OK", csrfToken: workstationCsrf(deps.key(), value, null) });
     } catch (error) { next(error); }
   });
-  router.get("/session", async (_req, res, next) => {
+  router.get("/session", async (req, res, next) => {
     try {
       const credential = String(res.locals.pinCredential), session = res.locals.pinSession as string | null;
       if (!await deps.sessions.credential(credential)) { res.status(401).json({ error: { code: "PIN_CREDENTIAL_INVALID" } }); return; }
-      const actor = session ? await deps.sessions.read(session, credential) : null;
+      const actor = await deps.service.current(session, credential, auditRequestContext(req));
       // Keep the current opaque cookie for CSRF binding, even when expired.
       res.json({ user: actor ? { id: actor.userId, username: actor.username, displayName: actor.displayName } : null,
         sessionId: actor?.sessionId ?? null, idleSeconds: pinIdleSeconds,
@@ -71,7 +71,12 @@ export function createWorkstationPinRouter(deps = defaultWorkstationPinRouteDepe
     try {
       const body = z.object({ username: z.string().trim().min(1).max(100), pin: z.string().regex(/^\d{4,12}$/) }).strict().safeParse(req.body);
       const network = getClientIp(req);
-      if (!body.success || !network) { res.status(400).json({ error: { code: "PIN_INPUT_INVALID" } }); return; }
+      if (!body.success || !network) {
+        // A structurally invalid B attempt is still a switch intent: A must
+        // remain revoked rather than silently staying usable behind a cleared UI.
+        await deps.service.lock(String(res.locals.pinCredential), auditRequestContext(req));
+        res.status(400).json({ error: { code: "PIN_INPUT_INVALID" } }); return;
+      }
       const result = await deps.service.login({ ...body.data, credential: String(res.locals.pinCredential), network, audit: auditRequestContext(req) });
       if (result.status !== "OK") {
         // Do not send an expired Set-Cookie: a late failed A->B response must

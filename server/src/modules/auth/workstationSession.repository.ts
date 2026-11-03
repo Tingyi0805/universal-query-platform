@@ -1,4 +1,4 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import sql from "mssql";
 import { env } from "../../config/env.js";
 import { getPlatformDbPool } from "../../config/database.js";
@@ -58,6 +58,23 @@ export function createWorkstationSessions(deps = defaults) {
         AND (p.LockedUntilUtc IS NULL OR p.LockedUntilUtc<=SYSUTCDATETIME()) AND ${allowedWorkstationUserSql};`);
     return result.recordset.length === 1 ? result.recordset[0] : null;
   }
+  async function accountBucketIdentity(username: string) {
+    // Resolve aliases with the database's actual username collation. Different
+    // spellings of one account must share the same failure bucket.
+    const result = await (await request()).input("username", sql.NVarChar(100), username.trim()).query(`
+      SELECT CONVERT(varchar(20),Id) AS AccountId FROM uqp.AppUser WHERE Username=@username;`);
+    const id = result.recordset[0]?.AccountId;
+    return typeof id === "string" && /^[1-9]\d{0,18}$/.test(id) ? `user:${id}`
+      : `missing:${createHash("sha256").update(username.trim().normalize("NFKC").toLowerCase()).digest("hex")}`;
+  }
+  async function expire(binding: WorkstationBinding, tx: sql.Transaction): Promise<number[]> {
+    const result = await (await request(tx)).input("id", sql.BigInt, binding.workstationId).input("idleSeconds", sql.Int, pinIdleSeconds).query(`
+      UPDATE uqp.SharedWorkstationSession SET RevokedAtUtc=SYSUTCDATETIME()
+        OUTPUT INSERTED.UserId
+      WHERE WorkstationId=@id AND RevokedAtUtc IS NULL AND AuthMethod=N'PIN'
+        AND (ExpiresAtUtc<=SYSUTCDATETIME() OR LastActivityAtUtc<=DATEADD(SECOND,-@idleSeconds,SYSUTCDATETIME()));`);
+    return result.recordset.map(row => Number(row.UserId));
+  }
   async function insert(token: string, credentialValue: string, binding: WorkstationBinding,
     user: { Id: number; TokenVersion: number; PinVersion: number }, tx: sql.Transaction) {
     const parsed = parseOpaqueToken(token);
@@ -101,12 +118,12 @@ export function createWorkstationSessions(deps = defaults) {
   async function touch(token: string, credentialValue: string, tx: sql.Transaction) {
     const actor = await read(token, credentialValue, tx);
     if (!actor) return null;
-    await (await request(tx)).input("id", sql.UniqueIdentifier, actor.sessionId).input("idleSeconds", sql.Int, pinIdleSeconds).query(`
+    const result = await (await request(tx)).input("id", sql.UniqueIdentifier, actor.sessionId).input("idleSeconds", sql.Int, pinIdleSeconds).query(`
       UPDATE uqp.SharedWorkstationSession SET LastActivityAtUtc=SYSUTCDATETIME()
       WHERE Id=@id AND RevokedAtUtc IS NULL AND ExpiresAtUtc>SYSUTCDATETIME()
         AND LastActivityAtUtc>DATEADD(SECOND,-@idleSeconds,SYSUTCDATETIME());`);
-    return actor;
+    return result.rowsAffected[0] === 1 ? actor : null;
   }
-  return { credential, candidate, insert, read, touch };
+  return { credential, candidate, accountBucketIdentity, expire, insert, read, touch };
 }
 export const workstationSessions = createWorkstationSessions();

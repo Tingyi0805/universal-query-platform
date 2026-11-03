@@ -6,12 +6,13 @@ import { createWorkstationPinService } from "./workstationPin.service.js";
 function fixture() {
   const calls: string[] = [];
   const tx = {} as sql.Transaction;
-  const state = { enabled: true, valid: true, candidate: true, active: "A", generation: "1", failAudit: "", failCommit: false, stale: false, blocked: false };
+  const state = { enabled: true, valid: true, candidate: true, active: "A", generation: "1", failAudit: "", failCommit: false, stale: false, blocked: false, expired: false };
   const binding = () => ({ workstationId: 7, credentialVersion: 2, generation: state.generation });
   const user = { Id: 8, TokenVersion: 3, PinVersion: 4, PinLength: 6, PinHash: "synthetic" };
   const service = createWorkstationPinService({ enabled: () => state.enabled, pepper: () => ({ id: "test", key: Buffer.alloc(32, 7) }),
     sessions: {
       credential: async () => binding(), candidate: async () => { calls.push("candidate"); return state.candidate ? user : null; },
+      accountBucketIdentity: async () => "user:8", expire: async () => state.expired ? [8] : [],
       insert: async () => { calls.push("insert"); state.active = "B"; }, read: async () => null, touch: async () => null,
     },
     state: {
@@ -66,4 +67,11 @@ test("phase-one Audit failure cannot proceed to verify B", async () => {
 test("disabled runtime does no credential lookup, revocation or Audit", async () => {
   const f = fixture(); f.state.enabled = false;
   await assert.rejects(f.login(), /DISABLED/); assert.deepEqual(f.calls, []);
+});
+test("session check persists idle/absolute revocation Audit in caller transaction and fails closed on Audit failure", async () => {
+  const f = fixture(); f.state.expired = true;
+  assert.equal(await f.service.current("synthetic-token", "synthetic-credential"), null);
+  assert.ok(f.calls.includes("AUTH_PIN_IDLE_LOCKED"));
+  f.state.failAudit = "AUTH_PIN_IDLE_LOCKED";
+  await assert.rejects(f.service.current("synthetic-token", "synthetic-credential"), /audit-failed/);
 });

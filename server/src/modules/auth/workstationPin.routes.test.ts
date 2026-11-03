@@ -14,9 +14,9 @@ async function fixture(run: (f: { state: { enabled: boolean; valid: boolean; fai
   app.use(createWorkstationPinRouter({ enabled: () => state.enabled, origin: () => "https://uqp.example", key: () => key,
     sessions: { credential: async () => state.valid ? { workstationId: 7, credentialVersion: 1, generation: "2" } : null,
       read: async () => state.valid ? { userId: 8, username: "synthetic", displayName: "Synthetic", sessionId: "session-B" } as never : null,
-      candidate: async () => null, insert: async () => {}, touch: async () => null },
+      candidate: async () => null, accountBucketIdentity: async () => "user:8", expire: async () => [], insert: async () => {}, touch: async () => null },
     service: { login: async () => { state.calls++; if (state.fail) throw new Error("password=synthetic;SELECT private"); return { status: "OK", token }; },
-      lock: async () => { state.calls++; }, activity: async () => null },
+      lock: async () => { state.calls++; }, activity: async () => null, current: async () => null },
   }));
   const server = createServer(app); await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
@@ -52,4 +52,8 @@ test("pair requires custom header; invalid credentials and driver failures expos
   const res = await f.request("/switch", "POST", { username: "synthetic", pin: "837294" });
   assert.equal(res.status, 503); assert.deepEqual(await res.json(), { error: { code: "PIN_SERVICE_UNAVAILABLE" } });
   assert.equal(res.headers.get("set-cookie"), null);
+}));
+test("malformed B switch still revokes A before rejecting input", () => fixture(async f => {
+  const res = await f.request("/switch", "POST", { username: "B", pin: "bad" });
+  assert.equal(res.status, 400); assert.equal(f.state.calls, 1); assert.equal(res.headers.get("set-cookie"), null);
 }));

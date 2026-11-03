@@ -35,7 +35,7 @@ export function createWorkstationPinService(deps = defaults) {
       await audit("AUTH_PIN_SWITCH_REVOKED", tx);
     });
     const attemptKey = createHmac("sha256", pepper.key).update("uqp:pin-attempt-key:v1").digest();
-    const canonicalAccount = input.username.trim().toLowerCase();
+    const canonicalAccount = await deps.sessions.accountBucketIdentity(input.username);
     const buckets = pinAttemptBuckets(canonicalAccount, binding.workstationId, input.network, attemptKey);
     const token = deps.token();
     const status = await deps.state.attempt(buckets, async tx => {
@@ -69,6 +69,17 @@ export function createWorkstationPinService(deps = defaults) {
     requireRuntime();
     return deps.state.transaction(tx => deps.sessions.touch(token, credential, tx));
   }
-  return { login, lock, activity };
+  async function current(token: string | null, credential: string, context?: Partial<AuditStartInput>) {
+    requireRuntime();
+    return deps.state.transaction(async tx => {
+      const binding = await deps.sessions.credential(credential, tx);
+      if (!binding) throw new Error("PIN_CREDENTIAL_INVALID");
+      const expired = await deps.sessions.expire(binding, tx);
+      for (const userId of expired) await deps.audit({ ...context, eventType: "AUTH_PIN_IDLE_LOCKED", userId,
+        parameters: { workstationId: binding.workstationId } }, tx);
+      return token ? deps.sessions.read(token, credential, tx) : null;
+    });
+  }
+  return { login, lock, activity, current };
 }
 export const workstationPinService = createWorkstationPinService();
