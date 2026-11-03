@@ -267,6 +267,9 @@ export async function verify927(
     assert.equal(await second.transaction(tx => second.claimGeneration(tx, 1, "4")), false);
     console.log("PIN_RUNTIME_SQL_REAL_SHARED_BUCKET_AUDIT_ROLLBACK_REVOKE_CAS_SESSION_PASS (disposable synthetic DB; two repository instances, not multi-process HTTP)");
 
+    stage = "real-http-PIN-two-processes";
+    await (await import("./workstationPin927HttpAcceptance.js")).verify927Http(pool, name);
+
     stage = "disabled-and-mutated-catalog-refusal";
     await query("ALTER TABLE uqp.WorkstationPinAttemptBucket NOCHECK CONSTRAINT CK_PinAttempt_Failed");
     await assert.rejects(pool.request().batch(workstationPinSchemaSql));
