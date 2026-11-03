@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type sql from "mssql";
-import { createWorkstationSessions } from "./workstationSession.repository.js";
+import { createWorkstationSessions, pinIdleSeconds, pinAbsoluteSeconds } from "./workstationSession.repository.js";
 import { pinSessionHash } from "./workstationCookies.js";
 import { hashDeviceSecret } from "./workstationCredential.service.js";
 const credential = `12345678-1234-4234-8234-123456789abc.${Buffer.alloc(32, 7).toString("base64url")}`;
@@ -49,4 +49,9 @@ test("database-resolved account ID binds username aliases to one bucket; unknown
   f.state.missing = true;
   const unknown = await f.sessions.accountBucketIdentity("missing-synthetic-user");
   assert.match(unknown, /^missing:[a-f0-9]{64}$/); assert.ok(!unknown.includes("synthetic"));
+});
+
+test("PIN session idle and absolute lifetimes match approved policy", () => {
+  assert.equal(pinIdleSeconds, 180);
+  assert.equal(pinAbsoluteSeconds, 8 * 60 * 60);
 });
