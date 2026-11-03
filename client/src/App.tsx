@@ -17,6 +17,7 @@ import { DashboardLayoutDesignerPage } from "./pages/DashboardLayoutDesignerPage
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
 import { QuickPinEnrollmentPage } from "./pages/QuickPinEnrollmentPage";
+import { WorkstationPinPage } from "./pages/WorkstationPinPage";
 import { QueryPortalPage } from "./pages/QueryPortalPage";
 import { QueryPublisherPage } from "./pages/QueryPublisherPage";
 import { QueryRuntimePage } from "./pages/QueryRuntimePage";
@@ -176,6 +177,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/workstation" element={<WorkstationPinPage />} />
       <Route path="/setup" element={<SetupPage />} />
       <Route path="/display/dashboards/:id" element={<DashboardDisplayPage />} />
       <Route element={<ProtectedRoute />}>

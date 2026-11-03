@@ -1,0 +1,9 @@
+.workstation-pin { max-width: 1100px; margin: auto; }
+.workstation-pin form, .workstation-pin label { display: flex; flex-direction: column; gap: 10px; }
+.workstation-pin form { max-width: 540px; margin: 20px 0; }
+.workstation-pin input, .workstation-pin select, .workstation-pin button, .workstation-pin summary { min-height: 48px; font-size: 16px; padding: 10px 14px; touch-action: manipulation; }
+.workstation-pin header { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }
+.workstation-pin details { margin-top: 24px; }
+.workstation-results { max-width: 100%; overflow-x: auto; margin-top: 24px; }
+.workstation-results th, .workstation-results td { padding: 12px; text-align: left; }
+@media (max-width: 600px) { .workstation-pin { padding: 16px; } .workstation-pin header button { width: 100%; } }
