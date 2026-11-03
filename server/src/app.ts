@@ -12,6 +12,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { adminRouter } from "./modules/admin/admin.routes.js";
 import { auditRouter } from "./modules/audit/audit.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { createWorkstationPinRouter } from "./modules/auth/workstationPin.routes.js";
 import { dataSourceRouter } from "./modules/datasource/datasource.routes.js";
 import { datasetRouter } from "./modules/dataset/dataset.routes.js";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
@@ -64,6 +65,7 @@ app.use(
 
 app.use("/api/status", healthRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/workstations/current", createWorkstationPinRouter());
 app.use("/api/admin", adminRouter);
 app.use("/api/audit", auditRouter);
 app.use("/api/datasources", dataSourceRouter);

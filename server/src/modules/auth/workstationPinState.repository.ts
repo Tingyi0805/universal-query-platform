@@ -134,5 +134,5 @@ export function createWorkstationPinState(deps: PinStateDependencies = defaults)
         AND RetiredAtUtc IS NULL AND PurposeCode=N'SHARED_QUERY';`);
     return result.rowsAffected[0] === 1;
   }
-  return { attempt, revokeForIntent, claimGeneration };
+  return { attempt, revokeForIntent, claimGeneration, transaction };
 }

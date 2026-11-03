@@ -12,6 +12,8 @@ export const loggerOptions = {
       "req.headers.authorization",
       'req.headers["x-dashboard-device-token"]',
       'req.headers["x-workstation-credential"]',
+      'req.headers["x-workstation-csrf"]',
+      "credential", "*.credential", "csrfToken", "*.csrfToken",
       "req.headers.cookie",
       "res.headers.set-cookie",
       "pin",
