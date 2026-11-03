@@ -9,7 +9,7 @@
 - **DONE**：新增 `GET /api/dashboards/:id/device-management/v1/:deviceId/authorization-evidence`，no-store、沿用 live JWT／TokenVersion、DESIGN_QUERY、Dashboard/device scope 及 lifecycle/schema attestation；與安全管理讀取相同，不要求 EXECUTE_QUERY，不增加寫入權限或執行患者 Query。只回傳當前查詢時間、持久 Enrollment、儲存 grant 與 Dashboard mode version 的相符性、既有終止/期限標記及固定 `playbackAuthority=NOT_VERIFIED`。明列未驗證的 Cookie、來源 IP、工作站、委派者 session/ACL、逐頁遮蔽／患者稽核，不回傳 Token、Hash、Credential、Cookie 或 Audit JSON。此回應不可替代完整 expectedVersion 或播放授權。
 - **DONE**：在原管理區整合六步引導；建立／保存後選定裝置並顯示已保存設定、播放位置、Query-only 啟用及 Enrollment 進度；連到原預檢／啟用與唯一版本化核發／網址／BAT 入口。每一步仍由原 API 獨立確認與 CAS，409明確重載，不自動重核、重送或啟用。
 - **DONE**：尚未核發及版本化生命週期裝置不再顯示重複舊核發按鈕。只有完整快照證明 NULL marker＋既有正整數 grant pair 的 Legacy 裝置才顯示明確標示的相容區，未載入／證據不足即隱藏；既有 ACK、一次性交接保留。`VERSIONED_API_REQUIRED` 改為前往版本化入口／重載的提示，禁止建議因錯誤而重核 Token。
-- **DONE**：搜尋標示「輸入純數字 ID」；不修改搜尋 API。管理操作表於1280px以下改卡片排列、保留欄位標籤、間距及觸控操作，避免不必要水平捲動。播放位置／Audit入口保留。
+- **DONE**：搜尋標示「輸入純數字 ID」；不修改搜尋 API。管理操作表於1280px以下改卡片排列、保留欄位標籤、間距及觸控操作，避免不必要水平捲動。播放位置／Audit入口保留。完整CI另揭露Dataset頁全域nowrap規則與裝置表格同優先序的載入順序衝突；以較明確的裝置scope修正，保留無溢出斷言，補345px及強制晚載全域nowrap的回歸（修正前可重現nowrap失敗）。
 - **待人工驗收**：正式 Dashboard #3／實際裝置的 readonly evidence 結果與原 BAT Cookie/IP/工作站狀態。本輪只確認 Repository 契約與合成測試，不宣稱已讀取該正式資料列或已通過 Windows／Android／iOS 實機驗收。ENROLLED 管理顯示不會把 ACTIVE 空篩選補值。
 
 ## #85：刷新與後端交付時間

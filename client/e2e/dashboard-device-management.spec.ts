@@ -554,10 +554,17 @@ for(const archived of [false,true])test(`D6-3 terminal expiry is not applicable 
  const table=page.getByRole("region",{name:"裝置操作表格"});await expect(table).toContainText(archived?"不適用（已封存）":"不適用（已撤銷）");await expect(table).not.toContainText("剩餘");
  expect(state.devices[0]!.expiresAtUtc).toBe("2099-01-01T00:00:00Z");await expect(panel.getByRole("button",{name:"首次核發新 Token 合成裝置",exact:true})).toHaveCount(0);
 });
-for(const width of [360,768])test(`D6-3 settings wrap on a touch viewport ${width}px without page overflow`,async({browser})=>{
+for(const width of [345,360,768])test(`D6-3 settings wrap on a touch viewport ${width}px without page overflow`,async({browser})=>{
  const context=await browser.newContext({baseURL:"http://127.0.0.1:4173",viewport:{width,height:1000},hasTouch:true});const page=await context.newPage();
- try{const {panel}=await setup(page);await panel.getByRole("button",{name:"重新載入裝置設定"}).tap();
-  await expect.poll(()=>page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth+1)).toBe(true);
+ try{const {panel}=await setup(page);
+  // Reproduce the existing Dataset page's global rule loading after the device stylesheet.
+  await page.addStyleTag({content:".preview-table th,.preview-table td{white-space:nowrap}"});
+  await panel.getByRole("button",{name:"重新載入裝置設定"}).tap();
+  await expect(page.getByRole("region",{name:"裝置操作表格"}).locator("td").nth(1)).toHaveCSS("white-space","normal");
+  await expect.poll(()=>page.evaluate(()=>{
+    if(document.documentElement.scrollWidth<=innerWidth+1)return [];
+    return [{viewport:innerWidth,scroll:document.documentElement.scrollWidth},...Array.from(document.querySelectorAll("body *")).filter(e=>e.getBoundingClientRect().right>innerWidth+1&&e.getBoundingClientRect().width>0).sort((a,b)=>b.getBoundingClientRect().right-a.getBoundingClientRect().right).slice(0,10).map(e=>({tag:e.tagName,cls:e.className,parent:e.parentElement?.className,text:e.textContent?.slice(0,80),width:e.getBoundingClientRect().width,right:e.getBoundingClientRect().right}))];
+  })).toEqual([]);
   const button=panel.getByRole("button",{name:"建立未授權裝置",exact:true});await button.focus();await page.keyboard.press("Shift+Tab");await page.keyboard.press("Tab");await expect(button).toBeFocused();await expect(button).toHaveCSS("outline-style","solid");
   await expect(page.getByRole("region",{name:"裝置操作表格"})).toHaveCSS("overflow-x","visible");
   const disabled=page.locator(".dashboard-designer-page button:disabled").first();await expect(disabled).toHaveCSS("border-top-style","dashed");
