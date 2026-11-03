@@ -84,7 +84,7 @@ async function main() {
     await new Promise<void>(resolve => server!.listen(0, "127.0.0.1", resolve));
     const port = (server.address() as { port: number }).port;
     process.on("message", value => {
-      if (value === "fail-next-success-audit") failSuccessAudit = true;
+      if (value === "fail-next-success-audit") { failSuccessAudit = true; process.send?.({ kind: "audit-armed" }); }
       if (value === "shutdown") {
         server?.closeAllConnections();
         server?.close(() => { void pool.close().then(() => process.exit(0)); });

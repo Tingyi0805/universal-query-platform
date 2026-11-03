@@ -99,7 +99,18 @@ export async function verify927Http(pool: sql.ConnectionPool, dbName: string): P
     assert.equal((await (await call(a, "/session", "GET", tokenB)).json()).user?.id, 9);
     // Force phase-two login Audit failure on node A; phase-one revocation must
     // remain durable even though the new session insert rolls back.
-    a.child.send("fail-next-success-audit");
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { a.child.off("message", onMessage); reject(Error("PIN_HTTP_AUDIT_ARM_TIMEOUT")); }, 5000);
+      const onMessage = (msg: unknown) => {
+        if (msg && typeof msg === "object" && (msg as { kind?: string }).kind === "audit-armed") {
+          clearTimeout(timer);
+          a.child.off("message", onMessage);
+          resolve();
+        }
+      };
+      a.child.on("message", onMessage);
+      a.child.send("fail-next-success-audit");
+    });
     const bad = await call(a, "/switch", "POST", tokenB, { username: usernameA, pin });
     assert.equal(bad.status, 503);
     assert.equal((await (await call(b, "/session", "GET", tokenB)).json()).user, null);
