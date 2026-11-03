@@ -69,6 +69,8 @@ export function projectAuthorizedChart(
 
   const seen = new Set<string>();
   const points = delivery.rows.map(row => {
+    if (!row || typeof row !== "object" || Array.isArray(row))
+      throw new ChartContractError("CHART_ROW_INVALID");
     const rawLabel = row[config.categoryColumn];
     if (!(typeof rawLabel === "string" || typeof rawLabel === "number") ||
         (typeof rawLabel === "number" && !Number.isFinite(rawLabel)))

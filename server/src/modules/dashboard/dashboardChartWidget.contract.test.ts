@@ -53,9 +53,11 @@ test("point count cap rejects instead of silently truncating", () => {
   assert.deepEqual(projectAuthorizedChart(config, { ...delivery(), rows: [] }).points, []);
 });
 test("masked and malformed numeric data and duplicate groups are refused", () => {
-  for (const value of ["●●", "1,200", "1e3", null, {}, Number.POSITIVE_INFINITY])
+  for (const value of ["●●", "1,200", "1e3", null, {}])
     reject("CHART_VALUE_NOT_NUMERIC", config, { ...delivery(), rows: [{ room: "OR-01", total: value }] });
   reject("CHART_VALUE_OUT_OF_RANGE", config, { ...delivery(), rows: [{ room: "OR-01", total: 1e15 }] });
+  reject("CHART_VALUE_OUT_OF_RANGE", config, { ...delivery(), rows: [{ room: "OR-01", total: Number.POSITIVE_INFINITY }] });
+  reject("CHART_ROW_INVALID", config, { ...delivery(), rows: [null as unknown as Record<string, unknown>] });
   reject("CHART_CATEGORY_INVALID", config, { ...delivery(), rows: [
     { room: "OR-01", total: 1 }, { room: "OR-01", total: 3 },
   ] });
