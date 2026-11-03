@@ -1,5 +1,7 @@
 # PIN 共用工作站切換：最小開發及阻斷紀錄
 
+本頁以下為先前停止點與歷史測試。使用者已授權沿用既定方案補必要接線，本輪進度與現行限制以 [PIN Runtime 開發契約](workstation-pin-runtime.md) 為準；舊文要求重新討論的項目不再作為繼續寫程式的前置條件。正式 SQL、備份與啟用核准仍獨立保留，不以程式開發完成代替。
+
 基準 `cad30674f02a92d681758c89e52da2cef54bd0c3`。PR83維持Draft；**PIN登入／切換與整合驗收BLOCKED**。沒有新增可登入的PIN API、假Session、前端閒置遮罩或姓名切換。本次只完成現有PIN設定流程的安全修正，沒有修改Server、SQL、Migration、JWT、Dataset、Query、Dashboard、Device或CI。
 
 ## 現有契約與可重用內容
