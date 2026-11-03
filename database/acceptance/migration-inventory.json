@@ -422,5 +422,17 @@
       900,
       918
     ]
+  },
+  {
+    "id": 927,
+    "file": "927_workstation_pin_runtime.sql",
+    "sha256": "2b49d9a84ef62d6dc6eb69f30c99da97c5ef4180757917add2713bbf8efdf574",
+    "requires": [
+      902,
+      903,
+      904,
+      905,
+      916
+    ]
   }
 ]

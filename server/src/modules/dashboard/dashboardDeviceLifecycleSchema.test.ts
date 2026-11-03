@@ -11,7 +11,7 @@ const directory=new URL("../../../../database/migrations/",import.meta.url),file
 test("926 is unique, pinned and leaves 922-925 reservations and old acceptance profiles unchanged",async()=>{
  const files=await readdir(directory);assert.equal(files.filter(f=>f.startsWith("926_")).length,1);
  assert.equal(files.filter(f=>/92[2-5]_/.test(f)).length,0);
- const rows=await inventory();assert.equal(rows.length,49);assert.equal(rows.at(-1)?.file,file);
+ const rows=await inventory();assert.equal(rows.length,50);assert.equal(rows.find(row=>row.id===926)?.file,file);assert.equal(rows.at(-1)?.id,927);
  for(const profile of ["legacy","coexistence"])assert.deepEqual(selectProfile(rows,profile),selectProfile(rows.filter(r=>r.id<926),profile));
 });
 test("926 repeats strict catalog checks instead of repairing conflicting/partial installations",async()=>{

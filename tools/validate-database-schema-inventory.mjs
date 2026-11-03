@@ -27,7 +27,7 @@ const migrations = JSON.parse(await read('database/acceptance/migration-inventor
 const actual = (await readdir(path.join(root, 'database/migrations'))).filter(p => p.endsWith('.sql')).sort();
 assert.deepEqual(actual, migrations.map(m => m.file).sort(), 'Historical migration source set changed');
 for (const m of migrations) assert.equal(digest(await read(`database/migrations/${m.file}`)), m.sha256, `Migration modified: ${m.file}`);
-assert.equal(actual.length, 49);
+assert.equal(actual.length, 50);
 assert.ok(!actual.some(p => /^(922|923|924|925)_/.test(p)), 'Independent installer or nonexistent migration added to scanner');
 const declarations = new Set();
 for (const [p] of pins) {

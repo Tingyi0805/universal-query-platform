@@ -5,6 +5,7 @@ import sql from "mssql";
 import { getPlatformDbPool, closePlatformDbPool } from "../config/database.js";
 import { logger } from "../config/logger.js";
 import { deviceLifecycleSchemaSql } from "../modules/dashboard/dashboardDeviceLifecycleSchema.js";
+import { workstationPinSchemaSql } from "../modules/auth/workstationPinSchema.js";
 
 const migrationsDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -20,6 +21,10 @@ function splitBatches(script: string): string[] {
 
 
 const manuallyVerifiableMigrations: Record<string, string> = {
+  "927_workstation_pin_runtime.sql": `BEGIN TRY
+    ${workstationPinSchemaSql}
+    SELECT 1 AS IsComplete;
+  END TRY BEGIN CATCH SELECT 0 AS IsComplete; END CATCH;`,
   "926_dashboard_device_lifecycle.sql": `BEGIN TRY
     ${deviceLifecycleSchemaSql}
     SELECT 1 AS IsComplete;
@@ -151,6 +156,10 @@ async function main() {
   for (const file of files) {
     if (scope && !scope.has(file)) continue;
     if (command === "adopt" && file !== args[1]) continue;
+    // 927 must never be treated as complete from Ledger alone. Do not alter
+    // historical migration behavior or implicitly add it to old scoped upgrades.
+    if (file === "927_workstation_pin_runtime.sql" && applied.has(file)
+      && await isManuallyComplete(pool, file) !== true) throw new Error("PIN_RECORDED_SCHEMA_INVALID");
     if (command === "status") {
       const verified = applied.has(file) ? null : await isManuallyComplete(pool, file);
       logger.info({ migration: file, state: applied.has(file) ? "RECORDED" : verified === true ? "MANUALLY_APPLIED_UNRECORDED" : verified === false ? "NOT_COMPLETE" : "UNRECORDED_REQUIRES_REVIEW" }, "Migration status");
