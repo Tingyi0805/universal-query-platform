@@ -1,10 +1,19 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { configuredPinLength } from "../security/pinPolicy";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./AdminUsersPage.css";
 import "./WorkstationManagement.css";
 
+function pinError(error:unknown):string {
+  const code=(error as {code?:string})?.code;
+  if(code==="PIN_LOCKED")return "PIN 管理已暫時鎖定，請 15 分鐘後再試。";
+  if(code==="PIN_POLICY_CHANGED")return "PIN 政策已變更，請重新載入政策後再設定。";
+  if(code==="PIN_WEAK")return "PIN 過於簡單或與舊 PIN 相同，請重新設定。";
+  if(code==="PIN_RATE_LIMIT")return "操作過於頻繁，請稍後再試；不會自動重送。";
+  return "操作未完成，請確認政策、正式密碼與鎖定狀態；不會自動重送。";
+}
 function PinPad({ value, onChange, maxLength, disabled }: { value: string; onChange: (value: string) => void; maxLength: number;disabled:boolean }) {
   const enter = (key: string) => {
     if (key === "清除") onChange("");
@@ -28,6 +37,8 @@ function PinPad({ value, onChange, maxLength, disabled }: { value: string; onCha
 
 export function QuickPinEnrollmentPage() {
   const { accessToken } = useAuth();
+  const identity=useRef(0),operation=useRef(0),inFlight=useRef(false);
+  const [reload,setReload]=useState(0);
   const [length, setLength] = useState(6);
   const [password, setPassword] = useState("");
   const [pin, setPin] = useState("");
@@ -38,46 +49,53 @@ export function QuickPinEnrollmentPage() {
   const [notice, setNotice] = useState("");
   const [ready, setReady] = useState(false);
 
+  const clearSecrets=()=>{setPassword("");setPin("");setConfirmPin("");setStage("enter");};
   useEffect(() => {
-    setReady(false);
-    apiRequest<{ pinLength: number }>("/auth/quick-pin/policy", {}, accessToken)
-      .then(result => { setLength(result.pinLength); setReady(true); })
-      .catch(err => setError(err instanceof Error ? err.message : "無法取得 PIN 長度設定"));
-  }, [accessToken]);
+    const epoch=++identity.current;
+    ++operation.current;clearSecrets();setReady(false);setError("");setNotice("");
+    void apiRequest<{ pinLength: number }>("/auth/quick-pin/policy", {}, accessToken,()=>identity.current===epoch)
+      .then(result => { if(identity.current===epoch){setLength(configuredPinLength(result.pinLength));setReady(true);} })
+      .catch(()=>{if(identity.current===epoch){setReady(false);setError("無法確認 PIN 政策，禁止提交；請重新載入。");}});
+    return()=>{++identity.current;++operation.current;};
+  }, [accessToken,reload]);
 
   useEffect(()=>{
-    const clear=()=>{setPassword("");setPin("");setConfirmPin("");setStage("enter");};
+    const clear=()=>{++operation.current;clearSecrets();setNotice("");if(inFlight.current)setError("操作結果尚未確認，請勿重送；待要求結束後重新確認政策與 PIN 狀態。");};
     const hidden=()=>{if(document.hidden)clear();};
-    window.addEventListener("pagehide",clear);document.addEventListener("visibilitychange",hidden);
-    return()=>{window.removeEventListener("pagehide",clear);document.removeEventListener("visibilitychange",hidden);};
+    window.addEventListener("pagehide",clear);window.addEventListener("uqp-interactive-clear",clear);document.addEventListener("visibilitychange",hidden);
+    return()=>{window.removeEventListener("pagehide",clear);window.removeEventListener("uqp-interactive-clear",clear);document.removeEventListener("visibilitychange",hidden);};
   },[]);
 
   async function enroll(event: FormEvent) {
-    event.preventDefault(); if(!ready||busy)return; setError(""); setNotice("");
+    event.preventDefault(); if(!ready||busy||inFlight.current)return; setError(""); setNotice("");
     if (stage === "enter") {
       if (pin.length !== length) { setError(`請輸入 ${length} 位數 PIN。`); return; }
       setStage("confirm"); return;
     }
     if (pin !== confirmPin) { setError("兩次 PIN 不一致，請重新確認。"); setConfirmPin(""); return; }
-    setBusy(true);
+    inFlight.current=true;setBusy(true);
+    const epoch=identity.current,seq=++operation.current;
     try {
-      await apiRequest("/auth/quick-pin/enroll", { method: "POST", body: JSON.stringify({ password, pin }) }, accessToken);
+      await apiRequest("/auth/quick-pin/enroll", { method: "POST", body: JSON.stringify({ password, pin }) }, accessToken,()=>identity.current===epoch);
+      if(identity.current!==epoch||operation.current!==seq)return;
       setNotice("個人 PIN 已設定或更新，舊 PIN 已失效。工作站 PIN 快速登入尚未啟用。");
       setPassword(""); setPin(""); setConfirmPin(""); setStage("enter");
-    } catch (err) { setError(err instanceof Error ? err.message : "PIN 設定失敗"); }
-    finally { setPassword("");setPin("");setConfirmPin("");setStage("enter");setBusy(false); }
+    } catch (error) { if(identity.current===epoch&&operation.current===seq){if((error as {code?:string})?.code==="PIN_POLICY_CHANGED")setReady(false);setError(pinError(error));} }
+    finally { inFlight.current=false;if(identity.current===epoch&&operation.current===seq)clearSecrets();setBusy(false); }
   }
 
   async function revoke() {
     if (!password) { setError("請先輸入正式密碼。"); return; }
     if (!window.confirm("確定撤銷個人 PIN？")) return;
-    if(!ready)return;
-    setBusy(true); setError(""); setNotice("");
+    if(!ready||busy||inFlight.current)return;
+    inFlight.current=true;setBusy(true); setError(""); setNotice("");
+    const epoch=identity.current,seq=++operation.current;
     try {
-      await apiRequest("/auth/quick-pin/revoke", { method: "POST", body: JSON.stringify({ password }) }, accessToken);
+      await apiRequest("/auth/quick-pin/revoke", { method: "POST", body: JSON.stringify({ password }) }, accessToken,()=>identity.current===epoch);
+      if(identity.current!==epoch||operation.current!==seq)return;
       setNotice("個人 PIN 已撤銷。"); setPassword(""); setPin(""); setConfirmPin(""); setStage("enter");
-    } catch (err) { setError(err instanceof Error ? err.message : "撤銷失敗"); }
-    finally { setPassword("");setPin("");setConfirmPin("");setStage("enter");setBusy(false); }
+    } catch (error) { if(identity.current===epoch&&operation.current===seq)setError(pinError(error)); }
+    finally { inFlight.current=false;if(identity.current===epoch&&operation.current===seq)clearSecrets();setBusy(false); }
   }
 
   return <main className="page-shell pin-panel">
@@ -86,11 +104,12 @@ export function QuickPinEnrollmentPage() {
       <Link className="secondary-button link-button" to="/">返回首頁</Link></div>
     {error && <section className="form-error" role="alert">{error}</section>}
     {notice && <section className="notice" role="status">{notice}</section>}
+    <button type="button" className="secondary-button" disabled={busy} onClick={()=>setReload(n=>n+1)}>重新載入 PIN 政策</button>
     <section className="admin-section"><form className="admin-form" onSubmit={enroll}>
       <label>正式登入密碼<input type="password" autoComplete="current-password" value={password}
         onChange={e => setPassword(e.target.value)} required /></label>
       <h2>{stage === "enter" ? "輸入新的個人 PIN" : "再次輸入 PIN 確認"}</h2>
-      <p>目前設定為 {length} 位數；建議至少 6 位。請避免生日、連續或重複數字。</p>
+      <p>{ready ? `目前設定為 ${length} 位數；建議至少 6 位。請避免生日、連續或重複數字。` : "尚未確認 PIN 政策，禁止提交。"}</p>
       {ready && <PinPad value={stage === "enter" ? pin : confirmPin}
         onChange={stage === "enter" ? setPin : setConfirmPin} maxLength={length} disabled={busy||!ready} />}
       <div className="form-actions">
