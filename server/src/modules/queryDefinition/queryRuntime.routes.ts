@@ -1,7 +1,9 @@
 import { getClientIp } from "../../utils/clientIp.js";
 import { finalizeDeliveryAudit } from "../audit/deliveryAudit.repository.js";
 import { safeAuditErrorCode, withErrorModule } from "../../middleware/safeErrorDiagnostic.js";
-import { Router } from "express";
+import { Router, type Request } from "express";
+import type sql from "mssql";
+import type { RuntimeIdentity } from "./queryDelivery.js";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { getParameterOptions } from "../dataset/dataset.service.js";
@@ -107,7 +109,9 @@ export const defaultQueryRuntimeDependencies = {
   listAccessibleQueries, setQueryFavorite, listDatasetParameters, getParameterOptions,
   startAudit, finalizeDeliveryAudit, completeAuditFailure, createQueryCsv, createQueryExcel,
 };
-export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies) {
+export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies,
+  requestIdentity?: (req: Request, tx?: sql.Transaction) => Promise<RuntimeIdentity>) {
+  const identity = (req: Request, tx?: sql.Transaction) => requestIdentity ? requestIdentity(req, tx) : deps.identity(req.headers.authorization, tx);
   const queryRuntimeRouter = Router();
   queryRuntimeRouter.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
   queryRuntimeRouter.use(deps.authenticate);
@@ -156,7 +160,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
         return;
       }
 
-      const context = await deps.delivery.open(id.data, "VIEW", transaction => deps.identity(req.headers.authorization, transaction));
+      const context = await deps.delivery.open(id.data, "VIEW", transaction => identity(req, transaction));
       const query = context.query, dataset = context.dataset;
       const savedParameters = await withErrorModule("dataset.parameters.load", () => deps.listDatasetParameters(query.datasetId));
       const parameters = await withErrorModule("dataset.parameters.validate", async () => runtimeParameterDefinitions(dataset.sqlText, savedParameters));
@@ -199,7 +203,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
         return;
       }
 
-      const context = await deps.delivery.open(id.data, "VIEW", transaction => deps.identity(req.headers.authorization, transaction));
+      const context = await deps.delivery.open(id.data, "VIEW", transaction => identity(req, transaction));
       const parameters = await deps.listDatasetParameters(context.query.datasetId);
       const parameter = parameters.find(p => p.name === name.data);
       if (!parameter) throw new QueryDeliveryError("PARAMETER_NOT_FOUND", 404);
@@ -220,7 +224,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
       try {
         const id = idSchema.safeParse(req.params.id), body = executeBodySchema.safeParse(req.body);
         if (!id.success || !body.success) throw new QueryDeliveryError("VALIDATION_ERROR", 400);
-        const context = await deps.delivery.open(id.data, format === "json" ? "EXECUTE" : "EXPORT", transaction => deps.identity(req.headers.authorization, transaction));
+        const context = await deps.delivery.open(id.data, format === "json" ? "EXECUTE" : "EXPORT", transaction => identity(req, transaction));
         const query = context.query;
         auditId = await deps.startAudit({
           eventType: format === "json" ? "QUERY_EXECUTE" : format === "csv" ? "QUERY_EXPORT_CSV" : "QUERY_EXPORT_EXCEL",
@@ -237,6 +241,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies)
           : JSON.stringify({ result: delivery.result, disclosureId: delivery.disclosureId });
         await context.revalidate();
         await deps.finalizeDeliveryAudit(auditId, { rowCount: delivery.result.rowCount, durationMs: Date.now() - started }, context.revalidate);
+        await context.revalidate();
         if (format === "json") {
           res.type("json").send(payload);
         } else {

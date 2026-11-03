@@ -8,6 +8,8 @@ import { credentialCookie, sessionCookie, readOpaqueCookie, setOpaqueCookie, cle
   workstationBoundary, workstationCsrf, matchesWorkstationCsrf, parseOpaqueToken } from "./workstationCookies.js";
 import { workstationSessions, pinIdleSeconds } from "./workstationSession.repository.js";
 import { workstationPinService } from "./workstationPin.service.js";
+import { createWorkstationQueryRouter } from "./workstationQuery.routes.js";
+import { QueryDeliveryError } from "../queryDefinition/queryDelivery.js";
 
 export const defaultWorkstationPinRouteDependencies = {
   enabled: () => env.WORKSTATION_PIN_RUNTIME,
@@ -97,10 +99,11 @@ export function createWorkstationPinRouter(deps = defaultWorkstationPinRouteDepe
       res.json({ status: "OK", sessionId: actor.sessionId });
     } catch (error) { next(error); }
   });
+  router.use("/queries", createWorkstationQueryRouter(deps.sessions));
   // Stable errors only. Never expose SQL driver errors or credential values.
   router.use((error: unknown, _req: import("express").Request, res: import("express").Response, _next: import("express").NextFunction) => {
     const code = error instanceof Error ? error.message : "";
-    const status = code === "PIN_SWITCH_STALE" ? 409 : code === "PIN_CREDENTIAL_INVALID" ? 401 : 503;
+    const status = error instanceof QueryDeliveryError ? error.status : code === "PIN_SWITCH_STALE" ? 409 : code === "PIN_CREDENTIAL_INVALID" ? 401 : 503;
     res.status(status).json({ error: { code: status === 503 ? "PIN_SERVICE_UNAVAILABLE" : code } });
   });
   return router;
