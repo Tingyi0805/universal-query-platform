@@ -56,6 +56,8 @@ async function main() {
       pepper: () => pepper, sessions, state, verify: verifyPin,
       token: () => randomUUID() + "." + randomBytes(32).toString("base64url"),
       audit: async (input, tx) => {
+        // PIN decisions must never write Audit outside the owning transaction.
+        if (!tx) throw Error("PIN_HTTP_AUDIT_TX_REQUIRED");
         if (failSuccessAudit && input.eventType === "AUTH_PIN_LOGIN_SUCCESS") {
           failSuccessAudit = false;
           throw Error("SYNTHETIC_LOGIN_AUDIT_ABORT");
