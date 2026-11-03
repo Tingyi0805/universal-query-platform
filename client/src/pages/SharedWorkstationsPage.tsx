@@ -93,6 +93,12 @@ export function SharedWorkstationsPage() {
   const [effectiveTotal, setEffectiveTotal] = useState(0);
   const selection = useRef(0);
   const item = items.find((w) => w.id === selected);
+  const counts = {
+    total: items.length,
+    active: items.filter((w) => !w.retiredAtUtc && w.isActive).length,
+    inactive: items.filter((w) => !w.retiredAtUtc && !w.isActive).length,
+    retired: items.filter((w) => Boolean(w.retiredAtUtc)).length,
+  };
   const load = useCallback(async () => {
     const result = await apiRequest<{
       schemaReady: boolean;
@@ -412,25 +418,48 @@ export function SharedWorkstationsPage() {
           </button>
         </form>
       </section>
-      <section className="admin-section">
-        <h2>已登記工作站</h2>
-        <div className="workstation-list">
-          {items.map((w) => (
-            <button
-              type="button"
-              key={w.id}
-              className="secondary-button"
-              disabled={busy}
-              onClick={() => void select(w)}
-            >
-              {w.displayName} ·{" "}
-              {w.purposeCode === "DASHBOARD"
-                ? "Dashboard 播放裝置"
-                : "共用查詢工作站"}{" "}
-              · {w.retiredAtUtc ? "已退役" : w.isActive ? "已啟用" : "停用"}
-            </button>
-          ))}
+      <section className="admin-section workstation-inventory" aria-label="已登記工作站">
+        <div className="workstation-inventory-heading">
+          <div>
+            <h2>已登記工作站</h2>
+            <p>選取工作站後，可查看授權與裝置綁定設定。</p>
+          </div>
+          <div className="workstation-summary" role="group" aria-label="工作站狀態總覽">
+            <span>總計 <strong>{counts.total}</strong></span>
+            <span>啟用 <strong>{counts.active}</strong></span>
+            <span>停用 <strong>{counts.inactive}</strong></span>
+            <span>退役 <strong>{counts.retired}</strong></span>
+          </div>
         </div>
+        {items.length === 0 ? (
+          <p className="workstation-empty">目前沒有已登記的工作站。</p>
+        ) : (
+          <div className="workstation-list" role="group" aria-label="選取工作站">
+            {items.map((w) => {
+              const status = w.retiredAtUtc ? "已退役" : w.isActive ? "已啟用" : "停用";
+              return (
+                <button
+                  type="button"
+                  key={w.id}
+                  className={`workstation-list-item${selected === w.id ? " is-selected" : ""}`}
+                  aria-pressed={selected === w.id}
+                  disabled={busy}
+                  onClick={() => void select(w)}
+                >
+                  <span className="workstation-item-heading">
+                    <strong>{w.displayName}</strong>
+                    <span className={`workstation-status ${w.retiredAtUtc ? "retired" : w.isActive ? "active" : "inactive"}`}>{status}</span>
+                  </span>
+                  <span className="workstation-item-meta">
+                    <span>{w.workstationCode}</span>
+                    <span>{w.purposeCode === "DASHBOARD" ? "Dashboard 播放裝置" : "共用查詢工作站"}</span>
+                    <span>{w.platformCode}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </section>
       {item && (
         <section className="admin-section">
