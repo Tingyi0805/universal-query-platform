@@ -34,3 +34,19 @@ Parser 靜態檢查不等同 SQL Server 編譯或執行；未宣稱隔離 SQL �
 驗證：PIN verifier／管理異動／政策／日誌相關 18 項測試、Server Typecheck／Build 通過。這不是登入、Session 或共享計數的完成驗收。
 
 隔離 SQL：Docker 可用，但 `mcr.microsoft.com/mssql/server:2022-latest` 下載回覆 `Forbidden`；沒有 SQL Server 容器啟動，沒有 SQL 執行。forward SQL 不得據此標示已通過隔離驗收或可正式執行。
+
+## 第三批：恢復 forward 草稿（未完成正式 Migration）
+
+[forward SQL](../database/drafts/workstation_pin_runtime.forward.sql) 僅增加 `SharedWorkstation.SwitchVersion` 及 `WorkstationPinAttemptBucket`，沿用 readiness 設計。Schema 交易使用專用 applock；缺前置、已有／部分安裝或名稱衝突時拒絕，不採認／修補既有物件，不重設 generation 或計數。未增 Session 表、RBAC、服務或資料庫，也未變更既有 902–905、916、926。計數 key 預期使用外置 key 的不可逆 digest，不保存原始 PIN／帳號／IP。
+
+草稿目前要求無外層交易的專用 connection，尚未接入 Migration runner。正式編號前仍需加入完整已安裝狀態 attestation／安全重跑契約，以及隔離執行、失敗回滾和既有 writer 相容性驗證；目前不得以此草稿取代可交付的 Migration。
+
+驗證：3 個 additive DDL 經 sqlglot 28.0.0 T-SQL 解析；靜態範圍檢查確認沒有 DML、Ledger 寫入或破壞性 DDL。TRY／transaction／applock 尚未在 SQL Server 執行。清冊 validator 通過：62 SQL 來源、49 歷史 Migration SHA／集合不變；新增草稿 17 個宣告物件列 UNKNOWN，不代表正式 DB 新增物件。
+
+後續未完成：正式 Migration、SQL 共享計數 Runtime、generation CAS Runtime、Session／Cookie／CSRF、受限 QueryDelivery 與 PIN 登入／切換／閒置鎖定 UI。沒有以 verifier 或 Schema 草稿冒充這些功能已完成，也沒有推送可交付版本。
+
+## 本機完整 Server 回歸
+
+Node v24.19.0，Server 全套 **2263／2263 PASS**，0 skipped；Typecheck／Build PASS。初輪因安裝時未建置 ODBC native 元件而有兩個依賴測試失敗，`npm rebuild odbc` 後 11 項相關案例及完整重跑通過；沒有修改依賴版本、lockfile 或測試規則。
+
+本輪沒有 Client／Browser 變更，尚未執行完整 Client／Browser、Windows Node v24.22.1 或實機觸控驗收。沒有推送／觸發 CI；不把本機 Server 綠燈當作整體 PIN 可交付。

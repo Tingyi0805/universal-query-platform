@@ -28,6 +28,10 @@ D5-C-3的58份SQL是當時來源快照；加入本輪兩份後，目前SQL來源
 | database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | ACTIVE（人工唯讀驗收） | 前置／Ledger／926 Catalog／舊資料／容量／權限／既有備份歷史；不安裝、不備份 |
 | database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | ACTIVE（人工唯讀驗收） | 僅在兩個926欄位存在且型別正確時統計三個CHECK違規 |
 
+## PIN 恢復草稿補註
+
+新增 forward 草稿的 17 個宣告物件均列 UNKNOWN（未部署／未接線）；原 49 Migration 與 SHA 不變。來源集另加入唯讀 PIN 檢查與 forward 草稿。此處增加的數量不是正式資料庫變動。
+
 ## 計數與分類口徑
 
 一個應用 Schema：`uqp`。SQL Server 系統 Schema、外部資料來源 Schema、測試臨時 Schema 不納入此數字。
@@ -50,10 +54,10 @@ Computed 欄位的實際 nullability 仍需 Catalog 確認。
 | 類別 | 數量 |
 |---|---:|
 | SCHEMA | 1 |
-| TABLE | 54 |
-| COLUMN | 536 |
-| CONSTRAINT | 407 |
-| INDEX | 43 |
+| TABLE | 55 |
+| COLUMN | 543 |
+| CONSTRAINT | 415 |
+| INDEX | 44 |
 | TRIGGER | 1 |
 | SEQUENCE | 1 |
 
@@ -63,8 +67,8 @@ Computed 欄位的實際 nullability 仍需 Catalog 確認。
 | LEGACY_REQUIRED | 32 |
 | MIGRATION_ONLY | 0 |
 | UNUSED_CONFIRMED | 0 |
-| UNKNOWN | 146 |
-| TOTAL | 1043 |
+| UNKNOWN | 163 |
+| TOTAL | 1060 |
 
 ## 來源與範圍界線
 
@@ -1569,6 +1573,7 @@ Trigger：`uqp.TR_DashboardDevice_Lifecycle`（ACTIVE），來源 926；禁止�
 | SortOrder | INT | NOT NULL | ACTIVE | `SortOrder INT NOT NULL CONSTRAINT DF_Workstation_Sort DEFAULT 0` · [database/migrations/916_workstation_management.sql](../database/migrations/916_workstation_management.sql) |
 | RetiredAtUtc | DATETIME2(3) | NULL | ACTIVE | `RetiredAtUtc DATETIME2(3) NULL` · [database/migrations/916_workstation_management.sql](../database/migrations/916_workstation_management.sql) |
 | LastUsedAtUtc | DATETIME2(3) | NULL | UNKNOWN | `LastUsedAtUtc DATETIME2(3) NULL` · [database/migrations/916_workstation_management.sql](../database/migrations/916_workstation_management.sql) |
+| SwitchVersion | BIGINT | NOT NULL | UNKNOWN | DEFAULT 0 / CHECK >=0；未部署草稿 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
 
 | Constraint | 類型 | 狀態 | 宣告／來源 |
 |---|---|---|---|
@@ -1585,6 +1590,8 @@ Trigger：`uqp.TR_DashboardDevice_Lifecycle`（ACTIVE），來源 926；禁止�
 | CK_Workstation_Purpose | CHECK | ACTIVE | `CONSTRAINT CK_Workstation_Purpose CHECK (PurposeCode IN ('SHARED_QUERY','DASHBOARD'))` · [database/migrations/916_workstation_management.sql](../database/migrations/916_workstation_management.sql) |
 | CK_Workstation_Sort | CHECK | ACTIVE | `CONSTRAINT CK_Workstation_Sort CHECK (SortOrder BETWEEN 0 AND 10000)` · [database/migrations/916_workstation_management.sql](../database/migrations/916_workstation_management.sql) |
 | CK_Workstation_Retired | CHECK | ACTIVE | `CONSTRAINT CK_Workstation_Retired CHECK (RetiredAtUtc IS NULL OR (IsActive=0 AND PinLoginEnabled=0))` · [database/migrations/916_workstation_management.sql](../database/migrations/916_workstation_management.sql) |
+| DF_Workstation_SwitchVersion | DEFAULT | UNKNOWN | 0；未部署草稿 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| CK_Workstation_SwitchVersion | CHECK | UNKNOWN | SwitchVersion >= 0；未部署草稿 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
 
 明確 CREATE INDEX：無；PK/UQ 的隱含索引見上表。
 
@@ -1847,6 +1854,32 @@ Trigger：`uqp.TR_DashboardDevice_Lifecycle`（ACTIVE），來源 926；禁止�
 
 明確 CREATE INDEX：無；PK/UQ 的隱含索引見上表。
 
+### uqp.WorkstationPinAttemptBucket
+
+表級狀態：**UNKNOWN**；建立來源：[database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql)。僅恢復的待驗收草稿，未建立正式 Migration、未部署或接入 Runtime。
+
+| 欄位 | 型別 | NULL | 狀態 | 完整宣告／來源 |
+|---|---|---|---|---|
+| ScopeCode | NVARCHAR(16) | NOT NULL | UNKNOWN | ACCOUNT / WORKSTATION / NETWORK · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| KeyDigest | BINARY(32) | NOT NULL | UNKNOWN | 不可逆 bucket key，不保存原始帳號／IP · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| WindowStartedAtUtc | DATETIME2(3) | NOT NULL | UNKNOWN | 計數視窗起點 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| FailedAttempts | INT | NOT NULL | UNKNOWN | DEFAULT 0 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| BlockedUntilUtc | DATETIME2(3) | NULL | UNKNOWN | 暫時封鎖界線 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| UpdatedAtUtc | DATETIME2(3) | NOT NULL | UNKNOWN | DEFAULT SYSUTCDATETIME() · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+
+| Constraint | 類型 | 狀態 | 宣告／來源 |
+|---|---|---|---|
+| PK_WorkstationPinAttemptBucket | PRIMARY KEY | UNKNOWN | (ScopeCode,KeyDigest) · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| DF_PinAttempt_Failed | DEFAULT | UNKNOWN | 0 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| DF_PinAttempt_Updated | DEFAULT | UNKNOWN | SYSUTCDATETIME() · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| CK_PinAttempt_Scope | CHECK | UNKNOWN | ACCOUNT / WORKSTATION / NETWORK · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| CK_PinAttempt_Failed | CHECK | UNKNOWN | FailedAttempts >= 0 · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+| CK_PinAttempt_Blocked | CHECK | UNKNOWN | BlockedUntilUtc IS NULL OR BlockedUntilUtc >= WindowStartedAtUtc · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+
+| Index | 狀態 | 宣告／來源 |
+|---|---|---|
+| IX_PinAttempt_Updated | UNKNOWN | (UpdatedAtUtc) · [database/drafts/workstation_pin_runtime.forward.sql](../database/drafts/workstation_pin_runtime.forward.sql) |
+
 ## 其他物件
 
 | 物件 | 類型 | 狀態 | 判據 |
@@ -1928,4 +1961,5 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | database/acceptance/production-device-lifecycle-926-preflight-readonly.sql | ee06ae0c9eeccba7e1e75894c10542e0c2fb40ad45258a03b9fb58fa0ad9c518 |
 | SOURCE | database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | 66e61f3ec190e12d1369b3ae6848e73250b8eecbe855ddcf9b957c81da17d74f |
 | SOURCE | database/acceptance/production-workstation-pin-readonly.sql | b24733deaa2f7a0f39d2187156b25a4dac457be2b93985a93515c6bc1590d160 |
+| SOURCE | database/drafts/workstation_pin_runtime.forward.sql | f9baf160de0e5b49853cfb2330228e15208fd9bd0fe4cd51da988d7dcd57631c |
 | SOURCE | server/src/scripts/migrate.ts | 52a3831f2af648d60c6df95275fe4b8b8f87716a5eb9c9684332915e5f21e794 |
