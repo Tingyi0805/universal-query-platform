@@ -22,3 +22,15 @@ Parser 靜態檢查不等同 SQL Server 編譯或執行；未宣稱隔離 SQL �
 `git diff --check` 通過。本批未改 Runtime，未執行 Server／Client／Browser 全套或 Windows 測試。
 
 下一批沿用 readiness 的 SwitchVersion 與 SQL bucket 設計，確認編號及必要相容性後補 forward SQL；本紀錄不代表整體 PIN Runtime 完成或可交付。
+
+## 第二批：PIN verifier
+
+新增固定參數 Node scrypt（N=32768、r=8、p=3）、每筆隨機 16-byte salt、32-byte verifier；以外置 32-byte pepper 做帶 domain 的 HMAC 預處理。格式保存版本與 pepper ID，不含 pepper。參數與編碼嚴格限制，資料庫中的 Hash 不能提高 KDF 成本；每個程序最多兩個同時 KDF，忙碌拒絕、不無限排隊。
+
+設定 `WORKSTATION_PIN_PEPPER_ID` 與 `WORKSTATION_PIN_PEPPER`（標準 base64 32 bytes），不在 Repository 或 SQL 保存正式值。`WORKSTATION_PIN_RUNTIME` 預設 false；本批沒有登入 API。任一 pepper 設定出現或旗標為 true 時，新的 PIN 設定必須使用有效 pepper 的 scrypt，缺少／錯誤配置拒絕，不回退 bcrypt。預設未配置且旗標關閉的既有安裝維持原 bcrypt 設定流程。
+
+既有 bcrypt 僅保留正式密碼與管理流程的相容比對；新的 runtime verifier 不接受 bcrypt。舊 PIN 須以正式密碼重新設定，沒有批次轉換明文或放寬 PIN 重用限制。pepper ID／key 改變會拒絕舊 verifier，須重新設定 PIN；不宣稱已有多 key 自動輪替。pepper 欄位加入既有日誌遮蔽。
+
+驗證：PIN verifier／管理異動／政策／日誌相關 18 項測試、Server Typecheck／Build 通過。這不是登入、Session 或共享計數的完成驗收。
+
+隔離 SQL：Docker 可用，但 `mcr.microsoft.com/mssql/server:2022-latest` 下載回覆 `Forbidden`；沒有 SQL Server 容器啟動，沒有 SQL 執行。forward SQL 不得據此標示已通過隔離驗收或可正式執行。

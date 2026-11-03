@@ -2,6 +2,8 @@ import bcrypt from "bcryptjs";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { findUserById } from "./auth.repository.js";
+import { env } from "../../config/env.js";
+import { hashPin, verifyPin, parsePinPepper } from "./pinVerifier.js";
 
 const PIN_COST = 12;
 export const DEFAULT_PIN_LENGTH = 6;
@@ -91,5 +93,12 @@ export function createQuickPinService(deps: QuickPinDependencies) {
 }
 const service=createQuickPinService({getPool:getPlatformDbPool,findUser:findUserById,
   transaction:pool=>new sql.Transaction(pool),request:tx=>new sql.Request(tx),
-  compare:(value,hash)=>bcrypt.compare(value,hash),hash:value=>bcrypt.hash(value,PIN_COST),now:()=>Date.now()});
+  compare:(value,hash)=>hash.startsWith("$uqp-scrypt$")
+    ? verifyPin(value,hash,parsePinPepper(env.WORKSTATION_PIN_PEPPER_ID,env.WORKSTATION_PIN_PEPPER))
+    : bcrypt.compare(value,hash),
+  // Existing installations keep enrollment working while runtime is disabled.
+  // Once configured, new verifiers use scrypt. Runtime login never accepts bcrypt.
+  hash:value=>env.WORKSTATION_PIN_RUNTIME || env.WORKSTATION_PIN_PEPPER || env.WORKSTATION_PIN_PEPPER_ID
+    ? hashPin(value,parsePinPepper(env.WORKSTATION_PIN_PEPPER_ID,env.WORKSTATION_PIN_PEPPER))
+    : bcrypt.hash(value,PIN_COST),now:()=>Date.now()});
 export const {enrollQuickPin,revokeQuickPin}=service;

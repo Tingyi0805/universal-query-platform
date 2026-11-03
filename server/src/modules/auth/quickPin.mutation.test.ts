@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import sql from "mssql";
-import { createQuickPinService } from "./quickPin.service.js";
-function fixture() {
+import { createQuickPinService, type QuickPinDependencies } from "./quickPin.service.js";
+import { hashPin, verifyPin, parsePinPepper } from "./pinVerifier.js";
+function fixture(crypto?: Pick<QuickPinDependencies, "compare" | "hash">) {
   const state = {
     policy: 6,
     tokenVersion: 1,
@@ -101,9 +102,38 @@ function fixture() {
         : hash === `hash:${value}`,
     hash: async (value) => `hash:${value}`,
     now: () => 1000,
+    ...crypto,
   });
   return { state, service };
 }
+test("real scrypt verifier participates in existing policy/PIN/session transaction", async () => {
+  const pepper = parsePinPepper("synthetic", Buffer.alloc(32, 43).toString("base64"));
+  const f = fixture({
+    compare: async (value, hash) => hash === "synthetic-password-hash"
+      ? value === "synthetic-correct-password" : verifyPin(value, hash, pepper),
+    hash: value => hashPin(value, pepper),
+  });
+  f.state.pin.PinHash = await hashPin("804297", pepper);
+  assert.equal(await f.service.enrollQuickPin(1, "synthetic-correct-password", "804297"), "PIN_WEAK");
+  assert.equal(f.state.commits, 0);
+  assert.equal(await f.service.enrollQuickPin(1, "synthetic-correct-password", "739204"), "OK");
+  assert.ok(await verifyPin("739204", f.state.pin.PinHash, pepper));
+  assert.equal(await verifyPin("804297", f.state.pin.PinHash, pepper), false);
+  assert.equal(f.state.pin.PinVersion, 2);
+  assert.equal(f.state.sessionRevoked, true);
+});
+test("pepper failure rolls back enrollment without changing stored hash or sessions", async () => {
+  const g = fixture({ compare: async (_value, hash) => hash === "synthetic-password-hash", hash: async () => {
+    parsePinPepper(undefined, undefined);
+    throw new Error("unreachable");
+  }});
+  const originalHash = g.state.pin.PinHash;
+  await assert.rejects(g.service.enrollQuickPin(1, "synthetic-correct-password", "739204"), /PIN_PEPPER_NOT_CONFIGURED/);
+  assert.equal(g.state.pin.PinHash, originalHash);
+  assert.equal(g.state.commits, 0);
+  assert.equal(g.state.rollbacks, 1);
+  assert.equal(g.state.sessionRevoked, false);
+});
 test("PIN update replaces hash/increments version and revokes workstation sessions", async () => {
   const f = fixture();
   assert.equal(
