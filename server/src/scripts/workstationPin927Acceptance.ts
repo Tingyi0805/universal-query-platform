@@ -280,9 +280,10 @@ export async function verify927(
     await pool.request().batch(workstationPinSchemaSql);
 
     stage = "partial-schema-fail-closed";
+    const generationBeforePartial = (await query("SELECT CONVERT(varchar(20),SwitchVersion) AS V FROM uqp.SharedWorkstation WHERE Id=1")).recordset[0].V;
     await query("DROP TABLE uqp.WorkstationPinAttemptBucket");
     await assert.rejects(pool.request().batch(migration927));
-    assert.equal((await query("SELECT SwitchVersion AS V FROM uqp.SharedWorkstation WHERE Id=1")).recordset[0].V, "2");
+    assert.equal((await query("SELECT CONVERT(varchar(20),SwitchVersion) AS V FROM uqp.SharedWorkstation WHERE Id=1")).recordset[0].V, generationBeforePartial);
     console.log("PIN_927_SQL_REAL_FRESH_REPEAT_OUTER_ROLLBACK_CATALOG_CONSTRAINT_CAS_PARTIAL_PASS (disposable synthetic database only; full PIN repository concurrency not certified)");
   } catch (e) {
     const code = Number((e as {number?:number}).number) || 0;
