@@ -21,8 +21,12 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
     "CREATE TABLE uqp.DashboardChartPrivacyReview(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,DashboardId BIGINT NOT NULL,QueryId BIGINT NOT NULL,DatasetId BIGINT NOT NULL,SourceKey NVARCHAR(64) NOT NULL,CategoryColumn NVARCHAR(128) NOT NULL,ValueColumn NVARCHAR(128) NOT NULL,QueryRevision BINARY(8) NOT NULL,DatasetRevision BINARY(8) NOT NULL,PolicyRevision CHAR(64) NOT NULL,Status VARCHAR(20) NOT NULL,MinimumCellCount INT NOT NULL,CategoryPrivacyReviewed BIT NOT NULL,DifferencingRiskReviewed BIT NOT NULL,RequestedByUserId BIGINT NOT NULL DEFAULT(8),RequestedAtUtc DATETIME2(3) NOT NULL DEFAULT(SYSUTCDATETIME()),ReviewerUserId BIGINT NULL,AuditLogId BIGINT NULL,ReviewedAtUtc DATETIME2(3) NULL,ValidUntilUtc DATETIME2(3) NULL,ReviewRowVersion ROWVERSION NOT NULL);",
     "CREATE UNIQUE INDEX UX_ChartPrivacyReview_Approved ON uqp.DashboardChartPrivacyReview(DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn) WHERE Status='APPROVED';",
     "CREATE TABLE uqp.AuditLog(Id BIGINT IDENTITY(1,1) PRIMARY KEY,EventType NVARCHAR(100) NOT NULL,EventCategory NVARCHAR(40) NOT NULL,IsImportant BIT NOT NULL,UserId BIGINT NOT NULL,Status NVARCHAR(20) NOT NULL,ParametersJson NVARCHAR(MAX) NOT NULL,CompletedAtUtc DATETIME2(3) NOT NULL);",
-    "CREATE TABLE uqp.DashboardChartTrustRequest(RequestId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,Action NVARCHAR(40) NOT NULL,ActorId BIGINT NOT NULL,AuditLogId BIGINT NULL);"
+    "CREATE TABLE uqp.DashboardChartTrustRequest(RequestId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,Action NVARCHAR(40) NOT NULL,ActorId BIGINT NOT NULL,AuditLogId BIGINT NULL);",
+    "CREATE TABLE uqp.AuditLogArchive(Id BIGINT NOT NULL PRIMARY KEY,EventType NVARCHAR(100) NOT NULL,UserId BIGINT NOT NULL,Status NVARCHAR(20) NOT NULL,IsImportant BIT NOT NULL);"
   ].join("\n"));
+  await exec("INSERT uqp.AuditLog(EventType,EventCategory,IsImportant,UserId,Status,ParametersJson,CompletedAtUtc) " +
+    "VALUES(N'CHART_SEAL_WIDGET',N'CONFIG',1,77,N'SUCCESS',N'{}',SYSUTCDATETIME()), " +
+    "(N'CHART_APPROVE_REVIEW',N'CONFIG',1,77,N'SUCCESS',N'{}',SYSUTCDATETIME());");
   const config = {
     version: 1, chartType: "BAR", dataSourceKey: "PRIMARY",
     categoryColumn: "ROOM", valueColumn: "TOTAL",
@@ -34,7 +38,7 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
     .input("digest", sql.Char(64), digest)
     .query("INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7); " +
       "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) VALUES(88,22,'CHART','PRIMARY',@raw); " +
-      "INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy) VALUES(88,@digest,1,77);");
+      "INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId) VALUES(88,@digest,1,77,1);");
   const readers = createDormantChartTrustReaders(async () => db);
   const initial = await readers.readSavedWidget(7, 88);
   assert(initial && initial.revision.length === 16);
@@ -70,9 +74,17 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
     .input("datasetRevision", sql.Binary, Buffer.from(scope.datasetRevision, "hex"))
     .input("policyRevision", sql.Char(64), scope.policyRevision)
     .query("SET IDENTITY_INSERT uqp.DashboardChartPrivacyReview ON; INSERT uqp.DashboardChartPrivacyReview(Id,DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn,QueryRevision,DatasetRevision,PolicyRevision,Status,MinimumCellCount,CategoryPrivacyReviewed,DifferencingRiskReviewed,ReviewerUserId,AuditLogId,ReviewedAtUtc,ValidUntilUtc) " +
-      "VALUES(123,7,9,10,'PRIMARY','ROOM','TOTAL',@queryRevision,@datasetRevision,@policyRevision,'APPROVED',5,1,1,77,9876,DATEADD(day,-1,SYSUTCDATETIME()),DATEADD(day,30,SYSUTCDATETIME())); SET IDENTITY_INSERT uqp.DashboardChartPrivacyReview OFF;");
+      "VALUES(123,7,9,10,'PRIMARY','ROOM','TOTAL',@queryRevision,@datasetRevision,@policyRevision,'APPROVED',5,1,1,77,2,DATEADD(day,-1,SYSUTCDATETIME()),DATEADD(day,30,SYSUTCDATETIME())); SET IDENTITY_INSERT uqp.DashboardChartPrivacyReview OFF;");
   const initialReview = await readers.readPublicReview(scope, actor);
   assert(initialReview && initialReview.minimumCellCount === 5);
+  await exec("INSERT uqp.AuditLogArchive(Id,EventType,UserId,Status,IsImportant) " +
+    "SELECT Id,EventType,UserId,Status,IsImportant FROM uqp.AuditLog WHERE Id=2; " +
+    "DELETE FROM uqp.AuditLog WHERE Id=2");
+  assert((await readers.readPublicReview(scope, actor))?.minimumCellCount === 5);
+  await exec("UPDATE uqp.AuditLogArchive SET Status=N'FAILED' WHERE Id=2");
+  assert.equal(await readers.readPublicReview(scope, actor), null);
+  await exec("UPDATE uqp.AuditLogArchive SET Status=N'SUCCESS' WHERE Id=2");
+  assert(await readers.readPublicReview(scope, actor));
   assert.equal(await readers.readPublicReview({ ...scope, policyRevision: "d".repeat(64) }, actor), null);
   assert.equal(await readers.readPublicReview({ ...scope, queryRevision: "e".repeat(16) }, actor), null);
   assert.equal(await readers.readPublicReview(scope, { ...actor, userId: 77 }), null);
@@ -88,6 +100,21 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
   await exec("UPDATE uqp.DashboardChartPrivacyReview SET ValidUntilUtc=DATEADD(day,-1,SYSUTCDATETIME()) WHERE Id=123");
   assert.equal(await readers.readPublicReview(scope, actor), null);
   await (await import("./chartTrustWriterSqlAcceptance.js")).verifyChartTrustWriterSql(db);
+  // Live -> Archive retains a valid latest Seal receipt, but removing both
+  // copies always denies the trusted Widget reader (no unaudited fallback).
+  const lastSeal=Number((await exec(
+    "SELECT AuditLogId FROM uqp.DashboardChartWidgetSeal WHERE WidgetId=88"
+  )).recordset[0]?.AuditLogId);
+  assert(Number.isSafeInteger(lastSeal) && lastSeal>0);
+  await db.request().input("id",sql.BigInt,lastSeal)
+    .query("INSERT uqp.AuditLogArchive(Id,EventType,UserId,Status,IsImportant) " +
+      "SELECT Id,EventType,UserId,Status,IsImportant FROM uqp.AuditLog WHERE Id=@id; " +
+      "DELETE FROM uqp.AuditLog WHERE Id=@id");
+  assert(await readers.readSavedWidget(7,88));
+  await db.request().input("id",sql.BigInt,lastSeal)
+    .query("DELETE uqp.AuditLogArchive WHERE Id=@id");
+  assert.equal(await readers.readSavedWidget(7,88),null);
   await (await import("./chartLayoutReplacementSqlAcceptance.js")).verifyChartLayoutReplacementSql(db);
+  console.log("CHART_2B13_AUDIT_LIVE_ARCHIVE_RECEIPT_FAIL_CLOSED_PASS");
   console.log("CHART_TRUST_SQL_2B8_SEAL_REVIEW_ABA_REVOKE_EXPIRE_PASS");
 }

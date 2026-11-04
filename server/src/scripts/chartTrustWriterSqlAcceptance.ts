@@ -26,6 +26,9 @@ export async function verifyChartTrustWriterSql(db: sql.ConnectionPool){
   const database=(await db.request().query("SELECT DB_NAME() AS Db")).recordset[0]?.Db;
   if(!/^UQP_CF_[a-f0-9]{12}$/i.test(String(database??"")))throw Error("CHART_WRITER_DATABASE_MISMATCH");
 
+  const initialAuditCount=Number((await db.request().query(
+    "SELECT COUNT_BIG(*) AS Total FROM uqp.AuditLog"
+  )).recordset[0]?.Total);
   const requester:ChartTrustActor={userId:8,tokenVersion:1};
   const reviewer:ChartTrustActor={userId:77,tokenVersion:1};
   await db.request().query("UPDATE uqp.DataSource SET IsActive=1 WHERE Id=11; " +
@@ -160,7 +163,7 @@ export async function verifyChartTrustWriterSql(db: sql.ConnectionPool){
   }),ChartTrustWriteError);
   const audits=(await db.request().query("SELECT COUNT(*) AS Total FROM uqp.AuditLog")).recordset[0]?.Total;
   const decision=(await db.request().query("SELECT COUNT(*) AS Total FROM uqp.DashboardChartTrustRequest")).recordset[0]?.Total;
-  assert.equal(Number(audits),6);
+  assert.equal(Number(audits),initialAuditCount+6);
   assert.equal(Number(decision),6);
   console.log("CHART_TRUST_WRITER_2B9_ATOMIC_SEAL_CAS_AUDIT_REVIEW_REVOKE_PASS");
 }

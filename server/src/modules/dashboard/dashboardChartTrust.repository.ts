@@ -14,7 +14,7 @@ import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 type WidgetRow = {
   Id?: unknown; DashboardId?: unknown; WidgetType?: unknown; SourceKey?: unknown;
   ConfigJson?: unknown; SealRowVersion?: unknown; ConfigDigest?: unknown;
-  SealActive?: unknown; SealedBy?: unknown;
+  SealActive?: unknown; SealedBy?: unknown; AuditReceiptVerified?: unknown;
 };
 type ReviewRow = {
   Id?: unknown; DashboardId?: unknown; QueryId?: unknown; DatasetId?: unknown;
@@ -23,7 +23,7 @@ type ReviewRow = {
   Status?: unknown; MinimumCellCount?: unknown;
   CategoryPrivacyReviewed?: unknown; DifferencingRiskReviewed?: unknown;
   ReviewerUserId?: unknown; AuditLogId?: unknown; ReviewedAtUtc?: unknown;
-  ValidUntilUtc?: unknown; ReviewRowVersion?: unknown;
+  ValidUntilUtc?: unknown; ReviewRowVersion?: unknown; AuditReceiptVerified?: unknown;
 };
 
 function exactPositive(value: unknown): number | null {
@@ -57,6 +57,7 @@ export function validateSealedChartWidget(
   if (!row || exactPositive(row.Id) !== widgetId ||
       exactPositive(row.DashboardId) !== dashboardId ||
       row.WidgetType !== "CHART" || row.SealActive !== true ||
+      row.AuditReceiptVerified !== true ||
       !exactPositive(row.SealedBy) ||
       typeof row.ConfigJson !== "string" || row.ConfigJson.length > 8192)
     return null;
@@ -76,7 +77,7 @@ export function validateSignedPublicChartReview(
   row: ReviewRow | null, scope: PublicCountScope,
   subject: ExecutionSubject, now = new Date(),
 ): PublicCountReview | null {
-  if (!row || row.Status !== "APPROVED" ||
+  if (!row || row.Status !== "APPROVED" || row.AuditReceiptVerified !== true ||
       !exactPositive(row.Id) || !exactPositive(row.ReviewerUserId) ||
       !exactPositive(row.AuditLogId) ||
       exactPositive(row.ReviewerUserId) === subject.userId ||
@@ -135,7 +136,14 @@ export function createDormantChartTrustReaders(
         .input("dashboardId", sql.BigInt, dashboardId)
         .input("widgetId", sql.BigInt, widgetId)
         .query("SELECT w.Id, p.DashboardId, w.WidgetType, w.SourceKey, w.ConfigJson, " +
-          "s.SealRowVersion, s.ConfigDigest, s.IsActive AS SealActive, s.SealedBy " +
+          "s.SealRowVersion, s.ConfigDigest, s.IsActive AS SealActive, s.SealedBy, " +
+          "CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK) " +
+          "WHERE a.Id=s.AuditLogId AND a.UserId=s.SealedBy AND a.IsImportant=1 " +
+          "AND a.Status=N'SUCCESS' AND a.EventType=N'CHART_SEAL_WIDGET') " +
+          "OR EXISTS(SELECT 1 FROM uqp.AuditLogArchive ar WITH(HOLDLOCK) " +
+          "WHERE ar.Id=s.AuditLogId AND ar.UserId=s.SealedBy AND ar.IsImportant=1 " +
+          "AND ar.Status=N'SUCCESS' AND ar.EventType=N'CHART_SEAL_WIDGET') " +
+          "THEN 1 ELSE 0 END) AS AuditReceiptVerified " +
           "FROM uqp.DashboardWidget w WITH (HOLDLOCK) " +
           "JOIN uqp.DashboardDisplayProfile p WITH (HOLDLOCK) ON p.Id=w.ProfileId " +
           "JOIN uqp.DashboardChartWidgetSeal s WITH (HOLDLOCK) ON s.WidgetId=w.Id " +
@@ -173,7 +181,14 @@ export function createDormantChartTrustReaders(
           "r.CategoryColumn,r.ValueColumn,r.QueryRevision,r.DatasetRevision, " +
           "r.PolicyRevision,r.Status,r.MinimumCellCount,r.CategoryPrivacyReviewed, " +
           "r.DifferencingRiskReviewed,r.ReviewerUserId,r.AuditLogId, " +
-          "r.ReviewedAtUtc,r.ValidUntilUtc,r.ReviewRowVersion " +
+          "r.ReviewedAtUtc,r.ValidUntilUtc,r.ReviewRowVersion, " +
+          "CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK) " +
+          "WHERE a.Id=r.AuditLogId AND a.UserId=r.ReviewerUserId AND a.IsImportant=1 " +
+          "AND a.Status=N'SUCCESS' AND a.EventType=N'CHART_APPROVE_REVIEW') " +
+          "OR EXISTS(SELECT 1 FROM uqp.AuditLogArchive ar WITH(HOLDLOCK) " +
+          "WHERE ar.Id=r.AuditLogId AND ar.UserId=r.ReviewerUserId AND ar.IsImportant=1 " +
+          "AND ar.Status=N'SUCCESS' AND ar.EventType=N'CHART_APPROVE_REVIEW') " +
+          "THEN 1 ELSE 0 END) AS AuditReceiptVerified " +
           "FROM uqp.DashboardChartPrivacyReview r WITH (HOLDLOCK) " +
           "WHERE r.DashboardId=@dashboardId AND r.QueryId=@queryId " +
           "AND r.DatasetId=@datasetId AND r.SourceKey=@sourceKey " +

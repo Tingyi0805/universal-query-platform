@@ -21,7 +21,7 @@ const widget = () => ({
   ConfigJson: raw,
   SealRowVersion: rv(1),
   ConfigDigest: createHash("sha256").update(raw).digest("hex"),
-  SealActive: true, SealedBy: 77,
+  SealActive: true, SealedBy: 77, AuditReceiptVerified: true,
 });
 const subject: ExecutionSubject = {
   context: "user", userId: 8, tokenVersion: 1, tokenHash: "synthetic",
@@ -42,7 +42,7 @@ const review = () => ({
   PolicyRevision: scope.policyRevision,
   Status: "APPROVED", MinimumCellCount: 5,
   CategoryPrivacyReviewed: true, DifferencingRiskReviewed: true,
-  ReviewerUserId: 77, AuditLogId: 9876,
+  ReviewerUserId: 77, AuditLogId: 9876, AuditReceiptVerified: true,
   ReviewedAtUtc: new Date("2026-11-01T00:00:00.000Z"),
   ValidUntilUtc: new Date("2026-12-01T00:00:00.000Z"),
   ReviewRowVersion: rv(1),
@@ -56,6 +56,7 @@ test("only a sealed, bound, versioned CHART row is readable", () => {
   for (const delta of [
     { DashboardId: 77 }, { Id: 777 }, { WidgetType: "TABLE" },
     { SourceKey: "OTHER" }, { SealActive: false }, { SealedBy: 0 },
+    { AuditReceiptVerified: false },
     { ConfigDigest: "0".repeat(64) }, { ConfigJson: "{}" },
     { SealRowVersion: null }, { ConfigJson: '{"version":1,"chartType":"BAR","dataSourceKey":"PRIMARY","categoryColumn":"ROOM","valueColumn":"TOTAL","valueMode":"COUNT_ROWS","maxPoints":30,"showLegend":true}' },
   ]) assert.equal(validateSealedChartWidget({ ...widget(), ...delta }, 7, 88), null);
@@ -72,7 +73,7 @@ test("independent public reviewer, durable audit, current scope and valid time a
   assert.equal(ok.reviewRevision, validateSignedPublicChartReview(review(), scope, subject, now)?.reviewRevision);
   for (const delta of [
     { Status: "PENDING" }, { ReviewerUserId: 8 }, { ReviewerUserId: null },
-    { AuditLogId: 0 }, { CategoryPrivacyReviewed: false },
+    { AuditLogId: 0 }, { AuditReceiptVerified: false }, { CategoryPrivacyReviewed: false },
     { DifferencingRiskReviewed: false }, { SourceKey: "OTHER" },
     { QueryRevision: rv(2) }, { DatasetRevision: rv(3) },
     { PolicyRevision: "f".repeat(64) }, { DashboardId: 9 },
@@ -114,6 +115,11 @@ test("SQL-backed reader uses parameterized, exact single-row Widget and review l
   assert(mock.statements[0]?.includes("DashboardChartWidgetSeal"));
   assert(mock.statements[1]?.includes("DashboardChartPrivacyReview"));
   assert(mock.statements[1]?.includes("r.QueryRevision=@queryRev"));
+  for (const statement of mock.statements) {
+    assert.match(statement,/uqp\.AuditLogArchive/);
+    assert.match(statement,/AuditReceiptVerified/);
+    assert.match(statement,/IsImportant=1/);
+  }
   assert.equal(mock.count(), 2);
 });
 test("missing future catalog, duplicate approvals or database failures fail closed", async () => {
