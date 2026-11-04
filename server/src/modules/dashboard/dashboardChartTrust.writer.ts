@@ -2,9 +2,8 @@
 // Requires explicit, trusted caller-supplied authorization and live-scope
 // verification; no production implementation, migration, API or registration.
 // In particular, NEVER bind a user/browser supplied "approved" boolean.
-import { createHash } from "node:crypto";
 import sql from "mssql";
-import { chartWidgetConfigSchema } from "./dashboardChartWidget.contract.js";
+import {canonicalChartConfig} from "./dashboardChartAtomicCreate.contract.js";
 import type { PublicCountScope } from "./dashboardChartPublicCountPrivacy.js";
 import {
   lockChartDashboardParent, lockChartDashboardProfiles, lockChartDashboardWidgets,
@@ -118,11 +117,10 @@ export function createDormantChartTrustWriters(deps: ChartTrustWriterDependencie
       const {dashboardId,widgetId,actor,requestId,expectedRevision}=input;
       requestIsValid(actor,requestId);
       if(!validId(dashboardId)||!validId(widgetId)||!isRev(expectedRevision))return fail("CHART_SEAL_INPUT_INVALID");
-      const parsed=chartWidgetConfigSchema.safeParse(input.config);
-      if(!parsed.success)return fail("CHART_SEAL_INPUT_INVALID");
-      const normalized=JSON.stringify(parsed.data);
-      if(normalized.length>8192)return fail("CHART_SEAL_INPUT_INVALID");
-      const digest=createHash("sha256").update(normalized).digest("hex");
+      const parsed=canonicalChartConfig(input.config);
+      if(!parsed)return fail("CHART_SEAL_INPUT_INVALID");
+      const normalized=parsed.json;
+      const digest=parsed.sha256;
       return inTransaction(deps,async tx=>{
         const scope={dashboardId,widgetId};
         await lockScopeParent(tx,dashboardId);

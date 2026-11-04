@@ -696,3 +696,22 @@ CHART 新增均改為**不提供 ID 的正式 INSERT**，
 這是正式 Writer 前的結構一致性修補，**不是專屬 CHART
 原子 Writer 或正式啟用的完成宣告**。Runtime、API、928
 安裝權限、原版型與 PIN 均未改動。
+
+
+## 25. 2B-15C-3：CHART 新增與 Seal CAS 共用正規化契約
+
+新增 `dashboardChartAtomicCreate.contract.ts`，共用
+`chartWidgetConfigSchema`、UTF-8 SHA-256、固定 JSON 欄位順序與
+8192 字元限制。現有 dormant `sealWidget` 已改用相同函式；
+未來新增 Widget 時，不得以不同序列化方式產生 Seal Digest。
+新增 `planDormantChartCreate` 僅驗證 Dashboard、Profile、Actor、
+TokenVersion、RequestId、分類與彙總欄位及畫布位置尺寸，
+**刻意不接收 WidgetId**；正式 `DashboardWidget.Id` 必須由
+SQL Server IDENTITY 配合 `OUTPUT INSERTED.Id` 取得，
+且與 Seal、Audit、Replay Ledger 同一交易提交。
+
+此計畫函式不會連線資料庫、不提供權限、不儲存或執行，
+`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false` 只是防誤用宣告；
+實際安全限制由 928 Freeze 和未註冊 Route 保持。
+下一個正式 Writer 核准條件仍是不可由 SQL Service
+Connection 偽造的受控模組權限、完整資料庫驗收與人工簽核。
