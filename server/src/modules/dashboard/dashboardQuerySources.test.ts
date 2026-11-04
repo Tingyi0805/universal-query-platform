@@ -346,6 +346,12 @@ for (const auditFailure of [false, true]) {
           statements.push(text);
           if (text.includes("END AS Ready")) return { recordset: [{ Ready: 1 }] };
           if (text.startsWith("SELECT * FROM uqp.Dashboard WITH")) return { recordset: [columns] };
+          // 2B-10 common layout writer now checks the trusted Dashboard,
+          // any CHART rows, and the optional sidecar before destructive DML.
+          // This isolated mock represents the existing legacy-only catalog.
+          if (text.startsWith("SELECT Id FROM uqp.Dashboard WITH")) return { recordset: [columns] };
+          if (text.includes("w.WidgetType=N'CHART'")) return { recordset: [] };
+          if (text.includes("OBJECT_ID(N'uqp.DashboardChartWidgetSeal'")) return { recordset: [{ SealTableId: null }] };
           if (text.startsWith("SELECT * FROM uqp.DashboardDataSource")) return { recordset: [source] };
           if (text.includes("INSERT INTO uqp.DashboardDisplayProfile")) return { recordset: [{Id: 101}] };
           if (text.includes("SELECT w.ConfigJson")) return { recordset: [{ WidgetType: 'TABLE', ConfigJson: '{"dataSourceKey":"WARD"}' }] };
