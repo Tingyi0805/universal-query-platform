@@ -119,10 +119,17 @@ export async function verifyChartTrustWriterSql(db: sql.ConnectionPool){
   }),ChartTrustWriteError); // requester cannot approve
   const approvedRevision=await writer.approveReview({
     id:requested.id,expectedRevision:requested.revision,
-    actor:reviewer,requestId:uid(7),minimumCellCount:5,validDays:30,
+    actor:reviewer,requestId:uid(7),minimumCellCount:5,validDays:90,
     categoryPrivacyReviewed:true,differencingRiskReviewed:true,
   });
   assert(approvedRevision!==requested.revision);
+  // The maximum approved duration must be exactly 90 days, never longer:
+  // the dormant reader enforces this same upper bound in milliseconds.
+  const windowRows=(await db.request().input("id",sql.BigInt,requested.id)
+    .query("SELECT DATEDIFF_BIG(millisecond,ReviewedAtUtc,ValidUntilUtc) AS WindowMs " +
+      "FROM uqp.DashboardChartPrivacyReview WHERE Id=@id")).recordset;
+  assert.equal(windowRows.length,1);
+  assert.equal(Number(windowRows[0].WindowMs),90*86400000);
   const scopeViewer={context:"user" as const,userId:8,tokenVersion:1,tokenHash:"synthetic"};
   const approved=await readers.readPublicReview(initialScope,scopeViewer);
   assert(approved&&approved.minimumCellCount===5);

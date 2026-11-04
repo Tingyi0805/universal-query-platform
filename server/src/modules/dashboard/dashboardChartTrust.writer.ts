@@ -237,10 +237,11 @@ export function createDormantChartTrustWriters(deps: ChartTrustWriterDependencie
           .input("audit",sql.BigInt,auditId)
           .input("minimum",sql.Int,input.minimumCellCount)
           .input("days",sql.Int,input.validDays)
-          .query("UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED'," +
+          .query("DECLARE @reviewedAtUtc DATETIME2(3)=SYSUTCDATETIME(); " +
+            "UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED'," +
             "MinimumCellCount=@minimum,CategoryPrivacyReviewed=1,DifferencingRiskReviewed=1," +
-            "ReviewerUserId=@actor,ReviewedAtUtc=SYSUTCDATETIME()," +
-            "ValidUntilUtc=DATEADD(day,@days,SYSUTCDATETIME()),AuditLogId=@audit " +
+            "ReviewerUserId=@actor,ReviewedAtUtc=@reviewedAtUtc," +
+            "ValidUntilUtc=DATEADD(day,@days,@reviewedAtUtc),AuditLogId=@audit " +
             "OUTPUT INSERTED.ReviewRowVersion AS Revision " +
             "WHERE Id=@id AND Status='REQUESTED' AND ReviewRowVersion=@expected")).recordset;
         const updated=rows.length===1?revision(rows[0].Revision):null;
