@@ -18,6 +18,7 @@ const base={
  DbControl:0,SchemaControl:0,SchemaAlter:0,
  ImpersonateWriter:0,CreateExecute:0,CreateAlter:0,
  PermitInsert:0,SealInsert:0,LedgerInsert:0,ReviewUpdate:0,
+ WidgetInsert:0,WidgetUpdate:0,WidgetDelete:0,
 };
 const platform=()=>({...base});
 const writer=()=>({...base,OriginalSid:"B2",EffectiveUser:"writer",CreateExecute:1});
@@ -62,6 +63,17 @@ test("2B-15C broad roles, SQL DML sidecars, impersonation fail closed",()=>{
      platform(),{...writer(),[key]:1}));
    rejects("CHART_WRITER_PRIVILEGE_EXCESS",()=>attest(
      platform(),{...writer(),[key]:null}));
+ }
+ // Preserve legacy Platform Dashboard layout DML, but the CHART-only
+ // Writer login must never be able to write Widget directly.
+ assert.doesNotThrow(()=>attest(
+   {...platform(),WidgetInsert:1,WidgetUpdate:1,WidgetDelete:1},
+   writer()));
+ for(const key of ["WidgetInsert","WidgetUpdate","WidgetDelete"]){
+  rejects("CHART_WRITER_DIRECT_WIDGET_DML",()=>attest(
+    platform(),{...writer(),[key]:1}));
+  rejects("CHART_WRITER_DIRECT_WIDGET_DML",()=>attest(
+    platform(),{...writer(),[key]:null}));
  }
  rejects("CHART_PLATFORM_EXECUTE_EXPOSED",()=>attest(
    {...platform(),CreateExecute:1},writer()));
