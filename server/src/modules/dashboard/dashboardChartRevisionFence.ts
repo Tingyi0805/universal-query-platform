@@ -16,7 +16,24 @@ export type ChartRevisionFence = Readonly<{
 const revision = (value: unknown): string | null =>
   Buffer.isBuffer(value) && value.length === 8 ? value.toString("hex") : null;
 
-export async function readChartRevisionFence(
+export type ChartRevisionFenceDependencies = {
+  getPool: typeof getPlatformDbPool;
+  getSession: typeof getTokenSessionState;
+  getAccess: typeof getEffectiveQueryAccess;
+  getAcl: typeof getQueryAccessRevision;
+};
+export const chartRevisionFenceDefaults: ChartRevisionFenceDependencies = {
+  getPool: getPlatformDbPool,
+  getSession: getTokenSessionState,
+  getAccess: getEffectiveQueryAccess,
+  getAcl: getQueryAccessRevision,
+};
+/** The connection pool must be trusted and database-scoped. The factory is
+ * intended for isolated SQL engine acceptance and is not an API entrypoint. */
+export function createChartRevisionFenceReader(
+  deps: ChartRevisionFenceDependencies = chartRevisionFenceDefaults,
+) {
+return async function readChartRevisionFence(
   dashboardId: number, sourceKey: string, queryId: number,
   datasetId: number, subject: ExecutionSubject,
 ): Promise<ChartRevisionFence | null> {
@@ -27,7 +44,7 @@ export async function readChartRevisionFence(
   const context = subject.context ?? (subject.deviceId === undefined ? "designer" : "device");
   if ((context === "device") !== (subject.deviceId !== undefined) ||
       !["designer", "user", "device", "admin-preview"].includes(context)) return null;
-  const pool = await getPlatformDbPool();
+  const pool = await deps.getPool();
   if (!pool) return null;
   const tx = new sql.Transaction(pool);
   try {
@@ -85,9 +102,9 @@ export async function readChartRevisionFence(
       throw Error("CHART_PUBLIC_EVIDENCE_STALE");
 
     // Requests sharing one SQL transaction must be sequential, not Promise.all.
-    const session = await getTokenSessionState(subject.userId, tx);
-    const access = await getEffectiveQueryAccess(subject.userId, queryId, tx, false);
-    const acl = await getQueryAccessRevision(queryId, tx);
+    const session = await deps.getSession(subject.userId, tx);
+    const access = await deps.getAccess(subject.userId, queryId, tx, false);
+    const acl = await deps.getAcl(queryId, tx);
     if (!session?.isActive || session.tokenVersion !== subject.tokenVersion ||
         !session.permissions.includes("EXECUTE_QUERY") ||
         !session.permissions.includes(context === "user" ? "VIEW_QUERY" : "DESIGN_QUERY") ||
@@ -110,6 +127,8 @@ export async function readChartRevisionFence(
   }
 }
 
+}
+export const readChartRevisionFence = createChartRevisionFenceReader();
 export type ChartFenceReader = typeof readChartRevisionFence;
 
 /** Compare the same immutable evidence BEFORE and AFTER the existing audited

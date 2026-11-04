@@ -249,3 +249,42 @@ PR 仍為 Draft。chartFactsDefaults.getVerifiedAggregate 仍回傳 null；
 任何 CHART SQL CHECK、Layout Schema、API、UI、全螢幕播放、Migration 927
 及 PIN Runtime 均不變。必須先完成**可信證據接線與真實 SQL 競爭測試**，
 再討論圖表 Widget 的正式啟用及人工驗收。
+
+
+## 12. 2B-6：Revision Fence SQL Server 2019／2022 真實引擎隔離驗證
+
+本階段為 Revision Fence 新增**可注入同一個受信任 SQL 連線池的工廠**，
+正式預設仍使用原有 UQP Pool，不改變任何路由或圖表授權。
+同時新增專用驗收腳本：server/src/scripts/chartRevisionFenceSqlAcceptance.ts。
+沿用既有 device-lifecycle-d1-sql CI 的 SQL Server 2019／2022 一次性容器；
+為避免影響 D1 測試的 Dashboard／Dataset 物件，另建 UQP_CF_ 隨機名稱的
+**獨立合成資料庫**，完成後強制刪除。環境守衛驗證一次性 Scope、
+容器 MachineName、master 及禁止平台 DB 設定，拒絕外部正式資料庫。
+
+驗收腳本建立極小的、與 Production Reader 相同必要欄位型別的合成 Schema，
+實際執行版本讀取器、現有 getTokenSessionState、getEffectiveQueryAccess
+及 getQueryAccessRevision：
+
+- PRIMARY 與附加來源的識別、授權及版本指紋。
+- Dataset SQL A→B→A 後實際 RowVersion 前進；QueryDefinitionVersion
+  增版及敏感政策版本異動必須令指紋改變。
+- 現有 Query ACL 撤銷、TokenVersion 改變、帳號停用及附加來源停用時
+  必須拒絕。ACL 恢復時模擬 919 Writer 同步推進 Dashboard ApprovalRowVersion。
+- 公共播放須 Query-only 啟用，且 925 顯示核准所綁的 Dataset／DataSource
+  修訂版本相符；DataSource 更新後原核准即失效。
+- 在資料交付前後故意修改 Dashboard RowVersion，確認版本欄柵會拒絕結果；
+  Query 取消發布與 DataSource 停用也不得通過。
+
+**驗收限制：**此測試使用合成的最小 SQL Schema 而不是完整正式 925
+Catalog 與所有 Trigger／Writer；其通過只能證明新 Reader 在 SQL 引擎上
+使用既有必要欄位及真實權限查詢可正常拒絕指定風險，不能宣稱
+已驗證任意跨節點交易競爭、所有資料庫 Writer、完整 925 安全契約，
+或正式患者資料揭露稽核。Chart Revision Fence 和 PublicCountPrivacy
+目前仍未串接 Query Delivery；圖表、版型、Migration 927、PIN Runtime、
+現有全螢幕播放及正式 C:\UQP 不受影響。
+
+### 附帶 CI 修正
+
+CI #1283 的 Browser E2E 有兩個 D6-3 焦點斷言失敗，原因是重新載入後按鈕
+尚未可用就測試 Tab 焦點。本次延續 2B-5 加入等候 Enabled 的修正，不刪減
+原本的焦點／樣式／窄螢幕驗證。完整結果以新 HEAD 的 CI 為準。
