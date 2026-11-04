@@ -137,3 +137,35 @@ GROUP BY 字串而核准圖表**。合成單元測試只驗證候選讀取、權
 
 沒有註冊任何 CHART 路由、Widget 儲存、圖表渲染或播放功能。
 正式資料庫、Migration 927、PIN Runtime 及現有 Dashboard 維持原樣。
+
+
+## 9. 2B-3：SQL Server／Oracle 窄版 GROUP BY COUNT(*) 語意證明（未啟用）
+
+新增 server/src/modules/dashboard/dashboardChartSqlAggregate.proof.ts 與同名 .test.ts。
+
+本次是**封閉式、完整耗盡 token 的 SQL 子集解析器**，不是搜尋字串有沒有
+GROUP BY。只接受下列兩種來源 SQL 的共同受限語法：
+
+    SELECT <column> AS <category>, COUNT(*) AS <value>
+    FROM [schema.]<single_table> GROUP BY <same_column> [;]
+
+其中 <column>/<category>/<value> 與 table 是單一有效識別字（可依 SQL Server
+方括號或 Oracle 雙引號明確引用）。分類欄位必須與 GROUP BY 指定的欄位一致，
+輸出別名必須與目前圖表設定一致，Query、Dataset ID 及不可重用的修訂值須合法。
+
+不可接受的語法一律拒絕，包括 WHERE、JOIN、HAVING、ORDER BY、子查詢、CTE、
+DISTINCT、COUNT(DISTINCT)、SUM／AVG、第二個分類欄位、表達式、函數、
+註解、字串、綁定參數、UNION、多敘述、ORACLE CONNECT BY、SQL Server TOP
+及超過辨識上限的 SQL。
+
+這個純函式只能證明「給定的 SQL 文本符合一個極小的單表分組計數語法」，
+**不能證明**資料表或分類欄位沒有個人資料、資料來源 ACL 完整、SQL
+實際執行結果未被截斷、編輯時版本與播放時版本一致、公共顯示已核准、
+患者曝光稽核已完成；其他強制安全閘門不得因這個證明而略過。
+
+本階段仍**未將證明器接進預設 SQL 證據讀取器**。目前
+chartFactsDefaults.getVerifiedAggregate 依然回傳 null，
+不能被管理畫面、Widget 儲存 API 或公共播放路由使用。
+未來須先用可信 Repository 取得正在使用的已發布 Query 與 Dataset
+SQL 本文、來源方言及其修訂證據，在前後一致性驗證成立後才可輸出證明。
+尚需實際 SQL Server／Oracle 相容性測試及來源權限／版本競爭驗收。
