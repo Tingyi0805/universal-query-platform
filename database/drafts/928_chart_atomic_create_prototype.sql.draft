@@ -79,6 +79,7 @@ BEGIN
    CONVERT(varbinary(max),CONVERT(varchar(max),
      @ConfigJson COLLATE Latin1_General_100_CI_AS_SC_UTF8))),2));
  BEGIN TRY
+  SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
   BEGIN TRANSACTION;
   DECLARE @lockResource nvarchar(255)=N''UQP:CHART:''+CONVERT(nvarchar(20),@DashboardId);
   EXEC @lockResult=sys.sp_getapplock

@@ -332,8 +332,18 @@ export async function verifyChart928DraftSql(
   assert.equal(proof[0]?.ConfigDigest,expected);
   assert.equal(Number(proof[0]?.AuditLogId),auditId);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartCreatePermit")).recordset[0]?.Total),0);
+  const beforeReplay=(await q(
+    "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardChartTrustRequest) AS Ledger, " +
+    "(SELECT COUNT_BIG(*) FROM uqp.AuditLog) AS Audit"
+  )).recordset[0];
   stage="ATOMIC_CREATE_REPLAY_ROLLBACK";
   await assert.rejects(params().query(execCreate),(e:unknown)=>e instanceof Error);
+  const afterReplay=(await q(
+    "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardChartTrustRequest) AS Ledger, " +
+    "(SELECT COUNT_BIG(*) FROM uqp.AuditLog) AS Audit"
+  )).recordset[0];
+  assert.equal(Number(afterReplay?.Ledger),Number(beforeReplay?.Ledger));
+  assert.equal(Number(afterReplay?.Audit),Number(beforeReplay?.Audit));
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE WidgetType=N'CHART'")).recordset[0]?.Total),1);
   stage="ATOMIC_CREATE_BAD_ACTOR_ROLLBACK";
   await assert.rejects(db.request().input("config",sql.NVarChar(sql.MAX),canonical)
@@ -342,6 +352,20 @@ export async function verifyChart928DraftSql(
       "@SourceKey=N'PRIMARY',@ConfigJson=@config,@X=10,@Y=10,@Width=600,@Height=360"),
     (e:unknown)=>e instanceof Error);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartCreatePermit")).recordset[0]?.Total),0);
+  stage="ATOMIC_CREATE_DIRECT_DML_NO_PERMIT";
+  const rejectFrozen=async(query:string)=>{
+    await assert.rejects(db!.request().batch(query),(err:unknown)=>
+      err && typeof err==="object" && Number((err as {number?:number}).number)===51928);
+  };
+  await rejectFrozen("INSERT uqp.DashboardWidget(ProfileId,WidgetType,SourceKey,ConfigJson) " +
+    "VALUES(22,N'CHART',N'PRIMARY',N'{}')");
+  // The exact request and the forged flag run in one batch; there is still
+  // no durable database-owned permit outside usp_ChartCreate_IsolatedDraft.
+  await rejectFrozen("EXEC sys.sp_set_session_context " +
+    "@key=N'UQP_CHART_WRITER_AUTHORIZED',@value=1; " +
+    "INSERT uqp.DashboardWidget(ProfileId,WidgetType,SourceKey,ConfigJson) " +
+    "VALUES(22,N'CHART',N'PRIMARY',N'{}')");
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE WidgetType=N'CHART'")).recordset[0]?.Total),1);
   await rejects("UPDATE uqp.DashboardWidget SET ConfigJson=N'{}' WHERE Id="+widgetId);
   await rejects("DELETE FROM uqp.DashboardWidget WHERE Id="+widgetId);
   console.log("CHART_2B15C_ATOMIC_CREATE_IDENTITY_SEAL_AUDIT_REPLAY_DRAFT_PASS");
