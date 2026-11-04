@@ -212,7 +212,14 @@ export async function verifyChart928DraftSql(
   stage="UNTRUSTED_TRIGGER_DISABLE";
   // Metadata/DDL permission denials can be SQL 15151 ("not found or no
   // permission") or SQL 229, depending on the server/catalog path.
-  await untrusted("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget",[229,15151]);
+  // SQL 1088 also covers the hidden-object/no-permission outcome.
+  await untrusted("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget",[229,15151,1088]);
+  // Do not infer safety from the error number: inspect the actual metadata.
+  const freeze=(await q("SELECT is_disabled FROM sys.triggers WHERE " +
+    "object_id=OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') " +
+    "AND parent_id=OBJECT_ID(N'uqp.DashboardWidget')")).recordset;
+  assert.equal(freeze.length,1);
+  assert.equal(Number(freeze[0].is_disabled),0);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=88 AND WidgetType=N'TEXT'")).recordset[0]?.Total),1);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal WHERE WidgetId=88")).recordset[0]?.Total),1);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=990")).recordset[0]?.Total),0);
