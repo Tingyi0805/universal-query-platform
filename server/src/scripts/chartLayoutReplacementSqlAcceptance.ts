@@ -63,10 +63,17 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
   await holder.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   const contender=new sql.Transaction(db);
   try {
+    const holderSession=(await new sql.Request(holder)
+      .query("SELECT @@SPID AS SessionId")).recordset[0]?.SessionId;
     await new sql.Request(holder).input("dashboardId",sql.BigInt,700)
       .query("SELECT Id FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@dashboardId");
     await contender.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     try {
+      const contenderSession=(await new sql.Request(contender)
+        .query("SELECT @@SPID AS SessionId")).recordset[0]?.SessionId;
+      assert(Number.isSafeInteger(Number(holderSession)));
+      assert(Number.isSafeInteger(Number(contenderSession)));
+      assert.notEqual(Number(holderSession),Number(contenderSession));
       await new sql.Request(contender).query("SET LOCK_TIMEOUT 400");
       await assert.rejects(writeDashboardLayout(contender,700,[]),
         (error: unknown) => /lock request time out/i.test(String(error)) ||

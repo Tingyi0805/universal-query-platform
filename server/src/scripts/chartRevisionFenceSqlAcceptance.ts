@@ -25,7 +25,11 @@ export async function verifyChartRevisionFenceSql(admin: sql.ConnectionPool, con
   try {
     await admin.request().query("CREATE DATABASE [" + name + "]");
     created = true;
-    db = await new sql.ConnectionPool({...config,database:name}).connect();
+    // Only this disposable UQP_CF_ pool permits two simultaneous SQL sessions.
+    // D1's parent/production-like pool remains max=1 and is never changed.
+    db = await new sql.ConnectionPool({
+      ...config,database:name,pool:{max:2,min:0},
+    }).connect();
     const query = (queryText: string) => db!.request().query(queryText);
     await query("CREATE SCHEMA uqp");
 
