@@ -325,13 +325,16 @@ export async function verifyChart928DraftSql(
     "HAS_PERMS_BY_NAME(N'uqp.DashboardChartWidgetSeal',N'OBJECT',N'INSERT') AS WriterSealInsert; " +
     "REVERT"
   );
-  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppExecute??0),0);
-  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppPermitInsert??0),0);
-  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppAlter??0),0);
-  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppImpersonate??0),0);
-  assert.equal(Number(rights.recordsets?.[1]?.[0]?.WriterExecute),1);
-  assert.equal(Number(rights.recordsets?.[1]?.[0]?.WriterPermitInsert??0),0);
-  assert.equal(Number(rights.recordsets?.[1]?.[0]?.WriterSealInsert??0),0);
+  const sets=Array.isArray(rights.recordsets)
+    ? rights.recordsets : Object.values(rights.recordsets);
+  assert.equal(sets.length,2);
+  assert.equal(Number(sets[0]?.[0]?.AppExecute??0),0);
+  assert.equal(Number(sets[0]?.[0]?.AppPermitInsert??0),0);
+  assert.equal(Number(sets[0]?.[0]?.AppAlter??0),0);
+  assert.equal(Number(sets[0]?.[0]?.AppImpersonate??0),0);
+  assert.equal(Number(sets[1]?.[0]?.WriterExecute),1);
+  assert.equal(Number(sets[1]?.[0]?.WriterPermitInsert??0),0);
+  assert.equal(Number(sets[1]?.[0]?.WriterSealInsert??0),0);
   const permissions=(await q(
     "SELECT (SELECT COUNT_BIG(*) FROM sys.database_role_members m " +
     "JOIN sys.database_principals roleName ON roleName.principal_id=m.role_principal_id " +
