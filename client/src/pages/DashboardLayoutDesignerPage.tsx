@@ -1,3 +1,4 @@
+import { DashboardChartDraftEditor } from "../components/DashboardChartDraftEditor";
 import { DashboardDrilldownEditor } from "../components/DashboardDrilldownEditor";
 import { graphIssue, type DrillGraph } from "../dashboard/drilldown";
 import { createPortal } from "react-dom";
@@ -831,6 +832,12 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
               </button>
             ))}
           </div>
+          {activeProfile && <DashboardChartDraftEditor
+            key={activeProfile.clientKey}
+            canvasWidth={activeProfile.canvasWidth}
+            canvasHeight={activeProfile.canvasHeight}
+            sourceKeys={supplementalSources.filter(s=>s.isEnabled&&s.queryDefinitionId!==null).map(s=>s.sourceKey)}
+          />}
         </aside>
 
         <section className="layout-canvas-stage">

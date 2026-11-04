@@ -575,3 +575,28 @@ RequestId/Review 身分。新增 Seal／Review／Request Ledger 的
 **待部署核准前**：Schema 漂移精確驗證（含 Trigger 定義）、正式
 帳號最小權限、AuditArchive 歷史資料保全、925 相容、
 跨節點多 Writer 並行驗證與獨立人工核准均尚待完成。
+
+
+## 20. 2B-14：隔離式 Dashboard CHART 設計草稿 UI（不存檔）
+
+在原有 `DashboardLayoutDesignerPage` 的 Widget 工具箱下新增可展開
+`DashboardChartDraftEditor`，包含 BAR／LINE／PIE 類型、已啟用的
+Query Source 鍵、分類與彙總數值欄位、最大點數、圖例、X/Y／寬高
+等設定，並依目前 Profile 畫布尺寸顯示位置比例。圖型為 **3 筆固定
+合成資料**，絕不使用患者或院內 SQL 執行結果，亦不利用
+`Query Source/page` 預覽輸出來宣稱 CHART 已授權。
+
+安全邊界：這是獨立 React 本機 state；不加入 LayoutWidget Union、
+後端 Schema、JSON 儲存、播放頁、預覽頁或版型 dirty/save 路徑；
+不提供 API、LocalStorage、跨頁復原或啟用旗標。正式使用者登入及
+原有 Widget 功能均不變。設計草稿的 `chartDraftPersistenceEnabled=false`
+僅是測試用表態；真正保護仍由 Server Widget CK/Trigger／正式圖表
+路由未註冊共同保證。請勿將其誤認為已具備資料介接、保存或公共播放。
+
+新增 `client/src/dashboard/chartDraft.test.ts` 驗證 V1 合法性、
+來源欄位拒絕、畫布界限、假資料無患者資訊及不具儲存能力。
+
+**後續 2B-15**：取得單獨審核的 CHART Writer／Schema 安裝授權後，
+再實作可持久化版型 Widget、經授權查詢／封印與公共隱私審查、
+真正的圖表預覽及全螢幕播放。928 仍為不自動掃描之 .sql.draft，
+正式 C:\\UQP、PIN、既有 Dashboard 播放未變。

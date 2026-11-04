@@ -1,0 +1,20 @@
+.chart-draft{border:1px solid #b7c8df;border-radius:12px;margin-top:14px;padding:10px;background:var(--surface,#fff);color:var(--text-primary,#172033)}
+.chart-draft-toggle{width:100%;padding:10px;text-align:left;font-weight:700;border:1px solid #a6b8d0;border-radius:8px;background:#eff6ff;color:#1e3a65;cursor:pointer}
+.chart-draft-body{display:grid;gap:10px;margin-top:12px}
+.chart-draft-body label{display:grid;gap:5px;font-size:13px}
+.chart-draft-body select,.chart-draft-body input:not([type=checkbox]){box-sizing:border-box;min-width:0;width:100%;padding:7px;border:1px solid #94a3b8;border-radius:6px;background:white;color:#172033}
+.chart-draft-body .chart-draft-check{display:flex;align-items:center;gap:7px}
+.chart-draft-warning{background:#f1f5f9;border-left:3px solid #64748b;padding:8px;font-size:12px;line-height:1.5}
+.chart-draft-subtitle{font-weight:700;font-size:13px}
+.chart-draft-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.chart-draft-position{position:relative;width:100%;background:repeating-linear-gradient(45deg,#f8fafc,#f8fafc 8px,#edf2f7 8px,#edf2f7 16px);border:1px solid #94a3b8;overflow:hidden;border-radius:5px}
+.chart-draft-position-frame{position:absolute;display:flex;align-items:center;justify-content:center;border:2px solid #2563eb;background:#dbeafe;box-sizing:border-box;overflow:hidden;font-size:10px;color:#1e40af}
+.chart-draft-sample{background:white;border:1px solid #cbd5e1;border-radius:9px;padding:8px;font-size:12px}
+.chart-draft-sample p{margin:0 0 5px;font-size:11px;font-weight:600;color:#475569}
+.chart-draft-sample svg{display:block;width:100%;height:auto;color:#334155}
+.chart-draft-legend{display:flex;flex-wrap:wrap;gap:7px;font-size:11px;color:#334155}
+.chart-draft-legend span{display:flex;align-items:center;gap:4px}
+.chart-draft-legend i{display:inline-block;width:9px;height:9px;border-radius:2px}
+.chart-draft-notice{font-size:12px;line-height:1.5;color:#475569}
+.chart-draft-reset{padding:8px;border:1px solid #94a3b8;border-radius:6px;background:white;cursor:pointer}
+.chart-draft-hidden-gate{display:none}
