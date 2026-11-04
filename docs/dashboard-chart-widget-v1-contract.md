@@ -81,3 +81,35 @@ A→B→A 異動。目前此 Reader **刻意未接上正式實作**；測試只�
 Bridge 的單元測試也不能取代真正的 Query-only 執行流程、SQL 2019／2022、
 資料來源更新競爭、HTTPS 裝置授權或公共螢幕人工驗收。
 CHART Widget、既有 SQL CHECK、版面設計器及正式全螢幕播放仍全部保持未啟用。
+
+
+## 7. 2B：伺服器端欄位核准政策（僅純函式，尚未連接正式 SQL）
+
+新增 dashboardChartApproval.policy.ts 與同名 .test.ts，作為日後可交由真實伺服器
+Repository 使用的 ServerChartApprovalReader 驗證政策。
+
+必要證據須同時成立：
+
+- Query Publisher 項目仍已發布、啟用、未封存，且 Dataset 啟用、來源綁定一致。
+- 即時使用者身分／TokenVersion、Query 權限、來源是否已啟用，以及可信的 Dashboard 核准版本均正確。
+- 分類欄位在報表定義中明確為 GROUP 欄位，數值欄位明確為 COUNT／SUM 等統計欄位，數值資料型別允許；兩欄都必須唯一、可見。
+- 兩欄在 Dataset 敏感欄位規則中均須明確標為 OTHER／NONE，不能經遮蔽、缺漏或重複別名導出。
+- 公共／使用者播放必須核對已確認且符合敏感政策版本的公共顯示授權，兩欄均有明確許可。
+- 除報表設定之外，**必須有另一份伺服器可信的 Query SQL 彙總語意驗證證據**，證明已發布的 Query 本身產生「每個分類一筆彙總結果」。僅有 ReportColumn.groupOrder 或 aggregateType **不是安全證明**。
+- 彙總證據應綁定 Query 與 Dataset 的不可重用修訂序號；來源與權限證據同樣須由可信 SQL 取得，核准版本變更時禁止重用快照。
+
+**本階段尚未實作可信的 SQL 彙總語意驗證器，也沒有把真實 SQL Repository 接進讀取器。**
+若缺少 VerifiedQueryAggregate 證據，核准一律回傳 null。合成單元測試
+可注入模擬證據檢驗安全政策，但這不代表實際 Dashboard 可以使用圖表。
+
+以下仍禁止：增加 CHART 至 layoutSchema、WidgetType SQL CHECK、設計工具箱、
+正式播放路由，以及任何繞過原有 Query Delivery 與揭露稽核的圖表 API。
+
+### 2B 後續項目
+
+1. 實作具足夠語意證明的 SQL Query 彙總檢查，對 Oracle／SQL Server 等來源
+   分別提供可靠的來源驗證；無法解析時明確拒絕，不能只靠字串搜尋 GROUP BY。
+2. 在一個可驗證的伺服器端讀取流程提供 Query、Dataset、來源綁定、公共顯示、
+   欄位政策及不可重用的修訂證據；避免把管理 UI 或使用者送出的資料當成事實。
+3. 經 Server／Browser／SQL 2019／2022 等隔離驗收及人工安全審查通過後，
+   才進一步規劃圖表 Widget 的 Migration、設計器與全螢幕播放。
