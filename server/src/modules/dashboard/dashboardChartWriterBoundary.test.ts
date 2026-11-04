@@ -10,8 +10,12 @@ import {attestChartWriterSqlPrincipals,attestChartWriterSqlPools,
 const EXPECTED_SHA="f".repeat(64);
 const base={
  DbName:"UQP_TEST",ServerName:"SQL_TEST",OriginalSid:"A1",EffectiveUser:"platform",
- ProcedureId:101,ProcedureSha256:EXPECTED_SHA,Sysadmin:0,DbOwner:0,DbDdlAdmin:0,DbSecurityAdmin:0,
- DbDataWriter:0,DbControl:0,SchemaControl:0,SchemaAlter:0,
+ ProcedureId:101,ProcedureSha256:EXPECTED_SHA,
+ Sysadmin:0,ServerControl:0,ServerImpersonateAny:0,ServerAlterLogins:0,
+ ServerAlterRoles:0,ServerSelectAllUserData:0,
+ DbOwner:0,DbDdlAdmin:0,DbSecurityAdmin:0,DbDataWriter:0,DbAccessAdmin:0,
+ DbAlterAnyUser:0,DbAlterAnyRole:0,DbAlterAnySchema:0,
+ DbControl:0,SchemaControl:0,SchemaAlter:0,
  ImpersonateWriter:0,CreateExecute:0,CreateAlter:0,
  PermitInsert:0,SealInsert:0,LedgerInsert:0,ReviewUpdate:0,
 };
@@ -37,8 +41,20 @@ test("2B-15C independent OriginalLogin SID, not EXECUTE AS USER, is required",()
    platform(),{...writer(),ProcedureId:null}));
 });
 test("2B-15C broad roles, SQL DML sidecars, impersonation fail closed",()=>{
- for(const key of ["Sysadmin","DbOwner","DbDdlAdmin","DbSecurityAdmin",
- "DbDataWriter","DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
+ // Check effective permissions, not just the fixed role list. A login with
+ // CONTROL SERVER or IMPERSONATE ANY LOGIN need not be in sysadmin.
+ for(const name of ["CONTROL SERVER","IMPERSONATE ANY LOGIN",
+   "ALTER ANY LOGIN","ALTER ANY SERVER ROLE","SELECT ALL USER SECURABLES"]){
+   assert(chartWriterIdentitySql.includes("N'"+name+"'"));
+ }
+ assert(chartWriterIdentitySql.includes("N'ALTER ANY USER'"));
+ assert(chartWriterIdentitySql.includes("N'ALTER ANY ROLE'"));
+ assert(chartWriterIdentitySql.includes("N'ALTER ANY SCHEMA'"));
+ for(const key of ["Sysadmin","ServerControl","ServerImpersonateAny",
+ "ServerAlterLogins","ServerAlterRoles","ServerSelectAllUserData",
+ "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbAccessAdmin",
+ "DbAlterAnyUser","DbAlterAnyRole","DbAlterAnySchema",
+ "DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
  "CreateAlter","PermitInsert","SealInsert","LedgerInsert","ReviewUpdate"]){
    rejects("CHART_PLATFORM_PRIVILEGE_EXCESS",()=>attest(
      {...platform(),[key]:1},writer()));
