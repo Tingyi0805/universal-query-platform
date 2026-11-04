@@ -196,7 +196,9 @@ export async function verifyChart928DraftSql(
   stage="UNTRUSTED_SEALED_WIDGET_UPDATE";
   await untrusted("UPDATE uqp.DashboardWidget SET ConfigJson=N'{\"tampered\":true}' WHERE Id=88",[51928]);
   stage="UNTRUSTED_SEALED_WIDGET_DELETE";
-  await untrusted("DELETE FROM uqp.DashboardWidget WHERE Id=88",[51928]);
+  // SQL Server checks the trusted widget/seal FK before AFTER triggers:
+  // FK error 547 is the expected denial for deleting the sealed parent.
+  await untrusted("DELETE FROM uqp.DashboardWidget WHERE Id=88",[547]);
   stage="UNTRUSTED_SEAL_DELETE";
   await untrusted("DELETE FROM uqp.DashboardChartWidgetSeal WHERE WidgetId=88",[229]);
   stage="UNTRUSTED_REVIEW_WRITE";
