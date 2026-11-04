@@ -162,6 +162,53 @@ export async function verifyChart928DraftSql(
     ).recordset[0]?.Total),2);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal")
     ).recordset[0]?.Total),1);
+  // 2B-15B: the *real* SQL Server engine, not a mock, must reject direct
+  // DML from an impersonated least-privilege caller. SESSION_CONTEXT cannot
+  // serve as a chart writer credential, even when the caller sets it.
+  stage="UNTRUSTED_SQL_PRINCIPAL";
+  await q("CREATE USER [UQP_Chart_Untrusted] WITHOUT LOGIN");
+  await q("GRANT SELECT,INSERT,UPDATE,DELETE ON uqp.DashboardWidget TO [UQP_Chart_Untrusted]; " +
+    "GRANT SELECT ON uqp.DashboardChartWidgetSeal TO [UQP_Chart_Untrusted]; " +
+    "DENY INSERT,UPDATE,DELETE ON uqp.DashboardChartWidgetSeal TO [UQP_Chart_Untrusted]; " +
+    "DENY INSERT,UPDATE,DELETE ON uqp.DashboardChartPrivacyReview TO [UQP_Chart_Untrusted]; " +
+    "DENY INSERT,UPDATE,DELETE ON uqp.DashboardChartTrustRequest TO [UQP_Chart_Untrusted];");
+  // A single batch guarantees REVERT on normal SQL errors. Return an error
+  // code from CATCH and require the expected trigger or permission denial,
+  // never merely an arbitrary assertion/driver error.
+  const untrusted = async (statement:string, expected:number[]):Promise<void>=>{
+    const rows=(await db!.request().batch(
+      "EXECUTE AS USER=N'UQP_Chart_Untrusted'; " +
+      "BEGIN TRY " +
+      "EXEC sys.sp_set_session_context @key=N'UQP_CHART_WRITER_AUTHORIZED',@value=1; " +
+      statement + "; SELECT CAST(0 AS int) AS RejectedNumber; " +
+      "END TRY BEGIN CATCH SELECT ERROR_NUMBER() AS RejectedNumber; END CATCH; " +
+      "REVERT;"
+    )).recordset;
+    const number=Number(rows?.[0]?.RejectedNumber);
+    assert(expected.includes(number),
+      "CHART untrusted DML did not fail with an expected SQL error");
+  };
+  stage="UNTRUSTED_CHART_INSERT";
+  await untrusted("INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson)" +
+    " VALUES(990,22,N'CHART',N'PRIMARY',N'{}')",[51928]);
+  stage="UNTRUSTED_CHART_TYPE_CHANGE";
+  await untrusted("UPDATE uqp.DashboardWidget SET WidgetType=N'CHART' WHERE Id=88",[51928]);
+  stage="UNTRUSTED_SEALED_WIDGET_UPDATE";
+  await untrusted("UPDATE uqp.DashboardWidget SET ConfigJson=N'{\"tampered\":true}' WHERE Id=88",[51928]);
+  stage="UNTRUSTED_SEALED_WIDGET_DELETE";
+  await untrusted("DELETE FROM uqp.DashboardWidget WHERE Id=88",[51928]);
+  stage="UNTRUSTED_SEAL_DELETE";
+  await untrusted("DELETE FROM uqp.DashboardChartWidgetSeal WHERE WidgetId=88",[229]);
+  stage="UNTRUSTED_REVIEW_WRITE";
+  await untrusted("UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED' WHERE Id=1",[229]);
+  stage="UNTRUSTED_LEDGER_WRITE";
+  await untrusted("DELETE FROM uqp.DashboardChartTrustRequest",[229]);
+  stage="UNTRUSTED_TRIGGER_DISABLE";
+  await untrusted("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget",[229]);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=88 AND WidgetType=N'TEXT'")).recordset[0]?.Total),1);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal WHERE WidgetId=88")).recordset[0]?.Total),1);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=990")).recordset[0]?.Total),0);
+  console.log("CHART_2B15B_UNTRUSTED_SQL_FREEZE_SESSION_FLAG_PRIVILEGE_PASS");
   stage="DRIFT_REJECT";
   await q("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget");
   await assert.rejects(db.request().batch(script), (err:unknown)=>err instanceof Error);

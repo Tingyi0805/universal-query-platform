@@ -623,3 +623,34 @@ CHART。尚待處理的正式阻斷：928 Draft 的 `TR_DashboardWidget_ChartFre
 只有在受信任 route 認證、Query／Dataset 版本、設備/IP、完整快照、
 患者 Audit、公開統計 Review 全數驗證後，才可將投影 DTO 傳給播放器。
 本提交不修改 928、927、正式 DB、C:\\UQP 或現有播放行為。
+
+ 
+## 22. 2B-15B：不可信 SQL 身分與受控 CHART Writer 啟用契約
+
+從現有 `928_dashboard_chart_trust_schema.sql.draft` 可確認：
+`TR_DashboardWidget_ChartFreeze` 拒絕所有 CHART INSERT/UPDATE/DELETE，
+不因使用者聲稱的 `SESSION_CONTEXT` 旗標改變。**不能靠客戶端旗標、
+API Header、Session Context 或自行停用 Trigger 來放行 CHART。**
+
+新增 SQL Server 2019／2022 一次性 `UQP_CH_` DB 驗收：
+`CREATE USER ... WITHOUT LOGIN` 模擬低權限身分；對現有
+DashboardWidget 只授予普通 DML；對 Seal／Review／Request Ledger
+明確 DENY DML。透過 `EXECUTE AS USER` 與自行設定
+`UQP_CHART_WRITER_AUTHORIZED=1`，實際嘗試新增 CHART、變更
+TEXT→CHART、修改或刪除封印 Widget、刪 Seal、改 Review、清 Ledger
+及停用 Trigger，**必須分別回報 SQL 51928 或 229**，
+並查核原有資料未改動；驗收批次內執行 REVERT。
+這是負面測試，不賦予正式 DB Principal 新權限。
+
+**後續正式啟用必須滿足**：專屬受信任的存放程序或等價
+不可被應用程式連線偽造的 SQL 權限隔離機制；僅授權該受控程式
+以同一交易執行 CHART Widget + Seal + Audit + CAS，
+並保留舊版 Layout Writer 的封鎖、Token/RBAC/Query/Device/IP
+及公共隱私核定。須驗證資料庫實際登入主體**不是** db_owner、
+db_ddladmin、db_datawriter 等過廣角色，也不可持有
+ALTER/DISABLE TRIGGER、CONTROL 或直接修改 CHART sidecar 的能力。
+簽章程序應有正式部署輪替、撤銷及審核流程。
+
+目前尚無專屬受控 Writer 程序、正式圖表 API 或播放路由；928
+仍為不可自動掃描草案，CHART Freeze、正式 C:\\UQP、PIN 927
+及既有 Dashboard 播放行為維持不變。
