@@ -9,6 +9,8 @@ test("2B-15 accepts exactly the server projected-only DTO, not Query rows or Wid
  }
  assert.equal(parseChartProjection({chartType:"BAR",showLegend:true,points:[{label:"A",value:1,PATIENT_ID:"secret"}]}),null);
  assert.equal(parseChartProjection({chartType:"BAR",showLegend:true,points:[{label:"A",value:1,details:{NAME:"secret"}}]}),null);
+ assert.equal(parseChartProjection({chartType:{toString:()=>"BAR"},showLegend:true,points:[]}),null);
+ assert.equal(parseChartProjection({chartType:"BAR",showLegend:1,points:[]}),null);
  assert.equal(parseChartProjection({chartType:"BAR",showLegend:true,points:[{label:"A",value:"8"}]}),null);
  assert.equal(parseChartProjection({chartType:"BAR",showLegend:true,points:Array.from({length:51},(_,i)=>({label:String(i),value:i}))}),null);
 });

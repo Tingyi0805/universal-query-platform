@@ -16,7 +16,8 @@ export function parseChartProjection(raw:unknown):ChartProjection|null {
   const obj=raw as Record<string,unknown>;
   const keys=Object.keys(obj).sort();
   if(keys.join("|")!=="chartType|points|showLegend"||
-      !["BAR","LINE","PIE"].includes(String(obj.chartType))||
+      typeof obj.chartType!=="string"||
+      !["BAR","LINE","PIE"].includes(obj.chartType)||
       typeof obj.showLegend!=="boolean"||
       !Array.isArray(obj.points)||obj.points.length>50) return null;
   const seen=new Set<string>();
