@@ -48,14 +48,14 @@ export async function verifyChart928DraftSql(
    "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT NOT NULL PRIMARY KEY," +
    " DashboardId BIGINT NOT NULL REFERENCES uqp.Dashboard(Id) ON DELETE CASCADE); " +
-   "CREATE TABLE uqp.DashboardWidget(Id BIGINT NOT NULL PRIMARY KEY," +
+   "CREATE TABLE uqp.DashboardWidget(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " ProfileId BIGINT NOT NULL REFERENCES uqp.DashboardDisplayProfile(Id) ON DELETE CASCADE," +
    " WidgetType NVARCHAR(30) NOT NULL,SourceKey NVARCHAR(256) NULL," +
    " ConfigJson NVARCHAR(MAX) NOT NULL DEFAULT N'{}'," +
    " CONSTRAINT CK_DashboardWidget_Type CHECK(WidgetType IN" +
    " (N'TEXT',N'PARAMETER',N'FIELD',N'CLOCK',N'PAGE_INFO',N'COUNTDOWN',N'TABLE',N'CONTAINER'))," +
    " CONSTRAINT CK_DashboardWidget_ConfigJson CHECK(ISJSON(ConfigJson)=1)); " +
-   "CREATE TABLE uqp.AuditLog(Id BIGINT NOT NULL PRIMARY KEY," +
+   "CREATE TABLE uqp.AuditLog(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " EventType NVARCHAR(100) NOT NULL,EventCategory NVARCHAR(20) NOT NULL," +
    " Status NVARCHAR(20) NOT NULL,UserId BIGINT NOT NULL,IsImportant BIT NOT NULL); " +
    "CREATE TABLE uqp.AuditLogArchive(Id BIGINT NOT NULL PRIMARY KEY," +
@@ -66,13 +66,22 @@ export async function verifyChart928DraftSql(
   await q("INSERT uqp.AppUser(Id) VALUES(8),(77); " +
    "INSERT uqp.QueryDefinition(Id) VALUES(9); INSERT uqp.Dataset(Id) VALUES(10); " +
    "INSERT uqp.Dashboard(Id) VALUES(7); INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7);" +
-   "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) VALUES(88,22,N'TEXT',N'PRIMARY',N'{}'); " +
-   "INSERT uqp.AuditLog(Id,EventType,EventCategory,Status,UserId,IsImportant) VALUES" +
-   "(1,N'CHART_SEAL_WIDGET',N'CONFIG',N'SUCCESS',8,1)," +
-   "(2,N'CHART_REQUEST_REVIEW',N'CONFIG',N'SUCCESS',8,1)," +
-   "(3,N'CHART_APPROVE_REVIEW',N'CONFIG',N'SUCCESS',77,1)," +
-   "(4,N'CHART_REVOKE_REVIEW',N'CONFIG',N'SUCCESS',77,1); " +
+   "SET IDENTITY_INSERT uqp.DashboardWidget ON; " +
+    "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) VALUES(88,22,N'TEXT',N'PRIMARY',N'{}'); " +
+    "SET IDENTITY_INSERT uqp.DashboardWidget OFF; " +
+   "INSERT uqp.AuditLog(EventType,EventCategory,Status,UserId,IsImportant) VALUES" +
+   "(N'CHART_SEAL_WIDGET',N'CONFIG',N'SUCCESS',8,1)," +
+   "(N'CHART_REQUEST_REVIEW',N'CONFIG',N'SUCCESS',8,1)," +
+   "(N'CHART_APPROVE_REVIEW',N'CONFIG',N'SUCCESS',77,1)," +
+   "(N'CHART_REVOKE_REVIEW',N'CONFIG',N'SUCCESS',77,1); " +
    "INSERT uqp.DatasetPublicDisplayPolicy(DatasetId) VALUES(10);");
+  stage="IDENTITY_SCHEMA_PARITY";
+  const identity=(await q(
+    "SELECT COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),N'Id','IsIdentity') AS WidgetIdentity, " +
+    "COLUMNPROPERTY(OBJECT_ID(N'uqp.AuditLog'),N'Id','IsIdentity') AS AuditIdentity"
+  )).recordset[0];
+  assert.equal(Number(identity?.WidgetIdentity),1);
+  assert.equal(Number(identity?.AuditIdentity),1);
   stage="OUTER_ROLLBACK";
   const outer=new sql.Transaction(db);
   await outer.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
@@ -93,13 +102,16 @@ export async function verifyChart928DraftSql(
   stage="EXACT_928_TRIGGER_ATTEST";
   await attestChart928TriggerCatalog(db,script);
   stage="LEGACY_WRITE";
-  await q("INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
+  await q("SET IDENTITY_INSERT uqp.DashboardWidget ON; " +
+    "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
     "VALUES(89,22,N'TEXT',N'PRIMARY',N'{}'); " +
+    "SET IDENTITY_INSERT uqp.DashboardWidget OFF; " +
     "UPDATE uqp.DashboardWidget SET ConfigJson=N'{\"safe\":1}' WHERE Id=89; " +
     "DELETE FROM uqp.DashboardWidget WHERE Id=89;");
   stage="CHART_INSERT_FREEZE";
-  await rejects("INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
-    "VALUES(90,22,N'CHART',N'PRIMARY',N'{}')");
+  // Use true IDENTITY insertion, not a caller-provided WidgetId.
+  await rejects("INSERT uqp.DashboardWidget(ProfileId,WidgetType,SourceKey,ConfigJson) " +
+    "VALUES(22,N'CHART',N'PRIMARY',N'{}')");
   await check();
   stage="SEALED_LEGACY_FREEZE";
   await q("INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)" +
@@ -112,8 +124,10 @@ export async function verifyChart928DraftSql(
     " VALUES(9999,REPLICATE('a',64),0,8,1)");
   // A missing or wrong-event live audit must not establish any new trust.
   stage="AUDIT_RECEIPT_ENFORCEMENT";
-  await q("INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
-    "VALUES(91,22,N'TEXT',N'PRIMARY',N'{}')");
+  await q("SET IDENTITY_INSERT uqp.DashboardWidget ON; " +
+    "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
+    "VALUES(91,22,N'TEXT',N'PRIMARY',N'{}'); " +
+    "SET IDENTITY_INSERT uqp.DashboardWidget OFF");
   await rejects("INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)" +
     " VALUES(91,REPLICATE('a',64),0,8,999)");
   await rejects("INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)" +
@@ -198,8 +212,8 @@ export async function verifyChart928DraftSql(
       "CHART untrusted DML did not fail with an expected SQL error");
   };
   stage="UNTRUSTED_CHART_INSERT";
-  await untrusted("INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson)" +
-    " VALUES(990,22,N'CHART',N'PRIMARY',N'{}')",[51928]);
+  await untrusted("INSERT uqp.DashboardWidget(ProfileId,WidgetType,SourceKey,ConfigJson)" +
+    " VALUES(22,N'CHART',N'PRIMARY',N'{}')",[51928]);
   stage="UNTRUSTED_CHART_TYPE_CHANGE";
   await untrusted("UPDATE uqp.DashboardWidget SET WidgetType=N'CHART' WHERE Id=88",[51928]);
   stage="UNTRUSTED_SEALED_WIDGET_UPDATE";

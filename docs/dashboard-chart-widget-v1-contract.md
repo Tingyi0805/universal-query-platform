@@ -677,3 +677,22 @@ Session Context 冒充及 928 回滾案例保持原驗證。
 CAS 與舊版儲存路徑隔離），目前仍屬阻斷條件。
 本次沒有修改 928、PIN 927、現有正式 Schema、Route、
 設計器存檔或播放器，不授權正式環境執行 `.sql.draft`。
+
+
+## 24. 2B-15C-2：928 合成 Schema 與正式 IDENTITY 結構對齊
+
+`022_dashboard_layout_designer.sql` 的
+`uqp.DashboardWidget.Id` 及 `006_audit_log.sql` 的
+`uqp.AuditLog.Id` 均為 SQL Server `BIGINT IDENTITY`。
+早期一次性 `UQP_CH_` 測試表使用普通主鍵，無法充分證明
+新建 CHART 的自動 WidgetId/AuditLogId 語意。
+
+2B-15C 測試 Schema 改為 IDENTITY：僅舊測試種子資料用
+`SET IDENTITY_INSERT ... ON/OFF` 指定固定 ID；所有未授權
+CHART 新增均改為**不提供 ID 的正式 INSERT**，
+同時驗證 `COLUMNPROPERTY(...,'IsIdentity')=1`，
+保留既有 Seal FK、稽核封存與 Freeze Trigger 拒絕檢查。
+
+這是正式 Writer 前的結構一致性修補，**不是專屬 CHART
+原子 Writer 或正式啟用的完成宣告**。Runtime、API、928
+安裝權限、原版型與 PIN 均未改動。
