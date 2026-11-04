@@ -1238,3 +1238,72 @@ SourceKey 自身一致，不允許重新標示來源卻沿用相同摘要。
 928 草案繼續不得部署，正式 `C:\\UQP`、PIN 927、現有
 Dashboard 版型及播放器不變。最新 HEAD 尚無 CI 的情況下，
 本項只能標記為**已提交、待驗證**。
+
+
+## 43. 2B-15D-7：隔離資料庫委派核發與單次消耗交易原型（待 CI）
+
+新增非正式、非掃描用的 SQL 草案
+`database/drafts/928_chart_actor_delegation_disposable.sql.draft`。
+檔案入口與兩個 SQL 程序均強制資料庫名稱為
+`UQP_CH_` 加 12 位隨機字元，僅供既有一次性 SQL 2019／2022
+驗收流程；**不得安裝在任何正式／測試共用 UQP 資料庫**。
+本階段不修改 Migration 928、不建立正式 SQL Login。
+
+### 專用角色與權限範圍
+
+隔離資料庫建立兩個無登入的**合成** SQL User：
+
+- `UQP_Chart_IssuerSynthetic` 只能呼叫
+  `usp_ChartDelegationIssue_IsolatedDraft`
+- `UQP_Chart_ConsumerSynthetic` 只能呼叫
+  `usp_ChartDelegationConsume_IsolatedDraft`
+
+雙方都沒有委派資料表的直接 DML/SELECT 權限。
+這項 SQL `EXECUTE AS USER` 測試驗證的是資料庫內的權限分離，
+**不是兩個獨立 `ORIGINAL_LOGIN()` SQL Login 的實測**，
+也不能當作受控 HTTP Issuer 的身份證明。
+
+### 委派生命週期
+
+1. 隔離 Issuer 程序於自己的 `SERIALIZABLE` 交易內查詢
+   有效 User/TokenVersion/RBAC 與 Dashboard/Profile，
+   使用 SQL Server `NEWID()`、`CRYPT_GEN_RANDOM(32)`
+   生成 GrantId 與一次性秘密；表內只保存 SHA-256。
+   RequestId 在委派表中具有唯一約束，效期固定 60 秒。
+2. 隔離 Consumer 只接受 GrantId、32-byte 秘密、完整
+   Actor/TokenVersion/RequestId/Config Digest/版面範圍。
+   `SERIALIZABLE` 加上 PK 列的 `UPDLOCK,HOLDLOCK`，
+   必須重驗委派未過期、未撤銷、尚未使用、使用者與
+   DB 角色仍有效及 Dashboard/Profile 範圍一致。
+   成功後於同一交易寫入 `ConsumedAtUtc`；已用過的
+   Grant 不可再次成功。
+3. 既有 `chart928DraftSqlAcceptance.ts` 追加一次性 SQL
+   引擎測試：權限矩陣、Secret 僅保存雜湊、
+   重複 RequestId 核發拒絕、另一名同樣具權限的 Actor
+   冒用、錯 Token/Scope/Digest/RequestId/Secret 拒絕、
+   已過期、已撤銷、核發後 TokenVersion 改變或 RBAC 撤銷
+   均須拒絕，且 **兩個同時消耗相同 Grant 僅一個成功**；
+   人工合成的 AFTER UPDATE 失敗應完整回滾
+   `ConsumedAtUtc`，之後才允許用原憑證重試。
+
+### 此原型仍有不可解除的正式上線阻擋
+
+**重要：本原型只將委派的「核發資料持久化／單次消耗」展示為
+受控 SQL 行為；它並未完成真實 HTTP 使用者到 DB Issuer 的
+不可偽造綁定。** Issuer 程序目前仍接受 `@ActorId` 參數。
+即便同權限帳號通過資料庫內權限檢查，仍不表示 HTTP 呼叫者
+就是該 Actor。正式實作須讓核發端不能任意代表別的有效帳號。
+
+隔離 Consumer 的交易也**尚未**連接 Widget／Seal／Audit／
+Request Ledger 的單一原子提交，未完成 Query/Dataset Scope、
+完整 SQL 程序來源簽章、正式 TLS 憑證與獨立 SQL Login。
+不能因「並行只成功一筆」就將整個 Chart Create 標為安全。
+
+所有安全 Gate 維持不變：
+`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false`、
+`CHART_WRITER_APPROVED_PROCEDURE_SHA256=null`、
+`CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false`。
+不註冊 CHART API，不安裝 928，不變更 `C:\\UQP`。
+只有當最新 HEAD 的 GitHub CI 完整跑過 Server／Windows／
+SQL Server 2019／2022，才能標記本次隔離案例「實測通過」；
+提交 GitHub 不等於執行結果。

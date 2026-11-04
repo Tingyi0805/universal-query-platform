@@ -618,6 +618,172 @@ export async function verifyChart928DraftSql(
   )).recordset[0]?.Total),0);
   console.log("CHART_2B15D5_DRAFT_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED");
 
+  // 2B-15D-7: disposable-only issuer / consumer procedures. This tests
+  // one-time SQL grant consumption; it DOES NOT prove a trusted HTTP actor,
+  // cannot authorize Chart writes and must not remove any production gate.
+  stage="DELEGATION_DISPOSABLE_INSTALL";
+  const delegationSql=await readFile(new URL(
+    "../../../database/drafts/928_chart_actor_delegation_disposable.sql.draft",
+    import.meta.url),"utf8");
+  await db!.request().batch(delegationSql);
+  stage="DELEGATION_PRIVILEGE_SEPARATION";
+  const grants=(await q(
+    "EXECUTE AS USER=N'UQP_Chart_ConsumerSynthetic';" +
+    "SELECT HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue_IsolatedDraft',N'OBJECT',N'EXECUTE') AS CanIssue," +
+    "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationConsume_IsolatedDraft',N'OBJECT',N'EXECUTE') AS CanConsume," +
+    "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegationDisposable',N'OBJECT',N'UPDATE') AS CanUpdate," +
+    "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegationDisposable',N'OBJECT',N'SELECT') AS CanRead;" +
+    "REVERT"
+  )).recordset[0];
+  assert.equal(Number(grants?.CanIssue),0);
+  assert.equal(Number(grants?.CanConsume),1);
+  assert.equal(Number(grants?.CanUpdate),0);
+  assert.equal(Number(grants?.CanRead),0);
+  const issuerGrants=(await q(
+    "EXECUTE AS USER=N'UQP_Chart_IssuerSynthetic';" +
+    "SELECT HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue_IsolatedDraft',N'OBJECT',N'EXECUTE') AS CanIssue," +
+    "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationConsume_IsolatedDraft',N'OBJECT',N'EXECUTE') AS CanConsume," +
+    "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegationDisposable',N'OBJECT',N'INSERT') AS CanInsert;" +
+    "REVERT"
+  )).recordset[0];
+  assert.equal(Number(issuerGrants?.CanIssue),1);
+  assert.equal(Number(issuerGrants?.CanConsume),0);
+  assert.equal(Number(issuerGrants?.CanInsert),0);
+
+  const issue=async(requestId:string)=>{
+    const issued=(await db!.request()
+      .input("requestId",sql.UniqueIdentifier,requestId)
+      .input("digest",sql.Char(64),expected)
+      .query(
+        "DECLARE @grant UNIQUEIDENTIFIER,@secret VARBINARY(32);" +
+        "EXECUTE AS USER=N'UQP_Chart_IssuerSynthetic';" +
+        "BEGIN TRY EXEC uqp.usp_ChartDelegationIssue_IsolatedDraft " +
+        "@ActorId=8,@TokenVersion=1,@DashboardId=7,@ProfileId=22," +
+        "@RequestId=@requestId,@SourceKey=N'PRIMARY',@ConfigSha256=@digest," +
+        "@X=10,@Y=10,@Width=600,@Height=360," +
+        "@GrantId=@grant OUTPUT,@Secret=@secret OUTPUT;" +
+        "END TRY BEGIN CATCH REVERT; THROW; END CATCH;" +
+        "REVERT; SELECT @grant AS GrantId,@secret AS Secret;"
+      )).recordset[0];
+    assert.match(String(issued?.GrantId),
+      /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i);
+    assert(Buffer.isBuffer(issued?.Secret));
+    assert.equal(issued.Secret.length,32);
+    return {grantId:String(issued.GrantId),secret:issued.Secret as Buffer,requestId};
+  };
+  type SyntheticGrant=Awaited<ReturnType<typeof issue>>;
+  const consume=(g:SyntheticGrant,overrides:Readonly<{
+    actor?:number;token?:number;requestId?:string;digest?:string;
+    secret?:Buffer;dashboard?:number;profile?:number;
+  }>={})=>db!.request()
+    .input("grantId",sql.UniqueIdentifier,g.grantId)
+    .input("secret",sql.VarBinary(sql.MAX),overrides.secret??g.secret)
+    .input("requestId",sql.UniqueIdentifier,overrides.requestId??g.requestId)
+    .input("digest",sql.Char(64),overrides.digest??expected)
+    .input("actor",sql.BigInt,overrides.actor??8)
+    .input("token",sql.Int,overrides.token??1)
+    .input("dashboard",sql.BigInt,overrides.dashboard??7)
+    .input("profile",sql.BigInt,overrides.profile??22)
+    .query(
+      "EXECUTE AS USER=N'UQP_Chart_ConsumerSynthetic';" +
+      "BEGIN TRY EXEC uqp.usp_ChartDelegationConsume_IsolatedDraft " +
+      "@GrantId=@grantId,@Secret=@secret," +
+      "@ActorId=@actor,@TokenVersion=@token," +
+      "@DashboardId=@dashboard,@ProfileId=@profile," +
+      "@RequestId=@requestId,@SourceKey=N'PRIMARY',@ConfigSha256=@digest," +
+      "@X=10,@Y=10,@Width=600,@Height=360;" +
+      "END TRY BEGIN CATCH REVERT; THROW; END CATCH; REVERT;"
+    );
+  const denied=async(work:Promise<unknown>)=>
+    assert.rejects(work,(e:unknown)=>e instanceof Error &&
+      Number((e as {number?:unknown}).number)===51928);
+  const consumed=async(id:string)=>Number((await db!.request()
+    .input("id",sql.UniqueIdentifier,id)
+    .query("SELECT COUNT_BIG(*) AS Total FROM uqp.ChartActorDelegationDisposable " +
+       "WHERE GrantId=@id AND ConsumedAtUtc IS NOT NULL")).recordset[0]?.Total);
+
+  stage="DELEGATION_SECRET_NOT_STORED_AS_PLAINTEXT";
+  const first=await issue("00000000-0000-4000-8000-000000006001");
+  const dbHash=(await db!.request().input("id",sql.UniqueIdentifier,first.grantId)
+    .query("SELECT SecretSha256 FROM uqp.ChartActorDelegationDisposable WHERE GrantId=@id")
+  ).recordset[0]?.SecretSha256;
+  assert(Buffer.isBuffer(dbHash));
+  assert.equal(Buffer.compare(dbHash,createHash("sha256").update(first.secret).digest()),0);
+  stage="DELEGATION_DUPLICATE_REQUEST_ISSUANCE";
+  await assert.rejects(issue(first.requestId),(e:unknown)=>e instanceof Error &&
+    [2601,2627].includes(Number((e as {number?:unknown}).number)));
+  stage="DELEGATION_SCOPE_AND_SECRET_DENIAL";
+  await denied(consume(first,{actor:77})); // another valid DESIGN_QUERY actor
+  await denied(consume(first,{token:2}));
+  await denied(consume(first,{dashboard:8}));
+  await denied(consume(first,{profile:23}));
+  await denied(consume(first,{digest:"f".repeat(64)}));
+  await denied(consume(first,{secret:Buffer.alloc(32,0x40)}));
+  await denied(consume(first,{requestId:"00000000-0000-4000-8000-000000006099"}));
+  assert.equal(await consumed(first.grantId),0);
+
+  stage="DELEGATION_SUCCESS_AND_REPLAY";
+  assert.equal((await consume(first)).recordset[0]?.Consumed,true);
+  assert.equal(await consumed(first.grantId),1);
+  await denied(consume(first));
+
+  stage="DELEGATION_CONCURRENT_SINGLE_WINNER";
+  const second=await issue("00000000-0000-4000-8000-000000006002");
+  const races=await Promise.allSettled([consume(second),consume(second)]);
+  assert.equal(races.filter(x=>x.status==="fulfilled").length,1);
+  assert.equal(races.filter(x=>x.status==="rejected").length,1);
+  const loser=races.find(x=>x.status==="rejected");
+  assert(loser && loser.status==="rejected");
+  assert.equal(Number((loser.reason as {number?:unknown}).number),51928);
+  assert.equal(await consumed(second.grantId),1);
+  console.log("CHART_2B15D7_DISPOSABLE_CONCURRENT_SINGLE_USE_PASS");
+
+  stage="DELEGATION_EXPIRED_AND_REVOKED";
+  const expired=await issue("00000000-0000-4000-8000-000000006003");
+  await db!.request().input("id",sql.UniqueIdentifier,expired.grantId)
+    .query("DECLARE @expired DATETIME2(3)=DATEADD(MINUTE,-4,SYSUTCDATETIME());" +
+      "UPDATE uqp.ChartActorDelegationDisposable " +
+      "SET IssuedAtUtc=DATEADD(SECOND,-60,@expired)," +
+      "ExpiresAtUtc=@expired WHERE GrantId=@id");
+  await denied(consume(expired));
+  const revoked=await issue("00000000-0000-4000-8000-000000006004");
+  await db!.request().input("id",sql.UniqueIdentifier,revoked.grantId)
+    .query("UPDATE uqp.ChartActorDelegationDisposable SET IsRevoked=1 WHERE GrantId=@id");
+  await denied(consume(revoked));
+  stage="DELEGATION_LIVE_TOKEN_VERSION_RECHECK";
+  const versionDrift=await issue("00000000-0000-4000-8000-000000006006");
+  await q("UPDATE uqp.AppUser SET TokenVersion=2 WHERE Id=8");
+  try{await denied(consume(versionDrift));}
+  finally{await q("UPDATE uqp.AppUser SET TokenVersion=1 WHERE Id=8");}
+  stage="DELEGATION_LIVE_RBAC_RECHECK";
+  const roleDrift=await issue("00000000-0000-4000-8000-000000006007");
+  await q("DELETE FROM uqp.UserRole WHERE UserId=8 AND RoleId=1");
+  try{await denied(consume(roleDrift));}
+  finally{await q("INSERT uqp.UserRole(UserId,RoleId) VALUES(8,1)");}
+
+  // The failing AFTER UPDATE trigger occurs after SQL has marked the grant
+  // consumed. The procedure must roll back that bit, permitting a retry.
+  stage="DELEGATION_LATE_FAILURE_SETUP";
+  const retry=await issue("00000000-0000-4000-8000-000000006005");
+  await db!.request().batch(
+    "CREATE TRIGGER uqp.TR_ChartDelegation_DisposableFailure " +
+    "ON uqp.ChartActorDelegationDisposable AFTER UPDATE AS BEGIN " +
+    "SET NOCOUNT ON; THROW 51928,N'CHART_DELEGATION_SYNTHETIC_LATE_FAIL',1; END"
+  );
+  try{
+    stage="DELEGATION_LATE_CONSUME_FAILURE";
+    await denied(consume(retry));
+  }finally{
+    await db!.request().batch(
+      "DROP TRIGGER IF EXISTS uqp.TR_ChartDelegation_DisposableFailure");
+  }
+  assert.equal(await consumed(retry.grantId),0);
+  stage="DELEGATION_RETRY_AFTER_ROLLBACK";
+  assert.equal((await consume(retry)).recordset[0]?.Consumed,true);
+  assert.equal(await consumed(retry.grantId),1);
+  console.log("CHART_2B15D7_DISPOSABLE_ROLLBACK_RETRY_PASS");
+
+
  }catch(error){
   // Disposable SQL instance only. Report SQL error number/line, not values,
   // connection strings, database contents or untrusted SQL payload text.
