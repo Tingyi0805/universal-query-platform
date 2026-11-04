@@ -27,6 +27,7 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
     }
   };
 
+  console.log("CHART_2B11_MARK:BEGIN_7");
   // Existing sealed widget: neither profile nor widget may be deleted.
   await rejected(7);
   const baseline = (await exec("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=88")).recordset;
@@ -37,6 +38,7 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
     "INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(311,701); " +
     "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
     "VALUES(312,311,N'CHART',N'PRIMARY',N'{}');");
+  console.log("CHART_2B11_MARK:REJECT_701");
   await rejected(701);
   assert.equal(Number((await exec("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=312")).recordset[0]?.Total), 1);
 
@@ -48,6 +50,7 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
     "VALUES(322,321,N'TEXT',N'PRIMARY',N'{}'); " +
     "INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy) " +
     "VALUES(322,REPLICATE('0',64),0,77);");
+  console.log("CHART_2B11_MARK:REJECT_702");
   await rejected(702);
   assert.equal(Number((await exec("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=322")).recordset[0]?.Total), 1);
 
@@ -59,36 +62,45 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
     "VALUES(302,301,N'TEXT',N'PRIMARY',N'{}');");
   // Two independent SQL connections contend for the same Dashboard.
   // A held parent lock cannot be bypassed by the existing layout writer.
+  console.log("CHART_2B11_MARK:HOLDER_BEGIN");
   const holder=new sql.Transaction(db);
   await holder.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   const contender=new sql.Transaction(db);
   try {
+    console.log("CHART_2B11_MARK:HOLDER_SPID");
     const holderSession=(await new sql.Request(holder)
       .query("SELECT @@SPID AS SessionId")).recordset[0]?.SessionId;
     await new sql.Request(holder).input("dashboardId",sql.BigInt,700)
       .query("SELECT Id FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@dashboardId");
+    console.log("CHART_2B11_MARK:CONTENDER_BEGIN");
     await contender.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
     try {
+      console.log("CHART_2B11_MARK:CONTENDER_SPID");
       const contenderSession=(await new sql.Request(contender)
         .query("SELECT @@SPID AS SessionId")).recordset[0]?.SessionId;
       assert(Number.isSafeInteger(Number(holderSession)));
       assert(Number.isSafeInteger(Number(contenderSession)));
       assert.notEqual(Number(holderSession),Number(contenderSession));
+      console.log("CHART_2B11_MARK:LOCK_TIMEOUT");
       await new sql.Request(contender).query("SET LOCK_TIMEOUT 400");
+      console.log("CHART_2B11_MARK:BLOCKING_LAYOUT");
       await assert.rejects(writeDashboardLayout(contender,700,[]),
         (error: unknown) => /lock request time out/i.test(String(error)) ||
           (typeof error === "object" && error !== null &&
             Number((error as {number?: number}).number) === 1222));
     } finally {
+      console.log("CHART_2B11_MARK:CONTENDER_ROLLBACK");
       await contender.rollback().catch(()=>undefined);
     }
   } finally {
+    console.log("CHART_2B11_MARK:HOLDER_ROLLBACK");
     await holder.rollback().catch(()=>undefined);
   }
   assert.equal(Number((await exec(
     "SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=302"
   )).recordset[0]?.Total),1);
 
+  console.log("CHART_2B11_MARK:NORMAL_REPLACEMENT");
   const tx = new sql.Transaction(db);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
