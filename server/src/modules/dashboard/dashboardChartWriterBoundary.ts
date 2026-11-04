@@ -10,10 +10,21 @@ export const chartWriterIdentitySql = [
   "(SELECT m.definition FROM sys.sql_modules m",
   "WHERE m.object_id=OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P')))),2)) AS ProcedureSha256,",
   "IS_SRVROLEMEMBER(N'sysadmin') AS Sysadmin,",
+  // Fixed server roles do NOT prove absence of server-scoped grants.
+  // HAS_PERMS_BY_NAME(NULL,NULL,...) is the documented effective check.
+  "HAS_PERMS_BY_NAME(NULL,NULL,N'CONTROL SERVER') AS ServerControl,",
+  "HAS_PERMS_BY_NAME(NULL,NULL,N'IMPERSONATE ANY LOGIN') AS ServerImpersonateAny,",
+  "HAS_PERMS_BY_NAME(NULL,NULL,N'ALTER ANY LOGIN') AS ServerAlterLogins,",
+  "HAS_PERMS_BY_NAME(NULL,NULL,N'ALTER ANY SERVER ROLE') AS ServerAlterRoles,",
+  "HAS_PERMS_BY_NAME(NULL,NULL,N'SELECT ALL USER SECURABLES') AS ServerSelectAllUserData,",
   "IS_MEMBER(N'db_owner') AS DbOwner,",
   "IS_MEMBER(N'db_ddladmin') AS DbDdlAdmin,",
   "IS_MEMBER(N'db_securityadmin') AS DbSecurityAdmin,",
   "IS_MEMBER(N'db_datawriter') AS DbDataWriter,",
+  "IS_MEMBER(N'db_accessadmin') AS DbAccessAdmin,",
+  "HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'ALTER ANY USER') AS DbAlterAnyUser,",
+  "HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'ALTER ANY ROLE') AS DbAlterAnyRole,",
+  "HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'ALTER ANY SCHEMA') AS DbAlterAnySchema,",
   "HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'CONTROL') AS DbControl,",
   "HAS_PERMS_BY_NAME(N'uqp',N'SCHEMA',N'CONTROL') AS SchemaControl,",
   "HAS_PERMS_BY_NAME(N'uqp',N'SCHEMA',N'ALTER') AS SchemaAlter,",
@@ -35,9 +46,14 @@ export class ChartWriterBoundaryError extends Error {
 }
 const block=(code:string):never=>{throw new ChartWriterBoundaryError(code);};
 const str=(v:unknown):v is string=>typeof v==="string"&&v.length>0;
-const forbidden=["Sysadmin","DbOwner","DbDdlAdmin","DbSecurityAdmin",
-  "DbDataWriter","DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
-  "CreateAlter","PermitInsert","SealInsert","LedgerInsert","ReviewUpdate"] as const;
+const forbidden=[
+ "Sysadmin","ServerControl","ServerImpersonateAny","ServerAlterLogins",
+ "ServerAlterRoles","ServerSelectAllUserData",
+ "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbAccessAdmin",
+ "DbAlterAnyUser","DbAlterAnyRole","DbAlterAnySchema",
+ "DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
+ "CreateAlter","PermitInsert","SealInsert","LedgerInsert","ReviewUpdate",
+] as const;
 
 /** Do NOT deny existing platform Widget DML: the LEGACY layout needs that.
  * The 928 freeze and separate procedure execute permission enforce CHART.
