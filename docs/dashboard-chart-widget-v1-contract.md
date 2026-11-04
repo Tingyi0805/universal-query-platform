@@ -1307,3 +1307,49 @@ Request Ledger 的單一原子提交，未完成 Query/Dataset Scope、
 只有當最新 HEAD 的 GitHub CI 完整跑過 Server／Windows／
 SQL Server 2019／2022，才能標記本次隔離案例「實測通過」；
 提交 GitHub 不等於執行結果。
+
+
+## 44. 2B-15D-8：三個真實 SQL Login 的 Issuer 信任隔離（待 CI）
+
+本階段不直接將一次性委派接入正式 CHART；新增純唯讀
+`dashboardChartIssuerBoundary.ts` 及合成測試，明確要求
+Platform、Issuer、Writer 三個不同的 SQL `ORIGINAL_LOGIN()`
+SID，且都連到相同的 SQL Server 與 UQP Database。
+`EXECUTE AS USER` 即使改變 `USER_NAME()`，仍不可藉由
+相同的 OriginalSid 偽裝成獨立 Issuer。三個由呼叫端**已經**
+建立的 ConnectionPool 必須是不同物件，模組不負責連線、
+載入密碼、建立角色或授權。
+
+唯讀 SQL metadata 採認使用 `sys.sql_modules` 比對正式
+`uqp.usp_ChartDelegationIssue` 的 SHA-256；若未獨立核准，
+`CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null` 會在查詢前
+拒絕。採認檢查 Issuer 才可執行核發程序，而一般 Platform 與
+Writer 都不得呼叫；三個登入均不得直接擁有委派表的
+SELECT／INSERT／UPDATE／DELETE、廣泛的 SQL Server／DB／
+Schema 權限、Impersonate Issuer 或 ALTER 核發程序。
+Issuer 亦不得執行 Chart Writer／獨立委派消耗程序；
+Writer 不得另行執行消耗程序，未來必須在 DB-owned Chart
+原子交易中消耗。查詢或權限中繼資料缺失皆 fail closed。
+
+HTTP 既有 `planVerifiedChartCreateRequest` 測試新增瀏覽器
+自帶 GrantId、IssuerSid、Secret、`issuerApproved`、
+`delegationConsumed` 的拒絕案例。這些欄位不得作為 Issuer
+或 Actor 身分來源，並沿用原本已驗證的 Request WeakMap、
+TokenVersion 與 `DESIGN_QUERY` 前置保護，不新增路由。
+
+**本次只建立 SQL 登入來源／權限採認的純函式、合成測試
+及原有 HTTP 測試擴充。** 沒有實際開設三組 SQL Login、
+沒有正式 Issuer 程序、真實 SQL 身分核發測試，也沒有把
+已驗證 HTTP Actor 安全地綁到資料庫核發／消耗。
+若正式執行時 SQL Login 權限不足以取得程序 definition
+或 `HAS_PERMS_BY_NAME` 元資料，亦必須拒絕，不能因為
+NULL 視同 0 而放行。三個登入的憑證是否由同一應用層存放，
+仍需在正式安全審查處理受入侵時的風險。
+
+`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false`、
+`CHART_WRITER_APPROVED_PROCEDURE_SHA256=null`、
+`CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false` 均不變。
+928 草案不能部署，PR #83 維持 Draft，正式 `C:\\UQP`
+不變。此處的合成測試只完成提交，必須在**本 HEAD SHA** 的
+Server、Windows、SQL 2019／2022 與 Client CI 執行成功後，
+才能宣稱相對應的靜態／隔離驗證 PASS。
