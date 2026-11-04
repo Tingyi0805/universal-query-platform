@@ -52,6 +52,17 @@ const envSchema = z.object({
   PLATFORM_DB_ENCRYPT: envBoolean(false),
   PLATFORM_DB_TRUST_SERVER_CERTIFICATE: envBoolean(true),
 
+  // Dedicated CHART Writer settings are ignored until two code-level gates
+  // (reviewed schema and fixed procedure digest) are explicitly released.
+  CHART_WRITER_DB_ENABLED: envBoolean(false),
+  CHART_WRITER_DB_SERVER: optionalString,
+  CHART_WRITER_DB_PORT: z.coerce.number().int().min(1).max(65535).default(1433),
+  CHART_WRITER_DB_DATABASE: optionalString,
+  CHART_WRITER_DB_USER: optionalString,
+  CHART_WRITER_DB_PASSWORD: optionalString,
+  CHART_WRITER_DB_ENCRYPT: envBoolean(true),
+  CHART_WRITER_DB_TRUST_SERVER_CERTIFICATE: envBoolean(false),
+
   JWT_SECRET: optionalString,
   JWT_EXPIRES_IN: z.string().default("8h"),
   BOOTSTRAP_ADMIN_TOKEN: optionalString,
