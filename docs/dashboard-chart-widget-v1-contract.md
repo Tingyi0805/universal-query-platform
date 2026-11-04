@@ -1131,3 +1131,53 @@ Migration 或正式 DB Login，仍不註冊 CHART API、不授權
 `.sql.draft` 部署，也不覆蓋 `C:\\UQP`。
 原先最後可查詢的 CI #1332 屬舊 HEAD；完整 CI 結果需與
 本次最新 Commit SHA 一致才能標為通過。
+
+
+## 41. 2B-15D-5：同權限帳號的 ActorId 冒用反例（待 CI）
+
+這一階段不將現有 SQL 原型升級為正式 Writer，而是加入
+**可重現的未解決信任缺口**驗證：在 CI 的一次性 `UQP_CH_`
+合成資料庫中，替第二名測試帳號 (77) 賦予與第一名測試帳號 (8)
+相同的 `DESIGN_QUERY` 權限，再以測試專屬
+`UQP_Chart_Writer` SQL 主體呼叫
+`uqp.usp_ChartCreate_IsolatedDraft`，指定 `@ActorId=77`。
+若成功產生 Widget/Seal/RequestId/Audit，且三者記錄的主體均為
+77，便直接證明**SQL 登入可執行受控程序＋帳號權限存在**
+仍不能證明 HTTP 原始呼叫者就是 77。
+
+本反例若被重現，CI 測試可正常完成，但其意義是
+**原型存在已知限制且正式交付必須持續 BLOCKED**，不是
+「Actor 防冒用通過」。測試也斷言三項正式開放 Gate：
+`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false`、
+`CHART_WRITER_APPROVED_PROCEDURE_SHA256=null`、
+`CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false`。
+測試 SQL 角色與資料只存在可銷毀的 `UQP_CH_` DB，
+沒有真實使用者或患者資訊。
+
+### 正式 Writer 候選設計需要達成的信任條件
+
+1. 經 JWT 簽章驗證、即時 TokenVersion／RBAC 驗證後，由受控
+   伺服器身分核發**綁定 ActorId、TokenVersion、Dashboard、
+   Profile、RequestId、Canonical Config Digest、限時有效期**的
+   一次性委派證據；不可讓 Writer SQL Login 自行核發、替換
+   ActorId 或改動內容。
+2. 獨立核發身分及其必要權限必須經審核；只有指定核發介面能
+   建立證據，不能直接使用瀏覽器傳來的 `approved`、
+   `SESSION_CONTEXT`、`EXECUTE AS USER` 或單純
+   `@ActorId`。需定義核發憑證的機密保護、輪替與撤銷、
+   權限收斂，以及應用伺服器遭入侵時的信任邊界。
+3. 正式 DB-owned Writer 在**同一筆 SERIALIZABLE 交易**
+   中鎖定並核對委派證據的唯一性、未消耗／未過期、
+   Caller／Actor 綁定、TokenVersion、RBAC、Dashboard/Profile、
+   Query/Dataset 版本與資料來源，與 Widget、Seal、Audit、
+   Request Ledger 原子提交；回滾必須不留下可用的委派或半套資料。
+4. 一次性 SQL Server 2019／2022 實測需包含兩個**都具權限**
+   的帳號互相冒用、已撤權／過期／重播、錯誤 Digest、另一
+   Dashboard 或 Profile、並行請求與交易後期失敗；通過安全
+   審查才可將本反例改為「應拒絕」驗收。
+
+**本次只有合成 SQL 反例與規格文件，沒有實作委派核發流程、
+沒有新的正式 SQL 設定或 Migration。** `928*.sql.draft`
+仍不可部署；CHART API、正式播放與 `C:\\UQP` 均不變。
+GitHub CI 必須以本 Commit 的 HEAD SHA 執行，才能確認
+2019／2022 的實際重現結果；僅有提交不等於驗收成功。

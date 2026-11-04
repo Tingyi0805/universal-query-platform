@@ -8,7 +8,11 @@ import sql from "mssql";
 import {
   attestChart928TriggerCatalog,Chart928CatalogError,
 } from "./chart928TriggerAttestation.js";
-import {chartWriterIdentitySql} from "../modules/dashboard/dashboardChartWriterBoundary.js";
+import {
+  chartWriterIdentitySql,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
+  CHART_WRITER_APPROVED_PROCEDURE_SHA256,
+} from "../modules/dashboard/dashboardChartWriterBoundary.js";
+import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "../modules/dashboard/dashboardChartAtomicCreate.contract.js";
 import {attestChartWriterBaseSqlCatalog} from "./chart928WriterBaseSchema.js";
 
 const sqlPath=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url);
@@ -568,6 +572,51 @@ export async function verifyChart928DraftSql(
   await rejects("UPDATE uqp.DashboardWidget SET ConfigJson=N'{}' WHERE Id="+widgetId);
   await rejects("DELETE FROM uqp.DashboardWidget WHERE Id="+widgetId);
   console.log("CHART_2B15C_ATOMIC_CREATE_IDENTITY_SEAL_AUDIT_REPLAY_DRAFT_PASS");
+
+  // 2B-15D-5: VULNERABILITY WITNESS, not an authorization PASS.
+  // The draft procedure accepts caller-owned @ActorId. Grant a second valid
+  // synthetic user the SAME DESIGN_QUERY role; a single SQL writer principal
+  // can then attribute a successful write to that other authorized user.
+  // No HTTP/JWT identity or DB-owned actor delegation is presented here.
+  // This MUST remain impossible to deploy: all three release gates are off.
+  stage="ATOMIC_CREATE_VALID_OTHER_ACTOR_IMPERSONATION_WITNESS";
+  assert.equal(CHART_ATOMIC_CREATE_RUNTIME_ENABLED,false);
+  assert.equal(CHART_WRITER_APPROVED_PROCEDURE_SHA256,null);
+  assert.equal(CHART_WRITER_DB_ACTOR_BINDING_APPROVED,false);
+  await q("INSERT uqp.UserRole(UserId,RoleId) VALUES(77,1)");
+  const otherRequest="00000000-0000-4000-8000-000000005077";
+  await db!.request()
+    .input("config",sql.NVarChar(sql.MAX),canonical)
+    .input("requestId",sql.UniqueIdentifier,otherRequest)
+    .query(
+      "EXECUTE AS USER=N'UQP_Chart_Writer'; " +
+      "BEGIN TRY " +
+      "EXEC uqp.usp_ChartCreate_IsolatedDraft " +
+      "@DashboardId=7,@ProfileId=22,@ActorId=77,@TokenVersion=1," +
+      "@RequestId=@requestId,@SourceKey=N'PRIMARY',@ConfigJson=@config," +
+      "@X=10,@Y=10,@Width=600,@Height=360; " +
+      "END TRY BEGIN CATCH REVERT; THROW; END CATCH; REVERT;"
+    );
+  const otherWitness=(await db!.request()
+    .input("requestId",sql.UniqueIdentifier,otherRequest)
+    .query("SELECT r.ActorId,a.UserId,a.EventType,a.Status," +
+      "s.SealedBy,s.WidgetId FROM uqp.DashboardChartTrustRequest r " +
+      "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId " +
+      "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id " +
+      "WHERE r.RequestId=@requestId")).recordset;
+  // This evidence must be treated as an explicit deploy BLOCKER, not proof
+  // of a secure identity flow. No records survive disposable DB teardown.
+  assert.equal(otherWitness.length,1);
+  assert.equal(Number(otherWitness[0]?.ActorId),77);
+  assert.equal(Number(otherWitness[0]?.UserId),77);
+  assert.equal(Number(otherWitness[0]?.SealedBy),77);
+  assert(Number.isSafeInteger(Number(otherWitness[0]?.WidgetId)));
+  assert.equal(otherWitness[0]?.EventType,"CHART_SEAL_WIDGET");
+  assert.equal(otherWitness[0]?.Status,"SUCCESS");
+  assert.equal(Number((await q(
+    "SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartCreatePermit"
+  )).recordset[0]?.Total),0);
+  console.log("CHART_2B15D5_DRAFT_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED");
 
  }catch(error){
   // Disposable SQL instance only. Report SQL error number/line, not values,
