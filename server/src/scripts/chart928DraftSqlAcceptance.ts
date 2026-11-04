@@ -36,9 +36,10 @@ export async function verifyChart928DraftSql(
   created=true;
   db=await new sql.ConnectionPool({...config,database:name,pool:{max:2,min:0}}).connect();
   const q=(statement:string)=>db!.request().query(statement);
-  stage="FIXTURE";
-  await q("CREATE SCHEMA uqp; " +
-   "CREATE TABLE uqp.AppUser(Id BIGINT NOT NULL PRIMARY KEY); " +
+  stage="CREATE_SCHEMA";
+  await q("CREATE SCHEMA uqp");
+  stage="CREATE_FIXTURE_TABLES";
+  await q("CREATE TABLE uqp.AppUser(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.QueryDefinition(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY); " +
@@ -54,6 +55,7 @@ export async function verifyChart928DraftSql(
    "CREATE TABLE uqp.AuditLog(Id BIGINT NOT NULL PRIMARY KEY," +
    " EventCategory NVARCHAR(20) NOT NULL,IsImportant BIT NOT NULL); " +
    "CREATE TABLE uqp.DatasetPublicDisplayPolicy(DatasetId BIGINT NOT NULL PRIMARY KEY); ");
+  stage="SEED_FIXTURE";
   await q("INSERT uqp.AppUser(Id) VALUES(8),(77); " +
    "INSERT uqp.QueryDefinition(Id) VALUES(9); INSERT uqp.Dataset(Id) VALUES(10); " +
    "INSERT uqp.Dashboard(Id) VALUES(7); INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7);" +
