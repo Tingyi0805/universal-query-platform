@@ -819,3 +819,44 @@ CHART Freeze／受控程序必須繼續保護圖表。
 不得把角色切換當成另一組 SQL 登入憑證。
 驗證器只執行唯讀查詢、拒絕過廣權限，並不證明正式
 Schema、JWT-Actor／DB 所有步驟與程序版本已整合。
+
+
+## 30. 2B-15C-8：正式 Writer 模組指紋與交易身分驗證（仍禁止正式啟用）
+
+不能僅以 `OBJECT_ID` 存在或 `HAS_PERMS_BY_NAME(...,EXECUTE)=1`
+判定 CHART Writer 可信：被修改後的同名程序仍可能滿足這兩項。
+`dashboardChartWriterBoundary.ts` 已加入唯讀查詢
+`sys.sql_modules.definition`，用 SQL Server `HASHBYTES('SHA2_256')`
+計算 NVARCHAR 定義的 UTF-16LE SHA-256（轉成小寫），並要求
+Platform 與專用 Writer 兩條獨立 SQL 登入連線均回報**同一份**
+核准雜湊。程序不存在、定義不可見、定義被改動、權限過大、
+SQL Server／Database 不一致或實際 `ORIGINAL_LOGIN()` SID
+重複，均應拒絕。
+
+`CHART_WRITER_APPROVED_PROCEDURE_SHA256` 目前**固定為 null**：
+不可透過瀏覽器、HTTP 標頭、JWT、SessionContext 或未經審核的
+環境變數解除。由使用者端傳入預期雜湊也不能視為核准。
+未來須以審核完成的 SQL 程序原始碼、版本、部署簽核為依據，
+先在 SQL Server 2019／2022 完成模組雜湊驗證，再於獨立 PR
+明確釘選。核准前任何「建立圖表」前置檢查一律拒絕。
+
+驗收案例從 CI 的一次性 `UQP_CH_` 資料庫讀取真實
+`sys.sql_modules`，與 Node.js 依 `utf16le` 計算的
+SHA-256 比對；並確認正式程序 `uqp.usp_DashboardChartCreate`
+不存在時不能取得有效證據。此案例不使用真實資料、帳密，
+亦不安裝 928 正式 Migration。
+
+**交易邊界不可混淆：** Node 的
+`recheckChartActorInTransaction()` 只適用於與實際 DML
+共用同一 SQL Transaction 的 Writer。現有隔離原型
+`usp_ChartCreate_IsolatedDraft` 會自行開啟交易，拒絕外部
+交易；因此不能先在獨立的 Node Transaction 重驗使用者，
+再呼叫此程序，就聲稱同筆交易安全。最終正式程序必須自行
+在同一交易持鎖重驗 Account／TokenVersion／RBAC 與
+Dashboard／Query／Dataset 範圍，並完成 RequestId、Widget、
+Seal、Audit 原子寫入與完整權限隔離。
+
+此階段沒有安裝正式 CHART Writer、沒有新增正式帳密與
+API、沒有開放公共全螢幕播放、沒有修改正式 `C:\UQP`。
+仍須完成 928 精確 Schema 驗證、正式憑證隔離、API 身分橋接、
+實際資料交付以及人工部署核准。
