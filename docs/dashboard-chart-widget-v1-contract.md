@@ -860,3 +860,26 @@ Seal、Audit 原子寫入與完整權限隔離。
 API、沒有開放公共全螢幕播放、沒有修改正式 `C:\UQP`。
 仍須完成 928 精確 Schema 驗證、正式憑證隔離、API 身分橋接、
 實際資料交付以及人工部署核准。
+
+
+## 31. 2B-15C-9：雙 SQL Login 連線池骨架（仍不啟用）
+
+新增 `server/src/config/chartWriterDatabase.ts`，
+並在環境契約新增 `CHART_WRITER_DB_*` 欄位。
+`server/.env.example` 僅提供註解範例，現有 `C:\UQP\.env`
+完全不必修改。連線池要求 Writer 與一般平台使用相同的
+SQL Server／埠／資料庫，卻不能共用 SQL 使用者名稱或密碼；
+Writer 強制啟用 TLS 且禁止 `trustServerCertificate=true`。
+
+這份程式不會在未核准的狀態下建立連線：
+`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false` 與
+`CHART_WRITER_APPROVED_PROCEDURE_SHA256=null` 均維持原值，
+無 API 會使用新池。未來即使設定了帳密，還必須以兩個真正
+獨立的 SQL 登入執行 `ORIGINAL_LOGIN()`、權限及受審程序
+定義 Digest 比對；不通過即關閉候選連線，不可退回
+原 `PLATFORM_DB_USER`。測試已加入既有
+`dashboardChartWriterBoundary.test.ts`。
+
+**本項只是專用連線生命週期實作與離線契約驗證，不代表
+正式程序、SQL Schema、JWT/DB 同交易身分核定、圖表
+資料交付、全螢幕播放或 ZIP 更新已核准。**
