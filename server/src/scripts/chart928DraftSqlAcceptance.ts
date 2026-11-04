@@ -5,6 +5,9 @@ import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
 import {randomBytes} from "node:crypto";
 import sql from "mssql";
+import {
+  attestChart928TriggerCatalog,Chart928CatalogError,
+} from "./chart928TriggerAttestation.js";
 
 const sqlPath=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url);
 export async function verifyChart928DraftSql(
@@ -87,6 +90,8 @@ export async function verifyChart928DraftSql(
   stage="IDEMPOTENT_RERUN";
   await db.request().batch(script);
   await check();
+  stage="EXACT_928_TRIGGER_ATTEST";
+  await attestChart928TriggerCatalog(db,script);
   stage="LEGACY_WRITE";
   await q("INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
     "VALUES(89,22,N'TEXT',N'PRIMARY',N'{}'); " +
@@ -224,10 +229,33 @@ export async function verifyChart928DraftSql(
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal WHERE WidgetId=88")).recordset[0]?.Total),1);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=990")).recordset[0]?.Total),0);
   console.log("CHART_2B15B_UNTRUSTED_SQL_FREEZE_SESSION_FLAG_PRIVILEGE_PASS");
+  stage="ENABLED_BUT_CHANGED_TRIGGER_REJECT";
+  // Changing an enabled Trigger body is not detected by a simple count or
+  // is_disabled=0 check; exact definition attestation MUST reject it.
+  // DDL changes are rolled back inside the disposable DB transaction.
+  const drift=new sql.Transaction(db);
+  await drift.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    await new sql.Request(drift).batch(
+      "ALTER TRIGGER uqp.TR_DashboardWidget_ChartFreeze " +
+      "ON uqp.DashboardWidget AFTER INSERT,UPDATE,DELETE AS " +
+      "BEGIN SET NOCOUNT ON; END"
+    );
+    await assert.rejects(
+      attestChart928TriggerCatalog(drift,script),
+      (error:unknown)=>error instanceof Chart928CatalogError &&
+        error.code==="CHART_928_CATALOG_TRIGGER_DEFINITION"
+    );
+  } finally {
+    await drift.rollback().catch(()=>undefined);
+  }
+  await attestChart928TriggerCatalog(db,script);
+  console.log("CHART_2B15C_TRIGGER_DEFINITION_DRIFT_FAIL_CLOSED_PASS");
   stage="DRIFT_REJECT";
   await q("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget");
   await assert.rejects(db.request().batch(script), (err:unknown)=>err instanceof Error);
   await q("ENABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget");
+  await attestChart928TriggerCatalog(db,script);
   stage="FINAL";
   await check();
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal")).recordset[0]?.Total),1);

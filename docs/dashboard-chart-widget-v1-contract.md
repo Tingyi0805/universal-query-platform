@@ -654,3 +654,26 @@ ALTER/DISABLE TRIGGER、CONTROL 或直接修改 CHART sidecar 的能力。
 目前尚無專屬受控 Writer 程序、正式圖表 API 或播放路由；928
 仍為不可自動掃描草案，CHART Freeze、正式 C:\\UQP、PIN 927
 及既有 Dashboard 播放行為維持不變。
+
+
+## 23. 2B-15C-1：928 實際 Trigger 定義防竄改驗收（不開啟 CHART）
+
+新增 `chart928TriggerAttestation.ts`：從**不會被 migration 掃描**的
+928 草案擷取七個 Trigger 的原始 SQL 定義；比較 SQL Server
+`sys.sql_modules.definition` 內的實際原始定義 SHA-256，
+並核對 Trigger 名稱、Schema、父層資料表、啟用狀態及類別。
+若缺少 VIEW DEFINITION 等權限而無法看到定義，必須拒絕，不能
+改以名稱或存在數量當成成功證據。
+
+隔離 SQL 2019／2022 加入：初次安裝與重跑後精確比對；
+在合成資料庫的交易內 `ALTER TRIGGER` 為不做任何拒絕的空程序，
+即使 Trigger **仍啟用**也必須被阻擋；回滾 DDL 後再次比對必須 PASS。
+這補足了僅檢查 `is_disabled=0` 的缺口。現有低權限直接 DML、
+Session Context 冒充及 928 回滾案例保持原驗證。
+
+**未完成項目**：同樣精確的全部欄位／FK／索引／CHECK／權限清冊，
+以及真正只透過受控、不可偽造 SQL 模組執行的 CHART 原子 Writer
+（需包含 Widget、Seal、Audit、Token/RBAC、RequestId replay、
+CAS 與舊版儲存路徑隔離），目前仍屬阻斷條件。
+本次沒有修改 928、PIN 927、現有正式 Schema、Route、
+設計器存檔或播放器，不授權正式環境執行 `.sql.draft`。
