@@ -337,3 +337,54 @@ CHECK Constraint、正式全螢幕播放器都沒有增加 CHART**。
 
 本階段不修改 Migration 927、PIN Runtime、Dashboard Token、既有表格
 或正式 C:\UQP；PR #83 仍為 Draft，不授權正式覆蓋。
+
+
+## 14. 2B-8：CHART Widget 版本封印與公共統計獨立隱私審查（尚未啟用）
+
+新增：
+- server/src/modules/dashboard/dashboardChartTrust.repository.ts
+- server/src/modules/dashboard/dashboardChartTrust.repository.test.ts
+- server/src/scripts/chartTrustSqlAcceptance.ts（由既有 D1 2019／2022 一次性驗收呼叫）
+
+### 尚不存在正式資料庫的側表契約
+
+**現有 uqp.DashboardWidget 的 CHECK Constraint 不允許 CHART，且尚未具備
+足以讓 CHART 使用的獨立封印 RowVersion。** 本階段不改原有 SQL、既有
+Migration 或正式 Schema，也不創建正式的 CHART Widget。為了安全地評估未來
+啟用所需的兩個信任邊界，實作了僅有 SELECT 的 dormant readers：
+
+- uqp.DashboardChartWidgetSeal（預計新側表）：
+  每筆須綁定真實 DashboardWidget.Id、ProfileId→DashboardId、ConfigJson、
+  SourceKey、伺服器 SHA-256 ConfigDigest、封印狀態、獨立封印者及
+  SealRowVersion。讀取時逐欄核對 WidgetType=CHART、Dashboard 所屬、
+  ConfigJson 全文摘要與嚴格的 Chart V1 Schema。不得由瀏覽器傳入可信版本。
+  未來版型寫入器必須**同交易**更新封印與 ConfigDigest，連 A→B→A
+  也要推進 RowVersion；這份 Writer／Trigger 合約尚未建立。
+
+- uqp.DashboardChartPrivacyReview（預計新側表）：
+  統計核准須在伺服器持久化記錄 Dashboard、Query、Dataset、SourceKey、
+  分類／數值欄位、QueryRevision、DatasetRevision、PolicyRevision、
+  狀態、最低分組件數、分類風險／跨時段推算審查、ReviewerUserId、
+  AuditLogId、ReviewedAtUtc、ValidUntilUtc 及不可重用的 ReviewRowVersion。
+  僅接受有效的 APPROVED，且審查者與目前執行者不同；審查有效期
+  不得長於 90 天。任何撤銷、過期、欄位不符、政策改版或相同範圍
+  重複批准紀錄都不回傳有效核准。reviewRevision 由可信資料列、
+  ROWVERSION、稽核識別與作用範圍產生 SHA-256。
+
+### 一次性 SQL Server 引擎隔離驗收
+
+僅在既有 D1 一次性容器內的獨立 UQP_CF_ 隨機資料庫，建立與讀取器
+一致的最小合成 DashboardWidget／封印／Review 結構，測試 Widget 校驗、
+ConfigDigest 不符拒絕、A→B→A 版本推進、撤銷封印、公共審查
+審查人／範圍／版本核對、取消核准／復原／過期拒絕。結束後會隨
+UQP_CF_ 測試資料庫一同清理。這不是正式 Schema migration，
+也沒有使用真正患者資料或正式 AuditLog。
+
+**驗收限制：**本次並未建立正式的 Sidecar Migration、Writer CAS、
+觸發器、稽核審查申請／核定 API 或帳號權責流程，也沒有把這兩個
+Reader 註冊到正式 Chart Coordinator。側表讀取對既有正式資料庫
+會因缺少側表或 CHART 類型而 fail closed。完整 925 Catalog、發布版本、
+權限變更競爭、跨節點資料交付、病人揭露稽核及公開隱私審查仍須另案驗證。
+
+原有 Dashboard、Query Publisher、已啟用播放器、裝置 Token、
+Migration 927、PIN Runtime 及正式 C:\UQP 維持原樣。

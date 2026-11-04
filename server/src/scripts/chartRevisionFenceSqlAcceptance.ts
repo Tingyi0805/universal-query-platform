@@ -134,6 +134,8 @@ export async function verifyChartRevisionFenceSql(admin: sql.ConnectionPool, con
   await query("UPDATE uqp.QueryDefinition SET IsPublished=1 WHERE Id=9");
   await query("UPDATE uqp.DataSource SET IsActive=0 WHERE Id=11");
   assert.equal(await load("PRIMARY",viewer),null);
+  stage = "CHART_TRUST_2B8";
+  await (await import("./chartTrustSqlAcceptance.js")).verifyChartTrustStoreSql(db!);
   console.log("CHART_FENCE_REAL_SQL_2B6_AUTH_REVISION_ABA_PUBLIC_PASS");
   } catch {
     console.error("CHART_FENCE_SQL_ACCEPTANCE_FAIL_STAGE:" + stage);
