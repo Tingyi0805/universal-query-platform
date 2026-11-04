@@ -5,11 +5,11 @@ import sql from "mssql";
 
 type ColumnRule=Readonly<{
  table:string;column:string;type:string;bytes:number|null;
- nullable:boolean;identity:boolean;
+ nullable:boolean;identity:boolean;scale:number|null;
 }>;
 const col=(table:string,column:string,type:string,bytes:number|null,
- nullable=false,identity=false):ColumnRule=>
- ({table,column,type,bytes,nullable,identity});
+ nullable=false,identity=false,scale:number|null=null):ColumnRule=>
+ ({table,column,type,bytes,nullable,identity,scale});
 
 export const CHART_WRITER_BASE_COLUMNS:readonly ColumnRule[]=[
  col("AppUser","Id","bigint",8,false,true),
@@ -36,19 +36,19 @@ export const CHART_WRITER_BASE_COLUMNS:readonly ColumnRule[]=[
  col("AuditLog","UserId","bigint",8,true),
  col("AuditLog","IsImportant","bit",1),
  col("AuditLog","ParametersJson","nvarchar",-1,true),
- col("AuditLog","CompletedAtUtc","datetime2",null,true),
+ col("AuditLog","CompletedAtUtc","datetime2",null,true,false,0),
 ];
 
 export type ChartWriterBaseColumnRow=Readonly<{
  TableName:unknown;ColumnName:unknown;SqlType:unknown;
- MaxLength:unknown;Nullable:unknown;IsIdentity:unknown;
+ MaxLength:unknown;Scale:unknown;Nullable:unknown;IsIdentity:unknown;
 }>;
 export class ChartWriterSchemaError extends Error{
  constructor(readonly code:string){super(code);this.name="ChartWriterSchemaError";}
 }
 export const CHART_WRITER_SCHEMA_SQL=[
  "SELECT r.TableName,r.ColumnName,ty.name AS SqlType,",
- "c.max_length AS MaxLength,CONVERT(bit,c.is_nullable) AS Nullable,",
+ "c.max_length AS MaxLength,c.scale AS Scale,CONVERT(bit,c.is_nullable) AS Nullable,",
  "CONVERT(bit,c.is_identity) AS IsIdentity",
  "FROM (VALUES",
  CHART_WRITER_BASE_COLUMNS.map(x=>"(N'"+x.table+"',N'"+x.column+"')").join(","),
@@ -139,6 +139,7 @@ export function attestChartWriterBaseColumns(
   const row=found[0]!;
   if(row.SqlType!==want.type||
     (want.bytes!==null&&row.MaxLength!==want.bytes)||
+    (want.scale!==null&&row.Scale!==want.scale)||
     row.Nullable!==want.nullable||row.IsIdentity!==want.identity)
    throw new ChartWriterSchemaError("CHART_BASE_SCHEMA_COLUMN_MISMATCH");
  }

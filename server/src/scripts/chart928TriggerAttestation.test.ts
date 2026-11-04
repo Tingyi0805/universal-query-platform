@@ -66,7 +66,7 @@ test("2B-15C disabled, instead-of, wrong schema, hidden DDL and missing trigger 
 test("2B-15C base Widget/Audit/Actor schema parity matches migration-owned columns",()=>{
  const rows=CHART_WRITER_BASE_COLUMNS.map(x=>({
    TableName:x.table,ColumnName:x.column,SqlType:x.type,
-   MaxLength:x.bytes,Nullable:x.nullable,IsIdentity:x.identity,
+   MaxLength:x.bytes,Scale:x.scale,Nullable:x.nullable,IsIdentity:x.identity,
  }));
  assert(CHART_WRITER_BASE_COLUMNS.length>=25);
  assert.match(CHART_WRITER_SCHEMA_SQL,/sys\.columns/);
@@ -75,7 +75,7 @@ test("2B-15C base Widget/Audit/Actor schema parity matches migration-owned colum
  assert.doesNotThrow(()=>attestChartWriterBaseColumns(rows));
  for(const altered of [
    {SqlType:"varchar"},{MaxLength:40},{Nullable:true},{IsIdentity:true},
-   {SqlType:null},{Nullable:null},{Identity:null},
+   {SqlType:null},{Nullable:null},{IsIdentity:null},
  ]){
    const drift=rows.map(row=>({...row}));
    Object.assign(drift.find(row=>row.TableName==="DashboardWidget"&&row.ColumnName==="WidgetType")!,altered);

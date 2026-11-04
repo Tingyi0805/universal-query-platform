@@ -13,7 +13,7 @@ import {
 const columns=():ChartWriterBaseColumnRow[]=>
  CHART_WRITER_BASE_COLUMNS.map(x=>({
   TableName:x.table,ColumnName:x.column,SqlType:x.type,
-  MaxLength:x.bytes??8,Nullable:x.nullable,IsIdentity:x.identity,
+  MaxLength:x.bytes??8,Scale:x.scale,Nullable:x.nullable,IsIdentity:x.identity,
  }));
 const foreignKeys=():ChartWriterBaseForeignKeyRow[]=>
  CHART_WRITER_BASE_FOREIGN_KEYS.map(x=>({
@@ -85,6 +85,19 @@ test("2B-15C FK trust, ownership, target, mapping and cascade are required",()=>
  const duplicate=foreignKeys();
  duplicate[1]={...duplicate[0]!};
  rejects("CHART_BASE_SCHEMA_FK_MISSING",()=>attestChartWriterBaseForeignKeys(duplicate));
+});
+
+
+test("2B-15C datetime2(0) precision cannot drift to datetime2(7)",()=>{
+ const target=(x:ChartWriterBaseColumnRow)=>
+  x.TableName==="AuditLog"&&x.ColumnName==="CompletedAtUtc";
+ assert.equal(columns().find(target)?.Scale,0);
+ for(const bad of [7,3,null,undefined,"0"]){
+  const altered=columns().map(row=>target(row)?{...row,Scale:bad}:row);
+  rejects("CHART_BASE_SCHEMA_COLUMN_MISMATCH",()=>
+   attestChartWriterBaseColumns(altered));
+ }
+ assert.match(CHART_WRITER_SCHEMA_SQL,/c\.scale\s+AS\s+Scale/);
 });
 
 test("2B-15C catalog SQL is read-only, schema-scoped and checks FK trust",()=>{

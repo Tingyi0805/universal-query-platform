@@ -1033,3 +1033,19 @@ CI #1332 屬舊 Commit，不能代表本段修改。
 操作，不能直接替最新 HEAD 發起新工作流程。
 本工作目前為「程式已提交，未通過最新 CI」，禁止正式
 928 安裝、正式 CHART Writer 授權、下載 ZIP 覆蓋部署。
+
+
+## 37. 2B-15C-15：Audit datetime2 精度防漂移（待 CI）
+
+基礎 Writer Schema 原本只驗證 `AuditLog.CompletedAtUtc` 的資料型別是
+`datetime2`，但因其 MaxLength 設為無精確比對，`datetime2(7)`
+可能被誤認成 Migration 006 原始的 `datetime2(0)`。
+新增從 `sys.columns.scale` 唯讀取得時間精度，要求該必要欄位
+精確為 0；若精度、型別中繼資料無法讀取或不符，一律拒絕。
+
+同步更新既有合成 Schema 單元測試及 Trigger 測試的資料列結構，
+增加 3／7／null／缺值等反例，並修正舊測試中 `Identity`
+拼字未對應正式 `IsIdentity` 欄位的錯誤反例。這只是防護加固：
+不改 Migration 006／925／928、不開放 CHART、不新增資料庫權限，
+也不操作正式 `C:\\UQP`。本 Commit 是否通過 Server、SQL 2019／2022
+及 Windows/Client CI，仍須依**本 Commit 的 HEAD SHA** 判定。
