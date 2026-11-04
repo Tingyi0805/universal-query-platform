@@ -31,6 +31,9 @@ export const chartWriterIdentitySql = [
   "HAS_PERMS_BY_NAME(N'UQP_Chart_Writer',N'USER',N'IMPERSONATE') AS ImpersonateWriter,",
   "HAS_PERMS_BY_NAME(N'uqp.usp_DashboardChartCreate',N'OBJECT',N'EXECUTE') AS CreateExecute,",
   "HAS_PERMS_BY_NAME(N'uqp.usp_DashboardChartCreate',N'OBJECT',N'ALTER') AS CreateAlter,",
+  "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',N'OBJECT',N'INSERT') AS WidgetInsert,",
+  "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',N'OBJECT',N'UPDATE') AS WidgetUpdate,",
+  "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',N'OBJECT',N'DELETE') AS WidgetDelete,",
   "HAS_PERMS_BY_NAME(N'uqp.DashboardChartCreatePermit',N'OBJECT',N'INSERT') AS PermitInsert,",
   "HAS_PERMS_BY_NAME(N'uqp.DashboardChartWidgetSeal',N'OBJECT',N'INSERT') AS SealInsert,",
   "HAS_PERMS_BY_NAME(N'uqp.DashboardChartTrustRequest',N'OBJECT',N'INSERT') AS LedgerInsert,",
@@ -54,6 +57,7 @@ const forbidden=[
  "DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
  "CreateAlter","PermitInsert","SealInsert","LedgerInsert","ReviewUpdate",
 ] as const;
+const writerForbidden=["WidgetInsert","WidgetUpdate","WidgetDelete"] as const;
 
 /** Do NOT deny existing platform Widget DML: the LEGACY layout needs that.
  * The 928 freeze and separate procedure execute permission enforce CHART.
@@ -83,6 +87,11 @@ export function attestChartWriterSqlPrincipals(
  for(const [role,row] of [["PLATFORM",platform],["WRITER",writer]] as const)
    for(const field of forbidden)
      if(row[field]!==0)return block("CHART_"+role+"_PRIVILEGE_EXCESS");
+ // The existing Platform login is still needed for legacy Dashboard layout
+ // CRUD. Only the dedicated Writer MUST have no direct Widget DML; all its
+ // CHART changes have to originate from the approved stored procedure.
+ for(const permission of writerForbidden)
+   if(writer[permission]!==0)return block("CHART_WRITER_DIRECT_WIDGET_DML");
  if(platform.CreateExecute!==0)return block("CHART_PLATFORM_EXECUTE_EXPOSED");
  if(writer.CreateExecute!==1)return block("CHART_WRITER_EXECUTE_MISSING");
 }
