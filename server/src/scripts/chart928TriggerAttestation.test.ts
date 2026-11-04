@@ -121,3 +121,24 @@ test("2B-15C SQL Widget/Profile/Audit foreign-key trust and cascade are exact",(
   (e:unknown)=>e instanceof ChartWriterSchemaError&&
     e.code==="CHART_BASE_SCHEMA_FK_MISSING");
 });
+
+test("2B-15C migration-sourced FK column contract remains exact",()=>{
+ const audit=readFileSync(
+  new URL("../../../database/migrations/006_audit_log.sql",import.meta.url),"utf8");
+ const dashboard=readFileSync(
+  new URL("../../../database/migrations/022_dashboard_layout_designer.sql",import.meta.url),"utf8");
+ const sourceChecks=[
+  [audit,/CONSTRAINT\s+FK_AuditLog_User\s+FOREIGN\s+KEY\s*\(UserId\)\s+REFERENCES\s+uqp\.AppUser\s*\(Id\)/i],
+  [dashboard,/CONSTRAINT\s+FK_DashboardDisplayProfile_Dashboard\s+FOREIGN\s+KEY\s*\(DashboardId\)\s+REFERENCES\s+uqp\.Dashboard\s*\(Id\)\s+ON\s+DELETE\s+CASCADE/i],
+  [dashboard,/CONSTRAINT\s+FK_DashboardWidget_Profile\s+FOREIGN\s+KEY\s*\(ProfileId\)\s+REFERENCES\s+uqp\.DashboardDisplayProfile\s*\(Id\)\s+ON\s+DELETE\s+CASCADE/i],
+ ] as const;
+ for(const [source,pattern] of sourceChecks)assert.match(source,pattern);
+ assert.deepEqual(
+  CHART_WRITER_BASE_FOREIGN_KEYS.map(k=>[k.name,k.parentColumn,k.targetColumn,k.deleteRule]),
+  [
+   ["FK_DashboardDisplayProfile_Dashboard","DashboardId","Id","CASCADE"],
+   ["FK_DashboardWidget_Profile","ProfileId","Id","CASCADE"],
+   ["FK_AuditLog_User","UserId","Id","NO_ACTION"],
+  ]
+ );
+});
