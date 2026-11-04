@@ -15,11 +15,17 @@ declare global {
 // Unforgeable by request JSON, headers, JWT decode or a hand-built req.authUser.
 // Written only after jwt.verify AND current database session validation.
 // A future CHART mutation route may read this value, but no route exists now.
-const verifiedActors = new WeakMap<Request,Readonly<{userId:number;tokenVersion:number}>>();
+const verifiedActors = new WeakMap<Request,Readonly<{
+  userId:number;tokenVersion:number;designQueryAllowed:boolean;
+}>>();
 export function readVerifiedJwtActor(req: Request):Readonly<{userId:number;tokenVersion:number}>|null {
   const actor=verifiedActors.get(req);
-  return actor && req.authUser?.id===actor.userId &&
-    req.authUser.permissions.includes("DESIGN_QUERY") ? actor : null;
+  // req.authUser is mutable request context, not a new source of authority.
+  // Permission must already have existed in the live DB session verified by
+  // this middleware; later replacement of req.authUser cannot grant it.
+  if(!actor?.designQueryAllowed || req.authUser?.id!==actor.userId ||
+     !req.authUser.permissions.includes("DESIGN_QUERY"))return null;
+  return {userId:actor.userId,tokenVersion:actor.tokenVersion};
 }
 
 export function createAuthenticateJwt(getSession = getTokenSessionState): RequestHandler {
@@ -69,7 +75,10 @@ export function createAuthenticateJwt(getSession = getTokenSessionState): Reques
         displayName: String(payload.displayName),
         permissions: session.permissions,
       };
-      verifiedActors.set(req,Object.freeze({userId,tokenVersion}));
+      verifiedActors.set(req,Object.freeze({
+        userId,tokenVersion,
+        designQueryAllowed:session.permissions.includes("DESIGN_QUERY"),
+      }));
       next();
     } catch (error) {
       if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {

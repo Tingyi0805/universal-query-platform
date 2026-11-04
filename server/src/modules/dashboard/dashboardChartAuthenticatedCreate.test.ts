@@ -36,13 +36,20 @@ test("2B-15C actor is bound ONLY to verified JWT + live session, never request b
   res.status(plan?200:403).json(plan?
    {actorId:plan.actorId,tokenVersion:plan.tokenVersion,sourceKey:plan.sourceKey}:{code:"DENIED"});
  });
+ // Simulate a buggy later internal middleware replacing mutable req.authUser.
+ // The original live session is still authoritative and cannot be upgraded.
+ app.post("/chart-poisoned",(req,res)=>{
+  if(req.authUser)req.authUser={...req.authUser,permissions:["DESIGN_QUERY"]};
+  const plan=planVerifiedChartCreateRequest(req,7,req.body);
+  res.status(plan?200:403).json({code:plan?"UNSAFE_ALLOW":"DENIED"});
+ });
  const server=createServer(app);
  await new Promise<void>(r=>server.listen(0,"127.0.0.1",r));
  const port=(server.address() as {port:number}).port;
  const url="http://127.0.0.1:"+port+"/chart-plan";
  const token=jwt.sign({sub:"8",tokenVersion:3,permissions:[],username:"test"},env.JWT_SECRET);
  const badToken=jwt.sign({sub:"8",tokenVersion:3,permissions:["DESIGN_QUERY"]},"other-key");
- const send=(payload:unknown,t=token)=>fetch(url,{method:"POST",headers:{
+ const send=(payload:unknown,t=token,endpoint=url)=>fetch(endpoint,{method:"POST",headers:{
   "Content-Type":"application/json",Authorization:"Bearer "+t,
  },body:JSON.stringify(payload)});
  try{
@@ -58,6 +65,8 @@ test("2B-15C actor is bound ONLY to verified JWT + live session, never request b
   assert.equal((await send({...body,profileId:0})).status,403);
   session={...session,permissions:[]};
   assert.equal((await send(body)).status,403);
+  // No permission in the verified DB session: a forged authUser cannot grant it.
+  assert.equal((await send(body,token,url.replace("/chart-plan","/chart-poisoned"))).status,403);
   session={...session,permissions:["DESIGN_QUERY"],tokenVersion:4};
   assert.equal((await send(body)).status,401);
   session={...session,tokenVersion:3,isActive:false};

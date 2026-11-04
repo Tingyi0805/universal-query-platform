@@ -1049,3 +1049,25 @@ CI #1332 屬舊 Commit，不能代表本段修改。
 不改 Migration 006／925／928、不開放 CHART、不新增資料庫權限，
 也不操作正式 `C:\\UQP`。本 Commit 是否通過 Server、SQL 2019／2022
 及 Windows/Client CI，仍須依**本 Commit 的 HEAD SHA** 判定。
+
+
+## 38. 2B-15D-1：JWT 已驗證權限快照避免 Request 內部竄改（待 CI）
+
+驗證 JWT／資料庫 Session 時，先以唯讀 `designQueryAllowed` 記錄當下
+Session 是否具有 `DESIGN_QUERY`，並與 `userId`／`tokenVersion`
+一起保存在伺服器 Request 私有的 WeakMap。Chart 內部讀取器不再依賴
+後續可變動的 `req.authUser.permissions` 作為新增權限的唯一依據；
+只有已核定權限快照與當前 Request Context **同時**符合，才回傳
+只包含 userId 與 TokenVersion 的證明。
+
+增加實際 Express Middleware／已簽署合成 JWT 的負面測試：
+資料庫 Session 原本未授權，但後續伺服器程式將 `req.authUser`
+整個替換並偽造 `DESIGN_QUERY`，Chart Create 計畫仍必須拒絕。
+原本 JWT、TokenVersion 與權限撤銷測試均保留。
+
+這是針對 **後續伺服器內部狀態遭修改** 的防禦補強；不宣稱能
+處理所有已取得伺服器執行權限的攻擊者，也不能代替 DB-owned
+交易內的 Actor／TokenVersion／RBAC 查核。未註冊 CHART API，
+正式 Writer 程序核准 SHA-256 仍為 null、Runtime Gate 仍關閉；
+無 Migration、正式憑證或正式部署作業。本 HEAD 的完整 CI
+尚須獨立核對，不可沿用 CI #1332 的測試結果。
