@@ -166,8 +166,8 @@ export function createDormantChartTrustReaders(
         .input("sourceKey", sql.NVarChar(64), scope.sourceKey)
         .input("category", sql.NVarChar(128), scope.categoryColumn)
         .input("value", sql.NVarChar(128), scope.valueColumn)
-        .input("queryRev", sql.Binary(8), Buffer.from(scope.queryRevision, "hex"))
-        .input("datasetRev", sql.Binary(8), Buffer.from(scope.datasetRevision, "hex"))
+        .input("queryRev", sql.Binary, Buffer.from(scope.queryRevision, "hex"))
+        .input("datasetRev", sql.Binary, Buffer.from(scope.datasetRevision, "hex"))
         .input("policyRev", sql.Char(64), scope.policyRevision)
         .query("SELECT r.Id,r.DashboardId,r.QueryId,r.DatasetId,r.SourceKey, " +
           "r.CategoryColumn,r.ValueColumn,r.QueryRevision,r.DatasetRevision, " +

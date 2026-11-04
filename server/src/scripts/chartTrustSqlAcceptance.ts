@@ -64,8 +64,8 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
     context: "user", userId: 8, tokenVersion: 1, tokenHash: "synthetic",
   };
   await db.request()
-    .input("queryRevision", sql.Binary(8), Buffer.from(scope.queryRevision, "hex"))
-    .input("datasetRevision", sql.Binary(8), Buffer.from(scope.datasetRevision, "hex"))
+    .input("queryRevision", sql.Binary, Buffer.from(scope.queryRevision, "hex"))
+    .input("datasetRevision", sql.Binary, Buffer.from(scope.datasetRevision, "hex"))
     .input("policyRevision", sql.Char(64), scope.policyRevision)
     .query("INSERT uqp.DashboardChartPrivacyReview(Id,DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn,QueryRevision,DatasetRevision,PolicyRevision,Status,MinimumCellCount,CategoryPrivacyReviewed,DifferencingRiskReviewed,ReviewerUserId,AuditLogId,ReviewedAtUtc,ValidUntilUtc) " +
       "VALUES(123,7,9,10,'PRIMARY','ROOM','TOTAL',@queryRevision,@datasetRevision,@policyRevision,'APPROVED',5,1,1,77,9876,DATEADD(day,-1,SYSUTCDATETIME()),DATEADD(day,30,SYSUTCDATETIME()));");
