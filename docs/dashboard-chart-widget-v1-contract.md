@@ -600,3 +600,26 @@ Query Source 鍵、分類與彙總數值欄位、最大點數、圖例、X/Y／�
 再實作可持久化版型 Widget、經授權查詢／封印與公共隱私審查、
 真正的圖表預覽及全螢幕播放。928 仍為不自動掃描之 .sql.draft，
 正式 C:\\UQP、PIN、既有 Dashboard 播放未變。
+
+
+## 21. 2B-15A：全螢幕 CHART 渲染契約（尚未啟用正式播放）
+
+引入可縮放 SVG `DashboardChartProjection`，提供 BAR／LINE／PIE、
+0 基準正負數、單一圓餅分區、圖例與可及性隱藏表格。採固定 viewBox，
+不使用新的第三方套件。現階段由 2B-14 合成資料草稿使用同一渲染器，
+讓設計器可先驗證圖型與不同視窗尺寸，**不讀取或傳送實際 SQL 資料**。
+
+`parseChartProjection` 的嚴格三欄 DTO（chartType/showLegend/points）
+不接受其他欄位、患者資料列、ConfigJson、approved/authorized 等旗標、
+數字字串、無限值、重複分類或超過 50 點。**這只是前端格式檢查，
+不能代表後端授權或稽核；真正授權只能由 dormant coordinator 完成。**
+正式播放器目前仍未 import 渲染元件，也沒有 CHART GET API。
+
+不能把一般 Dashboard `/page` 的 rows 在瀏覽器做 SUM/COUNT 或改成
+CHART。尚待處理的正式阻斷：928 Draft 的 `TR_DashboardWidget_ChartFreeze`
+禁止 CHART INSERT/UPDATE/DELETE；必須設計經資料庫強制保護的專屬
+原子 Writer（含無法任意 SET SESSION_CONTEXT 偽造的最小權限或
+簽章程序）、Widget Seal 初始化及終止、Schema drift 驗證與發佈核准。
+只有在受信任 route 認證、Query／Dataset 版本、設備/IP、完整快照、
+患者 Audit、公開統計 Review 全數驗證後，才可將投影 DTO 傳給播放器。
+本提交不修改 928、927、正式 DB、C:\\UQP 或現有播放行為。
