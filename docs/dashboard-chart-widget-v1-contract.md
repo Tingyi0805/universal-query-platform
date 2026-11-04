@@ -741,3 +741,28 @@ EXECUTE**，本身也驗證資料庫名稱必須是一次性 `UQP_CH_`。
 權限隔離審查、實際 Schema 完整欄位差異與正式 925 驗收，
 才可能設計正式版。任何人不得因測試成功而直接授予
 `EXECUTE`、搬入 migrations 或停用 Freeze。
+
+
+## 27. 2B-15C-5：測試專用雙資料庫主體的權限邊界
+
+原型存放程序目前接受 `ActorId` 引數，必須區分兩個主體：
+一般平台資料庫連線（無 CHART EXECUTE 權限），以及
+獨立的、只執行經授權 CHART 寫入程序的後端憑證。
+**SQL Principal 可執行程序並不代表使用者本人已獲認證。**
+不得將任意客戶端傳入的 ActorId 直接當成可信身分。
+
+在 `UQP_CH_` 一次性合成資料庫新增權限隔離測試：
+臨時 `UQP_Chart_DraftExecutor` 角色只包含模擬
+`UQP_Chart_Writer` 主體；一般 `UQP_Chart_Untrusted`
+明確 DENY EXECUTE，兩個主體都不能直接 INSERT Permit；
+模擬 Writer 也不能直接 INSERT Seal／Ledger。
+使用 `HAS_PERMS_BY_NAME`、`sys.database_role_members` 實際
+查核 EXECUTE、ALTER、IMPERSONATE 與直接表格寫入權限。
+角色及授權僅在 CI 建立並銷毀的資料庫存在，
+**不將 GRANT/ROLE 放入正式 Migration 或 Runtime。**
+
+此驗證不能取代真正獨立的 SQL 登入、憑證隔離、
+Node request authenticated actor 綁定、審核的 API 授權、
+TokenVersion／RBAC 最後重驗及跨節點競爭驗收。
+正式帳號如果具有 `db_owner`、`db_ddladmin` 或
+廣泛 `IMPERSONATE` 權限，則不得通過交付審查。

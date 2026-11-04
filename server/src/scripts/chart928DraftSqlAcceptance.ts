@@ -293,6 +293,58 @@ export async function verifyChart928DraftSql(
   await db.request().batch(atom);
   // No automatic permissions; explicitly impersonated low-rights principal
   // cannot call a privileged atomic writer just by passing an actor ID.
+  // 2B-15C: prove two distinct SQL principals. The normal platform DB
+  // connection is not the writer login; public/app SQL users cannot EXECUTE,
+  // alter modules, mutate the transaction permit, or impersonate the writer.
+  // Grants below exist ONLY inside this disposable UQP_CH_ database.
+  stage="ATOMIC_CREATE_TWO_PRINCIPAL_PERMISSIONS";
+  await q("CREATE USER [UQP_Chart_Writer] WITHOUT LOGIN; " +
+    "CREATE ROLE [UQP_Chart_DraftExecutor]; " +
+    "ALTER ROLE [UQP_Chart_DraftExecutor] ADD MEMBER [UQP_Chart_Writer]; " +
+    "GRANT EXECUTE ON OBJECT::uqp.usp_ChartCreate_IsolatedDraft " +
+    "TO [UQP_Chart_DraftExecutor]; " +
+    "DENY EXECUTE ON OBJECT::uqp.usp_ChartCreate_IsolatedDraft TO [UQP_Chart_Untrusted]; " +
+    "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardChartCreatePermit " +
+    "TO [UQP_Chart_Untrusted]; " +
+    "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardChartCreatePermit " +
+    "TO [UQP_Chart_Writer]; " +
+    "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardChartWidgetSeal " +
+    "TO [UQP_Chart_Writer]; " +
+    "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardChartTrustRequest " +
+    "TO [UQP_Chart_Writer];");
+  const rights=await q(
+    "EXECUTE AS USER=N'UQP_Chart_Untrusted'; " +
+    "SELECT HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreate_IsolatedDraft',N'OBJECT',N'EXECUTE') AS AppExecute, " +
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardChartCreatePermit',N'OBJECT',N'INSERT') AS AppPermitInsert, " +
+    "HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreate_IsolatedDraft',N'OBJECT',N'ALTER') AS AppAlter, " +
+    "HAS_PERMS_BY_NAME(N'UQP_Chart_Writer',N'USER',N'IMPERSONATE') AS AppImpersonate; " +
+    "REVERT; " +
+    "EXECUTE AS USER=N'UQP_Chart_Writer'; " +
+    "SELECT HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreate_IsolatedDraft',N'OBJECT',N'EXECUTE') AS WriterExecute, " +
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardChartCreatePermit',N'OBJECT',N'INSERT') AS WriterPermitInsert, " +
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardChartWidgetSeal',N'OBJECT',N'INSERT') AS WriterSealInsert; " +
+    "REVERT"
+  );
+  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppExecute??0),0);
+  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppPermitInsert??0),0);
+  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppAlter??0),0);
+  assert.equal(Number(rights.recordsets?.[0]?.[0]?.AppImpersonate??0),0);
+  assert.equal(Number(rights.recordsets?.[1]?.[0]?.WriterExecute),1);
+  assert.equal(Number(rights.recordsets?.[1]?.[0]?.WriterPermitInsert??0),0);
+  assert.equal(Number(rights.recordsets?.[1]?.[0]?.WriterSealInsert??0),0);
+  const permissions=(await q(
+    "SELECT (SELECT COUNT_BIG(*) FROM sys.database_role_members m " +
+    "JOIN sys.database_principals roleName ON roleName.principal_id=m.role_principal_id " +
+    "JOIN sys.database_principals userName ON userName.principal_id=m.member_principal_id " +
+    "WHERE roleName.name=N'UQP_Chart_DraftExecutor' AND userName.name=N'UQP_Chart_Writer') AS Member, " +
+    "(SELECT COUNT_BIG(*) FROM sys.database_role_members m " +
+    "JOIN sys.database_principals roleName ON roleName.principal_id=m.role_principal_id " +
+    "JOIN sys.database_principals userName ON userName.principal_id=m.member_principal_id " +
+    "WHERE roleName.name=N'UQP_Chart_DraftExecutor' AND userName.name=N'UQP_Chart_Untrusted') AS AppMember"
+  )).recordset[0];
+  assert.equal(Number(permissions?.Member),1);
+  assert.equal(Number(permissions?.AppMember),0);
+  console.log("CHART_2B15C_DISPOSABLE_PRINCIPAL_SEPARATION_PASS");
   stage="ATOMIC_CREATE_UNGRANTED_EXEC";
   const unauthorized=(await db.request().batch(
     "EXECUTE AS USER=N'UQP_Chart_Untrusted'; " +
