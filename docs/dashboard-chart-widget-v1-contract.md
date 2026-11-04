@@ -1353,3 +1353,55 @@ NULL 視同 0 而放行。三個登入的憑證是否由同一應用層存放，
 不變。此處的合成測試只完成提交，必須在**本 HEAD SHA** 的
 Server、Windows、SQL 2019／2022 與 Client CI 執行成功後，
 才能宣稱相對應的靜態／隔離驗證 PASS。
+
+
+## 45. 2B-15D-9：HTTP 驗證 Request 到 Issuer 的資料意圖（待 CI）
+
+新增 `dashboardChartHttpIssuerHandoff.ts` 與合成 HTTP 測試。
+**這不是已核准的 Actor 身分委派，沒有真的呼叫核發程序。**
+
+- `deriveDormantChartIssuerIntent()` 只呼叫既有
+  `planVerifiedChartCreateRequest()`，該流程從 Express Request
+  私有 WeakMap 讀取 `jwt.verify` 與即時 Session 驗證後的 Actor，
+  只接受嚴格的 `config|placement|profileId|requestId` body。
+  本次輸出固定 11 個 primitive 欄位：
+  ActorId、TokenVersion、DashboardId、ProfileId、RequestId、
+  SourceKey、Canonical Config SHA-256、X/Y/Width/Height。
+  將結果 `Object.freeze`，不含 GrantId、Issuer SID、
+  SQL 密碼、秘密值、核准旗標或可由瀏覽器供應的使用者身分。
+  其中 RequestId 是客戶端的 **idempotency key**，不是憑證。
+- `prepareDormantChartIssuerHandoff()` 同時確認四項硬式阻斷：
+  `CHART_ATOMIC_CREATE_RUNTIME_ENABLED`、
+  `CHART_WRITER_DB_ACTOR_BINDING_APPROVED`、
+  `CHART_WRITER_APPROVED_PROCEDURE_SHA256`、
+  `CHART_ISSUER_APPROVED_PROCEDURE_SHA256`。
+  任一條件未核准就直接回傳 null，不開 SQL 連線、不發放授權。
+  只有將來經人工審查後，才可再確認 Session 未停用、
+  TokenVersion 未變且仍有 DESIGN_QUERY，並透過三組獨立 SQL
+  Login 的唯讀採認。這仍然只是**前置檢查**，不核發 SQL Grant。
+- 測試使用短暫啟動的本機 Express 與合成 JWT，檢查原本
+  無權限、TokenVersion 被變更、惡意替換 ActorId，以及
+  自行夾帶 `grantId`、`secret`、`issuerSid`、`approved`
+  等欄位都不得通過；也驗證硬 Gate 關閉時，SQL metadata
+  Query 次數為零。測試路由只存在測試檔，沒有產品 HTTP API。
+
+### 尚未打通的核心安全信任鏈
+
+這份 primitive 型別資料**不可作為 SQL 身分憑證**；
+Node 伺服器傳入 ActorId 並不表示 SQL 能證明 JWT 已驗證，
+尤其 Issuer 的隔離草案仍接受 `@ActorId`，
+Writer 的隔離草案仍可被指定其他有權限 ActorId。
+正式上線之前必須實作並獨立審查
+「HTTP 認證來源 → 受控 Issuer 身分 → DB-owned Grant
+→ 交易內 Writer 驗證／消耗 → Widget/Seal/Audit/Ledger 提交」，
+包括獨立 SQL Login、Issuer 與 Writer 程序內容指紋、抗冒用、
+並行撤權、Grant 過期／消耗、Config Digest 與狀態回滾。
+單獨執行本階段的 Node 前置重驗有 TOCTOU 問題，
+不得替代 DB-owned SERIALIZABLE 交易中的最後重驗。
+
+本次不變更原 SQL 草案、登入憑證、Migration／Schema、
+`C:\\UQP` 或 Dashboard 播放邏輯。
+正式 CHART 及全部安全核准維持關閉、PR #83 維持 Draft。
+由於目前 GitHub Actions 仍未對最新 HEAD 產生完整 CI
+工作紀錄，**程式提交不等於 Server／Windows／SQL 2019／2022
+測試已通過**。必須檢查同一 HEAD SHA 才能採認。
