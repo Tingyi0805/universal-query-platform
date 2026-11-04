@@ -24,6 +24,14 @@ BEGIN TRY
     OR COL_LENGTH(N'uqp.DashboardWidget',N'SourceKey') IS NULL
     OR COL_LENGTH(N'uqp.AuditLog',N'EventCategory') IS NULL
     OR COL_LENGTH(N'uqp.AuditLog',N'IsImportant') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'EventType') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'UserId') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'Status') IS NULL
+    OR OBJECT_ID(N'uqp.AuditLogArchive',N'U') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'EventType') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'IsImportant') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'UserId') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'Status') IS NULL
   THROW 51928,'CHART_928_PREREQUISITES_REQUIRED',1;
 
  DECLARE @count int=
@@ -38,6 +46,8 @@ BEGIN TRY
    AND name IN(
     N'TR_DashboardWidget_ChartFreeze',N'TR_ChartSeal_DeleteBlock',
     N'TR_ChartReview_Transition',N'TR_ChartTrustRequest_Immutable',
+    N'TR_ChartSeal_AuditReceipt',N'TR_ChartReview_AuditReceipt',
+    N'TR_ChartTrustRequest_AuditReceipt',
     N'CK_ChartReview_State',N'CK_ChartTrustRequest_Action',
     N'CK_ChartSeal_Digest',N'UX_ChartReview_Active'))
    THROW 51928,'CHART_928_NAME_CONFLICT',1;
@@ -60,7 +70,6 @@ BEGIN TRY
    CreatedAtUtc datetime2(3) NOT NULL CONSTRAINT DF_ChartSeal_Created DEFAULT SYSUTCDATETIME(),
    CONSTRAINT FK_ChartSeal_Widget FOREIGN KEY(WidgetId) REFERENCES uqp.DashboardWidget(Id),
    CONSTRAINT FK_ChartSeal_User FOREIGN KEY(SealedBy) REFERENCES uqp.AppUser(Id),
-   CONSTRAINT FK_ChartSeal_Audit FOREIGN KEY(AuditLogId) REFERENCES uqp.AuditLog(Id),
    CONSTRAINT CK_ChartSeal_Digest CHECK(LEN(ConfigDigest)=64 AND ConfigDigest NOT LIKE '%[^0-9a-f]%')
   );
   CREATE TABLE uqp.DashboardChartTrustRequest(
@@ -69,7 +78,6 @@ BEGIN TRY
    ActorId bigint NOT NULL,
    AuditLogId bigint NULL,
    CONSTRAINT FK_ChartRequest_Actor FOREIGN KEY(ActorId) REFERENCES uqp.AppUser(Id),
-   CONSTRAINT FK_ChartRequest_Audit FOREIGN KEY(AuditLogId) REFERENCES uqp.AuditLog(Id),
    CONSTRAINT CK_ChartTrustRequest_Action CHECK(Action IN
      (N'SEAL_WIDGET',N'REQUEST_REVIEW',N'APPROVE_REVIEW',N'REVOKE_REVIEW'))
   );
@@ -100,7 +108,6 @@ BEGIN TRY
    CONSTRAINT FK_ChartReview_Dataset FOREIGN KEY(DatasetId) REFERENCES uqp.Dataset(Id),
    CONSTRAINT FK_ChartReview_Requester FOREIGN KEY(RequestedByUserId) REFERENCES uqp.AppUser(Id),
    CONSTRAINT FK_ChartReview_Reviewer FOREIGN KEY(ReviewerUserId) REFERENCES uqp.AppUser(Id),
-   CONSTRAINT FK_ChartReview_Audit FOREIGN KEY(AuditLogId) REFERENCES uqp.AuditLog(Id),
    CONSTRAINT CK_ChartReview_State CHECK(
     (Status='REQUESTED' AND MinimumCellCount=0 AND CategoryPrivacyReviewed=0
      AND DifferencingRiskReviewed=0 AND ReviewerUserId IS NULL AND
@@ -172,6 +179,38 @@ BEGIN
  )
   THROW 51928,''CHART_928_LEDGER_IMMUTABLE'',1;
 END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartSeal_AuditReceipt ON uqp.DashboardChartWidgetSeal AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.UserId=i.SealedBy
+     AND a.EventType=N''CHART_SEAL_WIDGET'' AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_SEAL_AUDIT_REQUIRED'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartReview_AuditReceipt ON uqp.DashboardChartPrivacyReview AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.Status=N''SUCCESS'' AND a.IsImportant=1
+     AND a.EventType=CASE i.Status
+       WHEN ''REQUESTED'' THEN N''CHART_REQUEST_REVIEW''
+       WHEN ''APPROVED'' THEN N''CHART_APPROVE_REVIEW''
+       WHEN ''REVOKED'' THEN N''CHART_REVOKE_REVIEW'' ELSE N''INVALID'' END
+     AND a.UserId=CASE WHEN i.Status=''REQUESTED'' THEN i.RequestedByUserId
+       ELSE i.ReviewerUserId END))
+  THROW 51928,''CHART_928_REVIEW_AUDIT_REQUIRED'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartTrustRequest_AuditReceipt ON uqp.DashboardChartTrustRequest AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE i.AuditLogId IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+     WHERE a.Id=i.AuditLogId AND a.UserId=i.ActorId AND a.EventType=N''CHART_''+i.Action
+       AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_REQUEST_AUDIT_REQUIRED'',1;
+END');
  END;
  -- Never silently adopt a partial or disabled schema.
  IF (SELECT COUNT(*) FROM sys.tables WHERE object_id IN
@@ -188,13 +227,13 @@ END');
   THROW 51928,'CHART_928_WIDGET_TYPE_CONSTRAINT_INVALID',1;
  IF (SELECT COUNT(*) FROM sys.foreign_keys
     WHERE parent_object_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal')
-      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>3
+      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>2
     OR (SELECT COUNT(*) FROM sys.foreign_keys WHERE
       parent_object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
-      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>6
+      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>5
     OR (SELECT COUNT(*) FROM sys.foreign_keys WHERE
       parent_object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest')
-      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>2
+      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>1
   THROW 51928,'CHART_928_FOREIGN_KEY_INVALID',1;
  IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE
     object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
@@ -210,7 +249,13 @@ END');
     OR (object_id=OBJECT_ID(N'uqp.TR_ChartReview_Transition',N'TR') AND
      parent_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview') AND is_disabled=0)
     OR (object_id=OBJECT_ID(N'uqp.TR_ChartTrustRequest_Immutable',N'TR') AND
-     parent_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest') AND is_disabled=0))<>4
+     parent_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartSeal_AuditReceipt',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartReview_AuditReceipt',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartTrustRequest_AuditReceipt',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest') AND is_disabled=0))<>7
   THROW 51928,'CHART_928_TRIGGERS_REQUIRED',1;
  IF @ownsTransaction=1 COMMIT TRANSACTION;
 END TRY

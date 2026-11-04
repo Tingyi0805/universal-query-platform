@@ -552,3 +552,26 @@ DML／Seal DELETE／Review 回復／Request Ledger 改寫失敗、
 **此 FK 可能阻止既有 Audit 清理，故 928 不得核准直接安裝**。
 2B-13 須與既有 Audit 保留／封存工作一起驗收，不可為了通過測試而
 刪除 Audit 關聯或允許靜默清除已核准決策。
+
+
+## 19. 2B-13：Chart 線上／封存 Audit Receipt 相容性（仍不啟用）
+
+既有 `archiveOldAuditLogs()` 將 `uqp.AuditLog` 複製至
+`uqp.AuditLogArchive`，再刪除線上紀錄。928 非掃描草案移除三個
+單純指向**線上** AuditLog 的外鍵，保留 `AuditLogId` 及不可逆
+RequestId/Review 身分。新增 Seal／Review／Request Ledger 的
+**寫入時** SQL Trigger：必須由同一交易內真實的線上 AuditLog
+驗證 `EventType=CHART_*`、`Status=SUCCESS`、`IsImportant=1`
+及正確操作者，不能提交缺稽核證據的封印或核定。
+
+受信任 **讀取時**，需由 `AuditLog` 或 `AuditLogArchive` 的
+相同 Id、EventType、Status、Actor、IsImportant 確認；兩處都不存在
+或任一欄不相符均拒絕輸出。保留既有 Audit 保留政策，不新增
+永久保留例外、不使用瀏覽器來源的核准旗標。
+
+此變更不會開放 CHART Type、API、圖表設計器或播放器，
+928 仍為 `.sql.draft`，沒有加入一般 `db:migrate`。
+
+**待部署核准前**：Schema 漂移精確驗證（含 Trigger 定義）、正式
+帳號最小權限、AuditArchive 歷史資料保全、925 相容、
+跨節點多 Writer 並行驗證與獨立人工核准均尚待完成。
