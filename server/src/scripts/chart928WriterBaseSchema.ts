@@ -81,7 +81,8 @@ export async function attestChartWriterBaseSqlCatalog(
  connection:sql.ConnectionPool|sql.Transaction,
 ):Promise<void>{
  try{
-  const request=new sql.Request(connection instanceof sql.Transaction?connection:connection);
+  const request=connection instanceof sql.Transaction
+   ? new sql.Request(connection) : new sql.Request(connection);
   const rows=(await request.query(CHART_WRITER_SCHEMA_SQL)).recordset;
   attestChartWriterBaseColumns(rows);
  }catch(e){
