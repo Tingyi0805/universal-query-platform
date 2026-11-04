@@ -1181,3 +1181,60 @@ Migration 或正式 DB Login，仍不註冊 CHART API、不授權
 仍不可部署；CHART API、正式播放與 `C:\\UQP` 均不變。
 GitHub CI 必須以本 Commit 的 HEAD SHA 執行，才能確認
 2019／2022 的實際重現結果；僅有提交不等於驗收成功。
+
+
+## 42. 2B-15D-6：一次性 Actor 委派欄位契約（離線，待 CI）
+
+新增 `dashboardChartActorDelegation.contract.ts` 與同名測試，只定義
+**合成委派紀錄的欄位一致性比對**，不連接 SQL、核發委派、
+驗證 DB 紀錄真偽、消耗委派或開啟任何 API。未來由獨立核發者
+產生的授權資料必須完整綁定：
+
+- 用途 `CHART_CREATE`、契約版本、獨立核發者的 SQL SID、
+  隨機 `GrantId` 與 256-bit 一次性秘密值的 SHA-256（DB 不存原文）
+- 已驗證的 ActorId、TokenVersion、DashboardId、ProfileId、
+  RequestId、SourceKey、Canonical Config SHA-256
+- X/Y/Width/Height、核發／到期時刻、未撤銷及未消耗狀態
+
+測試使用兩名皆有權限的**合成** Actor 作為替換情境，逐項
+修改 ActorId、TokenVersion、Dashboard／Profile、RequestId、
+來源、設定摘要、位置、核發主體、秘密值與時間界線，均必須
+拒絕欄位比對；有效時間長度上限為 60 秒，缺資料、已撤銷、
+已消耗與憑證多餘欄位均拒絕。另確認 Config JSON 的摘要與
+SourceKey 自身一致，不允許重新標示來源卻沿用相同摘要。
+
+### 未來資料庫可信核發與消耗的必要安全邊界
+
+1. **Issuer／Writer 分離**：獨立受控的 Issuer SQL Login
+   經審核後才可 EXECUTE 核發程序；Writer SQL Login
+   不得直接 SELECT／INSERT／UPDATE／DELETE 委派資料，
+   不得 EXECUTE 核發程序或取得 Issuer 憑證。
+   一般 Platform 連線不得以 SQL 角色切換假扮 Issuer。
+2. **Node 信任來源**：Issuer 的 ActorId 必須綁定已通過
+   JWT 驗證、即時 TokenVersion 與 RBAC 的伺服器側 Request；
+   瀏覽器提交的 ActorId、TokenVersion、核准欄位或 RequestId
+   均不得充當身分證明。隨機秘密值由受控 Issuer 安全產生，
+   僅傳入受控服務內部，不回傳前端、不寫入 Audit／Log。
+3. **DB 交易內核定**：正式 Writer 必須於同一 SQL Server
+   `SERIALIZABLE` 交易中以 `UPDLOCK,HOLDLOCK` 鎖定
+   實際 Issuer-owned grant，從 SQL Server 自身的 UTC 時鐘
+   核對有效期、TokenVersion／RBAC 與 Dashboard／Profile、
+   Query／Dataset 範圍，與 Request Ledger／Widget／Seal／Audit
+   同交易消耗 grant 和提交。重播、跨 Actor、跨 Dashboard、
+   逾期、資料變更、後期失敗或並行消耗皆要有 SQL 2019／2022
+   反例；rollback 不可留下半套資料。
+4. **權限與上線採認**：正式核發程序與 Writer 程序必須分別
+   完成可信定義指紋、低權限 SQL Login、不可任意修改權限與
+   人工審查。若兩套憑證同時被單一受攻擊的應用程序掌控，
+   所能提供的安全隔離仍有限，正式設計須納入該風險。
+   JS `matchesDormantChartDelegationFields()` 即使回傳 true，
+   也不能取代 DB 憑證來源與交易內消耗，更**不代表核准**。
+
+目前只新增 **純函式與合成測試**，不包含 Issuer 資料表、
+正式專用登入、核發程序、正式 Writer、端點或 migration。
+`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false`、
+`CHART_WRITER_APPROVED_PROCEDURE_SHA256=null` 與
+`CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false` 均不變。
+928 草案繼續不得部署，正式 `C:\\UQP`、PIN 927、現有
+Dashboard 版型及播放器不變。最新 HEAD 尚無 CI 的情況下，
+本項只能標記為**已提交、待驗證**。
