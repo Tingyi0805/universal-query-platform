@@ -3,6 +3,7 @@
 import sql from "mssql";
 import {env} from "./env.js";
 import {getPlatformDbPool} from "./database.js";
+import {attestChartWriterBaseSqlCatalog} from "../scripts/chart928WriterBaseSchema.js";
 import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "../modules/dashboard/dashboardChartAtomicCreate.contract.js";
 import {
  CHART_WRITER_APPROVED_PROCEDURE_SHA256,attestChartWriterSqlPools,
@@ -70,6 +71,7 @@ export async function getChartWriterDbPool():Promise<sql.ConnectionPool|null>{
      const platform=await getPlatformDbPool();
      if(!platform)throw Error("PLATFORM_DB_UNAVAILABLE");
      await attestChartWriterSqlPools(platform,active);
+     await attestChartWriterBaseSqlCatalog(active);
      return active;
    }catch{
      await closeChartWriterDbPool().catch(()=>undefined);
@@ -87,6 +89,7 @@ export async function getChartWriterDbPool():Promise<sql.ConnectionPool|null>{
      if(!platform)return null;
      candidate=await new sql.ConnectionPool(config).connect();
      await attestChartWriterSqlPools(platform,candidate);
+     await attestChartWriterBaseSqlCatalog(candidate);
      if(epoch!==generation){await candidate.close();return null;}
      active=candidate;return active;
    }catch{
