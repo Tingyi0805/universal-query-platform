@@ -288,3 +288,52 @@ Catalog 與所有 Trigger／Writer；其通過只能證明新 Reader 在 SQL 引
 CI #1283 的 Browser E2E 有兩個 D6-3 焦點斷言失敗，原因是重新載入後按鈕
 尚未可用就測試 Tab 焦點。本次延續 2B-5 加入等候 Enabled 的修正，不刪減
 原本的焦點／樣式／窄螢幕驗證。完整結果以新 HEAD 的 CI 為準。
+
+
+## 13. 2B-7：純伺服器圖表安全交付整合層（仍未啟用）
+
+新增：
+- server/src/modules/dashboard/dashboardChartDelivery.coordinator.ts
+- server/src/modules/dashboard/dashboardChartDelivery.coordinator.test.ts
+
+這不是新的 Chart HTTP API。**既有 Dashboard 路由、儲存 Widget 的型別與資料庫
+CHECK Constraint、正式全螢幕播放器都沒有增加 CHART**。
+目前只提供一個依賴注入的內部整合層；沒有註冊任何正式工廠或 singleton。
+
+### 安全交付順序
+
+1. 明確 runtime gate 為關閉時，不讀取 Widget、不執行 Query。
+2. 由可信的未來 Widget Repository 讀取已儲存 CHART 設定與 ROWVERSION；
+   不採信外部傳入的 config、授權結果、版型 ID 或隱私核准。
+3. 使用目前已發布 Query、Dataset、欄位白名單、敏感政策、公共顯示
+   核准以及 SQL Server/Oracle 受限 COUNT(*) 語意證據評估圖表欄位。
+4. 在現有已稽核 Query-only Page Delivery 前後比對 SQL Server Revision Fence
+   及圖表核准結果；原有 Delivery 必須完成 Device Token/IP/session、
+   敏感欄位遮蔽、快照完整性、患者揭露 Audit 及最後重驗。
+5. 一般使用者、裝置播放及管理員公開預覽，都必須**先**取得獨立的
+   小樣本／跨時段差異推算隱私核准；完成稽核後再次驗證同一核准修訂。
+   內部 staged designer 預覽不代表公共播放已通過隱私審查。
+6. 投影只交付 chartType、showLegend 及 label/value；
+   除分類和核准數值外的患者欄位不得被傳遞。
+7. 傳回前再次比對可信 Widget ROWVERSION／設定內容與所有已核准證據；
+   任一資料異動、核准撤銷、頁面截斷、稽核失敗、掩碼差異或
+   隱私複查失敗時，整張圖拒絕，不轉用原始資料或舊版 Legacy 播放。
+
+### 尚未具備正式接線條件
+
+- **現有 Dashboard 無 CHART Widget 儲存契約**，因此沒有可用的
+  readSavedWidget 實作。測試使用合成且可撤回的可信 Widget。
+- **沒有正式 PublicCountReview Repository**。人工核准、審查修訂、
+  最低組別門檻及跨時段防差異推算政策尚未完成。測試只用合成核准。
+- **既有 Query-only 執行器尚未正式掛接本 coordinator**；測試模擬其
+  授權結果與稽核頁面，用隔離快照驗證串接順序，不等於實際患者
+  曝光稽核 HTTP 端到端驗收。
+- createDormantSqlChartFactsReader 是明確可呼叫的
+  Query/SQL 語意證據組合工廠，**不是**啟用正式
+  chartFactsDefaults.getVerifiedAggregate 的行為。
+- 需要完整 925 Catalog、真實 Widget storage CAS、跨節點快照、
+  Device Session／IP、Query-only 資料交付與醫院隱私政策的實際驗收後，
+  才可進入規劃 CHART Widget Type Migration／前端編輯與全螢幕播放。
+
+本階段不修改 Migration 927、PIN Runtime、Dashboard Token、既有表格
+或正式 C:\UQP；PR #83 仍為 Draft，不授權正式覆蓋。
