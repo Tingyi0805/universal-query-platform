@@ -1004,3 +1004,32 @@ PR #83 持續 Draft，928 `.sql.draft` 不得部署，
 權限的人透過正常 GitHub 使用者提交到既有 PR head branch
 觸發 `synchronize`；不需要合併 PR，也不得在正式 DB
 重跑 SQL。此工作應維持 BLOCKED，避免以未執行測試冒充 PASS。
+
+
+## 36. 2B-15C-14：Writer 直接 Widget DML 隔離與連線池重驗
+
+專屬 CHART Writer 的 SQL Login 不得直接擁有
+`DashboardWidget INSERT/UPDATE/DELETE` 權限；只有一般
+Platform 帳號仍需保有既有 Dashboard 版型 CRUD 能力。
+在 `dashboardChartWriterBoundary.ts` 新增 Writer-only 有效權限
+拒絕條件，null／未知權限也拒絕；不把此限制錯套至 Platform
+帳號。單元測試包括 Writer 直接 Widget DML 遭拒、原平台
+版型 DML 可保留；在 SQL 2019／2022 的一次性主體驗收中
+增加相應 DENY 與 `HAS_PERMS_BY_NAME` 驗證。SQL 原型
+仍只在 `UQP_CH_` 隔離資料庫存在，沒有正式 GRANT。
+
+另調整 `chartWriterDatabase.ts`：若專用 Pool 已建立，
+**每次再次借用前**重新檢查兩組 SQL 身分、有效權限與
+核准程序內容 SHA-256。若失效，關閉快取 Pool 並回傳 null，
+而不是沿用曾經通過驗證的權限。此預檢仍無法消除查核到
+寫入之間的競爭；正式資料庫程序必須在自己的原子交易內
+完成 Actor／TokenVersion／RBAC 及 Widget/Seal/Audit 重驗。
+
+### CI 與交付限制
+
+PR #83 HEAD 仍持續改變，但 GitHub Actions 最後一次
+CI #1332 屬舊 Commit，不能代表本段修改。
+可用 GitHub 連接器只有讀取既有 Workflow／重跑舊 Job 的
+操作，不能直接替最新 HEAD 發起新工作流程。
+本工作目前為「程式已提交，未通過最新 CI」，禁止正式
+928 安裝、正式 CHART Writer 授權、下載 ZIP 覆蓋部署。
