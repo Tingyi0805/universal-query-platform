@@ -964,3 +964,43 @@ GitHub CI Server Build、SQL Server 2019／2022、Client
 E2E 與 Release jobs 成功後才可將本項標記為驗收通過。
 目前 PR #83 保持 Draft、不執行 928、不開放 CHART。
 本項亦不能取代 925 完整 Schema 採認與正式 Writer 核准。
+
+
+## 35. 2B-15C-13：外鍵實際欄位對應，防止同名外鍵繞過採認
+
+原本 Base Schema FK 採認僅比對 FK 名稱、父／參照資料表、
+刪除行為與信任旗標：攻擊者若保留相同 FK 名稱、表名，
+卻更換關聯欄位，仍可能通過。新增查詢
+`sys.foreign_key_columns`，對三個必要 FK 要求**恰好一對**
+對應欄位，並精確驗證：
+
+- `FK_DashboardDisplayProfile_Dashboard`：
+  `DashboardDisplayProfile.DashboardId -> Dashboard.Id`
+- `FK_DashboardWidget_Profile`：
+  `DashboardWidget.ProfileId -> DashboardDisplayProfile.Id`
+- `FK_AuditLog_User`：
+  `AuditLog.UserId -> AppUser.Id`
+
+使用 `constraint_column_id` 核對欄位次序與總數，
+若改成其他欄位、複合 FK、缺少／隱藏中繼資料均拒絕。
+新增負面測試涵蓋錯誤父欄、錯誤參照欄、複合 FK、
+缺少欄位映射與既有 disabled／untrusted／CASCADE 漂移。
+
+已將這三項來源映射與既有正式 Migration 006／022 逐一靜態比對，
+均一致；**這不是 SQL Server 2019／2022 實際運行 PASS**。
+應等與本 Commit 對應的 CI 完整執行後再宣告驗收。
+PR #83 持續 Draft，928 `.sql.draft` 不得部署，
+正式 CHART Writer 憑證與獨立核准仍未完成。
+
+### CI 觸發阻斷與正確驗收判定
+
+`.github/workflows/ci.yml` 仍包含 `pull_request` 觸發，
+但自 #1332 後對 GitHub 分支的新 Commit 尚無新 workflow run。
+`rerun` 舊 Run 只驗證舊 Event／SHA，不能算新 HEAD PASS。
+必須取得**HEAD SHA 對應**的 GitHub Actions Workflow，
+且 Server、Client、SQL 2019／2022、Windows 及 Release
+所需工作均成功，才能繼續判定本項安全驗收通過。
+如平台沒有提供可對新 HEAD dispatch 的工具，須由有儲存庫
+權限的人透過正常 GitHub 使用者提交到既有 PR head branch
+觸發 `synchronize`；不需要合併 PR，也不得在正式 DB
+重跑 SQL。此工作應維持 BLOCKED，避免以未執行測試冒充 PASS。
