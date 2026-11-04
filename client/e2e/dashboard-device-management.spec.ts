@@ -566,7 +566,7 @@ for(const width of [345,360,768])test(`D6-3 settings wrap on a touch viewport ${
     if(document.documentElement.scrollWidth<=innerWidth+1)return [];
     return [{viewport:innerWidth,scroll:document.documentElement.scrollWidth},...Array.from(document.querySelectorAll("body *")).filter(e=>e.getBoundingClientRect().right>innerWidth+1&&e.getBoundingClientRect().width>0).sort((a,b)=>b.getBoundingClientRect().right-a.getBoundingClientRect().right).slice(0,10).map(e=>({tag:e.tagName,cls:e.className,parent:e.parentElement?.className,text:e.textContent?.slice(0,80),width:e.getBoundingClientRect().width,right:e.getBoundingClientRect().right}))];
   })).toEqual([]);
-  const button=panel.getByRole("button",{name:"建立未授權裝置",exact:true});await button.focus();await page.keyboard.press("Shift+Tab");await page.keyboard.press("Tab");await expect(button).toBeFocused();await expect(button).toHaveCSS("outline-style","solid");
+  const button=panel.getByRole("button",{name:"建立未授權裝置",exact:true});await expect(button).toBeEnabled();await button.focus();await page.keyboard.press("Shift+Tab");await page.keyboard.press("Tab");await expect(button).toBeFocused();await expect(button).toHaveCSS("outline-style","solid");
   await expect(page.getByRole("region",{name:"裝置操作表格"})).toHaveCSS("overflow-x","visible");
   const disabled=page.locator(".dashboard-designer-page button:disabled").first();await expect(disabled).toHaveCSS("border-top-style","dashed");
  }finally{await context.close();}

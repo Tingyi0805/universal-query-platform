@@ -197,3 +197,55 @@ SQL 本文、來源方言及其修訂證據，在前後一致性驗證成立後�
 後續上線前另需評估小樣本計數是否可能揭露個別患者資訊，
 例如單一手術室某時段只有 1 件時，不能單以「GROUP BY 已證明」當作公共
 播放的完整隱私核准。
+
+
+## 11. 2B-5：跨 Repository Revision Fence 與小樣本揭露阻擋（仍停用）
+
+新增 dashboardChartRevisionFence.ts／.test.ts，以及
+dashboardChartPublicCountPrivacy.ts／.test.ts。
+本階段只新增**尚未串到 Chart Delivery／HTTP API 的安全原語**。
+
+### Revision Fence
+
+- 單一 UQP SQL Server SERIALIZABLE 唯讀交易，使用現有 Dashboard 與
+  附加來源核准 RowVersion、Query 版本歷史、Dataset DefinitionRowVersion、
+  DataSource ConfigurationRowVersion、敏感政策 VersionNumber 及
+  Public Display RowVersion，讀取目前已發布、啟用且仍有查詢權限的來源。
+- 同交易重驗帳號 TokenVersion、角色權限與有效 Query ACL，對公共播放
+  另檢查公共顯示的 Dataset／DataSource／敏感政策版本是否相符。
+- 結果僅返回作用範圍與不可直接還原資料的 SHA-256 指紋，
+  不傳回 SQL、密碼或患者資料。外層驗證器可在現有 Query Delivery 前後
+  比對指紋；不符拒絕圖表，不能回傳半成品。
+- 這不代替原有裝置 Token／IP 限制、欄位白名單、患者曝光 Audit 或
+  Query Delivery 內部逐步重驗；目前尚未接到這些實際執行鏈中。
+- **目前 CI 的 SQL Server 2019／2022 隔離回歸並未直接呼叫本次
+  Revision Fence SQL**。要讓這套 SQL 成為可靠的上線安全證據，
+  仍須在一次性 SQL 測試環境補上真實 Schema、交易競爭及 ABA 回歸。
+
+### 小樣本／差異推算保護
+
+- 新的 PublicCountPrivacy 原語要求獨立、伺服器可信且與來源
+  Query、Dataset、欄位、敏感政策版本完全對應的人工隱私核准。
+- 需明確評估分類欄位與重複播放時間窗的差異推算風險；
+  缺少核准一律拒絕。
+- 目前保守的每分類最低件數為 5（僅是**開發階段的最低技術護欄，
+  不是院內正式隱私門檻**）；小於門檻、零值、不完整或不合法數字，
+  一律拒絕整張圖，不自動隱藏單筆後仍顯示可能推得個資的其他筆數。
+- 即使大於門檻，仍可能因唯一手術／單日事件／跨時段比對而重識別。
+  將來必須另外建立真實的審查結果 Repository、時間窗及再識別
+  風險控管，才可能讓公共看板使用統計圖。
+
+### 與 CI #1283 的關係
+
+CI #1283 的 Server、Windows 與 SQL Server 2019／2022 既有回歸已 PASS，
+但 Client Browser E2E 因 D6-3 窄螢幕測試在裝置重新載入後，按鈕尚未
+恢復 Enabled 就執行焦點檢查而有兩筆失敗。本階段同步在原測試加上
+「確認按鈕恢復 Enabled」的等待，再保留既有鍵盤焦點與 CSS 斷言。
+不放寬正式產品行為或移除測試。
+
+### 正式啟用界線
+
+PR 仍為 Draft。chartFactsDefaults.getVerifiedAggregate 仍回傳 null；
+任何 CHART SQL CHECK、Layout Schema、API、UI、全螢幕播放、Migration 927
+及 PIN Runtime 均不變。必須先完成**可信證據接線與真實 SQL 競爭測試**，
+再討論圖表 Widget 的正式啟用及人工驗收。
