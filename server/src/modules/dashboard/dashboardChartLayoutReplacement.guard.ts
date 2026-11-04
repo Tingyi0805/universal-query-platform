@@ -29,7 +29,8 @@ export async function assertChartLayoutReplacementSafe(
   if (!Number.isSafeInteger(dashboardId) || dashboardId < 1 ||
       !Array.isArray(profiles) || profiles.some(profile =>
         !profile || !Array.isArray(profile.widgets) ||
-        profile.widgets.some(widget => !widget || !legacyTypes.has(widget.widgetType))))
+        profile.widgets.some((widget: DashboardProfileInput["widgets"][number]) =>
+          !widget || !legacyTypes.has(widget.widgetType))))
     return blocked();
 
   const parent = (await request(tx).input("dashboardId", sql.BigInt, dashboardId)
