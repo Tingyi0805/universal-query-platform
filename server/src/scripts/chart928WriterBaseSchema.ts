@@ -62,16 +62,20 @@ export const CHART_WRITER_SCHEMA_SQL=[
 // Source: 022_dashboard_layout_designer.sql and 006_audit_log.sql.
 export const CHART_WRITER_BASE_FOREIGN_KEYS=[
  {name:"FK_DashboardDisplayProfile_Dashboard",parent:"DashboardDisplayProfile",
-  target:"Dashboard",deleteRule:"CASCADE"},
+  parentColumn:"DashboardId",target:"Dashboard",targetColumn:"Id",
+  deleteRule:"CASCADE"},
  {name:"FK_DashboardWidget_Profile",parent:"DashboardWidget",
-  target:"DashboardDisplayProfile",deleteRule:"CASCADE"},
+  parentColumn:"ProfileId",target:"DashboardDisplayProfile",targetColumn:"Id",
+  deleteRule:"CASCADE"},
  {name:"FK_AuditLog_User",parent:"AuditLog",
-  target:"AppUser",deleteRule:"NO_ACTION"},
+  parentColumn:"UserId",target:"AppUser",targetColumn:"Id",
+  deleteRule:"NO_ACTION"},
 ] as const;
 export type ChartWriterBaseForeignKeyRow=Readonly<{
  ConstraintName:unknown;ParentSchema:unknown;ParentTable:unknown;
  TargetSchema:unknown;TargetTable:unknown;IsDisabled:unknown;
  IsNotTrusted:unknown;DeleteRule:unknown;
+ KeyColumnCount:unknown;ParentColumn:unknown;TargetColumn:unknown;
 }>;
 export const CHART_WRITER_BASE_FK_SQL=[
  "SELECT expected.ConstraintName,",
@@ -81,12 +85,22 @@ export const CHART_WRITER_BASE_FK_SQL=[
  "OBJECT_NAME(f.referenced_object_id) AS TargetTable,",
  "CONVERT(bit,f.is_disabled) AS IsDisabled,",
  "CONVERT(bit,f.is_not_trusted) AS IsNotTrusted,",
- "f.delete_referential_action_desc AS DeleteRule",
+ "f.delete_referential_action_desc AS DeleteRule,",
+ "keyCols.KeyColumnCount,keyCols.ParentColumn,keyCols.TargetColumn",
  "FROM (VALUES",
  CHART_WRITER_BASE_FOREIGN_KEYS.map(x=>"(N'"+x.name+"')").join(","),
  ") AS expected(ConstraintName)",
  "LEFT JOIN sys.foreign_keys f ON f.name=expected.ConstraintName",
  "AND f.schema_id=SCHEMA_ID(N'uqp')",
+ "OUTER APPLY (SELECT COUNT(*) AS KeyColumnCount,",
+ "MAX(CASE WHEN fkc.constraint_column_id=1 THEN parentColumn.name END) AS ParentColumn,",
+ "MAX(CASE WHEN fkc.constraint_column_id=1 THEN targetColumn.name END) AS TargetColumn",
+ "FROM sys.foreign_key_columns fkc",
+ "LEFT JOIN sys.columns parentColumn ON parentColumn.object_id=fkc.parent_object_id",
+ "AND parentColumn.column_id=fkc.parent_column_id",
+ "LEFT JOIN sys.columns targetColumn ON targetColumn.object_id=fkc.referenced_object_id",
+ "AND targetColumn.column_id=fkc.referenced_column_id",
+ "WHERE fkc.constraint_object_id=f.object_id) AS keyCols",
 ].join(" ");
 
 export function attestChartWriterBaseForeignKeys(
@@ -102,7 +116,10 @@ export function attestChartWriterBaseForeignKeys(
   if(actual.ParentSchema!=="uqp"||actual.TargetSchema!=="uqp"||
     actual.ParentTable!==expected.parent||actual.TargetTable!==expected.target||
     actual.IsDisabled!==false||actual.IsNotTrusted!==false||
-    actual.DeleteRule!==expected.deleteRule)
+    actual.DeleteRule!==expected.deleteRule||
+    actual.KeyColumnCount!==1||
+    actual.ParentColumn!==expected.parentColumn||
+    actual.TargetColumn!==expected.targetColumn)
    throw new ChartWriterSchemaError("CHART_BASE_SCHEMA_FK_MISMATCH");
  }
 }
