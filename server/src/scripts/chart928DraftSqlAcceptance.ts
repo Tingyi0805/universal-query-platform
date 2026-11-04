@@ -362,6 +362,8 @@ export async function verifyChart928DraftSql(
     "TO [UQP_Chart_Untrusted]; " +
     "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardChartCreatePermit " +
     "TO [UQP_Chart_Writer]; " +
+    "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardWidget " +
+    "TO [UQP_Chart_Writer]; " +
     "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardChartWidgetSeal " +
     "TO [UQP_Chart_Writer]; " +
     "DENY INSERT,UPDATE,DELETE ON OBJECT::uqp.DashboardChartTrustRequest " +
@@ -376,7 +378,10 @@ export async function verifyChart928DraftSql(
     "EXECUTE AS USER=N'UQP_Chart_Writer'; " +
     "SELECT HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreate_IsolatedDraft',N'OBJECT',N'EXECUTE') AS WriterExecute, " +
     "HAS_PERMS_BY_NAME(N'uqp.DashboardChartCreatePermit',N'OBJECT',N'INSERT') AS WriterPermitInsert, " +
-    "HAS_PERMS_BY_NAME(N'uqp.DashboardChartWidgetSeal',N'OBJECT',N'INSERT') AS WriterSealInsert; " +
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardChartWidgetSeal',N'OBJECT',N'INSERT') AS WriterSealInsert, " +
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',N'OBJECT',N'INSERT') AS WriterWidgetInsert, " +
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',N'OBJECT',N'UPDATE') AS WriterWidgetUpdate, " +
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',N'OBJECT',N'DELETE') AS WriterWidgetDelete; " +
     "REVERT"
   );
   const sets=Array.isArray(rights.recordsets)
@@ -389,6 +394,8 @@ export async function verifyChart928DraftSql(
   assert.equal(Number(sets[1]?.[0]?.WriterExecute),1);
   assert.equal(Number(sets[1]?.[0]?.WriterPermitInsert??0),0);
   assert.equal(Number(sets[1]?.[0]?.WriterSealInsert??0),0);
+  for(const flag of ["WriterWidgetInsert","WriterWidgetUpdate","WriterWidgetDelete"])
+    assert.equal(Number(sets[1]?.[0]?.[flag]),0);
   const permissions=(await q(
     "SELECT (SELECT COUNT_BIG(*) FROM sys.database_role_members m " +
     "JOIN sys.database_principals roleName ON roleName.principal_id=m.role_principal_id " +
