@@ -17,9 +17,11 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
   await exec([
     "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT NOT NULL PRIMARY KEY,DashboardId BIGINT NOT NULL);",
     "CREATE TABLE uqp.DashboardWidget(Id BIGINT NOT NULL PRIMARY KEY,ProfileId BIGINT NOT NULL,WidgetType NVARCHAR(30) NOT NULL,SourceKey NVARCHAR(64) NOT NULL,ConfigJson NVARCHAR(MAX) NOT NULL);",
-    "CREATE TABLE uqp.DashboardChartWidgetSeal(WidgetId BIGINT NOT NULL PRIMARY KEY REFERENCES uqp.DashboardWidget(Id),ConfigDigest CHAR(64) NOT NULL,IsActive BIT NOT NULL,SealedBy BIGINT NOT NULL,SealRowVersion ROWVERSION NOT NULL);",
-    "CREATE TABLE uqp.DashboardChartPrivacyReview(Id BIGINT NOT NULL PRIMARY KEY,DashboardId BIGINT NOT NULL,QueryId BIGINT NOT NULL,DatasetId BIGINT NOT NULL,SourceKey NVARCHAR(64) NOT NULL,CategoryColumn NVARCHAR(128) NOT NULL,ValueColumn NVARCHAR(128) NOT NULL,QueryRevision BINARY(8) NOT NULL,DatasetRevision BINARY(8) NOT NULL,PolicyRevision CHAR(64) NOT NULL,Status VARCHAR(20) NOT NULL,MinimumCellCount INT NOT NULL,CategoryPrivacyReviewed BIT NOT NULL,DifferencingRiskReviewed BIT NOT NULL,ReviewerUserId BIGINT NOT NULL,AuditLogId BIGINT NOT NULL,ReviewedAtUtc DATETIME2(3) NOT NULL,ValidUntilUtc DATETIME2(3) NOT NULL,ReviewRowVersion ROWVERSION NOT NULL);",
-    "CREATE UNIQUE INDEX UX_ChartPrivacyReview_Approved ON uqp.DashboardChartPrivacyReview(DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn) WHERE Status='APPROVED';"
+    "CREATE TABLE uqp.DashboardChartWidgetSeal(WidgetId BIGINT NOT NULL PRIMARY KEY REFERENCES uqp.DashboardWidget(Id),ConfigDigest CHAR(64) NOT NULL,IsActive BIT NOT NULL,SealedBy BIGINT NOT NULL,AuditLogId BIGINT NULL,SealRowVersion ROWVERSION NOT NULL);",
+    "CREATE TABLE uqp.DashboardChartPrivacyReview(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,DashboardId BIGINT NOT NULL,QueryId BIGINT NOT NULL,DatasetId BIGINT NOT NULL,SourceKey NVARCHAR(64) NOT NULL,CategoryColumn NVARCHAR(128) NOT NULL,ValueColumn NVARCHAR(128) NOT NULL,QueryRevision BINARY(8) NOT NULL,DatasetRevision BINARY(8) NOT NULL,PolicyRevision CHAR(64) NOT NULL,Status VARCHAR(20) NOT NULL,MinimumCellCount INT NOT NULL,CategoryPrivacyReviewed BIT NOT NULL,DifferencingRiskReviewed BIT NOT NULL,RequestedByUserId BIGINT NOT NULL DEFAULT(8),RequestedAtUtc DATETIME2(3) NOT NULL DEFAULT(SYSUTCDATETIME()),ReviewerUserId BIGINT NULL,AuditLogId BIGINT NULL,ReviewedAtUtc DATETIME2(3) NULL,ValidUntilUtc DATETIME2(3) NULL,ReviewRowVersion ROWVERSION NOT NULL);",
+    "CREATE UNIQUE INDEX UX_ChartPrivacyReview_Approved ON uqp.DashboardChartPrivacyReview(DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn) WHERE Status='APPROVED';",
+    "CREATE TABLE uqp.AuditLog(Id BIGINT IDENTITY(1,1) PRIMARY KEY,EventType NVARCHAR(100) NOT NULL,EventCategory NVARCHAR(40) NOT NULL,IsImportant BIT NOT NULL,UserId BIGINT NOT NULL,Status NVARCHAR(20) NOT NULL,ParametersJson NVARCHAR(MAX) NOT NULL,CompletedAtUtc DATETIME2(3) NOT NULL);",
+    "CREATE TABLE uqp.DashboardChartTrustRequest(RequestId UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,Action NVARCHAR(40) NOT NULL,ActorId BIGINT NOT NULL,AuditLogId BIGINT NULL);"
   ].join("\n"));
   const config = {
     version: 1, chartType: "BAR", dataSourceKey: "PRIMARY",
@@ -67,8 +69,8 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
     .input("queryRevision", sql.Binary, Buffer.from(scope.queryRevision, "hex"))
     .input("datasetRevision", sql.Binary, Buffer.from(scope.datasetRevision, "hex"))
     .input("policyRevision", sql.Char(64), scope.policyRevision)
-    .query("INSERT uqp.DashboardChartPrivacyReview(Id,DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn,QueryRevision,DatasetRevision,PolicyRevision,Status,MinimumCellCount,CategoryPrivacyReviewed,DifferencingRiskReviewed,ReviewerUserId,AuditLogId,ReviewedAtUtc,ValidUntilUtc) " +
-      "VALUES(123,7,9,10,'PRIMARY','ROOM','TOTAL',@queryRevision,@datasetRevision,@policyRevision,'APPROVED',5,1,1,77,9876,DATEADD(day,-1,SYSUTCDATETIME()),DATEADD(day,30,SYSUTCDATETIME()));");
+    .query("SET IDENTITY_INSERT uqp.DashboardChartPrivacyReview ON; INSERT uqp.DashboardChartPrivacyReview(Id,DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn,QueryRevision,DatasetRevision,PolicyRevision,Status,MinimumCellCount,CategoryPrivacyReviewed,DifferencingRiskReviewed,ReviewerUserId,AuditLogId,ReviewedAtUtc,ValidUntilUtc) " +
+      "VALUES(123,7,9,10,'PRIMARY','ROOM','TOTAL',@queryRevision,@datasetRevision,@policyRevision,'APPROVED',5,1,1,77,9876,DATEADD(day,-1,SYSUTCDATETIME()),DATEADD(day,30,SYSUTCDATETIME())); SET IDENTITY_INSERT uqp.DashboardChartPrivacyReview OFF;");
   const initialReview = await readers.readPublicReview(scope, actor);
   assert(initialReview && initialReview.minimumCellCount === 5);
   assert.equal(await readers.readPublicReview({ ...scope, policyRevision: "d".repeat(64) }, actor), null);
