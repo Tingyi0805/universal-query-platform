@@ -42,12 +42,12 @@ test("all dormant writer operations stop at feature gate before any SQL or autho
   }),"CHART_WRITE_DISABLED");
   await blocked(f.writer.requestReview({scope,actor,requestId:id}),"CHART_WRITE_DISABLED");
   await blocked(f.writer.approveReview({
-    id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
+    dashboardId:7,id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
     minimumCellCount:5,validDays:30,
     categoryPrivacyReviewed:true,differencingRiskReviewed:true,
   }),"CHART_WRITE_DISABLED");
   await blocked(f.writer.revokeReview({
-    id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
+    dashboardId:7,id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
   }),"CHART_WRITE_DISABLED");
   assert.deepEqual(f.calls(),{poolCalls:0,authorizations:0,liveReads:0});
 });
@@ -65,7 +65,7 @@ test("invalid request ID, missing CAS and untrusted review scope fail before tou
     scope:{...scope,sourceKey:"PRIMARY;DROP"},actor,requestId:id,
   }),"CHART_REVIEW_INPUT_INVALID");
   await blocked(f.writer.approveReview({
-    id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
+    dashboardId:7,id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
     minimumCellCount:1,validDays:30,
     categoryPrivacyReviewed:true,differencingRiskReviewed:true,
   }),"CHART_REVIEW_INPUT_INVALID");
@@ -75,4 +75,17 @@ test("enabled writers without a configured pool never issue success",async()=>{
   const f=fixture(true);
   await blocked(f.writer.requestReview({scope,actor,requestId:id}),"CHART_WRITE_UNAVAILABLE");
   assert.deepEqual(f.calls(),{poolCalls:1,authorizations:0,liveReads:0});
+});
+
+test("2B-11 refuses review decision without a valid parent lock hint",async()=>{
+  const f=fixture(true);
+  await blocked(f.writer.revokeReview({
+    dashboardId:0,id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
+  }),"CHART_REVIEW_INPUT_INVALID");
+  await blocked(f.writer.approveReview({
+    dashboardId:0,id:123,expectedRevision:"a".repeat(16),actor,requestId:id,
+    minimumCellCount:5,validDays:30,
+    categoryPrivacyReviewed:true,differencingRiskReviewed:true,
+  }),"CHART_REVIEW_INPUT_INVALID");
+  assert.deepEqual(f.calls(),{poolCalls:0,authorizations:0,liveReads:0});
 });

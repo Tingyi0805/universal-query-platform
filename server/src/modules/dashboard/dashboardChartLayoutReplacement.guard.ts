@@ -5,8 +5,11 @@
 import sql from "mssql";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import type { DashboardProfileInput } from "./dashboardLayout.repository.js";
+import {
+  lockChartDashboardParent, lockChartDashboardProfiles, lockChartDashboardWidgets,
+  type ChartLockRequestFactory,
+} from "./dashboardChartMutationLocks.js";
 
-type RequestFactory = (transaction: sql.Transaction) => sql.Request;
 const legacyTypes = new Set([
   "TEXT", "PARAMETER", "FIELD", "CLOCK", "PAGE_INFO",
   "COUNTDOWN", "TABLE", "CONTAINER",
@@ -24,7 +27,7 @@ const blocked = (): never => {
 export async function assertChartLayoutReplacementSafe(
   tx: sql.Transaction, dashboardId: number,
   profiles: readonly DashboardProfileInput[],
-  request: RequestFactory = t => new sql.Request(t),
+  request: ChartLockRequestFactory = t => new sql.Request(t),
 ): Promise<void> {
   if (!Number.isSafeInteger(dashboardId) || dashboardId < 1 ||
       !Array.isArray(profiles) || profiles.some(profile =>
@@ -33,17 +36,12 @@ export async function assertChartLayoutReplacementSafe(
           !widget || !legacyTypes.has(widget.widgetType))))
     return blocked();
 
-  const parent = (await request(tx).input("dashboardId", sql.BigInt, dashboardId)
-    .query("SELECT Id FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@dashboardId")).recordset;
-  if (parent.length !== 1) return blocked();
-
-  // This check works against the *current* production Widget catalog even
-  // when neither future CHART sidecar table has been installed.
-  const chart = (await request(tx).input("dashboardId", sql.BigInt, dashboardId)
-    .query("SELECT TOP (1) w.Id FROM uqp.DashboardDisplayProfile p WITH (UPDLOCK,HOLDLOCK) " +
-      "JOIN uqp.DashboardWidget w WITH (UPDLOCK,HOLDLOCK) ON w.ProfileId=p.Id " +
-      "WHERE p.DashboardId=@dashboardId AND w.WidgetType=N'CHART'")).recordset;
-  if (chart.length) return blocked();
+  if (!await lockChartDashboardParent(tx,dashboardId,request)) return blocked();
+  const profiles = await lockChartDashboardProfiles(tx,dashboardId,request);
+  const widgets = await lockChartDashboardWidgets(tx,dashboardId,request);
+  if (!profiles || !widgets || widgets.some(w =>
+      !profiles.includes(w.profileId) || w.widgetType === "CHART"))
+    return blocked();
 
   // Check the optional sidecar separately. SQL Server may compile references
   // to an absent table even inside an IF branch, so do not use a single batch.

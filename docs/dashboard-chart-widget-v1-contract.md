@@ -481,3 +481,31 @@ SQL Server 2019／2022 使用既有 D1 隔離 `UQP_CF_` 合成資料庫，測試
 **正式啟用前仍須補齊**：未來 CHART 建立、版型編輯、封印、停用或刪除應統一 Dashboard → Profile → Widget → Seal 鎖順序，並提供真正的封印 epoch／CAS 與原子 Audit；資料庫 Trigger／完整 FK、直接 SQL 更新、跨進程並行與完整 925 實際 Schema 仍未驗收。此次守衛不能代替上述完整寫入者契約，尤其不能由側表不存在推論可以開放圖表。
 
 CHART 型別、正式 SQL CHECK、管理 API、設計器、播放器、Migration 927、PIN Runtime 均保持不變；PR 維持 Draft，正式 `C:\\UQP` 不變。
+
+
+## 17. 2B-11：共用 CHART Writer 鎖定順序及跨連線競爭（仍未啟用）
+
+新增 `dashboardChartMutationLocks.ts`，所有參與的 Application Writer 在
+同一個 `SERIALIZABLE` SQL transaction 內依序取得
+**Dashboard → DashboardDisplayProfile → DashboardWidget →（若存在）DashboardChartWidgetSeal**
+的 `UPDLOCK/HOLDLOCK`。不得以一個多表 JOIN 推定 SQL Optimizer 一定會使用
+指定的鎖定順序。2B-10 的兩條既有版型儲存路徑及 2B-9 dormant Chart Seal
+寫入器共享此明確鎖序，已有封印仍拒絕被原有整批刪除重建流程覆蓋。
+
+隱私審查 requestReview 在讀取即時 scope 以前先鎖 Dashboard。
+approveReview 與 revokeReview 必填 `dashboardId`，**僅為選擇先鎖哪個父層**；
+之後再以 SQL 儲存的 Review.DashboardId 核對，不信任呼叫端 ID 宣稱。
+RequestId 不可重送、交易內 AuditLog、TokenVersion、RBAC、來源修訂
+重驗、Seal／Review RowVersion CAS 均保留。
+
+SQL Server 2019／2022 的既有 D1 `UQP_CF_` 隔離合成資料庫新增
+「兩條不同 SQL 連線，一方持有 Dashboard parent 更新鎖，另一方
+嘗試執行版型刪除重建」競爭案例；必須以 SQL Server 鎖定逾時拒絕，
+原 Widget 仍存在，釋放鎖後普通版型可照舊儲存。
+
+**限制：**應用程式鎖契約不能防護直接使用 SQL DML、未遵守鎖序的其他
+Writer 或持久化資料庫權限錯誤。正式 FK／Trigger／封印不可繞過保護、
+跨程序節點的完整競爭驗證，需留給 2B-12 migration 與進一步驗收；
+不能因兩交易測試通過即宣告所有並行或資料完整性風險皆已解決。
+沒有啟用 CHART、沒有新 API／Migration、沒有改正式 `C:\\UQP`、
+PIN／927 或現有 Dashboard 播放器。

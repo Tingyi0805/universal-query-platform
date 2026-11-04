@@ -6,6 +6,9 @@ import { createHash } from "node:crypto";
 import sql from "mssql";
 import { chartWidgetConfigSchema } from "./dashboardChartWidget.contract.js";
 import type { PublicCountScope } from "./dashboardChartPublicCountPrivacy.js";
+import {
+  lockChartDashboardParent, lockChartDashboardProfiles, lockChartDashboardWidgets,
+} from "./dashboardChartMutationLocks.js";
 
 export type ChartTrustActor = Readonly<{ userId: number; tokenVersion: number }>;
 export type ChartTrustAction = "SEAL_WIDGET" | "REQUEST_REVIEW" | "APPROVE_REVIEW" | "REVOKE_REVIEW";
@@ -98,6 +101,11 @@ function requestIsValid(a: ChartTrustActor, requestId: string){
   if(!actorIsValid(a)||!isUUID(requestId))return fail("CHART_WRITE_INPUT_INVALID");
 }
 
+async function lockScopeParent(tx: sql.Transaction, dashboardId: number): Promise<void> {
+  if (!await lockChartDashboardParent(tx,dashboardId))
+    return fail("CHART_TRUST_SCOPE_STALE");
+}
+
 export function createDormantChartTrustWriters(deps: ChartTrustWriterDependencies){
   return {
     /** CAS on sidecar SealRowVersion; Widget ConfigJson and seal are updated in
@@ -117,18 +125,24 @@ export function createDormantChartTrustWriters(deps: ChartTrustWriterDependencie
       const digest=createHash("sha256").update(normalized).digest("hex");
       return inTransaction(deps,async tx=>{
         const scope={dashboardId,widgetId};
+        await lockScopeParent(tx,dashboardId);
         await deps.authorize(tx,actor,"SEAL_WIDGET",scope);
+        // 2B-11: lock parent -> all related profiles -> widgets -> seal
+        // in this single SERIALIZABLE transaction. No optimizer JOIN
+        // order is treated as a substitute for this explicit sequence.
+        const profiles=await lockChartDashboardProfiles(tx,dashboardId);
+        const widgets=await lockChartDashboardWidgets(tx,dashboardId);
+        const matching=widgets?.filter(w=>w.id===widgetId)??[];
+        const widget=matching.length===1?matching[0]:null;
+        if(!profiles||!widgets||!widget||!profiles.includes(widget.profileId)||
+            widget.widgetType!=="CHART"||widget.sourceKey!==parsed.data.dataSourceKey)
+          return fail("CHART_SEAL_VERSION_CONFLICT");
         const locked=(await new sql.Request(tx)
-          .input("dashboardId",sql.BigInt,dashboardId)
           .input("widgetId",sql.BigInt,widgetId)
-          .query("SELECT w.Id,w.WidgetType,w.SourceKey,s.SealRowVersion,s.IsActive " +
-            "FROM uqp.DashboardWidget w WITH(UPDLOCK,HOLDLOCK) " +
-            "JOIN uqp.DashboardDisplayProfile p WITH(UPDLOCK,HOLDLOCK) ON p.Id=w.ProfileId " +
-            "JOIN uqp.DashboardChartWidgetSeal s WITH(UPDLOCK,HOLDLOCK) ON s.WidgetId=w.Id " +
-            "WHERE p.DashboardId=@dashboardId AND w.Id=@widgetId")).recordset;
+          .query("SELECT SealRowVersion,IsActive FROM uqp.DashboardChartWidgetSeal " +
+            "WITH(UPDLOCK,HOLDLOCK) WHERE WidgetId=@widgetId")).recordset;
         const row=locked.length===1?locked[0]:null;
-        if(!row||row.WidgetType!=="CHART"||row.SourceKey!==parsed.data.dataSourceKey||
-            row.IsActive!==true||revision(row.SealRowVersion)!==expectedRevision)
+        if(!row||row.IsActive!==true||revision(row.SealRowVersion)!==expectedRevision)
           return fail("CHART_SEAL_VERSION_CONFLICT");
         const auditId=await audit(tx,actor,"SEAL_WIDGET",requestId,{dashboardId,widgetId,digest});
         const changed=(await new sql.Request(tx)
@@ -157,6 +171,7 @@ export function createDormantChartTrustWriters(deps: ChartTrustWriterDependencie
       requestIsValid(input.actor,input.requestId);
       if(!validScope(input.scope))return fail("CHART_REVIEW_INPUT_INVALID");
       return inTransaction(deps,async tx=>{
+        await lockScopeParent(tx,input.scope.dashboardId);
         await deps.authorize(tx,input.actor,"REQUEST_REVIEW",input.scope);
         const live=await deps.readLiveScope(tx,input.scope);
         if(!live||!sameScope(input.scope,live))return fail("CHART_REVIEW_SCOPE_STALE");
@@ -205,22 +220,25 @@ export function createDormantChartTrustWriters(deps: ChartTrustWriterDependencie
     /** Review decisions require a *different*, independently authorized
      * actor from the requester. Must explicitly attest BOTH risk reviews. */
     approveReview: async(input:{
-      id:number;expectedRevision:string;actor:ChartTrustActor;requestId:string;
+      dashboardId:number;id:number;expectedRevision:string;actor:ChartTrustActor;requestId:string;
       minimumCellCount:number;validDays:number;
       categoryPrivacyReviewed:true;differencingRiskReviewed:true;
     }):Promise<string>=>{
       requestIsValid(input.actor,input.requestId);
-      if(!validId(input.id)||!isRev(input.expectedRevision)||
+      if(!validId(input.dashboardId)||!validId(input.id)||!isRev(input.expectedRevision)||
           !Number.isSafeInteger(input.minimumCellCount)||input.minimumCellCount<5||
           input.minimumCellCount>1000||!Number.isSafeInteger(input.validDays)||
           input.validDays<1||input.validDays>90||
           input.categoryPrivacyReviewed!==true||input.differencingRiskReviewed!==true)
         return fail("CHART_REVIEW_INPUT_INVALID");
       return inTransaction(deps,async tx=>{
+        // DashboardId is only a lock-selection hint, never authority.
+        await lockScopeParent(tx,input.dashboardId);
         const records=(await new sql.Request(tx).input("id",sql.BigInt,input.id)
           .query("SELECT * FROM uqp.DashboardChartPrivacyReview WITH(UPDLOCK,HOLDLOCK) WHERE Id=@id")).recordset;
         const r=records.length===1?records[0]:null;
-        if(!r||r.Status!=="REQUESTED"||revision(r.ReviewRowVersion)!==input.expectedRevision||
+        if(!r||Number(r.DashboardId)!==input.dashboardId||
+            r.Status!=="REQUESTED"||revision(r.ReviewRowVersion)!==input.expectedRevision||
             !validId(Number(r.RequestedByUserId))||Number(r.RequestedByUserId)===input.actor.userId)
           return fail("CHART_REVIEW_VERSION_CONFLICT");
         const scope=keyFromRow(r);
@@ -250,14 +268,16 @@ export function createDormantChartTrustWriters(deps: ChartTrustWriterDependencie
         return updated;
       });
     },
-    revokeReview: async(input:{id:number;expectedRevision:string;actor:ChartTrustActor;requestId:string;}):Promise<string>=>{
+    revokeReview: async(input:{dashboardId:number;id:number;expectedRevision:string;actor:ChartTrustActor;requestId:string;}):Promise<string>=>{
       requestIsValid(input.actor,input.requestId);
-      if(!validId(input.id)||!isRev(input.expectedRevision))return fail("CHART_REVIEW_INPUT_INVALID");
+      if(!validId(input.dashboardId)||!validId(input.id)||!isRev(input.expectedRevision))return fail("CHART_REVIEW_INPUT_INVALID");
       return inTransaction(deps,async tx=>{
+        await lockScopeParent(tx,input.dashboardId);
         const rows=(await new sql.Request(tx).input("id",sql.BigInt,input.id)
           .query("SELECT * FROM uqp.DashboardChartPrivacyReview WITH(UPDLOCK,HOLDLOCK) WHERE Id=@id")).recordset;
         const r=rows.length===1?rows[0]:null;
-        if(!r||r.Status!=="APPROVED"||revision(r.ReviewRowVersion)!==input.expectedRevision)
+        if(!r||Number(r.DashboardId)!==input.dashboardId||
+            r.Status!=="APPROVED"||revision(r.ReviewRowVersion)!==input.expectedRevision)
           return fail("CHART_REVIEW_VERSION_CONFLICT");
         const scope=keyFromRow(r);
         if(!validScope(scope))return fail("CHART_REVIEW_SCOPE_STALE");

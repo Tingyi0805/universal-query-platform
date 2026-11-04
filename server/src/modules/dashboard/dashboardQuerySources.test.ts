@@ -350,7 +350,8 @@ for (const auditFailure of [false, true]) {
           // any CHART rows, and the optional sidecar before destructive DML.
           // This isolated mock represents the existing legacy-only catalog.
           if (text.startsWith("SELECT Id FROM uqp.Dashboard WITH")) return { recordset: [columns] };
-          if (text.includes("w.WidgetType=N'CHART'")) return { recordset: [] };
+          if (text.startsWith("SELECT Id FROM uqp.DashboardDisplayProfile WITH")) return { recordset: [] };
+          if (text.startsWith("SELECT w.Id,w.ProfileId,w.WidgetType,w.SourceKey")) return { recordset: [] };
           if (text.includes("OBJECT_ID(N'uqp.DashboardChartWidgetSeal'")) return { recordset: [{ SealTableId: null }] };
           if (text.startsWith("SELECT * FROM uqp.DashboardDataSource")) return { recordset: [source] };
           if (text.includes("INSERT INTO uqp.DashboardDisplayProfile")) return { recordset: [{Id: 101}] };

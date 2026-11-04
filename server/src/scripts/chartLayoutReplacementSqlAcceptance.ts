@@ -57,6 +57,31 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
     "INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(301,700); " +
     "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
     "VALUES(302,301,N'TEXT',N'PRIMARY',N'{}');");
+  // Two independent SQL connections contend for the same Dashboard.
+  // A held parent lock cannot be bypassed by the existing layout writer.
+  const holder=new sql.Transaction(db);
+  await holder.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  const contender=new sql.Transaction(db);
+  try {
+    await new sql.Request(holder).input("dashboardId",sql.BigInt,700)
+      .query("SELECT Id FROM uqp.Dashboard WITH (UPDLOCK,HOLDLOCK) WHERE Id=@dashboardId");
+    await contender.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    try {
+      await new sql.Request(contender).query("SET LOCK_TIMEOUT 400");
+      await assert.rejects(writeDashboardLayout(contender,700,[]),
+        (error: unknown) => /lock request time out/i.test(String(error)) ||
+          (typeof error === "object" && error !== null &&
+            Number((error as {number?: number}).number) === 1222));
+    } finally {
+      await contender.rollback().catch(()=>undefined);
+    }
+  } finally {
+    await holder.rollback().catch(()=>undefined);
+  }
+  assert.equal(Number((await exec(
+    "SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=302"
+  )).recordset[0]?.Total),1);
+
   const tx = new sql.Transaction(db);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
   try {
@@ -75,5 +100,6 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
   assert.equal(Number(after?.Widgets), 0);
   assert.equal(Number(after?.Profiles), 0);
   assert.equal(Number(after?.ProtectedWidget), 1);
+  console.log("CHART_LAYOUT_2B11_SQL_PARENT_LOCK_CONTENTION_PASS");
   console.log("CHART_LAYOUT_2B10_SQL_ATOMIC_DELETE_FENCE_PASS");
 }

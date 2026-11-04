@@ -4,66 +4,58 @@ import type sql from "mssql";
 import { assertChartLayoutReplacementSafe } from "./dashboardChartLayoutReplacement.guard.js";
 import { QuerySourceError } from "./dashboardQuerySources.service.js";
 import type { DashboardProfileInput } from "./dashboardLayout.repository.js";
-
-const sameCode = (err: unknown) =>
-  err instanceof QuerySourceError && err.code === "CHART_LAYOUT_ATOMIC_WRITER_REQUIRED";
-const request = (respond: (query: string) => unknown[]) => (() => ({
+const blocked = (e: unknown) => e instanceof QuerySourceError &&
+  e.code === "CHART_LAYOUT_ATOMIC_WRITER_REQUIRED";
+const request = (read: (sql: string) => unknown[]) => (() => ({
   input() { return this; },
-  async query(query: string) { return { recordset: respond(query) }; },
+  async query(sql: string) { return {recordset: read(sql)}; },
 })) as unknown as (tx: sql.Transaction) => sql.Request;
-
-test("2B-10 rejects a CHART or unknown input before looking up the catalog", async () => {
-  const never = request(() => { throw Error("unexpected DB read"); });
-  const profile = { widgets: [{ widgetType: "CHART" }] } as unknown as DashboardProfileInput;
-  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction, 7, [profile], never), sameCode);
-  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction, 7, [
-    { widgets: [{ widgetType: "TEXT" }, { widgetType: "NOT_ALLOWED" }] } as unknown as DashboardProfileInput,
-  ], never), sameCode);
-  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction, 0, [], never), sameCode);
+const standard = (s: string, widget: unknown[] = [], sidecar: number | null = null) => {
+  if (s.startsWith("SELECT Id FROM uqp.Dashboard WITH")) return [{Id:7}];
+  if (s.startsWith("SELECT Id FROM uqp.DashboardDisplayProfile WITH")) return [{Id:22}];
+  if (s.startsWith("SELECT w.Id,w.ProfileId,w.WidgetType,w.SourceKey")) return widget;
+  if (s.includes("OBJECT_ID(")) return [{SealTableId:sidecar}];
+  if (s.includes("JOIN uqp.DashboardChartWidgetSeal")) return [];
+  throw Error("unexpected read " + s);
+};
+test("2B-11 refuses CHART/unknown inputs before DB access", async()=>{
+  const never=request(()=>{throw Error("SQL must not be reached");});
+  for(const type of ["CHART","UNKNOWN"]) {
+    const profile={widgets:[{widgetType:type}]} as unknown as DashboardProfileInput;
+    await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction,7,[profile],never),blocked);
+  }
+  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction,0,[],never),blocked);
 });
-
-test("2B-10 fails closed on existing CHART with no seal catalog", async () => {
-  let statements = 0;
-  const fake = request(query => {
-    statements++;
-    if (query.startsWith("SELECT Id FROM uqp.Dashboard")) return [{ Id: 7 }];
-    if (query.includes("w.WidgetType=N'CHART'")) return [{ Id: 88 }];
-    throw Error("must reject before sidecar inspection");
-  });
-  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction, 7, [], fake), sameCode);
-  assert.equal(statements, 2);
+test("2B-11 explicit lock order protects a CHART without checking sidecar",async()=>{
+  const calls:string[]=[];
+  const chart=[{Id:88,ProfileId:22,WidgetType:"CHART",SourceKey:"PRIMARY"}];
+  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction,7,[],
+    request(s=>{calls.push(s);return standard(s,chart);})
+  ),blocked);
+  assert.equal(calls.length,3);
+  assert.match(calls[0]!,/FROM uqp.Dashboard WITH \(UPDLOCK,HOLDLOCK\)/);
+  assert.match(calls[1]!,/FROM uqp.DashboardDisplayProfile WITH \(UPDLOCK,HOLDLOCK\)/);
+  assert.match(calls[2]!,/FROM uqp.DashboardWidget w WITH \(UPDLOCK,HOLDLOCK\)/);
 });
-
-test("2B-10 accepts only an empty legacy layout when seal sidecar is absent", async () => {
-  const queries: string[] = [];
-  const fake = request(query => {
-    queries.push(query);
-    if (query.startsWith("SELECT Id FROM uqp.Dashboard")) return [{ Id: 7 }];
-    if (query.includes("w.WidgetType=N'CHART'")) return [];
-    if (query.includes("OBJECT_ID")) return [{ SealTableId: null }];
-    throw Error("unexpected read");
-  });
-  await assert.doesNotReject(assertChartLayoutReplacementSafe({} as sql.Transaction, 7, [], fake));
-  assert.equal(queries.length, 3);
+test("2B-11 permits legacy layouts without chart sidecar",async()=>{
+  const widgets=[{Id:88,ProfileId:22,WidgetType:"TEXT",SourceKey:"PRIMARY"}];
+  await assert.doesNotReject(assertChartLayoutReplacementSafe({} as sql.Transaction,7,[],
+    request(s=>standard(s,widgets))
+  ));
 });
-
-test("2B-10 sidecar exists: protected even when widget claims TEXT", async () => {
-  const fake = request(query => {
-    if (query.startsWith("SELECT Id FROM uqp.Dashboard")) return [{ Id: 7 }];
-    if (query.includes("w.WidgetType=N'CHART'")) return [];
-    if (query.includes("OBJECT_ID")) return [{ SealTableId: 123 }];
-    if (query.includes("JOIN uqp.DashboardChartWidgetSeal")) return [{ WidgetId: 88 }];
-    throw Error("unexpected read");
-  });
-  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction, 7, [], fake), sameCode);
+test("2B-11 refuses leftover inactive seal on a TEXT widget",async()=>{
+  const widgets=[{Id:88,ProfileId:22,WidgetType:"TEXT",SourceKey:"PRIMARY"}];
+  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction,7,[],
+    request(s=>s.includes("JOIN uqp.DashboardChartWidgetSeal")
+      ? [{WidgetId:88}]:standard(s,widgets,123))
+  ),blocked);
 });
-
-test("2B-10 fails closed on broken schema metadata rather than assuming no seals", async () => {
-  const fake = request(query => {
-    if (query.startsWith("SELECT Id FROM uqp.Dashboard")) return [{ Id: 7 }];
-    if (query.includes("w.WidgetType=N'CHART'")) return [];
-    if (query.includes("OBJECT_ID")) return [];
-    throw Error("unexpected read");
-  });
-  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction, 7, [], fake), sameCode);
+test("2B-11 rejects broken catalog or profile-widget membership",async()=>{
+  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction,7,[],
+    request(s=>s.includes("OBJECT_ID(")?[]:standard(s))
+  ),blocked);
+  const orphan=[{Id:88,ProfileId:999,WidgetType:"TEXT",SourceKey:"PRIMARY"}];
+  await assert.rejects(assertChartLayoutReplacementSafe({} as sql.Transaction,7,[],
+    request(s=>standard(s,orphan))
+  ),blocked);
 });

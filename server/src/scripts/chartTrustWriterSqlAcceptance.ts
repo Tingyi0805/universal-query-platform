@@ -113,12 +113,12 @@ export async function verifyChartTrustWriterSql(db: sql.ConnectionPool){
     scope:initialScope,actor:requester,requestId:uid(5),
   }),ChartTrustWriteError);
   await assert.rejects(writer.approveReview({
-    id:requested.id,expectedRevision:requested.revision,
+    dashboardId:7,id:requested.id,expectedRevision:requested.revision,
     actor:requester,requestId:uid(6),minimumCellCount:5,validDays:30,
     categoryPrivacyReviewed:true,differencingRiskReviewed:true,
   }),ChartTrustWriteError); // requester cannot approve
   const approvedRevision=await writer.approveReview({
-    id:requested.id,expectedRevision:requested.revision,
+    dashboardId:7,id:requested.id,expectedRevision:requested.revision,
     actor:reviewer,requestId:uid(7),minimumCellCount:5,validDays:90,
     categoryPrivacyReviewed:true,differencingRiskReviewed:true,
   });
@@ -134,18 +134,18 @@ export async function verifyChartTrustWriterSql(db: sql.ConnectionPool){
   const approved=await readers.readPublicReview(initialScope,scopeViewer);
   assert(approved&&approved.minimumCellCount===5);
   await assert.rejects(writer.approveReview({
-    id:requested.id,expectedRevision:requested.revision,
+    dashboardId:7,id:requested.id,expectedRevision:requested.revision,
     actor:reviewer,requestId:uid(8),minimumCellCount:5,validDays:30,
     categoryPrivacyReviewed:true,differencingRiskReviewed:true,
   }),ChartTrustWriteError);
   const revoked=await writer.revokeReview({
-    id:requested.id,expectedRevision:approvedRevision,
+    dashboardId:7,id:requested.id,expectedRevision:approvedRevision,
     actor:reviewer,requestId:uid(9),
   });
   assert(revoked!==approvedRevision);
   assert.equal(await readers.readPublicReview(initialScope,scopeViewer),null);
   await assert.rejects(writer.revokeReview({
-    id:requested.id,expectedRevision:approvedRevision,actor:reviewer,requestId:uid(10),
+    dashboardId:7,id:requested.id,expectedRevision:approvedRevision,actor:reviewer,requestId:uid(10),
   }),ChartTrustWriteError);
   // Revocation cannot be undone by reusing an old approval or RequestId.
   const second=await writer.requestReview({
@@ -154,7 +154,7 @@ export async function verifyChartTrustWriterSql(db: sql.ConnectionPool){
   assert(second.id!==requested.id);
   await db.request().query("UPDATE uqp.Dataset SET SqlText=SqlText WHERE Id=10");
   await assert.rejects(writer.approveReview({
-    id:second.id,expectedRevision:second.revision,
+    dashboardId:7,id:second.id,expectedRevision:second.revision,
     actor:reviewer,requestId:uid(12),minimumCellCount:5,validDays:30,
     categoryPrivacyReviewed:true,differencingRiskReviewed:true,
   }),ChartTrustWriteError);
