@@ -509,3 +509,38 @@ Writer 或持久化資料庫權限錯誤。正式 FK／Trigger／封印不可繞
 不能因兩交易測試通過即宣告所有並行或資料完整性風險皆已解決。
 沒有啟用 CHART、沒有新 API／Migration、沒有改正式 `C:\\UQP`、
 PIN／927 或現有 Dashboard 播放器。
+
+
+## 18. 2B-12：CHART 獨立 Schema 草案（928，不啟用）
+ 
+### 為何 928 僅置於 database/drafts
+現有 `server/src/scripts/migrate.ts` 自動掃描 `database/migrations/^\\d+_.*\\.sql$/`；
+直接加入數字命名的 CHART SQL，會使既有 ZIP 覆蓋更新流程在呼叫一般
+`db:migrate` 時執行尚未授權的安全結構。故保留 `927_workstation_pin_runtime.sql`
+原始內容、Ledger、PIN Runtime 設定不變；2B-12 僅在
+`database/drafts/928_dashboard_chart_trust_schema.sql` 存放非掃描、
+**未經批准不得對正式或一般測試 C:\\UQP 資料庫執行**的 DDL 草案。
+
+### 草案包含
+- 新增 Seal、Review、RequestId Ledger 三張 sidecar 表，以 FK／CHECK／ROWVERSION／
+  範圍唯一索引阻止孤兒資料、重複有效審查與無效期限。
+- DashboardWidget 的 `CK_DashboardWidget_Type` 草案增加 `CHART`，
+  但後置 Trigger 拒絕 CHART 的 INSERT／UPDATE／DELETE；這是「保留型別」
+  而非圖表功能上線。未來需用明確受授權的原子 Writer 替換 Freeze Gate，
+  才能啟用 CHART，絕不可單獨停用 Trigger。
+- 封印不能刪除、Review 決策不得逆轉／變更範圍、已消耗 RequestId
+  Ledger 只能做一次 AuditLogId NULL→非 NULL 更新；這些控制不能取代
+  權限最小化及完整跨節點驗收。
+- `CHART` 欄位 ConfigJson 本身仍以 SHA-256 Digest 與 SealRowVersion
+  由受信任 Reader 檢查，不允許 browser 提供 approval flag。
+
+### 驗證與階段界線
+草案由 2B-12 的 SQL Server 2019／2022 **獨立一次性合成資料庫**載入並
+驗證：首次安裝、重跑、部分結構拒絕、原有 TEXT 正常運作、直接 CHART
+DML／Seal DELETE／Review 回復／Request Ledger 改寫失敗、
+受限 FK、90 天有效期與交易完整性。
+
+**重要**：SQL Server sysadmin、具有 ALTER／DISABLE TRIGGER 權限的主體
+仍可繞過這些 DML 規則；正式部署需另驗證帳號最小權限、Schema 漂移、
+正式 925 狀態及 Writer 可在封印門檻內原子寫入。本階段無 CHART API、
+版型編輯器、播放器、PIN 或正式 migration 安裝。
