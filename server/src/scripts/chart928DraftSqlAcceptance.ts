@@ -54,9 +54,13 @@ export async function verifyChart928DraftSql(
    "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
-   " DashboardId BIGINT NOT NULL REFERENCES uqp.Dashboard(Id) ON DELETE CASCADE); " +
+   " DashboardId BIGINT NOT NULL," +
+   " CONSTRAINT FK_DashboardDisplayProfile_Dashboard FOREIGN KEY(DashboardId)" +
+   " REFERENCES uqp.Dashboard(Id) ON DELETE CASCADE); " +
    "CREATE TABLE uqp.DashboardWidget(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
-   " ProfileId BIGINT NOT NULL REFERENCES uqp.DashboardDisplayProfile(Id) ON DELETE CASCADE," +
+   " ProfileId BIGINT NOT NULL," +
+   " CONSTRAINT FK_DashboardWidget_Profile FOREIGN KEY(ProfileId)" +
+   " REFERENCES uqp.DashboardDisplayProfile(Id) ON DELETE CASCADE," +
    " WidgetType NVARCHAR(30) NOT NULL,SourceKey NVARCHAR(256) NULL," +
    " ConfigJson NVARCHAR(MAX) NOT NULL DEFAULT N'{}'," +
    " Title NVARCHAR(200) NULL,X INT NOT NULL DEFAULT(0),Y INT NOT NULL DEFAULT(0)," +
@@ -69,7 +73,8 @@ export async function verifyChart928DraftSql(
    "CREATE TABLE uqp.AuditLog(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " EventType NVARCHAR(50) NOT NULL,EventCategory NVARCHAR(20) NOT NULL," +
    " Status NVARCHAR(20) NOT NULL,UserId BIGINT NULL,IsImportant BIT NOT NULL," +
-   " ParametersJson NVARCHAR(MAX) NULL,CompletedAtUtc DATETIME2(0) NULL); " +
+   " ParametersJson NVARCHAR(MAX) NULL,CompletedAtUtc DATETIME2(0) NULL," +
+   " CONSTRAINT FK_AuditLog_User FOREIGN KEY(UserId) REFERENCES uqp.AppUser(Id)); " +
    "CREATE TABLE uqp.AuditLogArchive(Id BIGINT NOT NULL PRIMARY KEY," +
    " EventType NVARCHAR(100) NOT NULL,Status NVARCHAR(20) NOT NULL," +
    " UserId BIGINT NOT NULL,IsImportant BIT NOT NULL); " +
@@ -94,7 +99,7 @@ export async function verifyChart928DraftSql(
    "INSERT uqp.DatasetPublicDisplayPolicy(DatasetId) VALUES(10);");
   stage="BASE_SCHEMA_IDENTITY_AND_COLUMN_PARITY";
   await attestChartWriterBaseSqlCatalog(db);
-  console.log("CHART_2B15C_BASE_SCHEMA_PARITY_2019_2022_PASS");
+  console.log("CHART_2B15C_BASE_SCHEMA_COLUMNS_FK_2019_2022_PASS");
   stage="ATOMIC_CREATE_ROLE_FIXTURE";
   await q("INSERT uqp.Role(Id,IsActive) VALUES(1,1);" +
     "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY');" +
