@@ -5,6 +5,7 @@ import type {Request} from "express";
 import sql from "mssql";
 import {readVerifiedJwtActor} from "../auth/auth.middleware.js";
 import {getTokenSessionState} from "../auth/auth.repository.js";
+import {attestChartWriterSqlPools} from "./dashboardChartWriterBoundary.js";
 import {
   planDormantChartCreate,type DormantChartCreatePlan,
 } from "./dashboardChartAtomicCreate.contract.js";
@@ -43,4 +44,23 @@ export async function recheckChartActorInTransaction(
      live.tokenVersion===plan.tokenVersion&&
      live.permissions.includes("DESIGN_QUERY");
  }catch{return false;}
+}
+
+
+/** FUTURE API preflight, NOT an authorization to write. Both a verified JWT
+ * actor and two distinct low-rights SQL login identities are mandatory.
+ * No route is registered; this function never executes a mutation.
+ * The final stored procedure must independently recheck actor and RBAC inside
+ * its own SERIALIZABLE transaction, not trust this time-of-check.
+ */
+export async function prepareDormantChartWriteRequest(
+ req:Request,dashboardId:number,raw:unknown,
+ platformPool:sql.ConnectionPool,chartWriterPool:sql.ConnectionPool,
+):Promise<DormantChartCreatePlan|null> {
+ const plan=planVerifiedChartCreateRequest(req,dashboardId,raw);
+ if(!plan)return null;
+ try{
+   await attestChartWriterSqlPools(platformPool,chartWriterPool);
+   return plan;
+ }catch{return null;}
 }

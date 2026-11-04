@@ -3,10 +3,13 @@ import test from "node:test";
 import express from "express";
 import jwt from "jsonwebtoken";
 import {createServer} from "node:http";
+import type sql from "mssql";
+import {chartWriterIdentitySql} from "./dashboardChartWriterBoundary.js";
 import {createAuthenticateJwt,readVerifiedJwtActor} from "../auth/auth.middleware.js";
 import {env} from "../../config/env.js";
 import {
   planVerifiedChartCreateRequest,recheckChartActorInTransaction,
+  prepareDormantChartWriteRequest,
 } from "./dashboardChartAuthenticatedCreate.js";
 import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "./dashboardChartAtomicCreate.contract.js";
 
@@ -92,4 +95,67 @@ test("2B-15C final transaction recheck fails closed on revoke, missing DB and RB
   {isActive:true,tokenVersion:3,permissions:[]},
  ])assert.equal(await recheckChartActorInTransaction(tx,plan,mock(state) as never),false);
  assert.equal(await recheckChartActorInTransaction(tx,plan,async()=>{throw Error("DATABASE_FAILURE");}),false);
+});
+
+
+test("2B-15C dormant write preflight demands verified actor AND two independent SQL logins",async()=>{
+ const prior=env.JWT_SECRET;
+ env.JWT_SECRET="synthetic-chart-two-login-preflight-only";
+ let calls=0;
+ const zero={
+   DbName:"UQP_TEST",ServerName:"CI_SQL",OriginalSid:"AAA",
+   EffectiveUser:"app",ProcedureId:1234,Sysadmin:0,DbOwner:0,
+   DbDdlAdmin:0,DbSecurityAdmin:0,DbDataWriter:0,DbControl:0,
+   SchemaControl:0,SchemaAlter:0,ImpersonateWriter:0,CreateExecute:0,
+   CreateAlter:0,PermitInsert:0,SealInsert:0,LedgerInsert:0,ReviewUpdate:0,
+ };
+ const platformIdentity={...zero};
+ const writerIdentity={...zero,OriginalSid:"BBB",EffectiveUser:"chartWriter",CreateExecute:1};
+ const fakePool=(getRow:()=>unknown)=>({
+   request:()=>({query:async(text:string)=>{
+     assert.equal(text,chartWriterIdentitySql);
+     calls++;
+     return {recordset:[getRow()]};
+   }})
+ }) as unknown as sql.ConnectionPool;
+ const appPool=fakePool(()=>platformIdentity);
+ const chartPool=fakePool(()=>writerIdentity);
+ const app=express(); app.use(express.json());
+ app.use(createAuthenticateJwt(async()=>({
+   isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"],
+ })));
+ app.post("/preflight",async(req,res)=>{
+   const plan=await prepareDormantChartWriteRequest(req,7,req.body,appPool,chartPool);
+   res.status(plan?200:403).json(plan?
+     {actorId:plan.actorId,tokenVersion:plan.tokenVersion}:{code:"DENIED"});
+ });
+ const server=createServer(app);
+ await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+ const port=(server.address() as {port:number}).port;
+ const url="http://127.0.0.1:"+port+"/preflight";
+ const token=jwt.sign({sub:"8",tokenVersion:3,permissions:[]},env.JWT_SECRET);
+ const send=(payload:unknown,t=token)=>fetch(url,{method:"POST",headers:{
+   Authorization:"Bearer "+t,"Content-Type":"application/json",
+ },body:JSON.stringify(payload)});
+ try{
+   assert.equal((await send(body,"not-a-jwt")).status,401);
+   assert.equal(calls,0);
+   assert.equal((await send({...body,actorId:77})).status,403);
+   assert.equal(calls,0);
+   const approved=await send(body);
+   assert.equal(approved.status,200);
+   assert.deepEqual(await approved.json(),{actorId:8,tokenVersion:3});
+   assert.equal(calls,2);
+   writerIdentity.OriginalSid="AAA";
+   assert.equal((await send(body)).status,403);
+   writerIdentity.OriginalSid="BBB";
+   writerIdentity.DbOwner=1;
+   assert.equal((await send(body)).status,403);
+   writerIdentity.DbOwner=0;
+   writerIdentity.CreateExecute=0;
+   assert.equal((await send(body)).status,403);
+ }finally{
+   env.JWT_SECRET=prior;
+   await new Promise<void>(resolve=>server.close(()=>resolve()));
+ }
 });
