@@ -60,7 +60,22 @@ let generation=0;
 export async function getChartWriterDbPool():Promise<sql.ConnectionPool|null>{
  if(!CHART_ATOMIC_CREATE_RUNTIME_ENABLED||
     !CHART_WRITER_APPROVED_PROCEDURE_SHA256)return null;
- if(active?.connected)return active;
+ // A previously attested SQL connection is NOT permanently trusted.
+ // Revalidate both original logins, grants and the pinned procedure digest
+ // before every later pool handoff; a revoked grant or altered procedure
+ // invalidates the cached pool. The DB-owned procedure still must perform
+ // its own in-transaction authorization and integrity checks.
+ if(active?.connected){
+   try{
+     const platform=await getPlatformDbPool();
+     if(!platform)throw Error("PLATFORM_DB_UNAVAILABLE");
+     await attestChartWriterSqlPools(platform,active);
+     return active;
+   }catch{
+     await closeChartWriterDbPool().catch(()=>undefined);
+     return null;
+   }
+ }
  if(connecting)return connecting;
  const config=chartWriterSqlConfig(settings());
  if(!config)return null;
