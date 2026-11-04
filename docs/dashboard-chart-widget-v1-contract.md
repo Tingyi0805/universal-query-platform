@@ -715,3 +715,29 @@ SQL Server IDENTITY 配合 `OUTPUT INSERTED.Id` 取得，
 實際安全限制由 928 Freeze 和未註冊 Route 保持。
 下一個正式 Writer 核准條件仍是不可由 SQL Service
 Connection 偽造的受控模組權限、完整資料庫驗收與人工簽核。
+
+
+## 26. 2B-15C-4：僅隔離執行的原子新增 SQL 原型
+
+新增 `database/drafts/928_chart_atomic_create_prototype.sql.draft`：
+原型使用專屬 `DashboardChartCreatePermit`，在**同一 SQL Session、
+同一交易 ID** 內暫時授權一筆 CHART INSERT；Freeze Trigger
+仍拒絕所有不具備此資料庫持久化許可的新增、修改與刪除，
+不信任 `SESSION_CONTEXT`。許可列只在交易內存在，建立
+Widget 與 Seal 後先刪除，才容許 COMMIT。
+
+`usp_ChartCreate_IsolatedDraft` 依序重驗 Dashboard/Profile、
+AppUser TokenVersion 與 DESIGN_QUERY RBAC；同交易寫入
+RequestId Ledger、AuditLog、IDENTITY Widget（OUTPUT Id）
+及 Seal Digest，任何例外整筆 ROLLBACK。SQL 使用 UTF-8
+SHA-256，須與 Node 既有 canonical JSON digest 經兩版 SQL
+驗證一致。存放程序僅以 OWNER 執行且**不授予任何應用帳號
+EXECUTE**，本身也驗證資料庫名稱必須是一次性 `UQP_CH_`。
+不支援正式或一般 UQP DB、不註冊 API、未改正式 928。
+
+**此為不可部署原型**：受信任 Actor 身分目前來自 SQL 引數，
+單純驗證 DB 使用者的 TokenVersion/RBAC 不足以證明 API 呼叫者
+就是該使用者；須先完成不可偽造的應用連線授權及受控模組簽章／
+權限隔離審查、實際 Schema 完整欄位差異與正式 925 驗收，
+才可能設計正式版。任何人不得因測試成功而直接授予
+`EXECUTE`、搬入 migrations 或停用 Freeze。

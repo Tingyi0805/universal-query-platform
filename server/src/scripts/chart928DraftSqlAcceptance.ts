@@ -3,7 +3,7 @@
 // The standalone draft intentionally keeps CHART unavailable until 2B-13.
 import assert from "node:assert/strict";
 import {readFile} from "node:fs/promises";
-import {randomBytes} from "node:crypto";
+import {randomBytes,createHash} from "node:crypto";
 import sql from "mssql";
 import {
   attestChart928TriggerCatalog,Chart928CatalogError,
@@ -42,7 +42,12 @@ export async function verifyChart928DraftSql(
   stage="CREATE_SCHEMA";
   await q("CREATE SCHEMA uqp");
   stage="CREATE_FIXTURE_TABLES";
-  await q("CREATE TABLE uqp.AppUser(Id BIGINT NOT NULL PRIMARY KEY); " +
+  await q("CREATE TABLE uqp.AppUser(Id BIGINT NOT NULL PRIMARY KEY, " +
+   "IsActive BIT NOT NULL DEFAULT(1),TokenVersion INT NOT NULL DEFAULT(1)); " +
+   "CREATE TABLE uqp.Role(Id BIGINT NOT NULL PRIMARY KEY,IsActive BIT NOT NULL); " +
+   "CREATE TABLE uqp.Permission(Id BIGINT NOT NULL PRIMARY KEY,Code NVARCHAR(100) NOT NULL); " +
+   "CREATE TABLE uqp.UserRole(UserId BIGINT NOT NULL,RoleId BIGINT NOT NULL); " +
+   "CREATE TABLE uqp.RolePermission(RoleId BIGINT NOT NULL,PermissionId BIGINT NOT NULL); " +
    "CREATE TABLE uqp.QueryDefinition(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY); " +
@@ -52,12 +57,15 @@ export async function verifyChart928DraftSql(
    " ProfileId BIGINT NOT NULL REFERENCES uqp.DashboardDisplayProfile(Id) ON DELETE CASCADE," +
    " WidgetType NVARCHAR(30) NOT NULL,SourceKey NVARCHAR(256) NULL," +
    " ConfigJson NVARCHAR(MAX) NOT NULL DEFAULT N'{}'," +
+   " Title NVARCHAR(200) NULL,X INT NOT NULL DEFAULT(0),Y INT NOT NULL DEFAULT(0)," +
+   " Width INT NOT NULL DEFAULT(600),Height INT NOT NULL DEFAULT(360)," +
    " CONSTRAINT CK_DashboardWidget_Type CHECK(WidgetType IN" +
    " (N'TEXT',N'PARAMETER',N'FIELD',N'CLOCK',N'PAGE_INFO',N'COUNTDOWN',N'TABLE',N'CONTAINER'))," +
    " CONSTRAINT CK_DashboardWidget_ConfigJson CHECK(ISJSON(ConfigJson)=1)); " +
    "CREATE TABLE uqp.AuditLog(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " EventType NVARCHAR(100) NOT NULL,EventCategory NVARCHAR(20) NOT NULL," +
-   " Status NVARCHAR(20) NOT NULL,UserId BIGINT NOT NULL,IsImportant BIT NOT NULL); " +
+   " Status NVARCHAR(20) NOT NULL,UserId BIGINT NOT NULL,IsImportant BIT NOT NULL," +
+   " ParametersJson NVARCHAR(MAX) NULL,CompletedAtUtc DATETIME2(0) NULL); " +
    "CREATE TABLE uqp.AuditLogArchive(Id BIGINT NOT NULL PRIMARY KEY," +
    " EventType NVARCHAR(100) NOT NULL,Status NVARCHAR(20) NOT NULL," +
    " UserId BIGINT NOT NULL,IsImportant BIT NOT NULL); " +
@@ -75,6 +83,11 @@ export async function verifyChart928DraftSql(
    "(N'CHART_APPROVE_REVIEW',N'CONFIG',N'SUCCESS',77,1)," +
    "(N'CHART_REVOKE_REVIEW',N'CONFIG',N'SUCCESS',77,1); " +
    "INSERT uqp.DatasetPublicDisplayPolicy(DatasetId) VALUES(10);");
+  stage="ATOMIC_CREATE_ROLE_FIXTURE";
+  await q("INSERT uqp.Role(Id,IsActive) VALUES(1,1);" +
+    "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY');" +
+    "INSERT uqp.UserRole(UserId,RoleId) VALUES(8,1);" +
+    "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4);");
   stage="IDENTITY_SCHEMA_PARITY";
   const identity=(await q(
     "SELECT COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),N'Id','IsIdentity') AS WidgetIdentity, " +
@@ -275,6 +288,64 @@ export async function verifyChart928DraftSql(
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal")).recordset[0]?.Total),1);
   assert.equal(String((await q("SELECT Status FROM uqp.DashboardChartPrivacyReview WHERE Id=1")).recordset[0]?.Status),"REVOKED");
   console.log("CHART_928_DRAFT_SQL_2019_2022_INSTALL_RERUN_ROLLBACK_FREEZE_AUDIT_FK_PASS");
+  stage="ATOMIC_CREATE_DRAFT_INSTALL";
+  const atom=await readFile(new URL("../../../database/drafts/928_chart_atomic_create_prototype.sql.draft",import.meta.url),"utf8");
+  await db.request().batch(atom);
+  // No automatic permissions; explicitly impersonated low-rights principal
+  // cannot call a privileged atomic writer just by passing an actor ID.
+  stage="ATOMIC_CREATE_UNGRANTED_EXEC";
+  const unauthorized=(await db.request().batch(
+    "EXECUTE AS USER=N'UQP_Chart_Untrusted'; " +
+    "BEGIN TRY EXEC uqp.usp_ChartCreate_IsolatedDraft " +
+    "@DashboardId=7,@ProfileId=22,@ActorId=8,@TokenVersion=1, " +
+    "@RequestId='00000000-0000-4000-8000-000000005001'," +
+    "@SourceKey=N'PRIMARY',@ConfigJson=N'{}',@X=10,@Y=10,@Width=600,@Height=360;" +
+    "SELECT 0 AS RejectedNumber; END TRY " +
+    "BEGIN CATCH SELECT ERROR_NUMBER() AS RejectedNumber; END CATCH; REVERT"
+  )).recordset[0];
+  assert([229,15151,2812].includes(Number(unauthorized?.RejectedNumber)));
+  stage="ATOMIC_CREATE_TRUSTED_TRANSACTION";
+  const canonical=JSON.stringify({version:1,chartType:"BAR",dataSourceKey:"PRIMARY",
+    categoryColumn:"ROOM",valueColumn:"TOTAL",
+    valueMode:"QUERY_RESULT",maxPoints:20,showLegend:true});
+  const req="00000000-0000-4000-8000-000000005002";
+  const params=()=>db!.request()
+    .input("requestId",sql.UniqueIdentifier,req)
+    .input("config",sql.NVarChar(sql.MAX),canonical);
+  const execCreate="EXEC uqp.usp_ChartCreate_IsolatedDraft " +
+    "@DashboardId=7,@ProfileId=22,@ActorId=8,@TokenVersion=1," +
+    "@RequestId=@requestId,@SourceKey=N'PRIMARY',@ConfigJson=@config," +
+    "@X=10,@Y=10,@Width=600,@Height=360";
+  const createdRow=(await params().query(execCreate)).recordset[0];
+  const widgetId=Number(createdRow?.WidgetId);
+  const auditId=Number(createdRow?.AuditLogId);
+  assert(Number.isSafeInteger(widgetId)&&widgetId>91);
+  assert(Number.isSafeInteger(auditId)&&auditId>4);
+  const expected=createHash("sha256").update(canonical,"utf8").digest("hex");
+  assert.equal(String(createdRow?.Digest),expected);
+  const proof=(await db.request().input("id",sql.BigInt,widgetId)
+   .query("SELECT w.WidgetType,w.SourceKey,w.ConfigJson,s.ConfigDigest,s.AuditLogId " +
+   "FROM uqp.DashboardWidget w JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=w.Id " +
+   "WHERE w.Id=@id AND s.IsActive=1")).recordset;
+  assert.equal(proof.length,1);
+  assert.equal(proof[0]?.WidgetType,"CHART");
+  assert.equal(proof[0]?.ConfigDigest,expected);
+  assert.equal(Number(proof[0]?.AuditLogId),auditId);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartCreatePermit")).recordset[0]?.Total),0);
+  stage="ATOMIC_CREATE_REPLAY_ROLLBACK";
+  await assert.rejects(params().query(execCreate),(e:unknown)=>e instanceof Error);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE WidgetType=N'CHART'")).recordset[0]?.Total),1);
+  stage="ATOMIC_CREATE_BAD_ACTOR_ROLLBACK";
+  await assert.rejects(db.request().input("config",sql.NVarChar(sql.MAX),canonical)
+    .query("EXEC uqp.usp_ChartCreate_IsolatedDraft @DashboardId=7,@ProfileId=22," +
+      "@ActorId=77,@TokenVersion=1,@RequestId='00000000-0000-4000-8000-000000005003'," +
+      "@SourceKey=N'PRIMARY',@ConfigJson=@config,@X=10,@Y=10,@Width=600,@Height=360"),
+    (e:unknown)=>e instanceof Error);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartCreatePermit")).recordset[0]?.Total),0);
+  await rejects("UPDATE uqp.DashboardWidget SET ConfigJson=N'{}' WHERE Id="+widgetId);
+  await rejects("DELETE FROM uqp.DashboardWidget WHERE Id="+widgetId);
+  console.log("CHART_2B15C_ATOMIC_CREATE_IDENTITY_SEAL_AUDIT_REPLAY_DRAFT_PASS");
+
  }catch{
   console.error("CHART_928_DRAFT_FAIL_STAGE:"+stage);
   throw Error("CHART_928_DRAFT_SQL_ACCEPTANCE_FAILED");
