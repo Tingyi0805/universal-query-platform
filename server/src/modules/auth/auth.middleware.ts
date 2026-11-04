@@ -1,4 +1,4 @@
-import type { RequestHandler } from "express";
+import type { Request, RequestHandler } from "express";
 import jwt from "jsonwebtoken";
 import { env } from "../../config/env.js";
 import type { AuthUser } from "./auth.types.js";
@@ -12,8 +12,20 @@ declare global {
   }
 }
 
+// Unforgeable by request JSON, headers, JWT decode or a hand-built req.authUser.
+// Written only after jwt.verify AND current database session validation.
+// A future CHART mutation route may read this value, but no route exists now.
+const verifiedActors = new WeakMap<Request,Readonly<{userId:number;tokenVersion:number}>>();
+export function readVerifiedJwtActor(req: Request):Readonly<{userId:number;tokenVersion:number}>|null {
+  const actor=verifiedActors.get(req);
+  return actor && req.authUser?.id===actor.userId &&
+    req.authUser.permissions.includes("DESIGN_QUERY") ? actor : null;
+}
+
 export function createAuthenticateJwt(getSession = getTokenSessionState): RequestHandler {
   return async (req, res, next) => {
+    // Drop any previously associated authority before authenticating.
+    verifiedActors.delete(req);
     if (!env.JWT_SECRET) {
       res.status(503).json({ error: { code: "AUTH_NOT_CONFIGURED", message: "登入服務尚未設定。" } });
       return;
@@ -57,6 +69,7 @@ export function createAuthenticateJwt(getSession = getTokenSessionState): Reques
         displayName: String(payload.displayName),
         permissions: session.permissions,
       };
+      verifiedActors.set(req,Object.freeze({userId,tokenVersion}));
       next();
     } catch (error) {
       if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) {

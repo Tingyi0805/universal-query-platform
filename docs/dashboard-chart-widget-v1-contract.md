@@ -766,3 +766,30 @@ Node request authenticated actor 綁定、審核的 API 授權、
 TokenVersion／RBAC 最後重驗及跨節點競爭驗收。
 正式帳號如果具有 `db_owner`、`db_ddladmin` 或
 廣泛 `IMPERSONATE` 權限，則不得通過交付審查。
+
+
+## 28. 2B-15C-6：已驗證 JWT 之 ActorId 綁定（不註冊圖表 API）
+
+`auth.middleware.ts` 在 `jwt.verify()`、`getTokenSessionState()`
+確認仍有效及 TokenVersion 一致後，才寫入僅在伺服器模組內可
+設定的 `WeakMap<Request,{userId,tokenVersion}>`。
+`readVerifiedJwtActor()` 只接受已通過 Middleware 的同一
+Request 且仍具 `DESIGN_QUERY` 權限；獨立建造
+`req.authUser`、瀏覽器送出 `ActorId` 或
+`SESSION_CONTEXT` 都無法建立該證據。
+
+`planVerifiedChartCreateRequest()` 從 verified Actor 產生
+`actorId/tokenVersion`，請求本體僅接受
+`profileId/requestId/config/placement` 四項，明確拒絕
+使用者傳入的 ActorId、TokenVersion、WidgetId、
+approved、deviceToken 等欄位。
+`recheckChartActorInTransaction()` 會在最終受信任 Writer
+的**同一個 SQL 交易**中，使用原本 `getTokenSessionState`
+再次確認帳號啟用、TokenVersion 和 RBAC；失敗一律拒絕。
+
+測試以真正 Express Middleware + JWT 和合成 Session 驗證
+錯誤簽章、權限撤銷、TokenVersion 更新、無效帳號、
+以及偽造 req.authUser，都不能取得 Writer 計畫。
+上述只是**尚未註冊的身份與授權前置契約**；
+未接正式路由／真正 SQL 執行／專用獨立登入池，
+因此仍不得開放 CHART 儲存或給予 SQL EXECUTE。
