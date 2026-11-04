@@ -383,6 +383,21 @@ export async function verifyChart928DraftSql(
   assert.notEqual(String(assumed?.EffectiveUser),String(original?.EffectiveUser));
   console.log("CHART_2B15C_ORIGINAL_LOGIN_IMPERSONATION_CANNOT_ISOLATE_PASS");
   console.log("CHART_2B15C_DISPOSABLE_PRINCIPAL_SEPARATION_PASS");
+  // Exercise the actual SQL Server 2019/2022 metadata query, not only mocked
+  // JavaScript rows. This admin connection is NOT proof of least privilege;
+  // it validates all permission names and result types are supported.
+  stage="ATOMIC_CREATE_SERVER_PERMISSION_METADATA";
+  const privilegeProof=(await q(chartWriterIdentitySql)).recordset[0];
+  assert(privilegeProof);
+  for(const flag of [
+    "ServerControl","ServerImpersonateAny","ServerAlterLogins",
+    "ServerAlterRoles","ServerSelectAllUserData","DbAccessAdmin",
+    "DbAlterAnyUser","DbAlterAnyRole","DbAlterAnySchema",
+  ]){
+    assert(privilegeProof[flag]===0||privilegeProof[flag]===1,
+      "Unexpected SQL 2019/2022 effective permission result");
+  }
+  console.log("CHART_2B15C_SQL_PERMISSION_METADATA_2019_2022_PASS");
   stage="ATOMIC_CREATE_UNGRANTED_EXEC";
   const unauthorized=(await db.request().batch(
     "EXECUTE AS USER=N'UQP_Chart_Untrusted'; " +
