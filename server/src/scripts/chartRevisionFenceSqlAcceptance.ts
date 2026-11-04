@@ -35,17 +35,29 @@ export async function verifyChartRevisionFenceSql(admin: sql.ConnectionPool, con
   await query("INSERT uqp.DataSource(Id,IsActive) VALUES(11,1);\nINSERT uqp.Dataset(Id,DataSourceId,Name,IsActive,IsArchived,SqlText) VALUES(10,11,N'Synthetic dataset',1,0,N'SELECT ROOM AS ROOM, COUNT(*) AS TOTAL FROM OPS GROUP BY ROOM');\nINSERT uqp.QueryDefinition(Id,DatasetId,Code,Name,Description,CategoryId,Icon,SortOrder,AllowExcelExport,IsPublished,IsActive,IsArchived,PublishedAtUtc) VALUES(9,10,N'SYN_COUNT',N'Synthetic Count',NULL,NULL,N'table',0,0,1,1,0,SYSUTCDATETIME());\nINSERT uqp.QueryDefinitionVersion(QueryDefinitionId,VersionNo) VALUES(9,1);\nINSERT uqp.DatasetSensitivePolicyVersion(DatasetId,VersionNumber) VALUES(10,1);\nINSERT uqp.Dashboard(Id,QueryDefinitionId,IsActive,QueryMode) VALUES(7,9,0,N'QUERY_ONLY_DISABLED');\nINSERT uqp.DashboardDataSource(Id,DashboardId,SourceKey,DatasetId,QueryDefinitionId,IsEnabled) VALUES(21,7,N'EXTRA',10,9,1);\nINSERT uqp.AppUser(Id,IsActive,TokenVersion) VALUES(8,1,1);\nINSERT uqp.Role(Id,IsActive) VALUES(1,1);\nINSERT uqp.UserRole(UserId,RoleId) VALUES(8,1);\nINSERT uqp.Permission(Id,Code) VALUES(1,N'DESIGN_QUERY'),(2,N'EXECUTE_QUERY'),(3,N'VIEW_QUERY');\nINSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,1),(1,2),(1,3);\nINSERT uqp.RoleQueryAccess(RoleId,QueryDefinitionId,CanView,CanExecute,CanExport) VALUES(1,9,1,1,0);");
 
   stage = "INITIAL";
+  let readerPhase = "CATALOG";
   const read = createChartRevisionFenceReader({
-    getPool: async () => db,
-    getSession: getTokenSessionState,
-    getAccess: getEffectiveQueryAccess,
-    getAcl: getQueryAccessRevision,
+    getPool: async () => db!,
+    getSession: async (userId, tx) => {
+      readerPhase = "SESSION";
+      return getTokenSessionState(userId, tx);
+    },
+    getAccess: async (userId, queryId, tx, includeUsage) => {
+      readerPhase = "ACCESS";
+      return getEffectiveQueryAccess(userId, queryId, tx, includeUsage);
+    },
+    getAcl: async (queryId, tx) => {
+      readerPhase = "ACL";
+      return getQueryAccessRevision(queryId, tx);
+    },
   });
   const designer: ExecutionSubject = {context:"designer",userId:8,tokenVersion:1,tokenHash:"synthetic"};
   const viewer: ExecutionSubject = {...designer,context:"user"};
   const load = (key="PRIMARY",actor=designer) => read(7,key,9,10,actor);
   stage = "INITIAL_READ";
+  readerPhase = "CATALOG";
   const initial = await load();
+  if (!initial) console.error("CHART_FENCE_SQL_INITIAL_NULL_PHASE:" + readerPhase);
   assert(initial && /^[a-f0-9]{64}$/.test(initial.version));
   const extraInitial = await load("EXTRA");
   assert.equal(extraInitial?.sourceKey, "EXTRA");

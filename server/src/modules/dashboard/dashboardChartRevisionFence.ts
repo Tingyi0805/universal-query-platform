@@ -84,10 +84,15 @@ return async function readChartRevisionFence(
     const dataset = revision(row?.DatasetRev);
     const datasource = revision(row?.DataSourceRev);
     const publicRev = row?.PublicRev == null ? null : revision(row.PublicRev);
+    // tedious may expose SQL BIGINT as either an integer or a decimal string.
+    // Accept only an exact, bounded positive integer; never round revisions.
+    const sensitivityText = String(row?.SensitivityVersion ?? "");
+    const sensitivityVersion = /^[1-9][0-9]{0,15}$/.test(sensitivityText)
+      ? Number(sensitivityText) : NaN;
     if (!row || !parent || !binding || !dataset || !datasource ||
         row.PublicRev != null && !publicRev ||
         !Number.isSafeInteger(row.QueryVersion) || row.QueryVersion <= 0 ||
-        !Number.isSafeInteger(row.SensitivityVersion) || row.SensitivityVersion < 1 ||
+        !Number.isSafeInteger(sensitivityVersion) || sensitivityVersion < 1 ||
         sourceKey !== "PRIMARY" &&
           (Number(row.BindingDatasetId) !== datasetId || row.BindingEnabled !== true))
       throw Error("CHART_FENCE_MISSING");
@@ -95,7 +100,7 @@ return async function readChartRevisionFence(
       context === "admin-preview" && row.DashboardActive === true;
     if (publicPlayback &&
         (row.DashboardActive !== true || row.QueryMode !== "QUERY_ONLY" ||
-        !publicRev || row.PublicSensitivityVersion !== row.SensitivityVersion ||
+        !publicRev || String(row.PublicSensitivityVersion) !== sensitivityText ||
         revision(row.PublicDefinitionRev) !== dataset ||
         revision(row.PublicConfigurationRev) !== datasource ||
         String(row.PublicSourceId) !== String(row.DataSourceId)))
@@ -115,7 +120,7 @@ return async function readChartRevisionFence(
       tokenVersion: subject.tokenVersion, queryVersion: row.QueryVersion,
       mode: row.QueryMode, dashboardActive: row.DashboardActive,
       parent, binding, dataset, datasource,
-      sensitivity: row.SensitivityVersion, publicRev, acl,
+      sensitivity: sensitivityVersion, publicRev, acl,
       permissions: [...session.permissions].sort(),
     })).digest("hex");
     await tx.commit();
