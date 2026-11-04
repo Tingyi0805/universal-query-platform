@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type sql from "mssql";
+import {chartWriterSqlConfig,getChartWriterDbPool,closeChartWriterDbPool} from "../../config/chartWriterDatabase.js";
+import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "./dashboardChartAtomicCreate.contract.js";
+import {CHART_WRITER_APPROVED_PROCEDURE_SHA256} from "./dashboardChartWriterBoundary.js";
 import {attestChartWriterSqlPrincipals,attestChartWriterSqlPools,
  chartWriterIdentitySql,ChartWriterBoundaryError} from "./dashboardChartWriterBoundary.js";
 
@@ -78,4 +81,32 @@ test("2B-15C SQL procedure hash requires independently approved release",async()
  const w={request:()=>{throw Error("SHOULD_NOT_QUERY");}} as unknown as sql.ConnectionPool;
  await assert.rejects(attestChartWriterSqlPools(p,w),(e:unknown)=>
   e instanceof ChartWriterBoundaryError&&e.code==="CHART_WRITER_RELEASE_NOT_APPROVED");
+});
+
+test("2B-15C chart pool rejects reused login and unsafe TLS without connecting",async()=>{
+ const valid={
+  enabled:true,platformServer:"sql.local",platformPort:1433,
+  platformDatabase:"UQP",platformUser:"platform_user",platformPassword:"platform-secret",
+  writerServer:"sql.local",writerPort:1433,writerDatabase:"UQP",
+  writerUser:"chart_writer",writerPassword:"writer-secret",
+  writerEncrypt:true,writerTrustServerCertificate:false,
+ };
+ const config=chartWriterSqlConfig(valid);
+ assert(config);
+ assert.equal(config.user,"chart_writer");
+ assert.equal(config.options?.encrypt,true);
+ assert.equal(config.options?.trustServerCertificate,false);
+ for(const change of [
+   {enabled:false},{writerServer:"other"},{writerDatabase:"other"},
+   {writerPort:1434},{writerUser:"PLATFORM_USER"},
+   {writerPassword:"platform-secret"},{writerUser:""},
+   {writerPassword:""},{writerEncrypt:false},
+   {writerTrustServerCertificate:true},{platformUser:undefined},
+ ]){
+   assert.equal(chartWriterSqlConfig({...valid,...change}),null);
+ }
+ assert.equal(CHART_ATOMIC_CREATE_RUNTIME_ENABLED,false);
+ assert.equal(CHART_WRITER_APPROVED_PROCEDURE_SHA256,null);
+ assert.equal(await getChartWriterDbPool(),null);
+ await closeChartWriterDbPool();
 });
