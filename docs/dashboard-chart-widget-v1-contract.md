@@ -936,3 +936,31 @@ Default Constraint、SQL Module 版本核准、正式受控寫入
 程序、身分授權與交易邊界仍須另外驗證。
 不能因這 25 個欄位 PASS 就解除 CHART Freeze；
 也不能直接在正式 DB 執行 `.sql.draft`。
+
+
+## 34. 2B-15C-12：基礎資料表 FK 與 SQL 信任狀態精確採認
+
+為避免只有欄位型別匹配卻無法保證刪除／稽核關聯，
+`chart928WriterBaseSchema.ts` 新增三個正式 Migration 所擁有的
+外鍵驗證：`FK_DashboardDisplayProfile_Dashboard`（CASCADE）、
+`FK_DashboardWidget_Profile`（CASCADE）及
+`FK_AuditLog_User`（NO_ACTION）。
+
+從 `sys.foreign_keys` 唯讀比對實際 Schema、父／參照表、
+外鍵名稱、`is_disabled=0`、`is_not_trusted=0` 及
+`delete_referential_action_desc`。任一缺失、名稱錯誤、
+失去信任、停用、指向錯誤表、刪除規則不同或無權讀取，
+都 fail closed。
+
+`chart928DraftSqlAcceptance.ts` 的一次性 SQL 2019／2022
+測試 Schema 已改用正式 FK 名稱。新增交易內
+`ALTER TABLE ... NOCHECK CONSTRAINT FK_DashboardWidget_Profile`
+的負面案例：驗證器必須拒絕，交易回滾後須再次 PASS。
+保留先前 25 個基礎欄位、928 Freeze 與 SQL 身分安全測試。
+欄位中繼資料的 SQL 識別別名統一為 `IsIdentity`。
+
+**本項只是實作／測試案例已提交。** 必須等同一 HEAD 的
+GitHub CI Server Build、SQL Server 2019／2022、Client
+E2E 與 Release jobs 成功後才可將本項標記為驗收通過。
+目前 PR #83 保持 Draft、不執行 928、不開放 CHART。
+本項亦不能取代 925 完整 Schema 採認與正式 Writer 核准。
