@@ -185,6 +185,10 @@ export async function verifyChart928DraftSql(
       "REVERT;"
     )).recordset;
     const number=Number(rows?.[0]?.RejectedNumber);
+    if(!expected.includes(number)) {
+      // Only the SQL error number and finite stage identifier are emitted.
+      console.error("CHART_928_EXPECTED_REJECTION_MISMATCH:"+stage+":"+number);
+    }
     assert(expected.includes(number),
       "CHART untrusted DML did not fail with an expected SQL error");
   };
@@ -206,7 +210,9 @@ export async function verifyChart928DraftSql(
   stage="UNTRUSTED_LEDGER_WRITE";
   await untrusted("DELETE FROM uqp.DashboardChartTrustRequest",[229]);
   stage="UNTRUSTED_TRIGGER_DISABLE";
-  await untrusted("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget",[229]);
+  // Metadata/DDL permission denials can be SQL 15151 ("not found or no
+  // permission") or SQL 229, depending on the server/catalog path.
+  await untrusted("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget",[229,15151]);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=88 AND WidgetType=N'TEXT'")).recordset[0]?.Total),1);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal WHERE WidgetId=88")).recordset[0]?.Total),1);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardWidget WHERE Id=990")).recordset[0]?.Total),0);
