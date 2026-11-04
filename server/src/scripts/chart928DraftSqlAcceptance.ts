@@ -8,6 +8,7 @@ import sql from "mssql";
 import {
   attestChart928TriggerCatalog,Chart928CatalogError,
 } from "./chart928TriggerAttestation.js";
+import {chartWriterIdentitySql} from "../modules/dashboard/dashboardChartWriterBoundary.js";
 
 const sqlPath=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url);
 export async function verifyChart928DraftSql(
@@ -291,6 +292,25 @@ export async function verifyChart928DraftSql(
   stage="ATOMIC_CREATE_DRAFT_INSTALL";
   const atom=await readFile(new URL("../../../database/drafts/928_chart_atomic_create_prototype.sql.draft",import.meta.url),"utf8");
   await db.request().batch(atom);
+  // Read-only real engine proof. The future approved proc does not yet
+  // exist: its digest must be NULL. The isolated draft proc has a real
+  // NVARCHAR definition whose SHA256 matches SQL Server's UTF-16 bytes.
+  stage="ATOMIC_CREATE_SQL_MODULE_HASH";
+  const absentModule=(await q(chartWriterIdentitySql)).recordset[0];
+  assert.equal(absentModule?.ProcedureId,null);
+  assert.equal(absentModule?.ProcedureSha256,null);
+  const draftModuleSql=chartWriterIdentitySql.replaceAll(
+    "usp_DashboardChartCreate","usp_ChartCreate_IsolatedDraft");
+  const draftModule=(await q(draftModuleSql)).recordset[0];
+  const actualDefinition=(await q(
+    "SELECT definition AS Body FROM sys.sql_modules " +
+    "WHERE object_id=OBJECT_ID(N'uqp.usp_ChartCreate_IsolatedDraft',N'P')"
+  )).recordset[0]?.Body;
+  assert.equal(typeof actualDefinition,"string");
+  assert.match(String(draftModule?.ProcedureSha256),/^[a-f0-9]{64}$/);
+  assert.equal(draftModule?.ProcedureSha256,
+    createHash("sha256").update(Buffer.from(actualDefinition,"utf16le")).digest("hex"));
+  console.log("CHART_2B15C_SQL_MODULE_SHA256_ENGINE_2019_2022_PASS");
   // No automatic permissions; explicitly impersonated low-rights principal
   // cannot call a privileged atomic writer just by passing an actor ID.
   // 2B-15C: prove two distinct SQL principals. The normal platform DB
