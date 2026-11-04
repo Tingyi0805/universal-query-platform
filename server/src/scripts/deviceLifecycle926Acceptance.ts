@@ -84,6 +84,7 @@ async function main(){
   stage="D4-C1-list";await (await import("./deviceListAcceptance.js")).verifyDeviceList(db,{...config,database:name});
   stage="D4D-history";await (await import("./deviceHistoryAcceptance.js")).verifyDeviceHistory(db);
   stage="chart-fence-2b6-real-sql";await (await import("./chartRevisionFenceSqlAcceptance.js")).verifyChartRevisionFenceSql(admin,config,machine);
+ stage="chart-928-draft-disposable-sql";await (await import("./chart928DraftSqlAcceptance.js")).verifyChart928DraftSql(admin,config,machine);
   stage="disabled-check-not-repaired";
   await query("ALTER TABLE uqp.DashboardDisplayDevice NOCHECK CONSTRAINT CK_DashboardDevice_LifecycleTerminal");
   await assert.rejects(query(deviceLifecycleSchemaSql));await assert.rejects(db.request().batch(ddl));

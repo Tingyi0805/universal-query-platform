@@ -179,7 +179,7 @@ END');
       OBJECT_ID(N'uqp.DashboardChartTrustRequest')))<>3
     OR (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal'))<>7
     OR (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest'))<>4
-    OR (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))<>19
+    OR (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))<>21
   THROW 51928,'CHART_928_CATALOG_COLUMNS_MISMATCH',1;
  IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE
     parent_object_id=OBJECT_ID(N'uqp.DashboardWidget') AND name=N'CK_DashboardWidget_Type'
