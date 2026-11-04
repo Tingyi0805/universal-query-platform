@@ -346,8 +346,15 @@ export async function verifyChart928DraftSql(
   await rejects("DELETE FROM uqp.DashboardWidget WHERE Id="+widgetId);
   console.log("CHART_2B15C_ATOMIC_CREATE_IDENTITY_SEAL_AUDIT_REPLAY_DRAFT_PASS");
 
- }catch{
+ }catch(error){
+  // Disposable SQL instance only. Report SQL error number/line, not values,
+  // connection strings, database contents or untrusted SQL payload text.
+  const metadata=error && typeof error==="object" ?
+    error as {number?:unknown;lineNumber?:unknown;code?:unknown} : {};
   console.error("CHART_928_DRAFT_FAIL_STAGE:"+stage);
+  console.error("CHART_928_DRAFT_ERROR_META:"+
+    String(metadata.number??"NA")+":"+String(metadata.lineNumber??"NA")+":"+
+    String(metadata.code??"NA"));
   throw Error("CHART_928_DRAFT_SQL_ACCEPTANCE_FAILED");
  }finally{
   await db?.close().catch(()=>undefined);
