@@ -909,3 +909,30 @@ Server 單元測試增加正、負面案例，及 SQL 2019／2022
 授予 SQL EXECUTE 或部署到正式 `C:\UQP`。
 SQL 參考：Microsoft Learn「HAS_PERMS_BY_NAME (Transact-SQL)」
 及「GRANT Server Permissions (Transact-SQL)」。
+
+
+## 33. 2B-15C-11：Chart Writer 基礎 Schema 精確欄位驗收
+
+新增 `server/src/scripts/chart928WriterBaseSchema.ts`，從
+`sys.tables`／`sys.columns`／`sys.types` 執行唯讀檢查，
+對照既有正式 Migration 001、006、016、019、022、024 的
+25 個 Writer 必需欄位，逐項比對 SQL 型別、NVARCHAR 實際
+位元組長度、NULL 允許與 IDENTITY 自動編號。
+缺表、少欄、重複欄位、欄位型別被改動、NULL／IDENTITY
+不符或資料庫中繼資料不可讀，均固定拒絕。
+
+SQL Server 2019／2022 一次性 `UQP_CH_` 測試資料表已加上
+真實 `AppUser.Id`／`DashboardDisplayProfile.Id` IDENTITY、
+Widget `FontSize`／`Alignment`／`SortOrder`，
+並將 `AuditLog.EventType` 設為 `NVARCHAR(50)`、
+`UserId` 調整為 NULL 可選；測試種子需明確
+`SET IDENTITY_INSERT ... ON/OFF`。在 928 草案驗收前後各
+執行一次基礎欄位比對，避免用過度簡化的表格誤認
+正式圖表新增必然相容。
+
+**此驗證尚未涵蓋所有正式 Schema 細節**：
+925 完整欄位及可信約束採認、全部 FK／Index／CHECK、
+Default Constraint、SQL Module 版本核准、正式受控寫入
+程序、身分授權與交易邊界仍須另外驗證。
+不能因這 25 個欄位 PASS 就解除 CHART Freeze；
+也不能直接在正式 DB 執行 `.sql.draft`。
