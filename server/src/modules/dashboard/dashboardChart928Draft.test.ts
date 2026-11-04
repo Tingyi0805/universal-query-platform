@@ -32,4 +32,11 @@ test("2B-12 preserves fail-closed CHART runtime and append-only trust records",(
   assert.match(executable,/CHART_928_PARTIAL_SCHEMA/);
   assert.match(executable,/CHART_928_FOREIGN_KEY_INVALID/);
   assert.match(executable,/CHART_928_TRIGGERS_REQUIRED/);
+  for(const name of ["ChartSeal","ChartReview","ChartTrustRequest"]) {
+    assert.match(executable,new RegExp("TR_"+name+"_AuditReceipt"));
+  }
+  assert.match(executable,/CHART_928_SEAL_AUDIT_REQUIRED/);
+  assert.match(executable,/CHART_928_REVIEW_AUDIT_REQUIRED/);
+  assert.match(executable,/CHART_928_REQUEST_AUDIT_REQUIRED/);
+  assert.doesNotMatch(executable,/FK_Chart(?:Seal|Review|Request)_Audit/);
 });

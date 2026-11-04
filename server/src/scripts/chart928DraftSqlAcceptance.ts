@@ -53,14 +53,22 @@ export async function verifyChart928DraftSql(
    " (N'TEXT',N'PARAMETER',N'FIELD',N'CLOCK',N'PAGE_INFO',N'COUNTDOWN',N'TABLE',N'CONTAINER'))," +
    " CONSTRAINT CK_DashboardWidget_ConfigJson CHECK(ISJSON(ConfigJson)=1)); " +
    "CREATE TABLE uqp.AuditLog(Id BIGINT NOT NULL PRIMARY KEY," +
-   " EventCategory NVARCHAR(20) NOT NULL,IsImportant BIT NOT NULL); " +
+   " EventType NVARCHAR(100) NOT NULL,EventCategory NVARCHAR(20) NOT NULL," +
+   " Status NVARCHAR(20) NOT NULL,UserId BIGINT NOT NULL,IsImportant BIT NOT NULL); " +
+   "CREATE TABLE uqp.AuditLogArchive(Id BIGINT NOT NULL PRIMARY KEY," +
+   " EventType NVARCHAR(100) NOT NULL,Status NVARCHAR(20) NOT NULL," +
+   " UserId BIGINT NOT NULL,IsImportant BIT NOT NULL); " +
    "CREATE TABLE uqp.DatasetPublicDisplayPolicy(DatasetId BIGINT NOT NULL PRIMARY KEY); ");
   stage="SEED_FIXTURE";
   await q("INSERT uqp.AppUser(Id) VALUES(8),(77); " +
    "INSERT uqp.QueryDefinition(Id) VALUES(9); INSERT uqp.Dataset(Id) VALUES(10); " +
    "INSERT uqp.Dashboard(Id) VALUES(7); INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7);" +
    "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) VALUES(88,22,N'TEXT',N'PRIMARY',N'{}'); " +
-   "INSERT uqp.AuditLog(Id,EventCategory,IsImportant) VALUES(1,N'CONFIG',1); " +
+   "INSERT uqp.AuditLog(Id,EventType,EventCategory,Status,UserId,IsImportant) VALUES" +
+   "(1,N'CHART_SEAL_WIDGET',N'CONFIG',N'SUCCESS',8,1)," +
+   "(2,N'CHART_REQUEST_REVIEW',N'CONFIG',N'SUCCESS',8,1)," +
+   "(3,N'CHART_APPROVE_REVIEW',N'CONFIG',N'SUCCESS',77,1)," +
+   "(4,N'CHART_REVOKE_REVIEW',N'CONFIG',N'SUCCESS',77,1); " +
    "INSERT uqp.DatasetPublicDisplayPolicy(DatasetId) VALUES(10);");
   stage="OUTER_ROLLBACK";
   const outer=new sql.Transaction(db);
@@ -97,32 +105,41 @@ export async function verifyChart928DraftSql(
   await rejects("DELETE FROM uqp.DashboardDisplayProfile WHERE Id=22");
   await rejects("INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)" +
     " VALUES(9999,REPLICATE('a',64),0,8,1)");
+  // A missing or wrong-event live audit must not establish any new trust.
+  stage="AUDIT_RECEIPT_ENFORCEMENT";
+  await q("INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) " +
+    "VALUES(91,22,N'TEXT',N'PRIMARY',N'{}')");
+  await rejects("INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)" +
+    " VALUES(91,REPLICATE('a',64),0,8,999)");
+  await rejects("INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)" +
+    " VALUES(91,REPLICATE('a',64),0,77,1)");
+  await q("DELETE FROM uqp.DashboardWidget WHERE Id=91");
   stage="REVIEW_STATE";
   const request="INSERT uqp.DashboardChartPrivacyReview("+
    "DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn," +
    "QueryRevision,DatasetRevision,PolicyRevision,Status,RequestedByUserId,AuditLogId) " +
    "VALUES(7,9,10,N'PRIMARY',N'ROOM',N'TOTAL',0x0102030405060708," +
-   "0x0807060504030201,REPLICATE('b',64),'REQUESTED',8,1)";
+   "0x0807060504030201,REPLICATE('b',64),'REQUESTED',8,2)";
   await q(request);
   await rejects(request); // filtered index protects active scope
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED'," +
     "MinimumCellCount=5,CategoryPrivacyReviewed=1,DifferencingRiskReviewed=1," +
     "ReviewerUserId=8,ReviewedAtUtc=SYSUTCDATETIME()," +
-    "ValidUntilUtc=DATEADD(day,30,SYSUTCDATETIME()) WHERE Id=1");
+    "ValidUntilUtc=DATEADD(day,30,SYSUTCDATETIME()),AuditLogId=3 WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED'," +
     "MinimumCellCount=5,CategoryPrivacyReviewed=1,DifferencingRiskReviewed=1," +
     "ReviewerUserId=77,ReviewedAtUtc=SYSUTCDATETIME()," +
-    "ValidUntilUtc=DATEADD(day,91,SYSUTCDATETIME()) WHERE Id=1");
+    "ValidUntilUtc=DATEADD(day,91,SYSUTCDATETIME()),AuditLogId=3 WHERE Id=1");
   await q("DECLARE @instant DATETIME2(3)=SYSUTCDATETIME(); " +
     "UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED'," +
     "MinimumCellCount=5,CategoryPrivacyReviewed=1,DifferencingRiskReviewed=1," +
     "ReviewerUserId=77,ReviewedAtUtc=@instant," +
-    "ValidUntilUtc=DATEADD(day,90,@instant) WHERE Id=1");
+    "ValidUntilUtc=DATEADD(day,90,@instant),AuditLogId=3 WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='REQUESTED' WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
-    "Status='REVOKED',QueryId=99,ValidUntilUtc=SYSUTCDATETIME() WHERE Id=1");
+    "Status='REVOKED',QueryId=99,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await q("UPDATE uqp.DashboardChartPrivacyReview SET " +
-    "Status='REVOKED',ValidUntilUtc=SYSUTCDATETIME() WHERE Id=1");
+    "Status='REVOKED',ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED' WHERE Id=1");
   await rejects("DELETE FROM uqp.DashboardChartPrivacyReview WHERE Id=1");
   stage="REQUEST_LEDGER";
@@ -134,6 +151,17 @@ export async function verifyChart928DraftSql(
   await rejects("DELETE FROM uqp.DashboardChartTrustRequest WHERE RequestId="+reqid);
   await rejects("INSERT uqp.DashboardChartTrustRequest(RequestId,Action,ActorId,AuditLogId) " +
     "VALUES("+reqid+",N'SEAL_WIDGET',8,1)");
+  stage="RETENTION_ARCHIVE_COMPAT";
+  // A trusted Audit ID must survive online retention without a live-table FK.
+  await q("INSERT uqp.AuditLogArchive(Id,EventType,UserId,Status,IsImportant) " +
+    "SELECT Id,EventType,UserId,Status,IsImportant FROM uqp.AuditLog WHERE Id IN(1,4); " +
+    "DELETE FROM uqp.AuditLog WHERE Id IN(1,4)");
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.AuditLog WHERE Id IN(1,4)")
+    ).recordset[0]?.Total),0);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.AuditLogArchive WHERE Id IN(1,4)")
+    ).recordset[0]?.Total),2);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal")
+    ).recordset[0]?.Total),1);
   stage="DRIFT_REJECT";
   await q("DISABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget");
   await assert.rejects(db.request().batch(script), (err:unknown)=>err instanceof Error);
