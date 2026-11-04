@@ -462,6 +462,46 @@ export async function verifyChart928DraftSql(
     "@DashboardId=7,@ProfileId=22,@ActorId=8,@TokenVersion=1," +
     "@RequestId=@requestId,@SourceKey=N'PRIMARY',@ConfigJson=@config," +
     "@X=10,@Y=10,@Width=600,@Height=360";
+  // 2B-15D-3: late failure AFTER the draft Writer has already inserted
+  // RequestId, AuditLog and IDENTITY Widget. A synthetic Seal AFTER trigger
+  // aborts the last step; the entire SERIALIZABLE transaction must roll back.
+  // This trigger exists ONLY in the isolated disposable UQP_CH_ database.
+  stage="ATOMIC_CREATE_LATE_SEAL_FAILURE_SETUP";
+  const atomicCounts=async()=> (await db!.request().query(
+    "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardChartTrustRequest) AS Ledger," +
+    "(SELECT COUNT_BIG(*) FROM uqp.AuditLog) AS Audit," +
+    "(SELECT COUNT_BIG(*) FROM uqp.DashboardWidget WHERE WidgetType=N'CHART') AS Charts," +
+    "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartWidgetSeal) AS Seals," +
+    "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartCreatePermit) AS Permits"
+  )).recordset[0];
+  const beforeLateFailure=await atomicCounts();
+  await db!.request().batch(
+    "CREATE TRIGGER uqp.TR_ChartSeal_DisposableLateFailure " +
+    "ON uqp.DashboardChartWidgetSeal AFTER INSERT AS BEGIN " +
+    "SET NOCOUNT ON; THROW 51928,N'CHART_DISPOSABLE_LATE_SEAL_FAILURE',1; END"
+  );
+  try{
+    stage="ATOMIC_CREATE_LATE_SEAL_FAILURE";
+    await assert.rejects(params().query(execCreate),(e:unknown)=>
+      e instanceof Error && Number((e as {number?:unknown}).number)===51928);
+  }finally{
+    // Drop the synthetic trigger even when the assertion fails. Never
+    // change any migration-owned trigger or production database object.
+    await db!.request().batch(
+      "DROP TRIGGER IF EXISTS uqp.TR_ChartSeal_DisposableLateFailure");
+  }
+  stage="ATOMIC_CREATE_LATE_SEAL_ROLLBACK_COUNTS";
+  assert.deepEqual(await atomicCounts(),beforeLateFailure);
+  const rolledRequest=(await db!.request()
+    .input("requestId",sql.UniqueIdentifier,req)
+    .query("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartTrustRequest " +
+      "WHERE RequestId=@requestId")).recordset[0];
+  assert.equal(Number(rolledRequest?.Total),0);
+  console.log("CHART_2B15D3_LATE_SEAL_ATOMIC_ROLLBACK_PASS");
+
+  // The same RequestId must be reusable only because the aborted attempt
+  // left NO persistent Ledger/Audit/Widget/Seal/Permit record.
+  stage="ATOMIC_CREATE_RETRY_AFTER_LATE_ROLLBACK";
   const createdRow=(await params().query(execCreate)).recordset[0];
   const widgetId=Number(createdRow?.WidgetId);
   const auditId=Number(createdRow?.AuditLogId);
@@ -477,6 +517,19 @@ export async function verifyChart928DraftSql(
   assert.equal(proof[0]?.WidgetType,"CHART");
   assert.equal(proof[0]?.ConfigDigest,expected);
   assert.equal(Number(proof[0]?.AuditLogId),auditId);
+  const receipt=(await db!.request()
+    .input("requestId",sql.UniqueIdentifier,req)
+    .query("SELECT r.ActorId,r.Action,r.AuditLogId AS LedgerAuditId," +
+      "a.EventType,a.UserId,a.Status FROM uqp.DashboardChartTrustRequest r " +
+      "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId WHERE r.RequestId=@requestId")
+  ).recordset;
+  assert.equal(receipt.length,1);
+  assert.equal(Number(receipt[0]?.ActorId),8);
+  assert.equal(receipt[0]?.Action,"SEAL_WIDGET");
+  assert.equal(Number(receipt[0]?.LedgerAuditId),auditId);
+  assert.equal(receipt[0]?.EventType,"CHART_SEAL_WIDGET");
+  assert.equal(Number(receipt[0]?.UserId),8);
+  assert.equal(receipt[0]?.Status,"SUCCESS");
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartCreatePermit")).recordset[0]?.Total),0);
   const beforeReplay=(await q(
     "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardChartTrustRequest) AS Ledger, " +

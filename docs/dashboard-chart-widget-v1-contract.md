@@ -1071,3 +1071,29 @@ Session 是否具有 `DESIGN_QUERY`，並與 `userId`／`tokenVersion`
 正式 Writer 程序核准 SHA-256 仍為 null、Runtime Gate 仍關閉；
 無 Migration、正式憑證或正式部署作業。本 HEAD 的完整 CI
 尚須獨立核對，不可沿用 CI #1332 的測試結果。
+
+
+## 39. 2B-15D-3：交易最後階段 Seal 寫入失敗的原子回滾（待 CI）
+
+既有 SQL Server 2019／2022 一次性 `UQP_CH_` 隔離驗收已有
+正常原子建立、RequestId 重播拒絕、無權 Actor 拒絕等案例，
+不重寫既有證明。本階段在既有 `chart928DraftSqlAcceptance.ts`
+內追加一個 **Seal 寫入後期失敗** 案例，讓交易依原流程先
+建立 Ledger、Audit 和 IDENTITY Widget，再透過只存在於合成
+資料庫的 Seal AFTER INSERT Trigger 擲出固定 51928 錯誤。
+
+要求錯誤類型精確符合，隨後移除合成 Trigger，逐一比對
+Ledger／Audit／CHART Widget／Seal／暫時 Permit 五種物件的
+前後筆數完全一致，確認失敗的 RequestId 沒有殘留，
+最後以**相同 RequestId 再試一次**，並核對 Widget ID、
+Seal digest、Ledger Audit ID、Audit 主體與事件的一致性。
+如果發生失敗，仍由既有一次性資料庫的測試流程銷毀資源，
+不影響任何正式資料。
+
+這是針對 SQL 原型的資料庫交易整合驗收，不是已完成正式
+SQL Writer；原型仍接受 SQL 引數 ActorId、拒絕非 `UQP_CH_`
+資料庫及外部交易，無正式程式簽章批准或獨立受控憑證，
+不能直接部署。最新 HEAD 必須取得對應 CI 的 SQL 2019／2022
+與 Server／Windows／Client 驗證結果才可宣告實測 PASS。
+維持 PR #83 Draft、CHART Runtime 關閉、不執行 928 Migration、
+不修改正式 `C:\\UQP`。
