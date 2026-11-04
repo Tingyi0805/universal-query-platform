@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import {readFileSync} from "node:fs";
 import {
  CHART_WRITER_BASE_COLUMNS,CHART_WRITER_SCHEMA_SQL,
- attestChartWriterBaseColumns,ChartWriterSchemaError,
+ CHART_WRITER_BASE_FOREIGN_KEYS,CHART_WRITER_BASE_FK_SQL,
+ attestChartWriterBaseColumns,attestChartWriterBaseForeignKeys,
+ ChartWriterSchemaError,
 } from "./chart928WriterBaseSchema.js";
 
 import {
@@ -85,4 +87,33 @@ test("2B-15C base Widget/Audit/Actor schema parity matches migration-owned colum
  const repeated=[...rows.slice(0,-1),rows[0]!];
  assert.throws(()=>attestChartWriterBaseColumns(repeated),
    (e:unknown)=>e instanceof ChartWriterSchemaError&&e.code==="CHART_BASE_SCHEMA_COLUMN_MISSING");
+});
+
+test("2B-15C SQL Widget/Profile/Audit foreign-key trust and cascade are exact",()=>{
+ const rows=CHART_WRITER_BASE_FOREIGN_KEYS.map(x=>({
+   ConstraintName:x.name,ParentSchema:"uqp",ParentTable:x.parent,
+   TargetSchema:"uqp",TargetTable:x.target,
+   IsDisabled:false,IsNotTrusted:false,DeleteRule:x.deleteRule,
+ }));
+ assert.equal(rows.length,3);
+ assert.match(CHART_WRITER_BASE_FK_SQL,/sys\.foreign_keys/);
+ assert.doesNotMatch(CHART_WRITER_BASE_FK_SQL,/\b(?:ALTER|DROP|GRANT|DELETE|UPDATE)\b/i);
+ assert.doesNotThrow(()=>attestChartWriterBaseForeignKeys(rows));
+ for(const change of [
+  {ParentSchema:"dbo"},{TargetSchema:"dbo"},{ParentTable:"Dashboard"},
+  {TargetTable:"AppUser"},{IsDisabled:true},{IsNotTrusted:true},
+  {IsNotTrusted:null},{DeleteRule:"NO_ACTION"},
+ ]){
+   const altered=rows.map(row=>({...row}));
+   Object.assign(altered[0]!,change);
+   assert.throws(()=>attestChartWriterBaseForeignKeys(altered),
+    (e:unknown)=>e instanceof ChartWriterSchemaError&&
+      e.code==="CHART_BASE_SCHEMA_FK_MISMATCH");
+ }
+ assert.throws(()=>attestChartWriterBaseForeignKeys(rows.slice(1)),
+  (e:unknown)=>e instanceof ChartWriterSchemaError&&
+    e.code==="CHART_BASE_SCHEMA_FK_COUNT");
+ assert.throws(()=>attestChartWriterBaseForeignKeys([rows[0]!,rows[0]!,rows[2]!]),
+  (e:unknown)=>e instanceof ChartWriterSchemaError&&
+    e.code==="CHART_BASE_SCHEMA_FK_MISSING");
 });
