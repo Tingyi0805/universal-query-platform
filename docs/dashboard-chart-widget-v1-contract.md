@@ -883,3 +883,29 @@ Writer 強制啟用 TLS 且禁止 `trustServerCertificate=true`。
 **本項只是專用連線生命週期實作與離線契約驗證，不代表
 正式程序、SQL Schema、JWT/DB 同交易身分核定、圖表
 資料交付、全螢幕播放或 ZIP 更新已核准。**
+
+
+## 32. 2B-15C-10：SQL 伺服器高權限不可只檢查固定角色
+
+`dashboardChartWriterBoundary.ts` 的雙連線唯讀驗證新增
+`HAS_PERMS_BY_NAME(NULL,NULL,...)` 伺服器層有效權限：
+`CONTROL SERVER`、`IMPERSONATE ANY LOGIN`、
+`ALTER ANY LOGIN`、`ALTER ANY SERVER ROLE`、
+`SELECT ALL USER SECURABLES`；另查詢資料庫
+`db_accessadmin`、`ALTER ANY USER`、`ALTER ANY ROLE`、
+`ALTER ANY SCHEMA`。
+這些權限不能僅從 `IS_SRVROLEMEMBER('sysadmin')`
+或 `IS_MEMBER('db_owner')` 推斷不存在。
+
+Platform 與 Writer 兩個 SQL Login 只要任何高權限值為 1、
+NULL 或無法證實為 0，則 fail closed；保留原本
+`ORIGINAL_LOGIN()` SID、核准程序 SHA-256、專用
+EXECUTE、Permit／Seal／Ledger 直接 DML 等既有拒絕。
+Server 單元測試增加正、負面案例，及 SQL 2019／2022
+一次性 `UQP_CH_` 資料庫對實際權限查詢欄位的 SQL 引擎測試。
+
+現階段最新 Commit 未取得對應 CI 結論時，
+上述內容只能稱為**已提交待驗證**。不應手動安裝 928、
+授予 SQL EXECUTE 或部署到正式 `C:\UQP`。
+SQL 參考：Microsoft Learn「HAS_PERMS_BY_NAME (Transact-SQL)」
+及「GRANT Server Permissions (Transact-SQL)」。
