@@ -1097,3 +1097,37 @@ SQL Writer；原型仍接受 SQL 引數 ActorId、拒絕非 `UQP_CH_`
 與 Server／Windows／Client 驗證結果才可宣告實測 PASS。
 維持 PR #83 Draft、CHART Runtime 關閉、不執行 928 Migration、
 不修改正式 `C:\\UQP`。
+
+
+## 40. 2B-15D-4：SQL Writer 的可信 Actor 綁定獨立核准 Gate（待 CI）
+
+確認 `database/drafts/928_chart_atomic_create_prototype.sql.draft` 的
+`usp_ChartCreate_IsolatedDraft` 在隔離資料庫中接受 `@ActorId` 與
+`@TokenVersion`，僅能在同一 SQL 交易中驗證**該帳號**存在、
+啟用且具有 `DESIGN_QUERY`。這並不能證明 SQL 引數中的使用者
+就是已驗證的 HTTP 呼叫者。即使具有專用 SQL Login、正確 TLS、
+受核准程序 SHA-256，或 Node 已先驗證 JWT，都不能補足這個信任缺口。
+
+為避免未來僅開啟兩個既有 Gate 就誤接正式 SQL Writer，新增
+硬式 `CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false`，
+`getChartWriterDbPool()` 與 `prepareDormantChartWriteRequest()`
+均須同時滿足此核准條件；缺少資料庫內可信 Actor 綁定時保持
+null／拒絕，無 Platform Pool 回退或直接執行 SQL。
+測試確認此獨立 Gate 保持關閉及前置請求仍拒絕。
+獨立 `attestChartWriterSqlPrincipals`／`attestChartWriterSqlPools`
+保留其低權限、兩登入、指紋的隔離正負面驗證能力，
+不能把這些驗證的 PASS 誤認為完整 Actor 授權。
+
+解除此 Gate 前必須另行完成與安全審查：不可由 HTTP 客戶端、
+任意 SQL Writer 呼叫或可修改的 Session Context 偽造的受控
+Actor/TokenVersion 委派；在同一個 DB-owned SERIALIZABLE 交易內
+持鎖重驗範圍、RBAC、版本與 replay，再原子寫入
+Widget／Seal／Audit／Request Ledger；包含冒用另一個**仍具有
+DESIGN_QUERY 的有效帳號**、簽章變更、並行撤權等負面實測；
+與 SQL 2019／2022、Server、Client、Windows 和人工核准採認。
+
+這一輪**沒有**建立此可信委派方案，沒有變更 SQL 原型、
+Migration 或正式 DB Login，仍不註冊 CHART API、不授權
+`.sql.draft` 部署，也不覆蓋 `C:\\UQP`。
+原先最後可查詢的 CI #1332 屬舊 HEAD；完整 CI 結果需與
+本次最新 Commit SHA 一致才能標為通過。

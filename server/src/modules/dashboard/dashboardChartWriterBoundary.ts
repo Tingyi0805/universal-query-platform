@@ -43,6 +43,12 @@ export const chartWriterIdentitySql = [
 // Intentionally unapproved until a reviewed SQL procedure definition is
 // pinned in a new release. Never accept this from browser/body/env headers.
 export const CHART_WRITER_APPROVED_PROCEDURE_SHA256: string|null=null;
+// Independent release gate. The disposable SQL prototype receives @ActorId
+// as an argument: checking that account's RBAC does NOT bind it to the actual
+// authenticated HTTP caller. A reviewed DB-owned, non-forgeable actor binding
+// in the SAME Writer transaction is required before changing this constant.
+// This must not be sourced from user input, env, JWT claims or SESSION_CONTEXT.
+export const CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false as const;
 export type ChartIdentityRow = Readonly<Record<string,unknown>>;
 export class ChartWriterBoundaryError extends Error {
   constructor(readonly code:string){super(code);this.name="ChartWriterBoundaryError";}

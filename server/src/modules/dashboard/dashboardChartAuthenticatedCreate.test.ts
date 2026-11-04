@@ -4,7 +4,9 @@ import express from "express";
 import jwt from "jsonwebtoken";
 import {createServer} from "node:http";
 import type sql from "mssql";
-import {chartWriterIdentitySql} from "./dashboardChartWriterBoundary.js";
+import {
+ chartWriterIdentitySql,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
+} from "./dashboardChartWriterBoundary.js";
 import {createAuthenticateJwt,readVerifiedJwtActor} from "../auth/auth.middleware.js";
 import {env} from "../../config/env.js";
 import {
@@ -151,6 +153,9 @@ test("2B-15C dormant write preflight demands verified actor AND two independent 
    assert.equal(calls,0);
    assert.equal((await send({...body,actorId:77})).status,403);
    assert.equal(calls,0);
+   assert.equal(CHART_WRITER_DB_ACTOR_BINDING_APPROVED,false);
+   // Independently unapproved DB-owned caller/ActorId binding: this
+   // remains blocked even if JWT is valid and SQL credentials differ.
    // The approved procedure digest is intentionally UNPINNED; future
    // API preflight cannot succeed just because JWT and mock SQL roles pass.
    const approved=await send(body);

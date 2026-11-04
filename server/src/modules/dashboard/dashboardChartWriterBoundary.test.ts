@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import type sql from "mssql";
 import {chartWriterSqlConfig,getChartWriterDbPool,closeChartWriterDbPool} from "../../config/chartWriterDatabase.js";
 import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "./dashboardChartAtomicCreate.contract.js";
-import {CHART_WRITER_APPROVED_PROCEDURE_SHA256} from "./dashboardChartWriterBoundary.js";
+import {
+ CHART_WRITER_APPROVED_PROCEDURE_SHA256,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
+} from "./dashboardChartWriterBoundary.js";
 import {attestChartWriterSqlPrincipals,attestChartWriterSqlPools,
  chartWriterIdentitySql,ChartWriterBoundaryError} from "./dashboardChartWriterBoundary.js";
 
@@ -135,6 +137,7 @@ test("2B-15C chart pool rejects reused login and unsafe TLS without connecting",
  }
  assert.equal(CHART_ATOMIC_CREATE_RUNTIME_ENABLED,false);
  assert.equal(CHART_WRITER_APPROVED_PROCEDURE_SHA256,null);
+ assert.equal(CHART_WRITER_DB_ACTOR_BINDING_APPROVED,false);
  assert.equal(await getChartWriterDbPool(),null);
  await closeChartWriterDbPool();
 });

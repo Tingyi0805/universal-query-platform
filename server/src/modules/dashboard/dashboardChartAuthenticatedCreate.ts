@@ -5,7 +5,9 @@ import type {Request} from "express";
 import sql from "mssql";
 import {readVerifiedJwtActor} from "../auth/auth.middleware.js";
 import {getTokenSessionState} from "../auth/auth.repository.js";
-import {attestChartWriterSqlPools} from "./dashboardChartWriterBoundary.js";
+import {
+  attestChartWriterSqlPools,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
+} from "./dashboardChartWriterBoundary.js";
 import {
   planDormantChartCreate,type DormantChartCreatePlan,
 } from "./dashboardChartAtomicCreate.contract.js";
@@ -59,6 +61,10 @@ export async function prepareDormantChartWriteRequest(
  req:Request,dashboardId:number,raw:unknown,
  platformPool:sql.ConnectionPool,chartWriterPool:sql.ConnectionPool,
 ):Promise<DormantChartCreatePlan|null> {
+ // Independent of JWT and SQL login checks: the SQL procedure must have
+ // approved same-transaction caller-to-ActorId binding. Never treat the
+ // disposable prototype's @ActorId input as that proof.
+ if(!CHART_WRITER_DB_ACTOR_BINDING_APPROVED)return null;
  const plan=planVerifiedChartCreateRequest(req,dashboardId,raw);
  if(!plan)return null;
  try{

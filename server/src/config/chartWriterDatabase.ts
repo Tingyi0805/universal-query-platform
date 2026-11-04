@@ -6,7 +6,8 @@ import {getPlatformDbPool} from "./database.js";
 import {attestChartWriterBaseSqlCatalog} from "../scripts/chart928WriterBaseSchema.js";
 import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "../modules/dashboard/dashboardChartAtomicCreate.contract.js";
 import {
- CHART_WRITER_APPROVED_PROCEDURE_SHA256,attestChartWriterSqlPools,
+ CHART_WRITER_APPROVED_PROCEDURE_SHA256,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
+ attestChartWriterSqlPools,
 } from "../modules/dashboard/dashboardChartWriterBoundary.js";
 
 export type ChartDbSettings=Readonly<{
@@ -60,7 +61,8 @@ let generation=0;
  */
 export async function getChartWriterDbPool():Promise<sql.ConnectionPool|null>{
  if(!CHART_ATOMIC_CREATE_RUNTIME_ENABLED||
-    !CHART_WRITER_APPROVED_PROCEDURE_SHA256)return null;
+    !CHART_WRITER_APPROVED_PROCEDURE_SHA256||
+    !CHART_WRITER_DB_ACTOR_BINDING_APPROVED)return null;
  // A previously attested SQL connection is NOT permanently trusted.
  // Revalidate both original logins, grants and the pinned procedure digest
  // before every later pool handoff; a revoked grant or altered procedure
