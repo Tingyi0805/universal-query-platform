@@ -113,3 +113,27 @@ Repository 使用的 ServerChartApprovalReader 驗證政策。
    欄位政策及不可重用的修訂證據；避免把管理 UI 或使用者送出的資料當成事實。
 3. 經 Server／Browser／SQL 2019／2022 等隔離驗收及人工安全審查通過後，
    才進一步規劃圖表 Widget 的 Migration、設計器與全螢幕播放。
+
+
+## 8. 2B-2：既有 SQL Repository 的唯讀候選證據（仍不核發圖表授權）
+
+新增 server/src/modules/dashboard/dashboardChartEvidence.reader.ts 與相對應單元測試。
+
+本階段的讀取器以既有 UQP Repository 讀取工作站來源綁定、即時 TokenVersion
+與使用者權限、Query 定義與 ACL、Dataset 啟用狀態、欄位稽核政策、ReportColumn
+和公共顯示核准。查詢版本候選讀取 QueryDefinitionVersion 目前最高 VersionNo，
+Dataset 版本候選讀取 DefinitionRowVersion；兩者缺失或型別不符就拒絕，
+不使用時間戳或純文字雜湊假裝不可重用的版本。
+
+讀取過程至少在前後檢查 Dashboard 既有 919 核准證據與 Query ACL。
+但目前各 Repository 的讀取並非在同一交易內整體鎖定，
+因此這個唯讀讀取器**不是最終可核發的正式憑證**；
+後續必須補強同一信任邊界內的版本競爭驗證。
+
+最重要的是：預設 getVerifiedAggregate 永遠回傳 null，
+**不會因 ReportColumn 的 GROUP／COUNT／SUM、數值型別或原始 SQL 含有
+GROUP BY 字串而核准圖表**。合成單元測試只驗證候選讀取、權限失效拒絕、
+裝置核驗、前後證據變動拒絕，不能證明實際 SQL 的彙總語意。
+
+沒有註冊任何 CHART 路由、Widget 儲存、圖表渲染或播放功能。
+正式資料庫、Migration 927、PIN Runtime 及現有 Dashboard 維持原樣。
