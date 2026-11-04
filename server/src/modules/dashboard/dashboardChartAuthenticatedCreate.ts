@@ -27,10 +27,12 @@ export function planVerifiedChartCreateRequest(
  });
 }
 
-/** Must run in the SAME SERIALIZABLE transaction as trusted Writer's DML;
- * this is a second check after JWT middleware to catch revocations,
- * TokenVersion updates and RBAC removals in the time between requests.
- * The SQL Server login/proc boundary must be verified separately.
+/** Only sufficient when the approved Writer and this check use the SAME
+ * SERIALIZABLE SQL transaction. The isolated SQL procedure prototype owns
+ * its own transaction and refuses an outer one: a separate Node-side check
+ * can never substitute for a DB-owned Actor/TokenVersion/RBAC recheck within
+ * that procedure's Widget/Seal/Audit transaction.
+ * This helper is dormant and is not wired to any HTTP route.
  */
 export async function recheckChartActorInTransaction(
  tx:sql.Transaction, plan:DormantChartCreatePlan,
