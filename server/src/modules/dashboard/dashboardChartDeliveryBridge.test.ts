@@ -28,7 +28,7 @@ function fixture(options: { rows?: Array<Record<string, unknown>>; pageSize?: nu
     deviceId: -subject.userId, dashboardId: 7, queryId: 9, datasetId: 10,
     sourceKey: "PRIMARY", executionContext: "designer",
     sourceScope: "ci-disposable", modeVersion: "QUERY_ONLY_PREVIEW_V1",
-    sensitivityVersion: 2, truncated: options.truncated ?? false,
+    sensitivityVersion: 2, truncated: options.truncated === undefined ? false : options.truncated,
     columns: [{ name: "ROOM" }, { name: "COUNT" }, { name: "PERSON_ID" }],
     rows,
   });

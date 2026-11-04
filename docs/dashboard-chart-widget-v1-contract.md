@@ -54,3 +54,30 @@ V1 單元測試驗證設定白名單、來源一致性、缺失欄位、
 未授權或未遮蔽的拒絕、不完整資料拒絕、
 上限、數值檢查，以及禁止多餘欄位洩漏。
 這不是實際患者資料、完整儀表板、真實瀏覽器或正式設備的驗收。
+
+
+## 6. 第二階段：伺服器內部已稽核 Page Bridge（尚未啟用）
+
+新增純伺服器橋接器與測試：
+
+- server/src/modules/dashboard/dashboardChartDeliveryBridge.ts
+- server/src/modules/dashboard/dashboardChartDeliveryBridge.test.ts
+
+Bridge 介面可接收既有 Query-only 來源執行器的 page() 回應，但不提供 HTTP Route。
+其設計只接受由既有伺服器權限檢查、來源有效性、遮蔽、患者揭露 Audit
+與最後版本重驗後成功交付的單一完整資料頁。
+
+Bridge 再核對同處理程序的原始快照之來源、Query、Dataset、敏感政策版本、
+安全模式、過期時間與資料數量；要求 totalPages=1、truncated 明確為 false
+且原始／交付資料行數一致。分類及數值欄位不能被遮蔽；不符合時直接拒絕，
+絕不拿單一分頁或截斷結果冒充完整統計。
+
+**重要未完成條件：**目前仍缺一個真正的、伺服器核發的 Chart 欄位核准來源
+(ServerChartApprovalReader)，必須檢查既有 Query 是否確實輸出可靠彙總，
+並證明選取欄位符合 Dataset、公共螢幕遮蔽及欄位政策，核准版本可抵抗
+A→B→A 異動。目前此 Reader **刻意未接上正式實作**；測試只用合成核准模擬，
+不能把橋接器直接接成管理 API 或播放 API。
+
+Bridge 的單元測試也不能取代真正的 Query-only 執行流程、SQL 2019／2022、
+資料來源更新競爭、HTTPS 裝置授權或公共螢幕人工驗收。
+CHART Widget、既有 SQL CHECK、版面設計器及正式全螢幕播放仍全部保持未啟用。
