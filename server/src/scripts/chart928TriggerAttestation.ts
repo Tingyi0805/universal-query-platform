@@ -78,7 +78,9 @@ export async function attestChart928TriggerCatalog(
   connection:sql.ConnectionPool|sql.Transaction,draft:string,
 ):Promise<void> {
   const expected=parseChart928TriggerDefinitions(draft);
-  const rows=(await new sql.Request(connection).query(
+  const request=connection instanceof sql.Transaction
+    ? new sql.Request(connection) : new sql.Request(connection);
+  const rows=(await request.query(
     "SELECT t.name AS TriggerName, OBJECT_SCHEMA_NAME(t.object_id) AS SchemaName, " +
     "OBJECT_SCHEMA_NAME(t.parent_id) AS ParentSchema, " +
     "OBJECT_NAME(t.parent_id) AS ParentTable, " +
