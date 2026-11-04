@@ -92,16 +92,20 @@ test("2B-15C base Widget/Audit/Actor schema parity matches migration-owned colum
 test("2B-15C SQL Widget/Profile/Audit foreign-key trust and cascade are exact",()=>{
  const rows=CHART_WRITER_BASE_FOREIGN_KEYS.map(x=>({
    ConstraintName:x.name,ParentSchema:"uqp",ParentTable:x.parent,
-   TargetSchema:"uqp",TargetTable:x.target,
+   ParentColumn:x.parentColumn,TargetSchema:"uqp",TargetTable:x.target,
+   TargetColumn:x.targetColumn,KeyColumnCount:1,
    IsDisabled:false,IsNotTrusted:false,DeleteRule:x.deleteRule,
  }));
  assert.equal(rows.length,3);
  assert.match(CHART_WRITER_BASE_FK_SQL,/sys\.foreign_keys/);
+ assert.match(CHART_WRITER_BASE_FK_SQL,/sys\.foreign_key_columns/);
  assert.doesNotMatch(CHART_WRITER_BASE_FK_SQL,/\b(?:ALTER|DROP|GRANT|DELETE|UPDATE)\b/i);
  assert.doesNotThrow(()=>attestChartWriterBaseForeignKeys(rows));
  for(const change of [
   {ParentSchema:"dbo"},{TargetSchema:"dbo"},{ParentTable:"Dashboard"},
-  {TargetTable:"AppUser"},{IsDisabled:true},{IsNotTrusted:true},
+  {TargetTable:"AppUser"},{ParentColumn:"OtherDashboardId"},
+  {TargetColumn:"Code"},{KeyColumnCount:2},
+  {KeyColumnCount:null},{IsDisabled:true},{IsNotTrusted:true},
   {IsNotTrusted:null},{DeleteRule:"NO_ACTION"},
  ]){
    const altered=rows.map(row=>({...row}));
