@@ -41,7 +41,7 @@ export const CHART_WRITER_BASE_COLUMNS:readonly ColumnRule[]=[
 
 export type ChartWriterBaseColumnRow=Readonly<{
  TableName:unknown;ColumnName:unknown;SqlType:unknown;
- MaxLength:unknown;Nullable:unknown;Identity:unknown;
+ MaxLength:unknown;Nullable:unknown;IsIdentity:unknown;
 }>;
 export class ChartWriterSchemaError extends Error{
  constructor(readonly code:string){super(code);this.name="ChartWriterSchemaError";}
@@ -49,7 +49,7 @@ export class ChartWriterSchemaError extends Error{
 export const CHART_WRITER_SCHEMA_SQL=[
  "SELECT r.TableName,r.ColumnName,ty.name AS SqlType,",
  "c.max_length AS MaxLength,CONVERT(bit,c.is_nullable) AS Nullable,",
- "CONVERT(bit,c.is_identity) AS Identity",
+ "CONVERT(bit,c.is_identity) AS IsIdentity",
  "FROM (VALUES",
  CHART_WRITER_BASE_COLUMNS.map(x=>"(N'"+x.table+"',N'"+x.column+"')").join(","),
  ") AS r(TableName,ColumnName)",
@@ -73,7 +73,7 @@ export function attestChartWriterBaseColumns(
   const row=found[0]!;
   if(row.SqlType!==want.type||
     (want.bytes!==null&&row.MaxLength!==want.bytes)||
-    row.Nullable!==want.nullable||row.Identity!==want.identity)
+    row.Nullable!==want.nullable||row.IsIdentity!==want.identity)
    throw new ChartWriterSchemaError("CHART_BASE_SCHEMA_COLUMN_MISMATCH");
  }
 }
