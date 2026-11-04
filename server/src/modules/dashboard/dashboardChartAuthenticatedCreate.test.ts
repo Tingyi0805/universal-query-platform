@@ -63,6 +63,9 @@ test("2B-15C actor is bound ONLY to verified JWT + live session, never request b
   for(const field of [
    {actorId:77},{tokenVersion:999},{approved:true},{permissions:["DESIGN_QUERY"]},
    {deviceToken:"anything"},{widgetId:123},{jwt:"fake"},
+   {grantId:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"},
+   {issuerSid:"FAKE_SQL_ISSUER"},{secret:"fake-secret"},
+   {issuerApproved:true},{delegationConsumed:false},
   ])assert.equal((await send({...body,...field})).status,403);
   assert.equal((await send({...body,profileId:0})).status,403);
   session={...session,permissions:[]};
