@@ -142,10 +142,11 @@ test("2B-15C dormant write preflight demands verified actor AND two independent 
    assert.equal(calls,0);
    assert.equal((await send({...body,actorId:77})).status,403);
    assert.equal(calls,0);
+   // The approved procedure digest is intentionally UNPINNED; future
+   // API preflight cannot succeed just because JWT and mock SQL roles pass.
    const approved=await send(body);
-   assert.equal(approved.status,200);
-   assert.deepEqual(await approved.json(),{actorId:8,tokenVersion:3});
-   assert.equal(calls,2);
+   assert.equal(approved.status,403);
+   assert.equal(calls,0);
    writerIdentity.OriginalSid="AAA";
    assert.equal((await send(body)).status,403);
    writerIdentity.OriginalSid="BBB";
