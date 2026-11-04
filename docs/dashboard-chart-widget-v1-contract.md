@@ -454,3 +454,30 @@ Repository 驗證 TokenVersion，並覆蓋 CAS、A→B→A、身分分離、
 不應以測試通過推論可以在正式 UQP 啟用 CHART。
 正式 C:\UQP、Migration 927、PIN Runtime、既有 Dashboard
 與播放設定保持原樣。
+
+
+## 16. 2B-10：共用版型刪除重建寫入器的 CHART 封印防護（仍未啟用）
+
+實際追查兩條既有路徑：
+
+- 舊版 `replaceDashboardLayout` → 共用 `writeDashboardLayout`。
+- Query Source 管理 `createQuerySourceStore.writeLayout` → 同一共用 `writeDashboardLayout`。
+
+現行寫入器會先整批 DELETE `DashboardWidget`／`DashboardDisplayProfile`，再 INSERT 重建；
+原始 Widget Id 及版型身分不會保留，因此不能讓已封印 CHART 隨此路徑寫入。
+
+2B-10 在共用 DELETE **之前**增加 `assertChartLayoutReplacementSafe`：
+
+1. 同一既有 SQL transaction、Dashboard parent UPDLOCK／HOLDLOCK，明確拒絕由舊版型輸入新建 CHART 或未知 WidgetType。
+2. 即使尚無 sidecar，先查既有 WidgetType='CHART'，任何該 Dashboard 下已存在 CHART 均拒絕整批版型重建。
+3. 僅在 sidecar 真正存在時查 `DashboardChartWidgetSeal`；任何附屬封印，包括殘留在非 CHART Widget 的異常封印，都拒絕整批替換。缺 Catalog 的正式舊版仍可使用普通 Widget，不要求執行 Migration。
+4. 此守衛在共同函式內，因此同時覆蓋 Legacy 與 Query Source 版型儲存；原本權限、模式、Audit 與現有 Widget schema 完全不放寬。
+
+新增 `dashboardChartLayoutReplacement.guard.test.ts` 純單元拒絕測試，及 `chartLayoutReplacementSqlAcceptance.ts`。
+SQL Server 2019／2022 使用既有 D1 隔離 `UQP_CF_` 合成資料庫，測試：
+封印 CHART、未封印 CHART、掛在 TEXT 上的殘留 Seal 都不能被共用 DELETE 移除；
+無 CHART 或 Seal 的其他舊版版型仍可刪除重建。只驗證安全守衛與清除路徑，未測正式圖表建置。
+
+**正式啟用前仍須補齊**：未來 CHART 建立、版型編輯、封印、停用或刪除應統一 Dashboard → Profile → Widget → Seal 鎖順序，並提供真正的封印 epoch／CAS 與原子 Audit；資料庫 Trigger／完整 FK、直接 SQL 更新、跨進程並行與完整 925 實際 Schema 仍未驗收。此次守衛不能代替上述完整寫入者契約，尤其不能由側表不存在推論可以開放圖表。
+
+CHART 型別、正式 SQL CHECK、管理 API、設計器、播放器、Migration 927、PIN Runtime 均保持不變；PR 維持 Draft，正式 `C:\\UQP` 不變。

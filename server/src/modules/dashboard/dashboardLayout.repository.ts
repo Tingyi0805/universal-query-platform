@@ -1,4 +1,5 @@
 import { assertLegacyDashboardWriter } from "./dashboardSourceWriteGuard.js";
+import { assertChartLayoutReplacementSafe } from "./dashboardChartLayoutReplacement.guard.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -145,6 +146,9 @@ export async function replaceDashboardLayout(
 
 // Internal transaction helper: callers must hold the Dashboard lock and validate their writer contract.
 export async function writeDashboardLayout(tx: sql.Transaction, dashboardId: number, profiles: DashboardProfileInput[], createRequest: (tx: sql.Transaction) => sql.Request = tx => new sql.Request(tx)) {
+    // Shared destructive path for legacy and managed layout writers. Never
+    // delete/recreate a CHART or its seal outside a future atomic chart writer.
+    await assertChartLayoutReplacementSafe(tx, dashboardId, profiles, createRequest);
     await createRequest(tx)
       .input("dashboardId", sql.BigInt, dashboardId)
       .query(`
