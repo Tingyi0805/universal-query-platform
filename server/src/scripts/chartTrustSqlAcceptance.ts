@@ -85,5 +85,6 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
   await exec("UPDATE uqp.DashboardChartPrivacyReview SET CategoryPrivacyReviewed=1 WHERE Id=123");
   await exec("UPDATE uqp.DashboardChartPrivacyReview SET ValidUntilUtc=DATEADD(day,-1,SYSUTCDATETIME()) WHERE Id=123");
   assert.equal(await readers.readPublicReview(scope, actor), null);
+  await (await import("./chartTrustWriterSqlAcceptance.js")).verifyChartTrustWriterSql(db);
   console.log("CHART_TRUST_SQL_2B8_SEAL_REVIEW_ABA_REVOKE_EXPIRE_PASS");
 }

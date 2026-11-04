@@ -388,3 +388,69 @@ Reader 註冊到正式 Chart Coordinator。側表讀取對既有正式資料庫
 
 原有 Dashboard、Query Publisher、已啟用播放器、裝置 Token、
 Migration 927、PIN Runtime 及正式 C:\UQP 維持原樣。
+
+
+## 15. 2B-9：版本封印 CAS／隱私申請核定撤銷的原子寫入器（仍未啟用）
+
+新增：
+- server/src/modules/dashboard/dashboardChartTrust.writer.ts
+- server/src/scripts/chartTrustWriterSqlAcceptance.ts
+
+**此程式沒有預設實例、沒有正式 API／路由、沒有正式 Migration，
+且預設部署中的 DashboardWidget SQL CHECK 仍禁止 CHART。**
+
+### 執行邊界與交易流程
+
+createDormantChartTrustWriters 需要呼叫者明確注入：
+(1) SQL Server connection pool；
+(2) 明確的啟用閘門；
+(3) **同一 SQL 交易內**重驗操作者 TokenVersion、權限與功能職責的授權器；
+(4) 在同一交易內重新計算 Query／Dataset／Dashboard／敏感政策／公開顯示
+修訂與來源綁定的可信作用範圍讀取器。預設並沒有掛接正式授權器。
+
+寫入交易採 SERIALIZABLE、XACT_ABORT ON、固定範圍的
+UPDLOCK/HOLDLOCK、CAS 比對與交易內 AuditLog。
+新側表 uqp.DashboardChartTrustRequest 用唯一 RequestId 持久保存每次
+寫入決策及稽核關聯，以免在資料 A→B→A 後重送同一請求。若帳號失效、
+版本不符、Audit 失敗、重複 RequestId、來源無法核對，整筆交易回滾。
+
+### CHART Widget 版本封印
+
+sealWidget 只處理**可信來源已存在**的 CHART Widget：
+需檢查 Profile 所屬 Dashboard、WidgetType、SourceKey、受限 Chart V1
+Config，以及前次 SealRowVersion。將 Widget.ConfigJson、
+封印 ConfigDigest、封印者與 AuditLogId **同交易**更新，並以
+SealRowVersion CAS 取得下一版本。即使內容還原為相同 JSON，
+版本依然前進。舊版本不可覆蓋新版本。
+
+**尚缺**正式 CHART Widget 新建流程，以及與既有會刪除／重建 Widget 的
+版型設計器的完整 Writer／Trigger 同交易接合。正式 Schema 不變。
+
+### 公共統計隱私審查生命週期
+
+- requestReview：只由已通過授權的申請人提出，
+  以伺服器可信的 Query／Dataset／公開政策版本檢查作用範圍，
+  不得存在同範圍 REQUESTED／APPROVED 的有效決策。
+- approveReview：需不同於申請人的獨立核准者，核對 ReviewRowVersion、
+  再確認作用範圍仍是最新，並明確確認分類隱私及差異推算已審查；
+  最低組別件數至少 5（非院內正式標準），有效期不逾 90 天。
+- revokeReview：需有獨立撤銷權限，透過 CAS 將 APPROVED 改成 REVOKED，
+  任何舊版核准不能再用；重新申請要建立新 Review 決策。
+- 三種操作均同交易寫入 AuditLog、不可重送 RequestId 與 ReviewRowVersion，
+  不提供靜默回復或舊核准重用。
+
+### 一次性 SQL Server 引擎測試與限制
+
+延用 D1 2019／2022 一次性容器的隔離 UQP_CF_ 資料庫，
+新增合成 AuditLog、RequestId ledger、Widget Seal AuditLogId
+及 Review 申請欄位。測試採合成申請人／核准者、真實 UQP Token／權限
+Repository 驗證 TokenVersion，並覆蓋 CAS、A→B→A、身分分離、
+版本異動、撤銷、請求重送與交易稽核筆數。
+
+**仍非完整正式驗收**：目前只有合成的最小 Sidecar Schema、
+注入式授權器及測試專用 readLiveScope。未提供核准申請 UI、
+審查人員管理、正式 SQL Migration、所有 Writer 的統一鎖順序、
+跨節點權限競爭、完整患者揭露 Audit／公共螢幕端到端驗收，
+不應以測試通過推論可以在正式 UQP 啟用 CHART。
+正式 C:\UQP、Migration 927、PIN Runtime、既有 Dashboard
+與播放設定保持原樣。
