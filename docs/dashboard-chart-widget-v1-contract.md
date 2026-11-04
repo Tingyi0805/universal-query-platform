@@ -793,3 +793,29 @@ approved、deviceToken 等欄位。
 上述只是**尚未註冊的身份與授權前置契約**；
 未接正式路由／真正 SQL 執行／專用獨立登入池，
 因此仍不得開放 CHART 儲存或給予 SQL EXECUTE。
+
+
+## 29. 2B-15C-7：專用 Writer SQL 登入主體隔離驗證（停用狀態）
+
+新增 `dashboardChartWriterBoundary.ts` 唯讀連線驗證器，
+正式環境未新增任何帳密、SQL Pool、授權或 CHART 路由。
+規劃中的正式程序 `uqp.usp_DashboardChartCreate` 目前**尚不存在**；
+驗證器會因此拒絕，而不是將現有隔離原型誤認為正式 Writer。
+
+當正式程序與兩組獨立連線均經核准後，須由驗證器確認：
+同一 Server／Database，但不同 `ORIGINAL_LOGIN()` SQL SID；
+平台連線不得執行 CHART 程序；專用連線只能 EXECUTE，不得
+ALTER 或直接修改 Permit、Seal、Request Ledger／Review；
+兩者均不能有 sysadmin、db_owner、db_ddladmin、
+db_securityadmin、db_datawriter、Schema ALTER／CONTROL
+或冒用 Writer 的權限。對看不到的權限或模組一律拒絕。
+**原有 Dashboard Widget CRUD 必須保持可用**，
+因此本驗證器不要求平台連線失去原本 Widget 寫入權，
+CHART Freeze／受控程序必須繼續保護圖表。
+
+在 SQL Server 2019／2022 的一次性資料庫加上
+`EXECUTE AS USER` 的反例：雖然 `USER_NAME()` 變成
+臨時 Writer，`ORIGINAL_LOGIN()` SID 必須仍是原登入，
+不得把角色切換當成另一組 SQL 登入憑證。
+驗證器只執行唯讀查詢、拒絕過廣權限，並不證明正式
+Schema、JWT-Actor／DB 所有步驟與程序版本已整合。

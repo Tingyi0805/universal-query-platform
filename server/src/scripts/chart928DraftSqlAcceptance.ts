@@ -347,6 +347,21 @@ export async function verifyChart928DraftSql(
   )).recordset[0];
   assert.equal(Number(permissions?.Member),1);
   assert.equal(Number(permissions?.AppMember),0);
+  // EXECUTE AS USER changes effective database permissions, not the
+  // ORIGINAL_LOGIN identity. It MUST NOT satisfy two-login attestation.
+  stage="ATOMIC_CREATE_ORIGINAL_LOGIN_IMPERSONATION";
+  const original=(await q(
+    "SELECT CONVERT(varchar(256),SUSER_SID(ORIGINAL_LOGIN()),2) AS OriginalSid, " +
+    "USER_NAME() AS EffectiveUser"
+  )).recordset[0];
+  const assumed=(await q(
+    "EXECUTE AS USER=N'UQP_Chart_Writer'; " +
+    "SELECT CONVERT(varchar(256),SUSER_SID(ORIGINAL_LOGIN()),2) AS OriginalSid, " +
+    "USER_NAME() AS EffectiveUser; REVERT"
+  )).recordset[0];
+  assert.equal(String(assumed?.OriginalSid),String(original?.OriginalSid));
+  assert.notEqual(String(assumed?.EffectiveUser),String(original?.EffectiveUser));
+  console.log("CHART_2B15C_ORIGINAL_LOGIN_IMPERSONATION_CANNOT_ISOLATE_PASS");
   console.log("CHART_2B15C_DISPOSABLE_PRINCIPAL_SEPARATION_PASS");
   stage="ATOMIC_CREATE_UNGRANTED_EXEC";
   const unauthorized=(await db.request().batch(
