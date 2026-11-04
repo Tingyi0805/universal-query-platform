@@ -518,7 +518,7 @@ PIN／927 或現有 Dashboard 播放器。
 直接加入數字命名的 CHART SQL，會使既有 ZIP 覆蓋更新流程在呼叫一般
 `db:migrate` 時執行尚未授權的安全結構。故保留 `927_workstation_pin_runtime.sql`
 原始內容、Ledger、PIN Runtime 設定不變；2B-12 僅在
-`database/drafts/928_dashboard_chart_trust_schema.sql` 存放非掃描、
+`database/drafts/928_dashboard_chart_trust_schema.sql.draft` 存放非掃描、
 **未經批准不得對正式或一般測試 C:\\UQP 資料庫執行**的 DDL 草案。
 
 ### 草案包含
@@ -544,3 +544,11 @@ DML／Seal DELETE／Review 回復／Request Ledger 改寫失敗、
 仍可繞過這些 DML 規則；正式部署需另驗證帳號最小權限、Schema 漂移、
 正式 925 狀態及 Writer 可在封印門檻內原子寫入。本階段無 CHART API、
 版型編輯器、播放器、PIN 或正式 migration 安裝。
+
+### 2B-12 Audit 保存期需獨立審查
+目前草案將 Seal／Review／RequestId Ledger 的 AuditLogId 設為 live
+`uqp.AuditLog` FK；原 016 歷程具有 AuditLogArchive 與線上保留期。
+在沒有驗證自動移轉、排除規則或不可刪 Audit receipt 的設計之前，
+**此 FK 可能阻止既有 Audit 清理，故 928 不得核准直接安裝**。
+2B-13 須與既有 Audit 保留／封存工作一起驗收，不可為了通過測試而
+刪除 Audit 關聯或允許靜默清除已核准決策。

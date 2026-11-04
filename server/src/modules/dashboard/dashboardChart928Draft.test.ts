@@ -1,11 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-const draft = readFileSync(new URL("../../../../database/drafts/928_dashboard_chart_trust_schema.sql", import.meta.url),"utf8");
+const draft = readFileSync(new URL("../../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft", import.meta.url),"utf8");
 const executable=draft.replace(/--[^\n]*/g,"");
 test("2B-12 stays outside the automatic migration scanner",()=>{
   assert.match(import.meta.url,/server\/src\/modules\/dashboard\/dashboardChart928Draft.test.ts/);
   assert.match(draft,/NON-SCANNED DRAFT/);
+  // .sql.draft files must never enter the generic SQL inventory or migration scanner.
+  assert.equal(new URL("../../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url)
+    .pathname.endsWith(".sql"),false);
   assert.match(executable,/SET XACT_ABORT ON/);
   assert.match(executable,/SAVE TRANSACTION Chart928Draft/);
   assert.match(executable,/sp_getapplock/);

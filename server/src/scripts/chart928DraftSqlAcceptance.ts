@@ -6,7 +6,7 @@ import {readFile} from "node:fs/promises";
 import {randomBytes} from "node:crypto";
 import sql from "mssql";
 
-const sqlPath=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql",import.meta.url);
+const sqlPath=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url);
 export async function verifyChart928DraftSql(
  admin:sql.ConnectionPool,config:sql.config,machine:string,
 ):Promise<void>{
