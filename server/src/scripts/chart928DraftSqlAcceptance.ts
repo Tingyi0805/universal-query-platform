@@ -303,6 +303,23 @@ export async function verifyChart928DraftSql(
   stage="FINAL";
   await check();
   await attestChartWriterBaseSqlCatalog(db);
+  stage="BASE_SCHEMA_FK_DISABLE_DRIFT_REJECT";
+  const fkDrift=new sql.Transaction(db);
+  await fkDrift.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try{
+    await new sql.Request(fkDrift).query(
+      "ALTER TABLE uqp.DashboardWidget NOCHECK CONSTRAINT FK_DashboardWidget_Profile"
+    );
+    await assert.rejects(
+      attestChartWriterBaseSqlCatalog(fkDrift),
+      (err:unknown)=>err instanceof Error &&
+        err.message==="CHART_BASE_SCHEMA_FK_MISMATCH"
+    );
+  }finally{
+    await fkDrift.rollback().catch(()=>undefined);
+  }
+  await attestChartWriterBaseSqlCatalog(db);
+  console.log("CHART_2B15C_BASE_SCHEMA_FK_DISABLE_ROLLBACK_PASS");
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal")).recordset[0]?.Total),1);
   assert.equal(String((await q("SELECT Status FROM uqp.DashboardChartPrivacyReview WHERE Id=1")).recordset[0]?.Status),"REVOKED");
   console.log("CHART_928_DRAFT_SQL_2019_2022_INSTALL_RERUN_ROLLBACK_FREEZE_AUDIT_FK_PASS");
