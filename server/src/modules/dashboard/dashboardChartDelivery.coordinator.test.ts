@@ -80,6 +80,9 @@ type Scenario = {
   context?: "device" | "admin-preview";
   validDeviceProof?: boolean;
   expiredUser?: boolean;
+  unreviewedPublic?: boolean;
+  invalidPublicThreshold?: boolean;
+  wrongReviewScope?: boolean;
 };
 function fixture(options: Scenario = {}) {
   const isPublic = options.isPublic ?? Boolean(options.context);
@@ -153,10 +156,12 @@ function fixture(options: Scenario = {}) {
       publicReads++;
       if (options.noReview) return null;
       const review: PublicCountReview = {
-        ...scope, status: "APPROVED", reviewRevision:
+        ...scope, sourceKey: options.wrongReviewScope ? "OTHER" : scope.sourceKey,
+        status: "APPROVED", reviewRevision:
           options.changeReview && publicReads > 1 ? "0".repeat(64) : "1".repeat(64),
-        minimumCellCount: 5,
-        categoryPrivacyReviewed: true, differencingRiskReviewed: true,
+        minimumCellCount: options.invalidPublicThreshold ? 0 : 5,
+        categoryPrivacyReviewed: (options.unreviewedPublic ? false : true) as true,
+        differencingRiskReviewed: true,
       };
       return review;
     },
@@ -266,4 +271,17 @@ test("admin-preview is treated as public, never internal designer mode", async (
   const f = fixture({ context: "admin-preview", noReview: true });
   await refused(f);
   assert.equal(f.counts().calls, 0);
+});
+
+test("unreviewed, invalid-threshold or wrong-scope public review prevents Query execution", async () => {
+  for (const scenario of [
+    { isPublic: true, unreviewedPublic: true },
+    { isPublic: true, invalidPublicThreshold: true },
+    { isPublic: true, wrongReviewScope: true },
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 0);
+    assert.equal(f.counts().publicReads, 1);
+  }
 });

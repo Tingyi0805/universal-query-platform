@@ -51,6 +51,17 @@ export type ChartCoordinatorDependencies = {
 function deny(): never {
   throw new ChartContractError("CHART_TRUSTED_DELIVERY_REQUIRED");
 }
+function reviewedBeforeQuery(scope: PublicCountScope, review: PublicCountReview | null): boolean {
+  if (!review || review.status !== "APPROVED" ||
+      review.categoryPrivacyReviewed !== true ||
+      review.differencingRiskReviewed !== true ||
+      !/^[a-f0-9]{64}$/.test(review.reviewRevision) ||
+      !Number.isSafeInteger(review.minimumCellCount) ||
+      review.minimumCellCount < 5 || review.minimumCellCount > 1000)
+    return false;
+  return (Object.keys(scope) as Array<keyof PublicCountScope>)
+    .every(key => review[key] === scope[key]);
+}
 function scopeOf(
   facts: ServerChartFacts,
   approvalVersion: string,
@@ -138,9 +149,7 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
         const scope = scopeOf(current.facts, current.approval.version, config);
         const reviewBefore = publicPlayback
           ? await deps.readPublicReview(scope, subject) : null;
-        if (publicPlayback && (!reviewBefore ||
-            reviewBefore.status !== "APPROVED" ||
-            reviewBefore.policyRevision !== scope.policyRevision))
+        if (publicPlayback && !reviewedBeforeQuery(scope, reviewBefore))
           return deny();
 
         // Neither the page provider nor the approval reader accepts
