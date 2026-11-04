@@ -82,9 +82,18 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
       assert(Number.isSafeInteger(Number(contenderSession)));
       assert.notEqual(Number(holderSession),Number(contenderSession));
       console.log("CHART_2B11_MARK:LOCK_TIMEOUT");
-      await new sql.Request(contender).query("SET LOCK_TIMEOUT 400");
+      // Ensure SQL LOCK_TIMEOUT is set in the *same request batch* as
+      // the guarded SELECT; driver-level request timeout must not stand
+      // in for a proved SQL Server lock conflict (error 1222).
+      const shortRequest=(tx:sql.Transaction):sql.Request=>{
+        const request=new sql.Request(tx);
+        const nativeQuery=request.query.bind(request);
+        request.query=((statement:string)=>
+          nativeQuery("SET LOCK_TIMEOUT 400;\\n"+statement)) as typeof request.query;
+        return request;
+      };
       console.log("CHART_2B11_MARK:BLOCKING_LAYOUT");
-      await assert.rejects(writeDashboardLayout(contender,700,[]),
+      await assert.rejects(writeDashboardLayout(contender,700,[],shortRequest),
         (error: unknown) => /lock request time out/i.test(String(error)) ||
           (typeof error === "object" && error !== null &&
             Number((error as {number?: number}).number) === 1222));
