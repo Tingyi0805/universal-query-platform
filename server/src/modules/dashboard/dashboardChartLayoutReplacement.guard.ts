@@ -37,10 +37,10 @@ export async function assertChartLayoutReplacementSafe(
     return blocked();
 
   if (!await lockChartDashboardParent(tx,dashboardId,request)) return blocked();
-  const profiles = await lockChartDashboardProfiles(tx,dashboardId,request);
+  const lockedProfiles = await lockChartDashboardProfiles(tx,dashboardId,request);
   const widgets = await lockChartDashboardWidgets(tx,dashboardId,request);
-  if (!profiles || !widgets || widgets.some(w =>
-      !profiles.includes(w.profileId) || w.widgetType === "CHART"))
+  if (!lockedProfiles || !widgets || widgets.some(w =>
+      !lockedProfiles.includes(w.profileId) || w.widgetType === "CHART"))
     return blocked();
 
   // Check the optional sidecar separately. SQL Server may compile references
