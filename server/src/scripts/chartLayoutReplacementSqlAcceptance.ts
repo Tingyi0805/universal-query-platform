@@ -89,7 +89,7 @@ export async function verifyChartLayoutReplacementSql(db: sql.ConnectionPool) {
         const request=new sql.Request(tx);
         const nativeQuery=request.query.bind(request);
         request.query=((statement:string)=>
-          nativeQuery("SET LOCK_TIMEOUT 400;\\n"+statement)) as typeof request.query;
+          nativeQuery("SET LOCK_TIMEOUT 400; "+statement)) as typeof request.query;
         return request;
       };
       console.log("CHART_2B11_MARK:BLOCKING_LAYOUT");
