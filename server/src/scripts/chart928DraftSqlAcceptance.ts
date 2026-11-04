@@ -9,6 +9,7 @@ import {
   attestChart928TriggerCatalog,Chart928CatalogError,
 } from "./chart928TriggerAttestation.js";
 import {chartWriterIdentitySql} from "../modules/dashboard/dashboardChartWriterBoundary.js";
+import {attestChartWriterBaseSqlCatalog} from "./chart928WriterBaseSchema.js";
 
 const sqlPath=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url);
 export async function verifyChart928DraftSql(
@@ -43,7 +44,7 @@ export async function verifyChart928DraftSql(
   stage="CREATE_SCHEMA";
   await q("CREATE SCHEMA uqp");
   stage="CREATE_FIXTURE_TABLES";
-  await q("CREATE TABLE uqp.AppUser(Id BIGINT NOT NULL PRIMARY KEY, " +
+  await q("CREATE TABLE uqp.AppUser(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY, " +
    "IsActive BIT NOT NULL DEFAULT(1),TokenVersion INT NOT NULL DEFAULT(1)); " +
    "CREATE TABLE uqp.Role(Id BIGINT NOT NULL PRIMARY KEY,IsActive BIT NOT NULL); " +
    "CREATE TABLE uqp.Permission(Id BIGINT NOT NULL PRIMARY KEY,Code NVARCHAR(100) NOT NULL); " +
@@ -52,7 +53,7 @@ export async function verifyChart928DraftSql(
    "CREATE TABLE uqp.QueryDefinition(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY); " +
    "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY); " +
-   "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT NOT NULL PRIMARY KEY," +
+   "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " DashboardId BIGINT NOT NULL REFERENCES uqp.Dashboard(Id) ON DELETE CASCADE); " +
    "CREATE TABLE uqp.DashboardWidget(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " ProfileId BIGINT NOT NULL REFERENCES uqp.DashboardDisplayProfile(Id) ON DELETE CASCADE," +
@@ -60,21 +61,28 @@ export async function verifyChart928DraftSql(
    " ConfigJson NVARCHAR(MAX) NOT NULL DEFAULT N'{}'," +
    " Title NVARCHAR(200) NULL,X INT NOT NULL DEFAULT(0),Y INT NOT NULL DEFAULT(0)," +
    " Width INT NOT NULL DEFAULT(600),Height INT NOT NULL DEFAULT(360)," +
+   " FontSize INT NOT NULL DEFAULT(36),Alignment NVARCHAR(10) NOT NULL DEFAULT(N'CENTER')," +
+   " SortOrder INT NOT NULL DEFAULT(0)," +
    " CONSTRAINT CK_DashboardWidget_Type CHECK(WidgetType IN" +
    " (N'TEXT',N'PARAMETER',N'FIELD',N'CLOCK',N'PAGE_INFO',N'COUNTDOWN',N'TABLE',N'CONTAINER'))," +
    " CONSTRAINT CK_DashboardWidget_ConfigJson CHECK(ISJSON(ConfigJson)=1)); " +
    "CREATE TABLE uqp.AuditLog(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
-   " EventType NVARCHAR(100) NOT NULL,EventCategory NVARCHAR(20) NOT NULL," +
-   " Status NVARCHAR(20) NOT NULL,UserId BIGINT NOT NULL,IsImportant BIT NOT NULL," +
+   " EventType NVARCHAR(50) NOT NULL,EventCategory NVARCHAR(20) NOT NULL," +
+   " Status NVARCHAR(20) NOT NULL,UserId BIGINT NULL,IsImportant BIT NOT NULL," +
    " ParametersJson NVARCHAR(MAX) NULL,CompletedAtUtc DATETIME2(0) NULL); " +
    "CREATE TABLE uqp.AuditLogArchive(Id BIGINT NOT NULL PRIMARY KEY," +
    " EventType NVARCHAR(100) NOT NULL,Status NVARCHAR(20) NOT NULL," +
    " UserId BIGINT NOT NULL,IsImportant BIT NOT NULL); " +
    "CREATE TABLE uqp.DatasetPublicDisplayPolicy(DatasetId BIGINT NOT NULL PRIMARY KEY); ");
   stage="SEED_FIXTURE";
-  await q("INSERT uqp.AppUser(Id) VALUES(8),(77); " +
+  await q("SET IDENTITY_INSERT uqp.AppUser ON; " +
+   "INSERT uqp.AppUser(Id) VALUES(8),(77); " +
+   "SET IDENTITY_INSERT uqp.AppUser OFF; " +
    "INSERT uqp.QueryDefinition(Id) VALUES(9); INSERT uqp.Dataset(Id) VALUES(10); " +
-   "INSERT uqp.Dashboard(Id) VALUES(7); INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7);" +
+   "INSERT uqp.Dashboard(Id) VALUES(7); " +
+   "SET IDENTITY_INSERT uqp.DashboardDisplayProfile ON; " +
+   "INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7); " +
+   "SET IDENTITY_INSERT uqp.DashboardDisplayProfile OFF; " +
    "SET IDENTITY_INSERT uqp.DashboardWidget ON; " +
     "INSERT uqp.DashboardWidget(Id,ProfileId,WidgetType,SourceKey,ConfigJson) VALUES(88,22,N'TEXT',N'PRIMARY',N'{}'); " +
     "SET IDENTITY_INSERT uqp.DashboardWidget OFF; " +
@@ -84,6 +92,9 @@ export async function verifyChart928DraftSql(
    "(N'CHART_APPROVE_REVIEW',N'CONFIG',N'SUCCESS',77,1)," +
    "(N'CHART_REVOKE_REVIEW',N'CONFIG',N'SUCCESS',77,1); " +
    "INSERT uqp.DatasetPublicDisplayPolicy(DatasetId) VALUES(10);");
+  stage="BASE_SCHEMA_IDENTITY_AND_COLUMN_PARITY";
+  await attestChartWriterBaseSqlCatalog(db);
+  console.log("CHART_2B15C_BASE_SCHEMA_PARITY_2019_2022_PASS");
   stage="ATOMIC_CREATE_ROLE_FIXTURE";
   await q("INSERT uqp.Role(Id,IsActive) VALUES(1,1);" +
     "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY');" +
@@ -286,6 +297,7 @@ export async function verifyChart928DraftSql(
   await attestChart928TriggerCatalog(db,script);
   stage="FINAL";
   await check();
+  await attestChartWriterBaseSqlCatalog(db);
   assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartWidgetSeal")).recordset[0]?.Total),1);
   assert.equal(String((await q("SELECT Status FROM uqp.DashboardChartPrivacyReview WHERE Id=1")).recordset[0]?.Status),"REVOKED");
   console.log("CHART_928_DRAFT_SQL_2019_2022_INSTALL_RERUN_ROLLBACK_FREEZE_AUDIT_FK_PASS");
