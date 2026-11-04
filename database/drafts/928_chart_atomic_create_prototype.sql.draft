@@ -80,8 +80,9 @@ BEGIN
      @ConfigJson COLLATE Latin1_General_100_CI_AS_SC_UTF8))),2));
  BEGIN TRY
   BEGIN TRANSACTION;
+  DECLARE @lockResource nvarchar(255)=N''UQP:CHART:''+CONVERT(nvarchar(20),@DashboardId);
   EXEC @lockResult=sys.sp_getapplock
-   @Resource=N''UQP:CHART:''+CONVERT(nvarchar(20),@DashboardId),
+   @Resource=@lockResource,
    @LockMode=N''Exclusive'',@LockOwner=N''Transaction'',@LockTimeout=5000;
   IF @lockResult<0 THROW 51928,''CHART_DRAFT_LOCK_FAILED'',1;
   IF NOT EXISTS(SELECT 1 FROM uqp.Dashboard WITH(UPDLOCK,HOLDLOCK) WHERE Id=@DashboardId)
