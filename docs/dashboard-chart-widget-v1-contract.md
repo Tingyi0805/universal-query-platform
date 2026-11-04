@@ -169,3 +169,31 @@ chartFactsDefaults.getVerifiedAggregate 依然回傳 null，
 未來須先用可信 Repository 取得正在使用的已發布 Query 與 Dataset
 SQL 本文、來源方言及其修訂證據，在前後一致性驗證成立後才可輸出證明。
 尚需實際 SQL Server／Oracle 相容性測試及來源權限／版本競爭驗收。
+
+
+## 10. 2B-4：已發布 Query 與 Dataset SQL 修訂綁定（停用中）
+
+新增 dashboardChartSqlAggregate.reader.ts 及 .test.ts。
+
+- 讀取器在單一 SQL Server SERIALIZABLE 唯讀交易中，從既有
+  QueryDefinition、Dataset、DataSource、QueryDefinitionVersion 讀取
+  目前已發布／啟用／未封存的 Query 與 Dataset、來源方言、Dataset SQL 本文、
+  QueryVersionNo 與 DefinitionRowVersion，且不把 SQL、患者資料帶出為播放結果。
+- 工廠函式 createVersionBoundCountProofReader 使用明確綁定的 Chart V1 設定，
+  核對查詢 ID、Dataset ID、兩份修訂值及方言，全部符合後才呼叫
+  proveSimpleGroupedCount 的窄版 SQL 語意解析器。
+- 因更新發生的 SQL、來源狀態、修訂或 ID 差異，直接拒絕產生證明。
+  不確定的 Query 仍不可顯示圖表。
+- QueryVersionNo 是既有版本歷史讀取，並不代替即時權限與 Dashboard
+  核准證據；Dataset DefinitionRowVersion 的讀取也不代替同一交易內的
+  敏感資料與 Public Display 核准。這些跨 Repository 邊界需進一步驗證。
+- 目前單元測試使用合成唯讀 Snapshot。CI 既有 SQL Server 2019／2022
+  回歸不等於新讀取器已通過真實 SQL 端到端測試；Oracle 方言目前只驗證
+  字法及語意子集，未實際執行 Oracle 查詢。
+- **正式功能仍關閉**：沒有把這個可選的證明讀取器綁進
+  chartFactsDefaults.getVerifiedAggregate；預設依然回傳 null。
+  沒有增加 CHART Widget、寫入 API、Migration 或播放路由。
+
+後續上線前另需評估小樣本計數是否可能揭露個別患者資訊，
+例如單一手術室某時段只有 1 件時，不能單以「GROUP BY 已證明」當作公共
+播放的完整隱私核准。
