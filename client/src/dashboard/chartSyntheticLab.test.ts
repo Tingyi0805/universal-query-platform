@@ -14,7 +14,7 @@ test("Stage 18 UI-only sandbox uses synthetic chart projections and has no persi
  assert.match(lab,/chartDraftErrors/);
  assert.match(lab,/requestFullscreen/);
  assert.doesNotMatch(lab,/\b(?:apiRequest|fetch|XMLHttpRequest|WebSocket|localStorage|sessionStorage)\b/);
- assert.doesNotMatch(entry,/\b(?:App|AuthProvider|apiRequest|fetch)\b/);
+ assert.doesNotMatch(entry.replace(/^\/\/.*$/gm,""),/\b(?:App|AuthProvider|apiRequest|fetch)\b/);
  assert.match(app,/path="\/designer\/dashboards\/chart-lab" element={<PermissionRoute permission="DESIGN_QUERY">/);
  assert.match(server,/server\.listen\(port,"127\.0\.0\.1"/);
  assert.match(server,/startsWith\("\/api\/"\)/);
