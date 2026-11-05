@@ -1700,3 +1700,4 @@ Writer／Issuer 程序核准 SHA-256 均為 `null`；
   確認 PR Checks／Actions、權限與實際 PR synchronize 事件。
 - 即使新 CI 執行成功，仍需處理可信 HTTP Actor 核發、
   SQL Login／Scope 與隱私政策驗證，正式交付維持 BLOCKED。
+CI trigger verification - 2026-11-05
