@@ -904,7 +904,7 @@ export async function verifyChart928DraftSql(
   const successful=await issue("00000000-0000-4000-8000-000000007001");
   const preSuccess=await delegatedCounts();
   const createdResult=await runDelegated(successful);
-  assert.equal(Number(createdResult.recordsets[createdResult.recordsets.length-1]?.[0]?.OpenTransactions),0);
+  assert.equal(Number(Object.values(createdResult.recordsets).at(-1)?.[0]?.OpenTransactions),0);
   const createdWidget=createdResult.recordset[0];
   await proveDelegatedReceipt(successful,createdWidget);
   const postSuccess=await delegatedCounts();
@@ -1084,7 +1084,7 @@ export async function verifyChart928DraftSql(
   await assertNoDelegatedPartialWrite(auditFailure,beforeAuditFailure);
   stage="DELEGATED_CREATE_AUDIT_RETRY_AFTER_ROLLBACK";
   const afterAuditRetryResult=await runDelegated(auditFailure);
-  assert.equal(Number(afterAuditRetryResult.recordsets[afterAuditRetryResult.recordsets.length-1]?.[0]?.OpenTransactions),0);
+  assert.equal(Number(Object.values(afterAuditRetryResult.recordsets).at(-1)?.[0]?.OpenTransactions),0);
   const afterAuditRetry=afterAuditRetryResult.recordset[0];
   await proveDelegatedReceipt(auditFailure,afterAuditRetry);
   const afterAudit=await delegatedCounts();
@@ -1149,16 +1149,10 @@ export async function verifyChart928DraftSql(
   assert.equal(CHART_ATOMIC_CREATE_RUNTIME_ENABLED,false);
   assert.equal(CHART_WRITER_DB_ACTOR_BINDING_APPROVED,false);
   assert.equal(CHART_WRITER_APPROVED_PROCEDURE_SHA256,null);
-  // Distinguish the known unsafe Issuer delegation from a simple RBAC
-  // denial: Actor 77 MUST itself have DESIGN_QUERY before reproducing the
-  // impersonation. The baseline disposable fixture grants it only to Actor 8.
-  const actor77Initial=(await q(
-    "SELECT COUNT_BIG(*) AS Total FROM uqp.UserRole WHERE UserId=77 AND RoleId=1"
-  )).recordset[0];
-  assert.equal(Number(actor77Initial?.Total),0);
-  await q("INSERT uqp.UserRole(UserId,RoleId) VALUES(77,1)");
-  try{
-    const actor77Authorized=(await q(
+  // The earlier ATOMIC_CREATE_OTHER_VALID_ACTOR phase ALREADY assigned
+  // DESIGN_QUERY to Actor 77. Verify that existing valid actor without
+  // inserting duplicate test roles or mutating privileges during this witness.
+  const actor77Authorized=(await q(
       "SELECT COUNT_BIG(*) AS Total FROM uqp.AppUser u " +
       "JOIN uqp.UserRole ur ON ur.UserId=u.Id " +
       "JOIN uqp.Role r ON r.Id=ur.RoleId AND r.IsActive=1 " +
@@ -1189,12 +1183,6 @@ export async function verifyChart928DraftSql(
   assert.equal(forgedAudit[0]?.WidgetType,"CHART");
   assert(forgedAudit[0]?.ConsumedAtUtc instanceof Date);
   console.log("CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED");
-  }finally{
-    await q("DELETE FROM uqp.UserRole WHERE UserId=77 AND RoleId=1");
-  }
-  assert.equal(Number((await q(
-    "SELECT COUNT_BIG(*) AS Total FROM uqp.UserRole WHERE UserId=77 AND RoleId=1"
-  )).recordset[0]?.Total),0);
 
 
 

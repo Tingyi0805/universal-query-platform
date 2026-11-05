@@ -94,25 +94,25 @@ test("2B-15D-13 Grant, Ledger, Audit, Widget and Seal share the transaction",asy
 });
 
 
-test("2B-15D-11 unsafe Issuer witness uses another actually authorized actor",async()=>{
+test("2B-15D-11 unsafe Issuer witness requires previously authorized Actor 77",async()=>{
  const acceptance=await readFile(
    new URL("./chart928DraftSqlAcceptance.ts",import.meta.url),"utf8");
+ const initialStage=acceptance.indexOf("ATOMIC_CREATE_VALID_OTHER_ACTOR_IMPERSONATION_WITNESS");
+ const assignment=acceptance.indexOf(
+   'INSERT uqp.UserRole(UserId,RoleId) VALUES(77,1)',initialStage);
  const stage=acceptance.indexOf("DELEGATED_CREATE_ISSUER_ACTOR_SPOOF_WITNESS_BLOCKED");
- const initial=acceptance.indexOf("const actor77Initial=",stage);
- const grant=acceptance.indexOf(
-   'INSERT uqp.UserRole(UserId,RoleId) VALUES(77,1)',initial);
- const check=acceptance.indexOf("const actor77Authorized=",grant);
+ const check=acceptance.indexOf("const actor77Authorized=",stage);
  const issuer=acceptance.indexOf("const forgedIssuerGrant=await issue(",check);
  const requireActor=acceptance.indexOf(
    '"00000000-0000-4000-8000-000000008077",77',issuer);
  const label=acceptance.indexOf(
    "CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED",requireActor);
- const cleanup=acceptance.indexOf(
-   "DELETE FROM uqp.UserRole WHERE UserId=77 AND RoleId=1",label);
- assert(stage>=0&&initial>stage&&grant>initial&&check>grant&&
-        issuer>check&&requireActor>issuer&&label>requireActor&&
-        cleanup>label,
-   "Issuer spoofing reproduction needs a valid second actor with DESIGN_QUERY and cleanup");
+ assert(initialStage>=0&&assignment>initialStage&&stage>assignment&&
+        check>stage&&issuer>check&&requireActor>issuer&&label>requireActor,
+   "The separate authorized actor must exist before Issuer spoofing is demonstrated");
  assert.match(acceptance,/u\.Id=77 AND u\.IsActive=1 AND u\.TokenVersion=1/);
  assert.match(acceptance,/p\.Code=N'DESIGN_QUERY'/);
+ // No duplicate grant or role teardown may alter this already-established fixture.
+ const witness=acceptance.slice(stage,label);
+ assert.doesNotMatch(witness,/INSERT uqp\.UserRole\(UserId,RoleId\) VALUES\(77,1\)/);
 });
