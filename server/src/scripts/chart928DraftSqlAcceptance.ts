@@ -1078,6 +1078,51 @@ export async function verifyChart928DraftSql(
   assert.equal(afterAudit[5],beforeAuditFailure[5]!+1);
   console.log("CHART_2B15D11_DISPOSABLE_REVOKE_AUDIT_ROLLBACK_DRAFT_PASS");
 
+  // 2B-15D-13: the expiry check MUST use SQL Server time after acquiring
+  // the GrantId UPDLOCK/HOLDLOCK, not a timestamp captured before a lock
+  // wait. This reproduces the stale-time acceptance vulnerability without
+  // relying on any real platform connection, secrets, or users.
+  stage="DELEGATED_GRANT_LOCK_WAIT_EXPIRY";
+  const lockExpiry=await issue("00000000-0000-4000-8000-000000008008");
+  await db!.request().input("id",sql.UniqueIdentifier,lockExpiry.grantId)
+    .query("DECLARE @base DATETIME2(3)=SYSUTCDATETIME();" +
+      "UPDATE uqp.ChartActorDelegationDisposable " +
+      "SET IssuedAtUtc=DATEADD(SECOND,-56,@base)," +
+      "ExpiresAtUtc=DATEADD(SECOND,4,@base) WHERE GrantId=@id");
+  const beforeExpiryWait=await delegatedCounts();
+  const hold=new sql.Transaction(db!);
+  await hold.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  let holdReleased=false;
+  try{
+    const held=(await new sql.Request(hold)
+      .input("id",sql.UniqueIdentifier,lockExpiry.grantId)
+      .query("SELECT CASE WHEN ExpiresAtUtc>SYSUTCDATETIME() " +
+        "THEN 1 ELSE 0 END AS StillValid FROM " +
+        "uqp.ChartActorDelegationDisposable WITH(UPDLOCK,HOLDLOCK) " +
+        "WHERE GrantId=@id")).recordset[0];
+    assert.equal(Number(held?.StillValid),1);
+    let finished=false;
+    const pending=runDelegated(lockExpiry).then(
+      result=>({status:"fulfilled" as const,result}),
+      reason=>({status:"rejected" as const,reason}),
+    ).finally(()=>{finished=true;});
+    await new Promise(resolve=>setTimeout(resolve,5500));
+    // The Writer should be blocked on the held issuer-owned grant.
+    assert.equal(finished,false);
+    await hold.commit();
+    holdReleased=true;
+    const outcome=await pending;
+    assert.equal(outcome.status,"rejected");
+    if(outcome.status==="rejected"){
+      assert.equal(Number((outcome.reason as {number?:unknown}).number),51928);
+    }
+  }finally{
+    if(!holdReleased)await hold.rollback().catch(()=>undefined);
+  }
+  await assertNoDelegatedPartialWrite(lockExpiry,beforeExpiryWait);
+  console.log("CHART_2B15D13_DISPOSABLE_GRANT_EXPIRY_AFTER_LOCK_WAIT_DRAFT_PASS");
+
+
   // RELEASE BLOCKER WITNESS: the current synthetic Issuer procedure accepts
   // arbitrary @ActorId for ANY other valid DESIGN_QUERY user. Even though
   // the Writer cannot substitute an Actor into a grant for user 8, a forged

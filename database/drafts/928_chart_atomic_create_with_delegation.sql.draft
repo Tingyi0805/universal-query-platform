@@ -79,6 +79,13 @@ BEGIN
   -- Lock the real issuer-owned grant by its primary key in the SAME
   -- SERIALIZABLE transaction as Ledger/Audit/Widget/Seal creation.
   -- IMPORTANT: synthetic issuer @ActorId is NOT verified HTTP identity.
+  -- Acquire and retain the PK row lock BEFORE obtaining the current time.
+  -- A pre-lock timestamp could validate a grant already expired while
+  -- this request was waiting for another transaction to release the row.
+  IF NOT EXISTS(
+    SELECT 1 FROM uqp.ChartActorDelegationDisposable WITH(UPDLOCK,HOLDLOCK)
+    WHERE GrantId=@GrantId
+  ) THROW 51928,''CHART_DELEGATED_GRANT_INVALID'',1;
   DECLARE @consumeAt DATETIME2(3)=SYSUTCDATETIME();
   IF NOT EXISTS(
     SELECT 1 FROM uqp.ChartActorDelegationDisposable d WITH(UPDLOCK,HOLDLOCK)

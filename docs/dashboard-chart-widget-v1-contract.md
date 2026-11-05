@@ -1584,3 +1584,46 @@ Server 和 Windows Node.js 的四個失敗皆屬舊 HEAD Chart
 因此不能因本次 CI 修正就開放 CHART，
 不能合併 PR #83、安裝 928 或變更正式 `C:\\UQP`。
 全部 Runtime／Writer／Actor 綁定／Issuer 核准 Gate 均維持關閉。
+
+
+## 49. 2B-15D-13：正式安全採認仍阻擋，修正 Grant 鎖等待後到期時序（待 CI）
+
+本輪已核對 PR #83 的 `head_sha` 與 GitHub Actions、Check Runs。
+在本輪檢查的 HEAD `04de99f6b9af5874830631bd8cf99acc827837eb`
+均查不到相同 SHA 的工作紀錄；舊版 #1332 不得充作驗收。
+`pull_request` trigger 存在於來源／基底分支，
+但**未能由現有證據判定沒有排程的根因**。不使用重新執行舊
+Workflow、移除安全測試或改變正式 Release Gate 代替驗收。
+GitHub 文件指出，若提交由 Action 的 `GITHUB_TOKEN` 產生，
+可能不觸發另一工作流程；但目前**沒有證據顯示此連線所用
+憑證即為該 Token**，只能保留為待核對的排查方向。
+
+另修正一個隔離 SQL 原型的時間競爭問題：
+`usp_ChartCreateWithDelegation_IsolatedDraft` 原先可能先取
+`SYSUTCDATETIME()`，再等待 `GrantId` 的
+`UPDLOCK,HOLDLOCK`，造成鎖釋放後仍以**等待前時間**
+檢查 60 秒有效期。現在要求**先鎖定 GrantId，
+再以 DB 時鐘取得時間並驗證有效期**，鎖定維持至整筆
+`SERIALIZABLE` 交易完成。既有一次性 SQL 2019／2022
+腳本追加合成測試：先核發有效 Grant、由另一資料庫連線
+鎖住該列、讓原有效期在等待中過期、釋放鎖後要求
+Writer 拒絕，且 Grant、Ledger、Audit、Widget、Seal
+不得留下任何新增紀錄。此案例必須取得**本次 HEAD**
+CI 成功的證據，才能標為 PASS。
+
+### Release BLOCKED 的具體事項
+
+- HTTP 驗證 Actor → 獨立 SQL Issuer 的不可冒用核發尚未完成；
+  合成 Issuer 仍可接受任意其他有效 `@ActorId`。
+- 正式三組 SQL Login／Procedure SHA-256 採認尚未完成。
+- 同交易 Query/Dataset 版本、敏感欄位遮蔽、公共螢幕政策
+  與患者資料稽核，以及真正並行撤權仍未完成。
+- 最新 HEAD 的 Server／Windows／Client／SQL 2019／2022
+  CI 和人工部署核准缺少證據。
+
+因此 **2B-15D-13 為採認阻擋收斂，不是正式結案**。
+`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false`、
+`CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false`、
+Writer／Issuer 程序核准 SHA-256 均為 `null`；
+928 仍是 `.sql.draft`，PR #83 維持 Draft／未合併，
+不覆蓋正式 `C:\\UQP`、不啟用 CHART。
