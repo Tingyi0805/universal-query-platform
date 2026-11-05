@@ -783,6 +783,180 @@ export async function verifyChart928DraftSql(
   assert.equal(await consumed(retry.grantId),1);
   console.log("CHART_2B15D7_DISPOSABLE_ROLLBACK_RETRY_PASS");
 
+  // 2B-15D-10: same DB-owned transaction contains Grant consume,
+  // Request Ledger, AuditLog, IDENTITY Widget and Seal. No real HTTP
+  // actor binding: this remains a disposable SQL proof, NOT deployable.
+  stage="DELEGATED_CREATE_ISOLATED_INSTALL";
+  const delegatedDraft=await readFile(new URL(
+    "../../../database/drafts/928_chart_atomic_create_with_delegation.sql.draft",
+    import.meta.url),"utf8");
+  await db!.request().batch(delegatedDraft);
+  stage="DELEGATED_CREATE_WRITER_PERMISSION";
+  const delegatedRights=(await q(
+    "EXECUTE AS USER=N'UQP_Chart_Writer';" +
+    "SELECT " +
+    "HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreate_IsolatedDraft',N'OBJECT',N'EXECUTE') AS OldExecute," +
+    "HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreateWithDelegation_IsolatedDraft',N'OBJECT',N'EXECUTE') AS NewExecute," +
+    "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegationDisposable',N'OBJECT',N'UPDATE') AS DirectGrantUpdate," +
+    "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegationDisposable',N'OBJECT',N'SELECT') AS DirectGrantSelect," +
+    "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue_IsolatedDraft',N'OBJECT',N'EXECUTE') AS GrantIssueExecute;" +
+    "REVERT"
+  )).recordset[0];
+  assert.equal(Number(delegatedRights?.OldExecute),0);
+  assert.equal(Number(delegatedRights?.NewExecute),1);
+  assert.equal(Number(delegatedRights?.DirectGrantUpdate),0);
+  assert.equal(Number(delegatedRights?.DirectGrantSelect),0);
+  assert.equal(Number(delegatedRights?.GrantIssueExecute),0);
+  const delegatedCounts=async()=> {
+    const totals=(await db!.request().query(
+      "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardChartTrustRequest) AS Ledger," +
+      "(SELECT COUNT_BIG(*) FROM uqp.AuditLog) AS Audit," +
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardWidget WHERE WidgetType=N'CHART') AS Charts," +
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartWidgetSeal) AS Seals," +
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartCreatePermit) AS Permits," +
+      "(SELECT COUNT_BIG(*) FROM uqp.ChartActorDelegationDisposable WHERE ConsumedAtUtc IS NOT NULL) AS Consumed"
+    )).recordset[0];
+    return ["Ledger","Audit","Charts","Seals","Permits","Consumed"].map(
+      key=>Number(totals?.[key]));
+  };
+  const runDelegated=(g:SyntheticGrant,overrides:Readonly<{
+    actor?:number;token?:number;secret?:Buffer;configJson?:string;
+    requestId?:string;grantId?:string;profile?:number;dashboard?:number;
+  }>={})=>db!.request()
+    .input("grantId",sql.UniqueIdentifier,overrides.grantId??g.grantId)
+    .input("secret",sql.VarBinary(sql.MAX),overrides.secret??g.secret)
+    .input("requestId",sql.UniqueIdentifier,overrides.requestId??g.requestId)
+    .input("config",sql.NVarChar(sql.MAX),overrides.configJson??canonical)
+    .input("actor",sql.BigInt,overrides.actor??8)
+    .input("token",sql.Int,overrides.token??1)
+    .input("dashboard",sql.BigInt,overrides.dashboard??7)
+    .input("profile",sql.BigInt,overrides.profile??22)
+    .query(
+      "EXECUTE AS USER=N'UQP_Chart_Writer';" +
+      "BEGIN TRY EXEC uqp.usp_ChartCreateWithDelegation_IsolatedDraft " +
+      "@DashboardId=@dashboard,@ProfileId=@profile,@ActorId=@actor,@TokenVersion=@token," +
+      "@RequestId=@requestId,@GrantId=@grantId,@Secret=@secret," +
+      "@SourceKey=N'PRIMARY',@ConfigJson=@config," +
+      "@X=10,@Y=10,@Width=600,@Height=360;" +
+      "END TRY BEGIN CATCH REVERT; THROW; END CATCH; REVERT"
+    );
+  // Expected digest is recomputed inside SQL from canonical UTF-8 JSON.
+  // An extra caller digest argument must NEVER be trusted by this Writer.
+  const proveDelegatedReceipt=async(g:SyntheticGrant,created:{WidgetId?:unknown;AuditLogId?:unknown;Digest?:unknown})=>{
+    const widget=Number(created.WidgetId),audit=Number(created.AuditLogId);
+    assert(Number.isSafeInteger(widget)&&widget>0);
+    assert(Number.isSafeInteger(audit)&&audit>0);
+    assert.equal(created.Digest,expected);
+    const receipt=(await db!.request()
+      .input("requestId",sql.UniqueIdentifier,g.requestId)
+      .input("grantId",sql.UniqueIdentifier,g.grantId)
+      .query("SELECT r.ActorId,r.AuditLogId AS LedgerAuditId," +
+        "a.EventType,a.UserId AS AuditActor,a.Status," +
+        "w.Id AS WidgetId,w.WidgetType,w.ConfigJson,w.SourceKey," +
+        "s.ConfigDigest,s.SealedBy,s.AuditLogId AS SealAuditId," +
+        "d.ConsumedAtUtc FROM uqp.DashboardChartTrustRequest r " +
+        "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId " +
+        "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id " +
+        "JOIN uqp.DashboardWidget w ON w.Id=s.WidgetId " +
+        "JOIN uqp.ChartActorDelegationDisposable d ON d.RequestId=r.RequestId " +
+        "WHERE r.RequestId=@requestId AND d.GrantId=@grantId"
+      )).recordset;
+    assert.equal(receipt.length,1);
+    const item=receipt[0];
+    assert.equal(Number(item?.ActorId),8);
+    assert.equal(Number(item?.AuditActor),8);
+    assert.equal(Number(item?.SealedBy),8);
+    assert.equal(Number(item?.LedgerAuditId),audit);
+    assert.equal(Number(item?.SealAuditId),audit);
+    assert.equal(Number(item?.WidgetId),widget);
+    assert.equal(item?.EventType,"CHART_SEAL_WIDGET");
+    assert.equal(item?.Status,"SUCCESS");
+    assert.equal(item?.WidgetType,"CHART");
+    assert.equal(item?.SourceKey,"PRIMARY");
+    assert.equal(item?.ConfigJson,canonical);
+    assert.equal(item?.ConfigDigest,expected);
+    assert(item?.ConsumedAtUtc instanceof Date);
+  };
+  stage="DELEGATED_CREATE_ATOMIC_SUCCESS";
+  const successful=await issue("00000000-0000-4000-8000-000000007001");
+  const preSuccess=await delegatedCounts();
+  const created=(await runDelegated(successful)).recordset[0];
+  await proveDelegatedReceipt(successful,created);
+  const postSuccess=await delegatedCounts();
+  assert.deepEqual(postSuccess.slice(0,4),preSuccess.slice(0,4).map(v=>v+1));
+  assert.equal(postSuccess[4],0); // permit is transaction-private
+  assert.equal(postSuccess[5],preSuccess[5]!+1);
+  stage="DELEGATED_CREATE_REPLAY_REJECT";
+  await denied(runDelegated(successful));
+  assert.deepEqual(await delegatedCounts(),postSuccess);
+
+  // Same permission-bearing SQL writer cannot substitute a DIFFERENT
+  // already-authorized ActorId into a grant issued for Actor 8.
+  stage="DELEGATED_CREATE_OTHER_VALID_ACTOR_REJECT";
+  const wrongActor=await issue("00000000-0000-4000-8000-000000007002");
+  const beforeWrongActor=await delegatedCounts();
+  await denied(runDelegated(wrongActor,{actor:77}));
+  assert.deepEqual(await delegatedCounts(),beforeWrongActor);
+  assert.equal(await consumed(wrongActor.grantId),0);
+  await denied(runDelegated(wrongActor,{secret:Buffer.alloc(32,0x55)}));
+  await denied(runDelegated(wrongActor,{grantId:"00000000-0000-4000-8000-000000007999"}));
+  await denied(runDelegated(wrongActor,{configJson:JSON.stringify({
+    ...JSON.parse(canonical),maxPoints:21,
+  })}));
+  await denied(runDelegated(wrongActor,{requestId:successful.requestId}));
+  assert.deepEqual(await delegatedCounts(),beforeWrongActor);
+  const validWrongActor=(await runDelegated(wrongActor)).recordset[0];
+  await proveDelegatedReceipt(wrongActor,validWrongActor);
+
+  stage="DELEGATED_CREATE_CONCURRENT_SINGLE_WINNER";
+  const concurrent=await issue("00000000-0000-4000-8000-000000007003");
+  const beforeRace=await delegatedCounts();
+  const competing=await Promise.allSettled([runDelegated(concurrent),runDelegated(concurrent)]);
+  const winners=competing.filter(x=>x.status==="fulfilled");
+  const losers=competing.filter(x=>x.status==="rejected");
+  assert.equal(winners.length,1);
+  assert.equal(losers.length,1);
+  const loser=losers[0];
+  assert(loser?.status==="rejected");
+  assert.equal(Number((loser.reason as {number?:unknown}).number),51928);
+  const winner=winners[0];
+  assert(winner?.status==="fulfilled");
+  await proveDelegatedReceipt(concurrent,winner.value.recordset[0]);
+  const afterRace=await delegatedCounts();
+  assert.deepEqual(afterRace.slice(0,4),beforeRace.slice(0,4).map(v=>v+1));
+  assert.equal(afterRace[4],0);
+  assert.equal(afterRace[5],beforeRace[5]!+1);
+
+  // A late Seal failure must roll back the consumed Grant, Ledger, Audit,
+  // Widget and temporary permit together. Retry is then safe with SAME
+  // RequestId/GrantId/Secret because the failed transaction persisted none.
+  stage="DELEGATED_CREATE_LATE_SEAL_FAILURE_SETUP";
+  const late=await issue("00000000-0000-4000-8000-000000007004");
+  const beforeLate=await delegatedCounts();
+  await db!.request().batch(
+    "CREATE TRIGGER uqp.TR_ChartDelegated_DisposableSealFailure " +
+    "ON uqp.DashboardChartWidgetSeal AFTER INSERT AS BEGIN " +
+    "SET NOCOUNT ON; THROW 51928,N'CHART_DELEGATED_LATE_SEAL_FAILURE',1; END"
+  );
+  try{
+    stage="DELEGATED_CREATE_LATE_SEAL_ROLLBACK";
+    await denied(runDelegated(late));
+  }finally{
+    await db!.request().batch(
+      "DROP TRIGGER IF EXISTS uqp.TR_ChartDelegated_DisposableSealFailure");
+  }
+  assert.deepEqual(await delegatedCounts(),beforeLate);
+  assert.equal(await consumed(late.grantId),0);
+  stage="DELEGATED_CREATE_RETRY_AFTER_ROLLBACK";
+  const retried=(await runDelegated(late)).recordset[0];
+  await proveDelegatedReceipt(late,retried);
+  const afterRetry=await delegatedCounts();
+  assert.deepEqual(afterRetry.slice(0,4),beforeLate.slice(0,4).map(v=>v+1));
+  assert.equal(afterRetry[4],0);
+  assert.equal(afterRetry[5],beforeLate[5]!+1);
+  console.log("CHART_2B15D10_DISPOSABLE_GRANT_WIDGET_SEAL_AUDIT_LEDGER_ATOMIC_DRAFT_PASS");
+
+
 
  }catch(error){
   // Disposable SQL instance only. Report SQL error number/line, not values,

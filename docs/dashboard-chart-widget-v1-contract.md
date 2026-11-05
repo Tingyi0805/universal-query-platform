@@ -1405,3 +1405,65 @@ Writer 的隔離草案仍可被指定其他有權限 ActorId。
 由於目前 GitHub Actions 仍未對最新 HEAD 產生完整 CI
 工作紀錄，**程式提交不等於 Server／Windows／SQL 2019／2022
 測試已通過**。必須檢查同一 HEAD SHA 才能採認。
+
+
+## 46. 2B-15D-10：委派消耗 + Widget／Seal／Audit／Ledger 單交易整合草案（待 CI）
+
+新增**僅供一次性測試資料庫**的
+`database/drafts/928_chart_atomic_create_with_delegation.sql.draft`；
+檔案入口與內部 SQL Procedure 均拒絕非 `UQP_CH_` 加 12 字元
+的合成資料庫，並檢查 2B-15C 與 2B-15D-7 先前原型的
+暫時許可、Grant、Seal、Trigger 等必要物件。不能安裝在
+任何正式或共用 UQP 測試資料庫，也沒有正式 Migration。
+
+新原型 `uqp.usp_ChartCreateWithDelegation_IsolatedDraft` 沿用
+先前單交易建立邏輯；以 **一筆由 DB-owned 程序控制的
+`SERIALIZABLE` 交易**及 Dashboard 排他 AppLock，
+完成以下順序：
+
+1. 檢查 Dashboard、Profile、ActorId、TokenVersion
+   與 `DESIGN_QUERY` 目前仍有效。
+2. 以 `UPDLOCK,HOLDLOCK` 鎖定資料庫內的 GrantId，
+   核對秘密 SHA-256、用途／版本、未消耗／未撤銷／未過期、
+   Actor、TokenVersion、Dashboard/Profile、RequestId、
+   SourceKey、圖表設定 **SQL 計算出的 canonical digest**、
+   X/Y/Width/Height；同交易設定 `ConsumedAtUtc`。
+3. 同交易新增 Request Ledger 與 AuditLog，
+   寫入 IDENTITY Widget、Seal／Audit 收據，清理
+   同 Session／TransactionId 的短期 Widget Permit。
+   僅在所有作業成功後提交；失敗則 ROLLBACK，
+   不保留消耗標記、半完成 Widget、Ledger、Audit 或 Seal。
+4. 隔離模式把舊版只收 `@ActorId` 的
+   `usp_ChartCreate_IsolatedDraft` 對合成 Writer 的
+   EXECUTE 權限改成 DENY，僅授予新的委派整合程序；
+   仍不向任何正式帳號開放。
+
+既有 `chart928DraftSqlAcceptance.ts` 新增 SQL 2019／2022
+一次性測試案例：核對舊版 EXECUTE 被拒與委派表無直接存取、
+核對成功建立時 Grant/Widget/Seal/Audit/Ledger ID 一致、
+另一個**同樣具有 DESIGN_QUERY** 的 Actor 不能替換成授權主體、
+GrantId/RequestId／Secret／Config JSON 不符拒絕，
+同一 Grant 的**雙並行建立僅一筆成功**，以及合成 Seal
+AFTER INSERT Trigger 擲出錯誤後，Grant 消耗與另外五類
+資料數量全部回滾，原 Grant 和 RequestId 可安全重試。
+測試通過與否必須以對應 HEAD 的 GitHub SQL 引擎 CI
+判斷，不能由本段文字推論。
+
+### 仍禁止上線的條件（重點）
+
+這個新原型**仍不具有真正安全的 HTTP Actor → Issuer
+授權綁定**。目前合成 Issuer SQL Procedure 仍接收呼叫者
+指定的 `@ActorId`，而隔離測試的 `EXECUTE AS USER`
+也不能證明 Platform／Issuer／Writer 真實 SQL
+`ORIGINAL_LOGIN` 身分分離。雖然委派在同一交易中被消耗，
+如果核發端能任意替另一名有效帳號核發 Grant，整體系統
+依然不安全。另一未完成項是 Query/Dataset/版本／患者欄位
+與公共螢幕隱私 scope 的即時 DB-owned 重驗。
+
+正式 Writer／Issuer 程序都尚未完成獨立程式指紋、
+最小 SQL Login 權限、人工審查與批准，
+現有三項正式 Gate 與新增 Issuer 指紋都維持關閉，
+不得啟用 CHART，不執行 928，不能覆蓋
+`C:\\UQP`，PR #83 維持 Draft。該階段屬
+**程式／草案已提交，SQL 2019／2022 實測待 CI**，
+不等於正式 Release Approval。
