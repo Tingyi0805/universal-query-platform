@@ -1685,3 +1685,18 @@ Writer／Issuer 程序核准 SHA-256 均為 `null`；
 
 維持 PR #83 Draft、CHART Runtime 關閉、928 `.sql.draft`
 不安裝、正式 `C:\\UQP` 不變。
+
+
+### CI 觸發診斷紀錄（Contents API；非部署核准）
+
+- 目前最新分支提交經原本的 Git objects／ref API 更新後，PR #83
+  並未出現同一 HEAD 的 Workflow Run 或 Check Run。
+- 此次採 **GitHub Contents API** 在 PR #83 來源分支提交這段
+  文字記錄，只為檢查它是否使現有 `on: pull_request`
+  GitHub Actions 排程；不修改 CI YAML、程式、SQL、Migration、
+  Runtime Gate 或 Release 政策。
+- 若這個提交也沒有相同 SHA 的 CI／Check Run，應停止
+  用自動化製造額外提交，改由有 Repository 權限的使用者
+  確認 PR Checks／Actions、權限與實際 PR synchronize 事件。
+- 即使新 CI 執行成功，仍需處理可信 HTTP Actor 核發、
+  SQL Login／Scope 與隱私政策驗證，正式交付維持 BLOCKED。
