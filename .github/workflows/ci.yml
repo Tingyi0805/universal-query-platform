@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Allow independent, user-initiated validation when PR synchronize is not delivered.
+  workflow_dispatch:
 
 jobs:
   server:
