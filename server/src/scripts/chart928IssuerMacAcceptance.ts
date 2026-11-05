@@ -353,7 +353,8 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   // in the disposable CI fixture, NOT a physically independent signer.
   // No production router imports this file. Never return the SQL secret.
   const previousJwtSecret=env.JWT_SECRET;
-  env.JWT_SECRET="chart-http-synthetic-"+randomBytes(24).toString("hex");
+  const syntheticJwtSecret="chart-http-synthetic-"+randomBytes(24).toString("hex");
+  env.JWT_SECRET=syntheticJwtSecret;
   let actor8Session={
     isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY"],
   };
@@ -404,7 +405,7 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     const createToken=(actor:number,version=1)=>jwt.sign({
       sub:String(actor),tokenVersion:version,username:"synthetic",
       permissions:[],
-    },env.JWT_SECRET);
+    },syntheticJwtSecret);
     const jwt8=createToken(8);
     const jwt77=createToken(77);
     const body={
