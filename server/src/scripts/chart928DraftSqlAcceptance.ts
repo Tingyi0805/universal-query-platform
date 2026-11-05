@@ -1149,6 +1149,25 @@ export async function verifyChart928DraftSql(
   assert.equal(CHART_ATOMIC_CREATE_RUNTIME_ENABLED,false);
   assert.equal(CHART_WRITER_DB_ACTOR_BINDING_APPROVED,false);
   assert.equal(CHART_WRITER_APPROVED_PROCEDURE_SHA256,null);
+  // Distinguish the known unsafe Issuer delegation from a simple RBAC
+  // denial: Actor 77 MUST itself have DESIGN_QUERY before reproducing the
+  // impersonation. The baseline disposable fixture grants it only to Actor 8.
+  const actor77Initial=(await q(
+    "SELECT COUNT_BIG(*) AS Total FROM uqp.UserRole WHERE UserId=77 AND RoleId=1"
+  )).recordset[0];
+  assert.equal(Number(actor77Initial?.Total),0);
+  await q("INSERT uqp.UserRole(UserId,RoleId) VALUES(77,1)");
+  try{
+    const actor77Authorized=(await q(
+      "SELECT COUNT_BIG(*) AS Total FROM uqp.AppUser u " +
+      "JOIN uqp.UserRole ur ON ur.UserId=u.Id " +
+      "JOIN uqp.Role r ON r.Id=ur.RoleId AND r.IsActive=1 " +
+      "JOIN uqp.RolePermission rp ON rp.RoleId=r.Id " +
+      "JOIN uqp.Permission p ON p.Id=rp.PermissionId " +
+      "WHERE u.Id=77 AND u.IsActive=1 AND u.TokenVersion=1 " +
+      "AND p.Code=N'DESIGN_QUERY'"
+    )).recordset[0];
+    assert.equal(Number(actor77Authorized?.Total),1);
   const forgedIssuerGrant=await issue(
     "00000000-0000-4000-8000-000000008077",77);
   const forgedCreate=(await runDelegated(forgedIssuerGrant,{actor:77})).recordset[0];
@@ -1170,6 +1189,12 @@ export async function verifyChart928DraftSql(
   assert.equal(forgedAudit[0]?.WidgetType,"CHART");
   assert(forgedAudit[0]?.ConsumedAtUtc instanceof Date);
   console.log("CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED");
+  }finally{
+    await q("DELETE FROM uqp.UserRole WHERE UserId=77 AND RoleId=1");
+  }
+  assert.equal(Number((await q(
+    "SELECT COUNT_BIG(*) AS Total FROM uqp.UserRole WHERE UserId=77 AND RoleId=1"
+  )).recordset[0]?.Total),0);
 
 
 

@@ -1648,3 +1648,40 @@ Writer／Issuer 程序核准 SHA-256 均為 `null`；
   PR #83 及正式部署狀態維持 **BLOCKED**；必須取得
   **當前 HEAD** 完整 CI 證據及真正安全的 Issuer／Scope
   實作才能另行審查。
+
+
+## 50. 2B-15D-13 CI 前置排錯：Actor 77 核發冒用反例的 Fixture 缺口
+
+檢查一次性 `chart928DraftSqlAcceptance.ts` 時發現，Fixture
+最初只有 Actor 8 具備 `DESIGN_QUERY`，
+但先前的 `DELEGATED_CREATE_ISSUER_ACTOR_SPOOF_WITNESS_BLOCKED`
+案例會讓 Issuer 替 Actor 77 核發 Grant。
+在未替 Actor 77 指派測試角色前，
+該案例只會在 Issuer 的 RBAC 查核階段失敗，
+**無法真正重現「替另一名本身已有權限的 Actor 核發」**。
+此問題會阻止 SQL 2019／2022 的完整隔離驗收成功，
+也會錯誤掩蓋仍存在的 Actor 來源漏洞。
+
+修正範圍僅限 `UQP_CH_` 一次性 SQL Fixture：
+
+1. 於特定冒用反例開始前確認 Actor 77 原先未有此角色，
+   暫時指派 `DESIGN_QUERY` 對應的 RoleId=1。
+2. 直接從 DB 核對 Actor 77 仍為啟用狀態、TokenVersion=1、
+   Role 有效且真的具有 `DESIGN_QUERY`，然後才執行
+   `issue(...,77)` 與 Writer 建立圖表的反例。
+3. 使用 `try/finally` 清除 Actor 77 的暫時測試角色，
+   並確認 Fixture 恢復；不改真實平台帳號或權限。
+4. 增加快速純檔案契約測試，避免冒用反例又退化為
+   「因為假 Actor 沒權限而被拒絕」的無效案例。
+
+此測試若輸出
+`CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED`，
+代表**尚未修復的安全漏洞確實被重現**，
+絕不可將它當成反冒用驗證通過。
+最新 HEAD CI 仍需個別取得 Server／Windows／SQL 2019／2022
+成功紀錄才可採認隔離測試本身；
+而可信 Issuer、三登入身分隔離與 Query／Dataset／患者
+公開螢幕隱私範圍仍阻擋正式部署。
+
+維持 PR #83 Draft、CHART Runtime 關閉、928 `.sql.draft`
+不安裝、正式 `C:\\UQP` 不變。

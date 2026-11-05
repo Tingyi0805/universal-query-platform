@@ -92,3 +92,27 @@ test("2B-15D-13 Grant, Ledger, Audit, Widget and Seal share the transaction",asy
  assert.match(source,/COMMIT TRANSACTION;\s+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;/);
  assert.match(source,/ROLLBACK TRANSACTION;\s+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;/);
 });
+
+
+test("2B-15D-11 unsafe Issuer witness uses another actually authorized actor",async()=>{
+ const acceptance=await readFile(
+   new URL("./chart928DraftSqlAcceptance.ts",import.meta.url),"utf8");
+ const stage=acceptance.indexOf("DELEGATED_CREATE_ISSUER_ACTOR_SPOOF_WITNESS_BLOCKED");
+ const initial=acceptance.indexOf("const actor77Initial=",stage);
+ const grant=acceptance.indexOf(
+   'INSERT uqp.UserRole(UserId,RoleId) VALUES(77,1)',initial);
+ const check=acceptance.indexOf("const actor77Authorized=",grant);
+ const issuer=acceptance.indexOf("const forgedIssuerGrant=await issue(",check);
+ const requireActor=acceptance.indexOf(
+   '"00000000-0000-4000-8000-000000008077",77',issuer);
+ const label=acceptance.indexOf(
+   "CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED",requireActor);
+ const cleanup=acceptance.indexOf(
+   "DELETE FROM uqp.UserRole WHERE UserId=77 AND RoleId=1",label);
+ assert(stage>=0&&initial>stage&&grant>initial&&check>grant&&
+        issuer>check&&requireActor>issuer&&label>requireActor&&
+        cleanup>label,
+   "Issuer spoofing reproduction needs a valid second actor with DESIGN_QUERY and cleanup");
+ assert.match(acceptance,/u\.Id=77 AND u\.IsActive=1 AND u\.TokenVersion=1/);
+ assert.match(acceptance,/p\.Code=N'DESIGN_QUERY'/);
+});
