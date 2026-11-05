@@ -904,9 +904,9 @@ export async function verifyChart928DraftSql(
   const successful=await issue("00000000-0000-4000-8000-000000007001");
   const preSuccess=await delegatedCounts();
   const createdResult=await runDelegated(successful);
-  assert.equal(Number(createdResult.recordsets.at(-1)?.[0]?.OpenTransactions),0);
-  const created=createdResult.recordset[0];
-  await proveDelegatedReceipt(successful,created);
+  assert.equal(Number(createdResult.recordsets[createdResult.recordsets.length-1]?.[0]?.OpenTransactions),0);
+  const createdWidget=createdResult.recordset[0];
+  await proveDelegatedReceipt(successful,createdWidget);
   const postSuccess=await delegatedCounts();
   assert.deepEqual(postSuccess.slice(0,4),preSuccess.slice(0,4).map(v=>v+1));
   assert.equal(postSuccess[4],0); // permit is transaction-private
@@ -941,9 +941,9 @@ export async function verifyChart928DraftSql(
   const losers=competing.filter(x=>x.status==="rejected");
   assert.equal(winners.length,1);
   assert.equal(losers.length,1);
-  const loser=losers[0];
-  assert(loser?.status==="rejected");
-  assert.equal(Number((loser.reason as {number?:unknown}).number),51928);
+  const delegatedLoser=losers[0];
+  assert(delegatedLoser?.status==="rejected");
+  assert.equal(Number((delegatedLoser.reason as {number?:unknown}).number),51928);
   const winner=winners[0];
   assert(winner?.status==="fulfilled");
   await proveDelegatedReceipt(concurrent,winner.value.recordset[0]);
@@ -1084,7 +1084,7 @@ export async function verifyChart928DraftSql(
   await assertNoDelegatedPartialWrite(auditFailure,beforeAuditFailure);
   stage="DELEGATED_CREATE_AUDIT_RETRY_AFTER_ROLLBACK";
   const afterAuditRetryResult=await runDelegated(auditFailure);
-  assert.equal(Number(afterAuditRetryResult.recordsets.at(-1)?.[0]?.OpenTransactions),0);
+  assert.equal(Number(afterAuditRetryResult.recordsets[afterAuditRetryResult.recordsets.length-1]?.[0]?.OpenTransactions),0);
   const afterAuditRetry=afterAuditRetryResult.recordset[0];
   await proveDelegatedReceipt(auditFailure,afterAuditRetry);
   const afterAudit=await delegatedCounts();
