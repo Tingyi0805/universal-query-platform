@@ -154,7 +154,7 @@ http://localhost:3000
 Health Check：
 
 ```text
-GET /api/health
+GET /api/status
 ```
 
 ### 5. Frontend
@@ -257,6 +257,8 @@ Query Portal
 
 
 ## Generic ODBC compatibility
+
+多 SQL Dashboard、裝置遮蔽與本機整合驗收請參閱 [整合驗收與部署](docs/dashboard-integration-acceptance.md)。
 
 The platform prefers native database adapters for SQL Server, Oracle, MySQL, and PostgreSQL.
 ODBC is available as a compatibility fallback for legacy or specialized databases.

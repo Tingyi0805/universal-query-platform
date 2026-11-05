@@ -1,21 +1,22 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./AdminUsersPage.css";
+import "./WorkstationManagement.css";
 
-export function QuickPinPolicyPage() {
+export function QuickPinPolicyPanel() {
   const { accessToken } = useAuth();
   const [length, setLength] = useState(6);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [readFailed, setReadFailed] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
     apiRequest<{ pinLength: number }>("/admin/quick-pin-policy", {}, accessToken)
       .then((result) => setLength(result.pinLength))
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "讀取 PIN 政策失敗"))
+      .catch((err: unknown) => { setReadFailed(true); setError(err instanceof Error ? err.message : "讀取 PIN 政策失敗"); })
       .finally(() => setLoading(false));
   }, [accessToken]);
 
@@ -31,12 +32,12 @@ export function QuickPinPolicyPage() {
     } finally { setSaving(false); }
   }
 
-  return <main className="page-shell">
-    <div className="page-toolbar"><div><p className="eyebrow">Security</p><h1>員工 PIN 長度設定</h1><p className="subtitle">設定全系統統一的個人 PIN 位數。</p></div><Link className="secondary-button link-button" to="/admin/users">返回使用者管理</Link></div>
+  return <section className="pin-panel" aria-label="PIN 安全設定">
+    <div className="page-toolbar"><div><p className="eyebrow">Security</p><h2>PIN 安全設定</h2><p className="subtitle">設定全系統統一的個人 PIN 位數。</p></div></div>
     {error && <section className="form-error" role="alert">{error}</section>}
     {notice && <section className="notice" role="status">{notice}</section>}
     <section className="admin-section">
-      {loading ? <p>載入中…</p> : <form className="admin-form" onSubmit={save}>
+      {loading ? <p>載入中…</p> : readFailed ? <p>政策讀取失敗，請重新載入頁面後再修改。</p> : <form className="admin-form" onSubmit={save}>
         <label>PIN 長度
           <select value={length} onChange={e => setLength(Number(e.target.value))}>
             {Array.from({ length: 9 }, (_, i) => i + 4).map(n => <option key={n} value={n}>{n} 位數</option>)}
@@ -46,5 +47,5 @@ export function QuickPinPolicyPage() {
         <button className="primary-button" type="submit" disabled={saving}>{saving ? "儲存中…" : "儲存 PIN 長度"}</button>
       </form>}
     </section>
-  </main>;
+  </section>;
 }

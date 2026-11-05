@@ -1,0 +1,391 @@
+[
+  {
+    "id": 1,
+    "file": "001_platform_identity.sql",
+    "sha256": "a22767cd7ed8d2db23d7b68ecc37a04cd689f5949a8a56cf6474c4915f3af658",
+    "requires": []
+  },
+  {
+    "id": 2,
+    "file": "002_datasource.sql",
+    "sha256": "80cbba3f540735325fa35a7411050f545574654cc8e79f96aa6c56d6c57c1c33",
+    "requires": []
+  },
+  {
+    "id": 3,
+    "file": "003_dataset_query_designer.sql",
+    "sha256": "bca7503ff9a004b8cb158d057cbbe3fce65c4f272fda3d47adaddb652d75a744",
+    "requires": [
+      2
+    ]
+  },
+  {
+    "id": 4,
+    "file": "004_parameter_designer.sql",
+    "sha256": "88c23bc549fe1aadcd4dcd3e4c7689329f682fa24fa66febf089995f9b25590f",
+    "requires": [
+      3
+    ]
+  },
+  {
+    "id": 5,
+    "file": "005_query_definition_and_access.sql",
+    "sha256": "327151da9341eb30f527d7579e3c200a4212883ae73e4b18d2ca036908f4adf5",
+    "requires": [
+      1,
+      3
+    ]
+  },
+  {
+    "id": 6,
+    "file": "006_audit_log.sql",
+    "sha256": "43824193c3c5a2a658af4949b9fa9a4a6fa724fcf925a613993b5db06001a03e",
+    "requires": [
+      1,
+      3,
+      5
+    ]
+  },
+  {
+    "id": 7,
+    "file": "007_report_designer.sql",
+    "sha256": "7a347bb93f8b8a082e2fe82facd6d94216fa0d6b6291ed9cbfd27c91d91ea815",
+    "requires": [
+      3,
+      5
+    ]
+  },
+  {
+    "id": 8,
+    "file": "008_system_settings.sql",
+    "sha256": "56a5c8fa7ddfda69d3487def780a77f40cc69b064917634de4eb34d12e6c17d6",
+    "requires": [
+      1
+    ]
+  },
+  {
+    "id": 9,
+    "file": "009_mysql_postgresql_datasource.sql",
+    "sha256": "bfb0fe7e70bcf8242a8b8ba1ed4f395ab44348c2efae6d299d74fb55b356c6ba",
+    "requires": [
+      2
+    ]
+  },
+  {
+    "id": 10,
+    "file": "010_odbc_datasource.sql",
+    "sha256": "b989d01416c8e04ee0b051bb6eb22d2ee4789358801564c63a79fb220cf4c8c1",
+    "requires": [
+      9
+    ]
+  },
+  {
+    "id": 11,
+    "file": "011_query_category.sql",
+    "sha256": "ab3200d0df12c6bfc5c6f7603edac23e5741ad509ff005f675781e7e2b02b32a",
+    "requires": [
+      5
+    ]
+  },
+  {
+    "id": 12,
+    "file": "012_query_archive.sql",
+    "sha256": "7df5873ee2340c2d0c48132a6b6974ef5c11b92a611b28e2c0eddd9b19d3973c",
+    "requires": [
+      1,
+      5
+    ]
+  },
+  {
+    "id": 13,
+    "file": "013_dataset_archive.sql",
+    "sha256": "42a0bd84f45a83efaa6739b10433afeb8f55a491466fa14c308b31577d722961",
+    "requires": [
+      1,
+      3
+    ]
+  },
+  {
+    "id": 14,
+    "file": "014_version_history.sql",
+    "sha256": "f21fc10329189924cc3d0d2992ee080fed3e537de85b868be37c764073774822",
+    "requires": [
+      1,
+      3,
+      5
+    ]
+  },
+  {
+    "id": 15,
+    "file": "015_version_retention.sql",
+    "sha256": "f5cdac721d85f1043f6aef5648a66b4b061b125eceeb2f9e95b4f1d7fced1ca5",
+    "requires": [
+      8,
+      14
+    ]
+  },
+  {
+    "id": 16,
+    "file": "016_audit_retention.sql",
+    "sha256": "66d8497d163d4fbf91171b0fbdec80e25e830acc851952bb6a64dea02fdc0dc2",
+    "requires": [
+      6,
+      8
+    ]
+  },
+  {
+    "id": 17,
+    "file": "017_user_query_favorite.sql",
+    "sha256": "95cce0911530c141097a4757f93f20c284b5ac294fc871fc091064e390c534ba",
+    "requires": [
+      1,
+      5
+    ]
+  },
+  {
+    "id": 18,
+    "file": "018_recent_query_usage_index.sql",
+    "sha256": "af22a006bc03a2f27e1d03291941fb5861b821886fcf2ec223ebb1806ae4b3b9",
+    "requires": [
+      6
+    ]
+  },
+  {
+    "id": 19,
+    "file": "019_user_token_version.sql",
+    "sha256": "e3c06d3bac3f53e0290fe8eae80f2850a049d5c847647a5c8092ecf03382208f",
+    "requires": [
+      1
+    ]
+  },
+  {
+    "id": 20,
+    "file": "020_dashboard_base.sql",
+    "sha256": "78e67a17320ff77aeb6b85797e3865d3b794b7f7ec8d32f382f7d49a3f3b8795",
+    "requires": [
+      1,
+      5
+    ]
+  },
+  {
+    "id": 21,
+    "file": "021_dashboard_display_layout.sql",
+    "sha256": "903c601f83ce2eafb49414c07e437f63ef5186e794e26656b47421503ae03330",
+    "requires": [
+      20
+    ]
+  },
+  {
+    "id": 22,
+    "file": "022_dashboard_layout_designer.sql",
+    "sha256": "6cebdd45a02108aad26f8188253313ff6cadf66cd3beb5405151da99295241e5",
+    "requires": [
+      21
+    ]
+  },
+  {
+    "id": 23,
+    "file": "023_dynamic_date_parameters.sql",
+    "sha256": "3ed5c80efeda1922b9bec413e1dac9883e79cd116f417906eb65510618684a5d",
+    "requires": [
+      4
+    ]
+  },
+  {
+    "id": 24,
+    "file": "024_dashboard_visual_styling.sql",
+    "sha256": "836acf741b2bd7a07125c4e334783e69e9a334b658302ee45c16f1a9546dac20",
+    "requires": [
+      22
+    ]
+  },
+  {
+    "id": 25,
+    "file": "025_dashboard_display_device.sql",
+    "sha256": "e9382df5566a26e38e27ab7afc985d85d7ea74b6192a3d8170d584c24dca125c",
+    "requires": [
+      1,
+      20
+    ]
+  },
+  {
+    "id": 26,
+    "file": "026_dashboard_device_ip_restriction.sql",
+    "sha256": "898fe6baddb3e68eb9cb485f72794a2f04a8b6aba42915b4f0543884445f21b0",
+    "requires": [
+      25
+    ]
+  },
+  {
+    "id": 900,
+    "file": "900_dashboard_device_archive.sql",
+    "sha256": "b3dcf810d6981e225c1631f2d8b63d69ec1b70399441cce56786d326d66c8b07",
+    "requires": [
+      25
+    ]
+  },
+  {
+    "id": 901,
+    "file": "901_dashboard_device_playback_settings.sql",
+    "sha256": "77689591eb55c0a1ca10b3eecb0fd24ebc8bf02f5f1fb74ea6a7504fa479e394",
+    "requires": [
+      25
+    ]
+  },
+  {
+    "id": 902,
+    "file": "902_shared_workstation_foundation.sql",
+    "sha256": "2e1027ad002b3f3444ca986e9970aaac1f6c88b13383d1806cde4aa6c94b7b69",
+    "requires": []
+  },
+  {
+    "id": 903,
+    "file": "903_quick_pin_policy.sql",
+    "sha256": "bced4553572224b4aec465a59df0b3bef1f2d6267395ab2a756ecb78e1808529",
+    "requires": []
+  },
+  {
+    "id": 904,
+    "file": "904_workstation_device_credentials.sql",
+    "sha256": "e2d746bf0ec8432f914496d3395c23e4d94a38542c9503988fd1e7b2d8405546",
+    "requires": [
+      902
+    ]
+  },
+  {
+    "id": 905,
+    "file": "905_workstation_platform.sql",
+    "sha256": "ce8627e3502c4c4d80ec79618ec9261f3b4eebd712c93e265ac63cf7c4bd2cbd",
+    "requires": [
+      902
+    ]
+  },
+  {
+    "id": 906,
+    "file": "906_patient_list_disclosure_audit.sql",
+    "sha256": "26e672c1ca72dc2138141069f4b53a566b7d47d07d37fa1084852feede6f9d57",
+    "requires": []
+  },
+  {
+    "id": 907,
+    "file": "907_dataset_patient_audit_config.sql",
+    "sha256": "5dddfaa493941d6709b2c8deb96533706a0ca3a8390c1b88114904ac6e24cb76",
+    "requires": [
+      3
+    ]
+  },
+  {
+    "id": 908,
+    "file": "908_patient_audit_hmac_key_version.sql",
+    "sha256": "935016e9e08334a9644c7cdb6ce18528a671ff9cdf2533aca662f816990efb5b",
+    "requires": [
+      906
+    ]
+  },
+  {
+    "id": 909,
+    "file": "909_dashboard_device_disclosure.sql",
+    "sha256": "b9b4794104e5df53477181c326743bf0a0b93017e73eb8b4f84dc56e38a8d385",
+    "requires": [
+      25,
+      906
+    ]
+  },
+  {
+    "id": 910,
+    "file": "910_dataset_sensitive_columns.sql",
+    "sha256": "84a133ffa1032f1aae4391ce4e0c127e3f46e234c2ef1ecb4e6c043be7374327",
+    "requires": [
+      3,
+      6
+    ]
+  },
+  {
+    "id": 911,
+    "file": "911_verify_dataset_sensitivity.sql",
+    "sha256": "152e5d7e10a3b315acbc4ee7f77aa9e5420c5c57e98687a0989a484846db5a8a",
+    "requires": [
+      910
+    ]
+  },
+  {
+    "id": 912,
+    "file": "912_custom_device_mask.sql",
+    "sha256": "75332997320d23216564c0fa8fd929e1bf12c17d37f56c9251f3cdc7c330a705",
+    "requires": [
+      910
+    ]
+  },
+  {
+    "id": 913,
+    "file": "913_dashboard_multi_dataset_sources.sql",
+    "sha256": "25a7af0994b8289fb93ac996feb0f7c86cabbbd176bde0521715a5c0aaf06e8a",
+    "requires": [
+      3,
+      20
+    ]
+  },
+  {
+    "id": 914,
+    "file": "914_dashboard_source_paging.sql",
+    "sha256": "c841d79f8b35f1dfe6baa3a6203d1c4a43279879f87ffc7abe9d6fe4f583eabd",
+    "requires": [
+      913
+    ]
+  },
+  {
+    "id": 915,
+    "file": "915_dashboard_security_reconciliation.sql",
+    "sha256": "ab2ec386e304be07fa62aadcad55260fc70660e4db6d8aff57b64337edae6867",
+    "requires": [
+      912,
+      914
+    ]
+  },
+  {
+    "id": 916,
+    "file": "916_workstation_management.sql",
+    "sha256": "904998104010be84278bffd608ad82e9184db8ac52df045f3b4c6d63a0bb2b61",
+    "requires": [
+      1,
+      6,
+      25,
+      902,
+      904,
+      906,
+      915
+    ]
+  },
+  {
+    "id": 917,
+    "file": "917_dashboard_query_source_model.sql",
+    "sha256": "54cdc861ff7c7eb95669085c8a054aebfbc063ba701b0c9b32c952d881b322bc",
+    "requires": [
+      5,
+      20,
+      914
+    ]
+  },
+  {
+    "id": 918,
+    "file": "918_dashboard_query_playback_mode.sql",
+    "sha256": "cc7ad656ff726448a89e5e168f6dac5d5e3bf83e41b8684366e3b6b61855b813",
+    "requires": [
+      25,
+      917
+    ]
+  },
+  {
+    "id": 919,
+    "file": "919_dashboard_dataset_security_contract.sql",
+    "sha256": "49ff0779c31d563a800a0fed624817a9d6194a63c547dda985be0d317ed325cc",
+    "requires": [
+      3,
+      6,
+      7,
+      907,
+      910,
+      913
+    ]
+  }
+]

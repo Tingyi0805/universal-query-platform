@@ -1,3 +1,4 @@
+import { invalidatePatientMetadata } from "../dataset/patientAuditContract.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 
@@ -340,6 +341,8 @@ export async function restoreDatasetVersion(
     }
 
     await snapshotDatasetVersion(tx, datasetId, userId, `RESTORE_FROM_V${versionNo}`);
+    // Restoring a saved definition never restores its former proof.
+    await invalidatePatientMetadata(tx, datasetId);
 
     await new sql.Request(tx)
       .input("datasetId", sql.BigInt, datasetId)

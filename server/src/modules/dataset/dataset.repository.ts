@@ -1,3 +1,4 @@
+import { invalidatePatientMetadata } from "./patientAuditContract.repository.js";
 import sql from "mssql";
 import { getPlatformDbPool } from "../../config/database.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
@@ -44,9 +45,9 @@ export async function listDatasets(): Promise<DatasetRecord[]> {
   return result.recordset.map(mapDataset);
 }
 
-export async function getDataset(id: number): Promise<DatasetRecord | null> {
-  const pool = await requirePool();
-  const result = await pool.request().input("id", sql.BigInt, id).query(`
+export async function getDataset(id: number, transaction?: sql.Transaction): Promise<DatasetRecord | null> {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
+  const result = await request.input("id", sql.BigInt, id).query(`
     SELECT d.Id, d.Code, d.Name, d.Description, d.DataSourceId, d.SqlText,
            d.MaxRows, d.QueryTimeoutSec, d.IsActive,
            d.IsArchived, d.ArchivedAtUtc, d.ArchivedByUserId,
@@ -86,9 +87,22 @@ export async function createDataset(input: DatasetInput): Promise<number> {
 export async function updateDataset(id: number, input: DatasetInput, userId?: number): Promise<void> {
   const pool = await requirePool();
   const tx = new sql.Transaction(pool);
-  await tx.begin();
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
   try {
+    // SQL or data-source changes may introduce new sensitive columns before
+    // preview metadata is refreshed. Without a trusted semantic review contract,
+    // confirmation/alias equality cannot authorize this change. Keep policies intact;
+    // ordinary display edits remain allowed.
+    const existing = await new sql.Request(tx).input("id", sql.BigInt, id)
+      .query("SELECT SqlText, DataSourceId FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
+    if (existing.recordset.length &&
+        (String(existing.recordset[0].SqlText) !== input.sqlText || Number(existing.recordset[0].DataSourceId) !== input.dataSourceId)) {
+      const protectedRules = await new sql.Request(tx).input("id", sql.BigInt, id)
+        .query("SELECT TOP (1) ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@id");
+      if (protectedRules.recordset.length) throw new Error("DATASET_SENSITIVITY_REVIEW_REQUIRED");
+      await invalidatePatientMetadata(tx, id);
+    }
     if (userId) {
       await snapshotDatasetVersion(tx, id, userId, "DATASET_UPDATE");
     }
@@ -217,13 +231,29 @@ export async function restoreDataset(id: number): Promise<void> {
 
 export async function deleteDataset(id: number): Promise<void> {
   const pool = await requirePool();
-  const impact = await getDatasetDeleteImpact(id);
-  if (!impact.canDelete) throw new Error("DATASET_IN_USE");
-
-  const result = await pool.request().input("id", sql.BigInt, id)
-    .query("DELETE FROM uqp.Dataset WHERE Id=@id; SELECT @@ROWCOUNT AS Affected;");
-  if (Number(result.recordset[0]?.Affected ?? 0) === 0) {
-    throw new Error("DATASET_NOT_FOUND");
+  const transaction = new sql.Transaction(pool);
+  await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    // Lock the parent Dataset row before checking references; FK inserts must
+    // validate this parent and cannot race with a successful deletion.
+    const result = await new sql.Request(transaction).input("id", sql.BigInt, id).query(`
+      IF NOT EXISTS (SELECT 1 FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id)
+        THROW 51021, 'DATASET_NOT_FOUND', 1;
+      IF EXISTS (SELECT 1 FROM uqp.QueryDefinition WITH (HOLDLOCK) WHERE DatasetId=@id)
+         OR EXISTS (SELECT 1 FROM uqp.DatasetParameter WITH (HOLDLOCK) WHERE LookupDatasetId=@id)
+         OR EXISTS (SELECT 1 FROM uqp.AuditLog WITH (HOLDLOCK) WHERE DatasetId=@id)
+        THROW 51022, 'DATASET_IN_USE', 1;
+      DELETE FROM uqp.Dataset WHERE Id=@id;
+      SELECT @@ROWCOUNT AS Affected;
+    `);
+    if (Number(result.recordset[0]?.Affected ?? 0) !== 1) throw new Error("DATASET_NOT_FOUND");
+    await transaction.commit();
+  } catch (error) {
+    await transaction.rollback();
+    const number = (error as { number?: number })?.number;
+    if (number === 51021) throw new Error("DATASET_NOT_FOUND");
+    if (number === 51022 || number === 547) throw new Error("DATASET_IN_USE");
+    throw error;
   }
 }
 
@@ -250,16 +280,19 @@ export async function getDatasetDeleteImpact(id: number) {
     SELECT
       CASE WHEN EXISTS (SELECT 1 FROM uqp.Dataset WHERE Id=@id) THEN 1 ELSE 0 END AS ExistsFlag,
       (SELECT COUNT(1) FROM uqp.QueryDefinition WHERE DatasetId=@id) AS QueryCount,
-      (SELECT COUNT(1) FROM uqp.DatasetParameter WHERE LookupDatasetId=@id) AS LookupReferenceCount
+      (SELECT COUNT(1) FROM uqp.DatasetParameter WHERE LookupDatasetId=@id) AS LookupReferenceCount,
+      (SELECT COUNT(1) FROM uqp.AuditLog WHERE DatasetId=@id) AS AuditCount
   `);
   const row = result.recordset[0];
   if (!row || !Boolean(row.ExistsFlag)) throw new Error("DATASET_NOT_FOUND");
   const queryCount = Number(row.QueryCount ?? 0);
   const lookupReferenceCount = Number(row.LookupReferenceCount ?? 0);
+  const auditCount = Number(row.AuditCount ?? 0);
   return {
-    canDelete: queryCount === 0 && lookupReferenceCount === 0,
+    canDelete: queryCount === 0 && lookupReferenceCount === 0 && auditCount === 0,
     queryCount,
     lookupReferenceCount,
+    auditCount,
   };
 }
 

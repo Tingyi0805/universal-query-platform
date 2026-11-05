@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { DatasetPatientAuditEditor } from "../components/DatasetPatientAuditEditor";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
+import { DatasetSensitivityEditor } from "../components/DatasetSensitivityEditor";
 import { DatasetParametersEditor } from "../components/DatasetParametersEditor";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
@@ -85,10 +87,21 @@ function extractParameters(sqlText: string): string[] {
 
 export function DatasetDesignerPage() {
   const { accessToken } = useAuth();
+  const [searchParams] = useSearchParams();
+  const requestedEditor = Number(searchParams.get("datasetId"));
+  const openedFromLink = useRef<number | null>(null);
   const [datasets, setDatasets] = useState<DatasetRow[]>([]);
   const [dataSources, setDataSources] = useState<DataSourceOption[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [savedSql, setSavedSql] = useState("");
+  const [savedDataSourceId, setSavedDataSourceId] = useState<number | "">("");
+  const [sqlSaveRevision, setSqlSaveRevision] = useState(0);
+  const [auditRevision, setAuditRevision] = useState(0);
+  const [sensitivityDirty, setSensitivityDirty] = useState(false);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
+  const previewParameterSequence = useRef(0);
+  const [previewParametersLoading, setPreviewParametersLoading] = useState(false);
+  const [previewParameterError, setPreviewParameterError] = useState("");
   const [previewParameters, setPreviewParameters] = useState<PreviewParameter[]>([]);
   const [previewOptions, setPreviewOptions] = useState<Record<string, PreviewOption[]>>({});
   const [preview, setPreview] = useState<QueryResult | null>(null);
@@ -137,7 +150,14 @@ export function DatasetDesignerPage() {
   }, [accessToken, datasetFilter, listPage, listPageSize, listSearch]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    const selected = datasets.find(item => item.id === requestedEditor);
+    if (selected && openedFromLink.current !== requestedEditor) { openedFromLink.current = requestedEditor; selectDataset(selected); }
+  }, [datasets, requestedEditor]);
   const loadPreviewParameterDefinitions = useCallback(async (datasetId?: number) => {
+    const sequence = ++previewParameterSequence.current;
+    setPreviewParameterError("");
+    setPreviewParametersLoading(Boolean(datasetId));
     if (!datasetId) {
       setPreviewParameters([]);
       setPreviewOptions({});
@@ -145,15 +165,16 @@ export function DatasetDesignerPage() {
     }
 
     try {
-      const result = await apiRequest<{ parameters: PreviewParameter[] }>(
+      const result = await apiRequest<{ parameters: PreviewParameter[]; preview: { detected: string[] } }>(
         `/datasets/${datasetId}/parameters`,
         {},
         accessToken,
       );
+      if (sequence !== previewParameterSequence.current) return;
       setPreviewParameters(result.parameters);
 
       const optionParameters = result.parameters.filter((parameter) =>
-        ["SELECT","MULTISELECT"].includes(parameter.controlType) && parameter.optionMode !== "NONE"
+        result.preview.detected.includes(parameter.name) && ["SELECT","MULTISELECT"].includes(parameter.controlType) && parameter.optionMode !== "NONE"
       );
 
       const optionEntries = await Promise.all(optionParameters.map(async (parameter) => {
@@ -165,10 +186,14 @@ export function DatasetDesignerPage() {
         return [parameter.name, response.options] as const;
       }));
 
-      setPreviewOptions(Object.fromEntries(optionEntries));
-    } catch {
+      if (sequence === previewParameterSequence.current) setPreviewOptions(Object.fromEntries(optionEntries));
+    } catch (e) {
+      if (sequence !== previewParameterSequence.current) return;
+      setPreviewParameterError(e instanceof Error ? e.message : "參數設定讀取失敗。");
       setPreviewParameters([]);
       setPreviewOptions({});
+    } finally {
+      if (sequence === previewParameterSequence.current) setPreviewParametersLoading(false);
     }
   }, [accessToken]);
 
@@ -177,6 +202,8 @@ export function DatasetDesignerPage() {
 
   function resetForm() {
     setForm(emptyForm);
+    setSavedSql("");
+    setSavedDataSourceId("");
     setParameterValues({});
     setPreviewParameters([]);
     setPreviewOptions({});
@@ -186,6 +213,8 @@ export function DatasetDesignerPage() {
   }
 
   function selectDataset(dataset: DatasetRow) {
+    setSavedSql(dataset.sqlText);
+    setSavedDataSourceId(dataset.dataSourceId);
     setForm({
       id: dataset.id,
       code: dataset.code,
@@ -233,26 +262,32 @@ export function DatasetDesignerPage() {
         return;
       }
 
+      const submitted = payload();
+      let savedId = form.id;
       if (form.id) {
         await apiRequest(`/datasets/${form.id}`, {
           method: "PUT",
-          body: JSON.stringify(payload()),
+          body: JSON.stringify(submitted),
         }, accessToken);
-        setNotice("Dataset 已更新。");
+        setNotice(sensitivityDirty ? "Dataset 基本設定已更新；敏感欄位規則尚未儲存，請使用獨立的儲存規則按鈕。" : "Dataset 已更新（不包含敏感欄位規則）。");
       } else {
         const created = await apiRequest<{ id: number; parameterNames: string[] }>("/datasets", {
           method: "POST",
-          body: JSON.stringify(payload()),
+          body: JSON.stringify(submitted),
         }, accessToken);
+        savedId = created.id;
         setForm((current) => ({ ...current, id: created.id }));
         setNotice("Dataset 已建立。");
       }
 
+      setSavedSql(submitted.sqlText);
+      setSavedDataSourceId(submitted.dataSourceId);
+      setSqlSaveRevision((current) => current + 1);
       await load();
-      await loadPreviewParameterDefinitions(form.id);
+      await loadPreviewParameterDefinitions(savedId);
       setVersionRefreshKey((current) => current + 1);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "儲存 Dataset 失敗。");
+      setError(`Dataset 儲存失敗；未儲存內容已保留。${e instanceof Error ? e.message : "請稍後重試。"}`);
     } finally {
       setBusy(false);
     }
@@ -332,6 +367,10 @@ export function DatasetDesignerPage() {
   }
 
   async function runPreview() {
+    if (form.id && (previewParametersLoading || previewParameterError)) {
+      setError("參數設定尚未成功載入，請先重試讀取再執行預覽。");
+      return;
+    }
     const quotedParameter = form.sqlText.match(/'\s*\{\{([A-Z][A-Z0-9_]*)\}\}\s*'/);
     if (quotedParameter?.[1]) {
       setError(`參數 {{${quotedParameter[1]}}} 外面不可加單引號，請直接使用 {{${quotedParameter[1]}}}。`);
@@ -376,7 +415,7 @@ export function DatasetDesignerPage() {
         }),
       }, accessToken);
 
-      setPreview(response.result);
+      setPreview(response.result); setAuditRevision(value => value + 1);
       setNotice(`預覽完成：${response.result.rowCount} 筆，${response.result.elapsedMs} ms${response.result.truncated ? "（結果已截斷）" : ""}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "查詢預覽失敗。");
@@ -444,16 +483,18 @@ export function DatasetDesignerPage() {
         canDelete: boolean;
         queryCount: number;
         lookupReferenceCount: number;
+        auditCount: number;
       }>(`/datasets/${form.id}/delete-impact`, {}, accessToken);
 
       if (!impact.canDelete) {
         const details = [
           impact.queryCount > 0 ? `${impact.queryCount} 個 Query` : "",
           impact.lookupReferenceCount > 0 ? `${impact.lookupReferenceCount} 個參數選項來源` : "",
+          impact.auditCount > 0 ? `${impact.auditCount} 筆稽核紀錄` : "",
         ].filter(Boolean).join("、");
 
         setError(
-          `Dataset「${form.name}」目前仍被 ${details} 使用，不能永久刪除，請改用「封存」。`,
+          `Dataset「${form.name}」仍有${details ? ` ${details}` : "其他關聯資料"}，不能永久刪除，請改用「封存」。`,
         );
         return;
       }
@@ -602,12 +643,16 @@ export function DatasetDesignerPage() {
                 onChange={(e) => setForm({ ...form, sqlText: e.target.value })} />
             </label>
 
+            <p role="status">{form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId
+              ? "編輯中 SQL／資料來源尚未儲存。下方 Parameter Designer 差異依已儲存 SQL 計算；本區參數依編輯中 SQL 偵測。"
+              : "SQL／資料來源與已儲存設定一致。Parameter Designer 差異依已儲存 SQL 計算。"}</p>
+            <p>儲存 Dataset 僅儲存基本設定與 SQL；敏感欄位規則須使用下方獨立按鈕儲存。</p>
             <div className="parameter-panel">
               <div>
                 <strong>偵測到的參數</strong>
                 <p>語法：<code>{"{{PARAM_NAME}}"}</code></p>
               </div>
-              {parameterNames.length === 0 ? (
+              {previewParametersLoading ? <div className="notice">參數設定載入中…</div> : previewParameterError ? <div className="form-error" role="alert">參數設定讀取失敗：{previewParameterError}</div> : parameterNames.length === 0 ? (
                 <span className="muted">此 SQL 沒有參數。</span>
               ) : (
                 <div className="parameter-grid">
@@ -678,6 +723,7 @@ export function DatasetDesignerPage() {
           {form.id && !form.isArchived && (
             <DatasetParametersEditor
               datasetId={form.id}
+              sqlSaveRevision={sqlSaveRevision}
               datasets={datasets
                 .filter((dataset) => !dataset.isArchived)
                 .map((dataset) => ({ id: dataset.id, code: dataset.code, name: dataset.name }))}
@@ -687,6 +733,10 @@ export function DatasetDesignerPage() {
               }}
             />
           )}
+
+          {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
+
+          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} previewColumns={preview?.columns.map((column) => column.name) ?? []} />}
 
           {preview && (
             <section className="preview-panel">

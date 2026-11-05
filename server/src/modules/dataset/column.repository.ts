@@ -11,9 +11,19 @@ async function requirePool() {
 export async function syncDatasetColumns(datasetId: number, columns: QueryColumn[]): Promise<void> {
   const pool = await requirePool();
   const tx = new sql.Transaction(pool);
-  await tx.begin();
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
 
   try {
+    // Serialize metadata refresh against sensitivity-rule edits. Do not silently
+    // orphan protections when a SQL alias disappears or is renamed.
+    await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId)
+      .query("SELECT Id FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@datasetId");
+    const rules = await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId)
+      .query("SELECT ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@datasetId");
+    const nextNames = new Set(columns.map((column) => column.name.toUpperCase()));
+    if (rules.recordset.some((rule) => !nextNames.has(String(rule.ColumnName).toUpperCase()))) {
+      throw new Error("DATASET_SENSITIVITY_COLUMNS_STALE");
+    }
     await new sql.Request(tx)
       .input("datasetId", sql.BigInt, datasetId)
       .query("DELETE FROM uqp.DatasetColumn WHERE DatasetId=@datasetId");

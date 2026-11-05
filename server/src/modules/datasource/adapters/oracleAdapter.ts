@@ -48,6 +48,7 @@ export class OracleAdapter implements DataSourceAdapter {
   }
 
   async executeQuery(config: DataSourceConfig, input: ExecuteQueryInput): Promise<QueryResult> {
+    const binds = validateOracleBinds(input.binds);
     const connection = await openConnection(config);
     const started = Date.now();
 
@@ -55,7 +56,7 @@ export class OracleAdapter implements DataSourceAdapter {
       connection.callTimeout = input.timeoutSec * 1000;
       const result = await connection.execute(
         input.sql,
-        input.binds,
+        binds,
         {
           outFormat: oracledb.OUT_FORMAT_OBJECT,
           maxRows: input.maxRows + 1,
@@ -81,4 +82,16 @@ export class OracleAdapter implements DataSourceAdapter {
       await connection.close().catch(() => undefined);
     }
   }
+}
+
+// Do not pass plain objects as driver bind descriptors, or silently coerce Boolean
+// values (Oracle SQL BOOLEAN is version-dependent). Compiler expands list values.
+export function validateOracleBinds(binds: Record<string, unknown>): Record<string, unknown> {
+  for (const value of Object.values(binds)) {
+    if (value === null || typeof value === "string" || Buffer.isBuffer(value)
+      || (typeof value === "number" && Number.isFinite(value))
+      || (value instanceof Date && Number.isFinite(value.getTime()))) continue;
+    throw new Error("ORACLE_BIND_INVALID");
+  }
+  return binds;
 }

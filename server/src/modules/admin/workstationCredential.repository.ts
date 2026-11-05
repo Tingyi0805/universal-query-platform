@@ -28,10 +28,10 @@ export async function issueDeviceCredential(workstationId: number):
   await transaction.begin();
   try {
     const workstation = await new sql.Request(transaction).input("id", sql.BigInt, workstationId).query(`
-      SELECT CredentialVersion FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK)
+      SELECT * FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK)
       WHERE Id=@id AND IsActive=1
     `);
-    if (!workstation.recordset.length) { await transaction.rollback(); return "NOT_FOUND"; }
+    if (!workstation.recordset.length || workstation.recordset[0].RetiredAtUtc) { await transaction.rollback(); return "NOT_FOUND"; }
     await new sql.Request(transaction).input("id", sql.UniqueIdentifier, id)
       .input("workstationId", sql.BigInt, workstationId)
       .input("secretHash", sql.VarBinary(32), hashDeviceSecret(secret))

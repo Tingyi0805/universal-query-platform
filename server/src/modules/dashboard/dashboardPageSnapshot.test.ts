@@ -27,3 +27,17 @@ test("rejects overlarge snapshots without retaining them", () => {
     datasetId: 7, sourceScope: "datasource:4", columns: [{ name: "x" }],
     rows: [{ x: "x".repeat(9 * 1024 * 1024) }] }), /DASHBOARD_SNAPSHOT_TOO_LARGE/);
 });
+
+test("expires at the exact TTL boundary and rejects invalid durations", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: 1000 });
+  const input = { deviceId: 901, dashboardId: 21, queryId: 3, datasetId: 7,
+    sourceScope: "datasource:4", columns: [], rows: [], ttlSeconds: 10 };
+  const snapshot = createDashboardPageSnapshot(input);
+  t.mock.timers.setTime(10_999);
+  assert.equal(getDashboardPageSnapshot(snapshot.id, 901, 21)?.id, snapshot.id);
+  t.mock.timers.setTime(11_000);
+  assert.equal(getDashboardPageSnapshot(snapshot.id, 901, 21), null);
+  for (const ttlSeconds of [NaN, Infinity, 0, -1]) {
+    assert.throws(() => createDashboardPageSnapshot({ ...input, ttlSeconds }), /INVALID_TTL/);
+  }
+});

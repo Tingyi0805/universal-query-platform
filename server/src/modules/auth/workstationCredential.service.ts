@@ -18,21 +18,25 @@ export function matchesDeviceSecret(candidate: string, storedHash: Buffer): bool
   return timingSafeEqual(computed, storedHash);
 }
 
-export async function verifyWorkstationCredential(
+export function createWorkstationCredentialVerifier(getPool=getPlatformDbPool) {
+return async function verifyWorkstationCredential(
   credentialId: string, secret: string
 ): Promise<{ workstationId: number } | null> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(credentialId)
     || !/^[A-Za-z0-9_-]{43}$/.test(secret)) return null;
-  const pool = await getPlatformDbPool();
+  const pool = await getPool();
   if (!pool) return null;
   const result = await pool.request().input("credentialId", sql.UniqueIdentifier, credentialId).query(`
-    SELECT c.WorkstationId, c.SecretHash
+    SELECT c.WorkstationId, c.SecretHash, c.IsRevoked, c.CredentialVersion AS IssuedVersion, w.*
     FROM uqp.SharedWorkstationCredential c
     INNER JOIN uqp.SharedWorkstation w ON w.Id=c.WorkstationId
     WHERE c.Id=@credentialId AND c.IsRevoked=0 AND w.IsActive=1
       AND c.CredentialVersion=w.CredentialVersion
   `);
-  const row = result.recordset[0] as { WorkstationId: number; SecretHash: Buffer } | undefined;
-  return row && matchesDeviceSecret(secret, row.SecretHash)
+  const row = result.recordset[0] as { WorkstationId: number; SecretHash: Buffer; IsActive: boolean; IsRevoked: boolean; IssuedVersion: number; CredentialVersion: number;RetiredAtUtc?: unknown } | undefined;
+  return row && row.IsActive && !row.IsRevoked && !row.RetiredAtUtc && Number(row.IssuedVersion)===Number(row.CredentialVersion) && matchesDeviceSecret(secret, row.SecretHash)
     ? { workstationId: Number(row.WorkstationId) } : null;
 }
+
+}
+export const verifyWorkstationCredential=createWorkstationCredentialVerifier();

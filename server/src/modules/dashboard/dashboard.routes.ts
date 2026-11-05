@@ -1,12 +1,37 @@
+import { createDashboardApprovalRouter } from "./dashboardApproval.routes.js";
+import { dashboardApprovalService, getDashboardApprovalEvidence } from "./dashboardApproval.repository.js";
+import { layoutSchema } from "./dashboardLayout.schema.js";
+import { createQueryModeRouter } from "./dashboardQueryMode.routes.js";
+import { createQueryModeService } from "./dashboardQueryMode.service.js";
+import { queryModeStore, readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
+import { createQueryDeviceRouter } from "./dashboardQueryDevice.routes.js";
+import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
+import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
+import { loadQueryExecutionBinding, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
+import { getTokenSessionState } from "../auth/auth.repository.js";
+import { env } from "../../config/env.js";
+import { QuerySourceError, createQuerySourceManagement } from "./dashboardQuerySources.service.js";
+import { querySourceStore } from "./dashboardQuerySources.repository.js";
+import { createQuerySourceRouter, failure as querySourceFailure } from "./dashboardQuerySources.routes.js";
+import { assertLegacySourcePreview } from "./dashboardSourceWriteGuard.js";
+import { getQueryAccessRevision } from "../queryDefinition/queryAccess.repository.js";
+import { dashboardSourcesSchema } from "./dashboardDataSource.schema.js";
 import { isIP } from "node:net";
-import { createDashboardPageSnapshot, getDashboardPageSnapshot, resolveDashboardSnapshotSeconds, type DashboardSnapshotKind } from "./dashboardPageSnapshot.js";
+import { listDashboardDataSources, replaceDashboardDataSources } from "./dashboardDataSource.repository.js";
+import { validateWidgetDataSources } from "./dashboardWidgetSource.js";
+import { validDashboardColumnMasks, validSourceColumnMasks } from "./dashboardDeviceMasking.js";
+import { createDashboardPreviewRouter } from "./dashboardPreview.routes.js";
+import { createDashboardDevicePageRouter } from "./dashboardDevicePage.routes.js";
+import { listDatasetParameters } from "../dataset/parameter.repository.js";
+import { getDataSourcePlaybackState } from "../datasource/datasource.repository.js";
 import { Router, type Request } from "express";
 import { getClientIp } from "../../utils/clientIp.js";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { executeSavedDataset } from "../dataset/dataset.service.js";
 import { getDataset } from "../dataset/dataset.repository.js";
-import { auditPatientListIfConfigured } from "../audit/patientDisclosure.service.js";
+import { getDashboardSensitivitySnapshot } from "../dataset/datasetSensitiveColumn.repository.js";
+import { auditDashboardPatientList } from "../audit/patientDisclosure.service.js";
 import { auditRequestContext } from "../audit/auditContext.js";
 import { tryWriteAuditEvent } from "../audit/audit.repository.js";
 import { getEffectiveQueryAccess, getQueryDefinition } from "../queryDefinition/queryDefinition.repository.js";
@@ -44,36 +69,7 @@ import { isValidIpOrCidr } from "./dashboardDeviceIp.js";
 
 const idSchema = z.coerce.number().int().positive();
 
-const widgetSchema = z.object({
-  id: z.coerce.number().int().positive().nullable().optional(),
-  widgetType: z.enum(["TEXT","PARAMETER","FIELD","CLOCK","PAGE_INFO","COUNTDOWN","TABLE","CONTAINER"]),
-  title: z.string().trim().max(200).nullable().optional().default(null),
-  sourceKey: z.string().trim().max(256).nullable().optional().default(null),
-  staticText: z.string().max(1000).nullable().optional().default(null),
-  x: z.coerce.number().int().min(0).max(7680),
-  y: z.coerce.number().int().min(0).max(4320),
-  width: z.coerce.number().int().min(40).max(7680),
-  height: z.coerce.number().int().min(30).max(4320),
-  fontSize: z.coerce.number().int().min(8).max(240).default(36),
-  alignment: z.enum(["LEFT","CENTER","RIGHT"]).default("CENTER"),
-  config: z.record(z.unknown()).default({}),
-  sortOrder: z.coerce.number().int().min(-10000).max(10000).default(0),
-});
 
-const profileSchema = z.object({
-  id: z.coerce.number().int().positive().nullable().optional(),
-  name: z.string().trim().min(1).max(100),
-  canvasWidth: z.coerce.number().int().min(320).max(7680),
-  canvasHeight: z.coerce.number().int().min(240).max(4320),
-  isDefault: z.boolean().default(false),
-  sortOrder: z.coerce.number().int().min(-10000).max(10000).default(0),
-  config: z.record(z.unknown()).default({}),
-  widgets: z.array(widgetSchema).max(200),
-});
-
-const layoutSchema = z.object({
-  profiles: z.array(profileSchema).min(1).max(20),
-});
 
 const deviceSchema = z.object({
   deviceName: z.string().trim().min(1).max(200),
@@ -170,7 +166,20 @@ const dashboardSchema = z.object({
   showClock: z.boolean().default(true),
   showPageNumber: z.boolean().default(true),
   showCountdown: z.boolean().default(true),
-  parameters: z.record(z.unknown()).default({}),
+  parameters: z.record(z.unknown()).refine((value) => {
+    if (!validSourceColumnMasks(value.deviceSourceColumnMasks)) return false;
+    const classifications = value.deviceColumnTypes;
+    if (classifications !== undefined) {
+      if (!classifications || typeof classifications !== "object" || Array.isArray(classifications)) return false;
+      if (Object.entries(classifications).length > 300 || Object.entries(classifications).some(([key, category]) => !key.trim() || key.length > 256 || typeof category !== "string" || !/^[A-Z0-9_]{1,64}$/.test(category))) return false;
+    }
+    const masks = value.deviceColumnMasks;
+    if (masks === undefined) return true;
+    if (!validDashboardColumnMasks(masks)) return false;
+    if (!classifications) return true;
+    const types = classifications as Record<string, string>;
+    return Object.entries(types).every(([key, category]) => category === "OTHER" || (masks as Record<string, unknown>)[key] !== "NONE");
+  }, "敏感欄位規則格式不正確").default({}),
   isActive: z.boolean().default(true),
 });
 
@@ -203,6 +212,11 @@ dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
       return;
     }
 
+    const mode = await readDashboardQueryMode(id.data);
+    if (mode.mode !== "LEGACY" && (mode.mode !== "QUERY_ONLY" || !env.DASHBOARD_QUERY_DEVICE_PLAYBACK ||
+      verification.device.queryModeGrantVersion !== mode.version || verification.device.delegatorTokenVersion !== verification.device.authorizationRevision)) {
+      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } }); return;
+    }
     res.json(await getDashboardLayout(id.data));
   } catch (error) {
     next(error);
@@ -242,30 +256,10 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
       return;
     }
 
-    const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    // Every preview/refresh request is a new disclosure; persist before returning rows.
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: null,
-      dashboardDeviceId: verification.device.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "DASHBOARD",
-      masked: false,
-      rows: result.rows,
-    });
-    const reportColumns = await listReportColumns(query.id);
+    // Legacy full-result device delivery must not bypass the page-scoped masking policy.
+    res.status(410).json({ error: { code: "DASHBOARD_DEVICE_PAGE_REQUIRED", message: "此裝置須使用分頁安全播放介面。" } });
+    return;
 
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      dashboard,
-      query: { id: query.id, code: query.code, name: query.name },
-      reportColumns,
-      result,
-      disclosureId,
-    });
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
       res.status(400).json({
@@ -280,98 +274,22 @@ dashboardRouter.post("/device/:id/preview", async (req, res, next) => {
   }
 });
 
-// Page-scoped device delivery: only the requested page leaves the server.
-// The existing preview endpoint remains for compatibility and is audited as full-result delivery.
-dashboardRouter.post("/device/:id/page", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const pageInput = z.object({ page: z.number().int().min(1).max(100000), snapshotId: z.string().uuid().optional() }).safeParse(req.body);
-    if (!id.success || !pageInput.success) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dashboard ID 或頁碼不正確。" } });
-      return;
-    }
-    const token = getDeviceToken(req);
-    const verification = token ? await checkDashboardDisplayDevice(id.data, token, getRequestSourceIp(req)) : { status: "INVALID_TOKEN" as const };
-    if (verification.status !== "VALID") {
-      res.status(401).json({ error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED", message: "播放裝置驗證失敗。" } });
-      return;
-    }
-    const dashboard = await getDashboard(id.data);
-    if (!dashboard || !dashboard.isActive) {
-      res.status(409).json({ error: { code: "DASHBOARD_NOT_AVAILABLE", message: "Dashboard 目前不可播放。" } });
-      return;
-    }
-    const query = await getQueryDefinition(dashboard.queryDefinitionId);
-    if (!query || !query.isPublished || !query.isActive || query.isArchived) {
-      res.status(409).json({ error: { code: "DASHBOARD_QUERY_NOT_AVAILABLE", message: "Dashboard 使用的 Query 目前不可執行。" } });
-      return;
-    }
-    let snapshot = pageInput.data.snapshotId
-      ? getDashboardPageSnapshot(pageInput.data.snapshotId, verification.device.id, id.data)
-      : null;
-    if (pageInput.data.snapshotId && !snapshot) {
-      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已過期，請重新載入。" } });
-      return;
-    }
-    if (snapshot && (snapshot.queryId !== query.id || snapshot.datasetId !== query.datasetId)) {
-      res.status(409).json({ error: { code: "DASHBOARD_SNAPSHOT_EXPIRED", message: "資料版本已變更，請重新載入。" } });
-      return;
-    }
-    if (!snapshot) {
-      const { snapshotKind: _snapshotKind, snapshotSeconds: _snapshotSeconds, ...queryParameters } = dashboard.parameters;
-      const result = await executeSavedDataset(query.datasetId, queryParameters);
-      const dataset = await getDataset(query.datasetId);
-      if (!dataset) throw new Error("DATASET_NOT_FOUND");
-      const snapshotConfig = dashboard.parameters;
-      const kindValue = snapshotConfig.snapshotKind;
-      const kind: DashboardSnapshotKind = kindValue === "SURGERY" || kindValue === "OUTPATIENT" || kindValue === "EXAM" || kindValue === "STATISTICS"
-        ? kindValue : "OTHER";
-      const secondsValue = snapshotConfig.snapshotSeconds;
-      const configuredSeconds = typeof secondsValue === "number" ? secondsValue : null;
-      const totalPagesForSnapshot = Math.max(1, Math.ceil(result.rows.length / Math.max(1, dashboard.pageSize)));
-      const cycleSeconds = totalPagesForSnapshot * Math.max(5, dashboard.pageSeconds);
-      const minimumSnapshotSeconds = Math.ceil((cycleSeconds + Math.max(10, Math.ceil(cycleSeconds * 0.2))) / 10) * 10;
-      if (minimumSnapshotSeconds > 3600) {
-        res.status(409).json({ error: { code: "DASHBOARD_PLAYBACK_TOO_LONG", message: "完整輪播超過快照有效時間上限，請調整每頁筆數或換頁秒數。" } });
-        return;
-      }
-      snapshot = createDashboardPageSnapshot({
-        ttlSeconds: Math.max(resolveDashboardSnapshotSeconds(kind, configuredSeconds), minimumSnapshotSeconds),
-        deviceId: verification.device.id, dashboardId: id.data,
-        queryId: query.id, datasetId: query.datasetId,
-        sourceScope: `datasource:${dataset.dataSourceId}`,
-        columns: result.columns, rows: result.rows,
-      });
-    }
-    const pageSize = Math.max(1, dashboard.pageSize);
-    const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / pageSize));
-    if (pageInput.data.page > totalPages) {
-      res.status(400).json({ error: { code: "DASHBOARD_PAGE_OUT_OF_RANGE", message: "頁碼超出資料範圍。" } });
-      return;
-    }
-    const rows = snapshot.rows.slice((pageInput.data.page - 1) * pageSize, pageInput.data.page * pageSize);
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: null,
-      dashboardDeviceId: verification.device.id,
-      sourceScope: snapshot.sourceScope,
-      deliveryType: "PAGE",
-      pageNumber: pageInput.data.page,
-      masked: false,
-      rows,
-    });
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ dashboard, query: { id: query.id, code: query.code, name: query.name },
-      reportColumns: await listReportColumns(query.id),
-      result: { columns: snapshot.columns, rows },
-      page: pageInput.data.page, totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, disclosureId });
-  } catch (error) {
-    next(error);
-  }
-});
+const queryExecution = createQuerySourceExecution({ loadBinding: loadQueryExecutionBinding,
+  getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
+  getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
+  getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
+  execute: executeSavedDataset, audit: auditDashboardPatientList }, device => device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
+dashboardRouter.use(createQueryDeviceRouter(queryExecution, { mode: readDashboardQueryMode, checkDevice: checkDashboardDisplayDevice, dashboard: getDashboard, reportColumns: listReportColumns }));
+
+dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, checkDashboardDisplayDevice, getDashboard, getQueryDefinition,
+  getDataset, getDatasetSensitivitySnapshot: getDashboardSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
+  auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
+dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
+dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
+dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
 dashboardRouter.get("/device-alerts", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
@@ -732,6 +650,8 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
         pageSize: parsed.data.pageSize,
         pageSeconds: parsed.data.pageSeconds,
         isActive: parsed.data.isActive,
+        deviceColumnMasks: parsed.data.parameters.deviceColumnMasks ?? {},
+        deviceColumnTypes: parsed.data.parameters.deviceColumnTypes ?? {},
       },
       ...auditRequestContext(req),
     });
@@ -743,6 +663,10 @@ dashboardRouter.post("/", requirePermission("DESIGN_QUERY"), async (req, res, ne
       res.status(409).json({
         error: { code: "DASHBOARD_CODE_EXISTS", message: "Dashboard 代碼已存在。" },
       });
+      return;
+    }
+    if (error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED") {
+      res.status(409).json({ error: { code: "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED", message: "此 Dashboard 的 Dataset 曾設定敏感欄位保護，但目前沒有任何規則；請先重新檢視並設定敏感欄位，再啟用播放。" } });
       return;
     }
     if (error instanceof Error && error.message === "DASHBOARD_QUERY_NOT_AVAILABLE") {
@@ -783,6 +707,7 @@ dashboardRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req, res, 
         pageSize: parsed.data.pageSize,
         pageSeconds: parsed.data.pageSeconds,
         isActive: parsed.data.isActive,
+        deviceColumnMasks: parsed.data.parameters.deviceColumnMasks ?? {},
       },
       ...auditRequestContext(req),
     });
@@ -800,6 +725,10 @@ dashboardRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req, res, 
       res.status(404).json({
         error: { code: error.message, message: "找不到 Dashboard。" },
       });
+      return;
+    }
+    if (error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED") {
+      res.status(409).json({ error: { code: "DASHBOARD_SENSITIVITY_REVIEW_REQUIRED", message: "此 Dashboard 的 Dataset 曾設定敏感欄位保護，但目前沒有任何規則；請先重新檢視並設定敏感欄位，再啟用播放。" } });
       return;
     }
     if (error instanceof Error && error.message === "DASHBOARD_QUERY_NOT_AVAILABLE") {
@@ -889,6 +818,41 @@ dashboardRouter.get("/:id/layout", async (req, res, next) => {
   }
 });
 
+
+dashboardRouter.get("/:id/data-sources", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
+    if (!await getDashboard(id.data)) { res.status(404).json({ error: { code: "DASHBOARD_NOT_FOUND" } }); return; }
+    res.json({ sources: await listDashboardDataSources(id.data) });
+  } catch (error) { next(error); }
+});
+dashboardRouter.put("/:id/data-sources", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    const parsed = dashboardSourcesSchema.safeParse(req.body);
+    if (!id.success || !parsed.success || !req.authUser) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "資料來源設定格式不正確。" } }); return;
+    }
+    const keys = parsed.data.sources.map((source) => source.sourceKey.toUpperCase());
+    if (new Set(keys).size !== keys.length) {
+      res.status(400).json({ error: { code: "DUPLICATE_SOURCE_KEY", message: "同一看板的資料來源代碼不可重複。" } }); return;
+    }
+    const sources = await replaceDashboardDataSources(id.data, parsed.data.sources);
+    await tryWriteAuditEvent({ eventType: "DASHBOARD_DATA_SOURCES_UPDATED",
+      userId: req.authUser.id, parameters: { dashboardId: id.data,
+        sources: sources.map(({ sourceKey, datasetId, refreshSeconds, pageSize, pageSeconds, isEnabled }) => ({ sourceKey, datasetId, refreshSeconds, pageSize, pageSeconds, isEnabled })) },
+      ...auditRequestContext(req) });
+    res.json({ status: "OK", sources });
+  } catch (error) {
+    if (error instanceof Error && ["DASHBOARD_NOT_FOUND", "DATASET_NOT_AVAILABLE"].includes(error.message)) {
+      res.status(409).json({ error: { code: error.message } }); return;
+    }
+    next(error);
+  }
+});
+
+
 dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
@@ -920,6 +884,13 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
           return;
         }
       }
+    }
+
+    const configuredSources = await listDashboardDataSources(id.data);
+    const bindingValidation = validateWidgetDataSources(parsed.data.profiles, configuredSources.filter((source) => source.isEnabled).map((source) => source.sourceKey));
+    if (!bindingValidation.valid) {
+      res.status(400).json({ error: { code: "DASHBOARD_WIDGET_SOURCE_NOT_AVAILABLE",
+        message: "版面元件指定的額外資料來源不存在或未啟用。" } }); return;
     }
 
     await replaceDashboardLayout(id.data, parsed.data.profiles);
@@ -955,86 +926,13 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
   }
 });
 
-dashboardRouter.post("/:id/preview", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success || !req.authUser) {
-      res.status(400).json({
-        error: { code: "VALIDATION_ERROR", message: "Dashboard ID 不正確。" },
-      });
-      return;
-    }
-
-    const dashboard = await getDashboard(id.data);
-    if (!dashboard) {
-      res.status(404).json({
-        error: { code: "DASHBOARD_NOT_FOUND", message: "找不到 Dashboard。" },
-      });
-      return;
-    }
-
-    const canDesign = req.authUser.permissions.includes("DESIGN_QUERY");
-    if (!canDesign) {
-      if (!req.authUser.permissions.includes("EXECUTE_QUERY") || !dashboard.isActive) {
-        res.status(403).json({ error: { code: "FORBIDDEN", message: "沒有播放此 Dashboard 的權限。" } });
-        return;
-      }
-      const access = await getEffectiveQueryAccess(req.authUser.id, dashboard.queryDefinitionId);
-      if (!access?.canExecute) {
-        res.status(403).json({ error: { code: "DASHBOARD_EXECUTE_FORBIDDEN", message: "沒有播放此 Dashboard 的權限。" } });
-        return;
-      }
-    }
-
-    const query = await getQueryDefinition(dashboard.queryDefinitionId);
-    if (!query || !query.isPublished || !query.isActive || query.isArchived) {
-      res.status(409).json({
-        error: {
-          code: "DASHBOARD_QUERY_NOT_AVAILABLE",
-          message: "Dashboard 使用的 Query 目前不可執行。",
-        },
-      });
-      return;
-    }
-
-    const result = await executeSavedDataset(query.datasetId, dashboard.parameters);
-    const dataset = await getDataset(query.datasetId);
-    if (!dataset) throw new Error("DATASET_NOT_FOUND");
-    // Every preview/refresh request is a new disclosure; persist before returning rows.
-    const disclosureId = await auditPatientListIfConfigured({
-      datasetId: query.datasetId,
-      queryDefinitionId: query.id,
-      userId: req.authUser!.id,
-      sourceScope: `datasource:${dataset.dataSourceId}`,
-      deliveryType: "DASHBOARD",
-      masked: false,
-      rows: result.rows,
-    });
-    const reportColumns = await listReportColumns(query.id);
-
-    res.setHeader("Cache-Control", "no-store");
-    res.json({
-      dashboard,
-      query: {
-        id: query.id,
-        code: query.code,
-        name: query.name,
-      },
-      reportColumns,
-      result,
-      disclosureId,
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message.startsWith("PARAMETER_")) {
-      res.status(400).json({
-        error: {
-          code: error.message.split(":")[0],
-          message: "Dashboard 預設參數不完整或格式不正確，請檢查設定。",
-        },
-      });
-      return;
-    }
-
-    next(error);
-  }
-});
+dashboardRouter.use(createDashboardPreviewRouter({ getDashboard, getSession: getTokenSessionState,
+  getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess, getDataset,
+  getPolicy: getDashboardSensitivitySnapshot, getSources: listDashboardDataSources,
+  getReportColumns: listReportColumns, legacyGuard: assertLegacySourcePreview,
+  execute: executeSavedDataset, audit: auditDashboardPatientList, getApprovalEvidence: getDashboardApprovalEvidence }));
+// Preserve explicit management error classifications for guarded legacy writers.
+dashboardRouter.use(((error, req, res, next) => {
+  if (error instanceof QuerySourceError) querySourceFailure(error, res, req.id);
+  else next(error);
+}) as import("express").ErrorRequestHandler);

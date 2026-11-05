@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { createHash } from "node:crypto";
 import { getPlatformDbPool } from "../../config/database.js";
 import { decryptSecret, encryptSecret } from "../../security/secretCrypto.js";
 import type { DataSourceConfig, DataSourceListItem } from "./datasource.types.js";
@@ -261,4 +262,13 @@ export async function listDataSourcesPaged(input: {
     items: (recordsets[0] ?? []).map(mapRow),
     total: Number(recordsets[1]?.[0]?.Total ?? 0),
   };
+}
+
+/** Opaque configuration revision, including encrypted credential changes without decrypting secrets. */
+export async function getDataSourcePlaybackState(id: number): Promise<{ isActive: boolean; revision: string } | null> {
+  const pool = await requirePool();
+  const result = await pool.request().input("id", sql.BigInt, id)
+    .query("SELECT TOP (1) * FROM uqp.DataSource WHERE Id=@id");
+  const row = result.recordset[0];
+  return row ? { isActive: Boolean(row.IsActive), revision: createHash("sha256").update(JSON.stringify(row)).digest("hex") } : null;
 }

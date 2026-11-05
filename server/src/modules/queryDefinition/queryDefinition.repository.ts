@@ -311,9 +311,9 @@ export async function restoreQueryDefinition(id: number): Promise<void> {
   }
 }
 
-export async function listAccessibleQueries(userId: number) {
-  const pool = await requirePool();
-  const result = await pool.request().input("userId", sql.BigInt, userId).query(`
+export async function listAccessibleQueries(userId: number, transaction?: sql.Transaction) {
+  const request = transaction ? new sql.Request(transaction) : (await requirePool()).request();
+  const result = await request.input("userId", sql.BigInt, userId).query(`
     WITH RoleAccess AS (
       SELECT rqa.QueryDefinitionId,
              MAX(CAST(rqa.CanView AS INT)) AS CanView,
@@ -380,8 +380,8 @@ export async function listAccessibleQueries(userId: number) {
   }));
 }
 
-export async function getEffectiveQueryAccess(userId: number, queryId: number) {
-  const queries = await listAccessibleQueries(userId);
+export async function getEffectiveQueryAccess(userId: number, queryId: number, transaction?: sql.Transaction) {
+  const queries = await listAccessibleQueries(userId, transaction);
   return queries.find((query) => query.id === queryId) ?? null;
 }
 

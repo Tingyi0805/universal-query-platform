@@ -31,9 +31,18 @@ export async function createSharedWorkstation(code: string, name: string, platfo
   return Number(result.recordset[0].id);
 }
 
-export async function updateSharedWorkstation(id: number, name: string, active: boolean): Promise<"OK" | "NOT_FOUND" | "NOT_CONFIGURED"> {
+export async function updateSharedWorkstation(id: number, name: string, active: boolean, actor: number): Promise<"OK" | "NOT_FOUND" | "NOT_CONFIGURED"> {
   const pool = await getPlatformDbPool();
   if (!pool) return "NOT_CONFIGURED";
+  const existing = await pool.request().input("id", sql.BigInt, id).query("SELECT * FROM uqp.SharedWorkstation WHERE Id=@id");
+  if (!existing.recordset[0] || existing.recordset[0].RetiredAtUtc) return "NOT_FOUND";
+  if (existing.recordset[0].PurposeCode !== undefined) {
+    const { workstationManagement } = await import("./workstationManagement.repository.js");
+    await workstationManagement.metadata(id, { displayName: name, isActive: active,
+      purposeCode: existing.recordset[0].PurposeCode, sortOrder: Number(existing.recordset[0].SortOrder),
+      expectedVersion: Number(existing.recordset[0].CredentialVersion) }, actor);
+    return "OK";
+  }
   const result = await pool.request().input("id", sql.BigInt, id)
     .input("name", sql.NVarChar(200), name).input("active", sql.Bit, active).query(`
       SET XACT_ABORT ON;
@@ -71,8 +80,8 @@ export async function setWorkstationUsers(workstationId: number, userIds: number
   await transaction.begin();
   try {
     const lock = await new sql.Request(transaction).input("id", sql.BigInt, workstationId)
-      .query("SELECT Id FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
-    if (lock.recordset.length === 0) { await transaction.rollback(); return "NOT_FOUND"; }
+      .query("SELECT * FROM uqp.SharedWorkstation WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
+    if (lock.recordset.length === 0 || lock.recordset[0].RetiredAtUtc) { await transaction.rollback(); return "NOT_FOUND"; }
     const users = await new sql.Request(transaction).query(
       "SELECT Id FROM uqp.AppUser WHERE IsActive=1"
     );
@@ -94,7 +103,7 @@ export async function setWorkstationUsers(workstationId: number, userIds: number
     await transaction.commit();
     return "OK";
   } catch (error) {
-    await transaction.rollback();
+    await transaction.rollback().catch(() => undefined);
     throw error;
   }
 }

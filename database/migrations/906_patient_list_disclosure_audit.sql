@@ -11,12 +11,12 @@ BEGIN
     QueryDefinitionId BIGINT NULL,
     DatasetId BIGINT NULL,
     DeliveryType NVARCHAR(20) NOT NULL,
-    RowCount INT NOT NULL,
+    [RowCount] INT NOT NULL,
     PageNumber INT NULL,
     Masked BIT NOT NULL CONSTRAINT DF_PatientListDisclosure_Masked DEFAULT (0),
     DisclosedAtUtc DATETIME2(3) NOT NULL CONSTRAINT DF_PatientListDisclosure_Time DEFAULT SYSUTCDATETIME(),
     CONSTRAINT CK_PatientListDisclosure_Type CHECK (DeliveryType IN ('MANUAL','PAGE','AUTO_REFRESH','DASHBOARD')),
-    CONSTRAINT CK_PatientListDisclosure_Rows CHECK (RowCount BETWEEN 0 AND 10000)
+    CONSTRAINT CK_PatientListDisclosure_Rows CHECK ([RowCount] BETWEEN 0 AND 10000)
   );
   CREATE INDEX IX_PatientListDisclosure_UserTime ON uqp.PatientListDisclosure(UserId, DisclosedAtUtc DESC);
 END;

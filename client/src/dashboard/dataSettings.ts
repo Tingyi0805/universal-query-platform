@@ -1,0 +1,41 @@
+import { securityGuidance } from "../security/securityContracts";
+export const reservedDashboardParameters = new Set(["deviceColumnMasks", "deviceColumnTypes", "snapshotKind", "snapshotSeconds", "deviceSourceColumnMasks"]);
+export function objectJson(text: string): Record<string, unknown> {
+  const value: unknown = JSON.parse(text || "{}");
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("INVALID_OBJECT");
+  return value as Record<string, unknown>;
+}
+export function queryParameterValues(value: Record<string, unknown>) {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !reservedDashboardParameters.has(key)));
+}
+const modes = new Set(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM", "INHERIT"]);
+export function maskAtLeastAsStrong(next: string, existing: unknown): boolean {
+  if (existing === undefined) return modes.has(next);
+  if (typeof existing !== "string" || !modes.has(existing) || !modes.has(next)) return false;
+  if (next === "INHERIT" && (existing === "CUSTOM" || existing === "INHERIT")) return true;
+  return existing === "NONE" || next === "OMIT" || (existing !== "OMIT" && next === "FULL") || next === existing;
+}
+export function sourcePreviewFailure(key: string, error: unknown): string {
+  const code = securityGuidance(error).code;
+  const safeKey = /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key) ? key : "UNKNOWN";
+  const safe = securityGuidance({ code });
+  return `來源 ${safeKey}：${code}。${safe.message} 此來源不顯示舊資料；遮蔽由後端執行。`;
+}
+
+export function datasetApprovalAllowed(mode: string, rule?: { sensitivityType: string; deviceMaskMode: string }): boolean {
+  if (!rule) return mode === "OMIT";
+  const minimum = rule.deviceMaskMode;
+  const allowed = minimum === "CUSTOM" ? ["INHERIT", "CUSTOM", "FULL", "OMIT"] : minimum === "OMIT" ? ["INHERIT", "OMIT"] :
+    minimum === "FULL" ? ["INHERIT", "FULL", "OMIT"] : minimum === "NONE" ? ["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "INHERIT"] : ["INHERIT", minimum, "FULL", "OMIT"];
+  return allowed.includes(mode) && (rule.sensitivityType === "OTHER" || mode !== "NONE");
+}
+export function inheritedMaskSample(rule?: { deviceMaskMode: string; customMask?: { prefix: number; suffix: number; symbol: string } | null }): string {
+  if (rule?.deviceMaskMode === "OMIT" || !rule) return "欄位不傳送";
+  if (rule.deviceMaskMode === "CUSTOM") {
+    const value = "0000123456", config = rule.customMask;
+    if (!config || !Number.isInteger(config.prefix) || !Number.isInteger(config.suffix) || config.prefix < 0 || config.suffix < 0 || config.prefix > 100 || config.suffix > 100 || Array.from(config.symbol).length !== 1 || /[\r\n\t]/.test(config.symbol)) return "○○○○";
+    if (config.prefix + config.suffix >= value.length) return config.symbol.repeat(value.length);
+    return value.slice(0, config.prefix) + config.symbol.repeat(value.length - config.prefix - config.suffix) + (config.suffix ? value.slice(-config.suffix) : "");
+  }
+  return rule.deviceMaskMode === "FULL" ? "○○○○" : rule.deviceMaskMode === "NONE" ? "合成非敏感文字" : "已沿用 Dataset 部分遮蔽";
+}

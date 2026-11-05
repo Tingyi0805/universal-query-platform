@@ -1,0 +1,18 @@
+{
+  "purpose": "DECLARATIVE_ONLY_NO_SEED_EXECUTOR",
+  "datasetCode": "ACCEPT_SYNTHETIC_PRIMARY",
+  "extraDatasetCode": "ACCEPT_SYNTHETIC_EXTRA",
+  "sourceKey": "SYNTH_EXTRA",
+  "sqlText": "SELECT CAST('SYNTH-0001' AS nvarchar(32)) AS PatientId, CAST('Synthetic Person' AS nvarchar(64)) AS PatientName, CAST('SYNTH-OMIT' AS nvarchar(32)) AS HiddenValue",
+  "aliases": ["PatientId", "PatientName", "HiddenValue"],
+  "rows": [{"PatientId": "SYNTH-0001", "PatientName": "Synthetic Person", "HiddenValue": "SYNTH-OMIT"}],
+  "sensitivity": [
+    {"columnName": "PatientId", "sensitivityType": "MRN", "deviceMaskMode": "CUSTOM", "customMask": {"prefix": 0, "suffix": 2, "symbol": "*"}},
+    {"columnName": "PatientName", "sensitivityType": "NAME", "deviceMaskMode": "NAME"},
+    {"columnName": "HiddenValue", "sensitivityType": "OTHER", "deviceMaskMode": "OMIT"}
+  ],
+  "patientPut": {"expectedVersion": "READ_FROM_GET_AT_EXECUTION", "isEnabled": true, "patientKeyColumn": "PatientId", "identifierConfirmed": true},
+  "approvalPatch": {"expectedVersion": "READ_FROM_GET_AT_EXECUTION", "sourceKey": "PRIMARY", "upsert": {"PatientId": "INHERIT", "PatientName": "FULL", "HiddenValue": "OMIT"}, "remove": []},
+  "actors": ["ADMIN_A", "ADMIN_B", "DESIGN_WITHOUT_QUERY_ACCESS", "VIEW_ONLY", "REVOKED_TOKEN"],
+  "secrets": "Generate ephemeral JWT/encryption/HMAC keys outside source control in the isolated run; no values in this fixture."
+}
