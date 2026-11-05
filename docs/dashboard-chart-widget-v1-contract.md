@@ -1627,3 +1627,24 @@ CI 成功的證據，才能標為 PASS。
 Writer／Issuer 程序核准 SHA-256 均為 `null`；
 928 仍是 `.sql.draft`，PR #83 維持 Draft／未合併，
 不覆蓋正式 `C:\\UQP`、不啟用 CHART。
+
+
+### 2B-15D-13 後續防回歸補強（本次提交，待 CI）
+
+- 原有 SQL 2019／2022 隔離驗收在安裝整合程序前，
+  加入**SQL 來源順序檢查**：必須先用
+  `UPDLOCK,HOLDLOCK` 確認 GrantId 資料列並取得鎖，
+  之後才呼叫 `SYSUTCDATETIME()`，最後再完整驗證
+  Grant 範圍與使用狀態。避免後續重構把到期判定改回鎖等待前。
+- 新增 `server/src/scripts/chart928DelegationDraft.contract.test.ts`
+  快速純檔案契約測試，供既有 `npm test` 執行，
+  不需要 SQL Server 或秘密值。它驗證 Runtime／Issuer／Writer
+  核准常數持續關閉、草案不得部署至正式 DB、
+  鎖／時間／範圍／消耗的先後順序、Grant／Ledger／Audit／
+  Widget／Seal 交易順序及成功／失敗恢復隔離層級。
+  **這是靜態契約測試，不能替代 SQL 2019／2022 引擎測試。**
+- 即使上述測試成功，`CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED`
+  所指出的可信 Actor 身分核發缺口仍然存在。
+  PR #83 及正式部署狀態維持 **BLOCKED**；必須取得
+  **當前 HEAD** 完整 CI 證據及真正安全的 Issuer／Scope
+  實作才能另行審查。

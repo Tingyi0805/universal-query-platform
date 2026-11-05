@@ -796,6 +796,22 @@ export async function verifyChart928DraftSql(
   // still verify all DB mutations in the disposable UQP_CH_ database.
   assert.match(delegatedDraft,/COMMIT TRANSACTION;\s+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;/);
   assert.match(delegatedDraft,/IF XACT_STATE\(\)<>0 ROLLBACK TRANSACTION;\s+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;/);
+  // Contract regression guard: DB time MUST be sampled only AFTER the
+  // GrantId row lock has been acquired (not ahead of a blocking SELECT).
+  // A passing 5.5 s engine race test alone cannot prove this SQL ordering
+  // remains safe when a refactor changes the procedure control flow.
+  const grantLockStatement=
+    "SELECT 1 FROM uqp.ChartActorDelegationDisposable WITH(UPDLOCK,HOLDLOCK)";
+  const grantLockPosition=delegatedDraft.indexOf(grantLockStatement);
+  const grantTimeStatement="DECLARE @consumeAt DATETIME2(3)=SYSUTCDATETIME();";
+  const grantTimePosition=delegatedDraft.indexOf(grantTimeStatement);
+  const grantScopeStatement=
+    "SELECT 1 FROM uqp.ChartActorDelegationDisposable d WITH(UPDLOCK,HOLDLOCK)";
+  const grantScopePosition=delegatedDraft.indexOf(grantScopeStatement);
+  assert(grantLockPosition>=0&&
+    grantTimePosition>grantLockPosition&&
+    grantScopePosition>grantTimePosition);
+  assert.equal(delegatedDraft.split(grantTimeStatement).length-1,1);
   await db!.request().batch(delegatedDraft);
   stage="DELEGATED_CREATE_WRITER_PERMISSION";
   const delegatedRights=(await q(
