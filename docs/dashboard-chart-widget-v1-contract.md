@@ -1525,3 +1525,62 @@ AFTER INSERT Trigger 擲出錯誤後，Grant 消耗與另外五類
 `CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null` 均不變。
 PR #83 維持 Draft，928 僅為 `.sql.draft`，
 不下載覆蓋或改動正式 `C:\\UQP`，不開放 CHART。
+
+
+## 48. 2B-15D-12：SQL 2019／2022 CI 預備驗收與精確 HEAD 採認（待 CI）
+
+本階段直接延用 `.github/workflows/ci.yml` 既有的
+`device-lifecycle-d1-sql` SQL 2019／2022 Matrix，
+及 `deviceLifecycle926Acceptance.ts` 所呼叫的
+`chart928DraftSqlAcceptance.ts` 一次性隔離驗收。
+**不新增另一套 SQL fixture、正式 DB 安裝器、Migration 或
+放寬任何驗證條件。**
+
+### 本次修正與可檢查的要求
+
+- 對隔離 SQL `usp_ChartCreateWithDelegation_IsolatedDraft`
+  的 COMMIT 成功路徑、CATCH ROLLBACK 失敗路徑，
+  明確恢復 `SET TRANSACTION ISOLATION LEVEL READ COMMITTED`，
+  避免連線池工作階段的交易設定被後續請求繼承。
+  既有 SQL 2019／2022 測試增加來源契約檢查，
+  並在成功建立和 Audit 失敗後重試成功的 SQL Batch
+  讀取 `@@TRANCOUNT`，要求無外部未結交易。
+- 現有 D1 SQL job 原本使用預設 `actions/checkout`；
+  為確定測試的是 PR 正確 HEAD 而非其他 Checkout 結果，
+  改成固定 `github.event.pull_request.head.sha || github.sha`
+  且停用 Credential Persistence。執行 SQL Docker 之前，
+  以 `git rev-parse HEAD` 和 40 位 SHA 完整相等比對。
+  如不相等會直接以 `D1_SQL_HEAD_SHA_MISMATCH` 失敗，
+  不會把錯誤版本記成 SQL 驗收。
+- 仍保持 `sql: [2019, 2022]`、現有 `UQP_D1_SCOPE=DISPOSABLE_ONLY`
+  容器限制及 `dashboard-ui-scope` 契約；不得以
+  skip、允許錯誤或降低 node/npm 版本繞過測試。
+
+### 目前可證實的 CI 狀態
+
+GitHub Actions 的最近失敗 #1332
+（`41814828288`，HEAD `c93b2c15102deeb88fce81b8ab4feaa6b5a29ffc`）
+Server 和 Windows Node.js 的四個失敗皆屬舊 HEAD Chart
+權限測試的期待值未與 Release Gate 對齊；較新程式已改用
+不核准時拒絕／合成 SHA 正負案例。
+**這不等於最新程式通過**，不得以舊 CI Success 取代
+最新 HEAD 的測試證據。
+
+截至本階段檢查，PR #83 後續 Commit 沒有對應的新 CI，
+即使 `on: pull_request` 已在 Workflow 中，
+**仍無法單靠程式碼確認 GitHub 為何沒有排程**，
+也不能聲稱本階段已完成 SQL 引擎驗收。
+需由 GitHub Actions 產生新的 `pull_request` Run，
+其 `head_sha` 與 PR #83 最新 HEAD 一致，
+且 D1 SQL 2019／2022、Server、Windows Node.js、Client
+與其他必要工作均成功，才可提升為驗收 PASS。
+
+### 發行阻擋維持不變
+
+隔離原型的 Issuer 仍可為另一個有效 ActorId 核發；
+真正 HTTP Actor → DB-owned Issuer 的不可冒用委派、
+同交易 Query/Dataset／敏感資料與公開螢幕政策驗證、
+真實獨立 SQL Login／程序指紋與人工審查尚未完成。
+因此不能因本次 CI 修正就開放 CHART，
+不能合併 PR #83、安裝 928 或變更正式 `C:\\UQP`。
+全部 Runtime／Writer／Actor 綁定／Issuer 核准 Gate 均維持關閉。

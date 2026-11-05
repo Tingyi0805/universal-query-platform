@@ -791,6 +791,11 @@ export async function verifyChart928DraftSql(
   const delegatedDraft=await readFile(new URL(
     "../../../database/drafts/928_chart_atomic_create_with_delegation.sql.draft",
     import.meta.url),"utf8");
+  // Guard against a draft leaving pooled SQL sessions in SERIALIZABLE mode
+  // or accidentally removing rollback cleanup. The engine assertions below
+  // still verify all DB mutations in the disposable UQP_CH_ database.
+  assert.match(delegatedDraft,/COMMIT TRANSACTION;\s+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;/);
+  assert.match(delegatedDraft,/IF XACT_STATE\(\)<>0 ROLLBACK TRANSACTION;\s+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;/);
   await db!.request().batch(delegatedDraft);
   stage="DELEGATED_CREATE_WRITER_PERMISSION";
   const delegatedRights=(await q(
@@ -839,7 +844,8 @@ export async function verifyChart928DraftSql(
       "@RequestId=@requestId,@GrantId=@grantId,@Secret=@secret," +
       "@SourceKey=N'PRIMARY',@ConfigJson=@config," +
       "@X=10,@Y=10,@Width=600,@Height=360;" +
-      "END TRY BEGIN CATCH REVERT; THROW; END CATCH; REVERT"
+      "END TRY BEGIN CATCH REVERT; THROW; END CATCH; REVERT;" +
+      "SELECT @@TRANCOUNT AS OpenTransactions"
     );
   // Expected digest is recomputed inside SQL from canonical UTF-8 JSON.
   // An extra caller digest argument must NEVER be trusted by this Writer.
@@ -881,7 +887,9 @@ export async function verifyChart928DraftSql(
   stage="DELEGATED_CREATE_ATOMIC_SUCCESS";
   const successful=await issue("00000000-0000-4000-8000-000000007001");
   const preSuccess=await delegatedCounts();
-  const created=(await runDelegated(successful)).recordset[0];
+  const createdResult=await runDelegated(successful);
+  assert.equal(Number(createdResult.recordsets.at(-1)?.[0]?.OpenTransactions),0);
+  const created=createdResult.recordset[0];
   await proveDelegatedReceipt(successful,created);
   const postSuccess=await delegatedCounts();
   assert.deepEqual(postSuccess.slice(0,4),preSuccess.slice(0,4).map(v=>v+1));
@@ -1059,7 +1067,9 @@ export async function verifyChart928DraftSql(
   }
   await assertNoDelegatedPartialWrite(auditFailure,beforeAuditFailure);
   stage="DELEGATED_CREATE_AUDIT_RETRY_AFTER_ROLLBACK";
-  const afterAuditRetry=(await runDelegated(auditFailure)).recordset[0];
+  const afterAuditRetryResult=await runDelegated(auditFailure);
+  assert.equal(Number(afterAuditRetryResult.recordsets.at(-1)?.[0]?.OpenTransactions),0);
+  const afterAuditRetry=afterAuditRetryResult.recordset[0];
   await proveDelegatedReceipt(auditFailure,afterAuditRetry);
   const afterAudit=await delegatedCounts();
   assert.deepEqual(afterAudit.slice(0,4),

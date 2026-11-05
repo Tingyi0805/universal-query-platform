@@ -52,6 +52,24 @@ jobs:
         working-directory: server
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Verify Chart 928 SQL against the actual PR HEAD, not an
+          # implicit synthetic PR merge checkout or an older commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require exact immutable D1 SQL acceptance HEAD
+        shell: bash
+        working-directory: .
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [[ ! "$EXPECTED_HEAD" =~ ^[a-f0-9]{40}$ || "$actual" != "$EXPECTED_HEAD" ]]; then
+            echo "D1_SQL_HEAD_SHA_MISMATCH" >&2
+            exit 1
+          fi
+          echo "D1_SQL_ACCEPTANCE_HEAD=$actual SQL_SERVER=${{ matrix.sql }}"
       - uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
