@@ -718,6 +718,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
           <p className="subtitle">依螢幕尺寸建立不同版型；拖曳元件調整位置，使用右側屬性調整大小與內容。</p>
         </div>
         <div className="dashboard-layout-toolbar-actions">
+          {!embedded&&<Link className="secondary-button link-button" to="/designer/dashboards/chart-lab">合成圖表實測區</Link>}
           {!embedded&&<Link className="secondary-button link-button" to="/designer/dashboards">返回 Dashboard</Link>}
           {activeProfile && (
             <button

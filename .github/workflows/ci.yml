@@ -154,6 +154,21 @@ jobs:
         run: npm ci --prefix ../server --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Build standalone synthetic chart lab (no API or database)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/iis-https-kiosk-82'
+        run: npm run build:chart-lab
+      - name: Upload test-only chart lab (NOT a production update)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/iis-https-kiosk-82'
+        uses: actions/upload-artifact@v4
+        with:
+          name: uqp-chart-synthetic-lab-NOT-FOR-PRODUCTION-${{ github.sha }}
+          path: |
+            client/chart-lab-dist/
+            client/chart-lab-preview-server.mjs
+            client/start-chart-lab.bat
+            client/CHART-LAB-README.txt
+          if-no-files-found: error
+          retention-days: 14
 
   sql-923-ephemeral:
     # Experimental acceptance only, scoped to the existing Draft PR.

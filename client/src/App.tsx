@@ -14,6 +14,7 @@ import { DashboardDesignerPage } from "./pages/DashboardDesignerPage";
 import { DashboardPortalPage } from "./pages/DashboardPortalPage";
 import { DashboardDisplayPage } from "./pages/DashboardDisplayPage";
 import { DashboardLayoutDesignerPage } from "./pages/DashboardLayoutDesignerPage";
+import { DashboardChartSyntheticLabPage } from "./pages/DashboardChartSyntheticLabPage";
 import { DatasetDesignerPage } from "./pages/DatasetDesignerPage";
 import { LoginPage } from "./pages/LoginPage";
 import { QuickPinEnrollmentPage } from "./pages/QuickPinEnrollmentPage";
@@ -220,6 +221,7 @@ export default function App() {
           path="/designer/dashboards"
           element={<PermissionRoute permission="DESIGN_QUERY"><DashboardDesignerPage /></PermissionRoute>}
         />
+        <Route path="/designer/dashboards/chart-lab" element={<PermissionRoute permission="DESIGN_QUERY"><DashboardChartSyntheticLabPage /></PermissionRoute>} />
         <Route
           path="/designer/dashboards/:id/layout"
           element={<PermissionRoute permission="DESIGN_QUERY"><DashboardLayoutDesignerPage /></PermissionRoute>}

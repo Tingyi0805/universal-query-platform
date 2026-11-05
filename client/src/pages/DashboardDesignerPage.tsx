@@ -312,7 +312,10 @@ export function DashboardDesignerPage() {
           <h1>資料顯示儀表板</h1>
           <p className="subtitle">建立 Dashboard、設定預設參數、資料更新秒數與大螢幕自動換頁。</p>
         </div>
-        <Link className="secondary-button link-button" to="/">返回首頁</Link>
+        <div className="dashboard-layout-toolbar-actions">
+          <Link className="secondary-button link-button" to="/designer/dashboards/chart-lab">開啟合成圖表實測區</Link>
+          <Link className="secondary-button link-button" to="/">返回首頁</Link>
+        </div>
       </div>
 
       {loading && <section className="notice">載入中…</section>}
