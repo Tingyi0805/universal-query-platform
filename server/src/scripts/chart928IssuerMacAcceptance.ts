@@ -42,7 +42,10 @@ export async function verifyChartIssuerMacDisposable(
   // SQL only receives the random pads inside this disposable database.
   const key=randomBytes(32);
   const ip=Buffer.alloc(64,0x36),op=Buffer.alloc(64,0x5c);
-  for(let i=0;i<key.length;i++){ip[i]^=key[i]!;op[i]^=key[i]!;}
+  for(let i=0;i<key.length;i++){
+    ip[i]=(ip[i]??0)^key[i]!;
+    op[i]=(op[i]??0)^key[i]!;
+  }
   const ddl=String.raw`IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19
  THROW 51928,N'CHART_MAC_DISPOSABLE_ONLY',1;
 CREATE TABLE uqp.ChartIssuerMacPadsDisposable(
