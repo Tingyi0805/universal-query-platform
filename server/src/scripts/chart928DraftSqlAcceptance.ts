@@ -650,15 +650,16 @@ export async function verifyChart928DraftSql(
   assert.equal(Number(issuerGrants?.CanConsume),0);
   assert.equal(Number(issuerGrants?.CanInsert),0);
 
-  const issue=async(requestId:string)=>{
+  const issue=async(requestId:string,actorId=8)=>{
     const issued=(await db!.request()
       .input("requestId",sql.UniqueIdentifier,requestId)
+      .input("actorId",sql.BigInt,actorId)
       .input("digest",sql.Char(64),expected)
       .query(
         "DECLARE @grant UNIQUEIDENTIFIER,@secret VARBINARY(32);" +
         "EXECUTE AS USER=N'UQP_Chart_IssuerSynthetic';" +
         "BEGIN TRY EXEC uqp.usp_ChartDelegationIssue_IsolatedDraft " +
-        "@ActorId=8,@TokenVersion=1,@DashboardId=7,@ProfileId=22," +
+        "@ActorId=@actorId,@TokenVersion=1,@DashboardId=7,@ProfileId=22," +
         "@RequestId=@requestId,@SourceKey=N'PRIMARY',@ConfigSha256=@digest," +
         "@X=10,@Y=10,@Width=600,@Height=360," +
         "@GrantId=@grant OUTPUT,@Secret=@secret OUTPUT;" +
@@ -955,6 +956,151 @@ export async function verifyChart928DraftSql(
   assert.equal(afterRetry[4],0);
   assert.equal(afterRetry[5],beforeLate[5]!+1);
   console.log("CHART_2B15D10_DISPOSABLE_GRANT_WIDGET_SEAL_AUDIT_LEDGER_ATOMIC_DRAFT_PASS");
+
+  // 2B-15D-11: revoke AFTER a valid grant was issued but BEFORE the Writer
+  // commits. A read-time authorization snapshot is never sufficient.
+  // All destructive fixture changes are restored in finally, so the test
+  // still runs in the same disposable UQP_CH_ DB on SQL 2019 and SQL 2022.
+  const assertNoDelegatedPartialWrite=async(g:SyntheticGrant,before:readonly number[])=>{
+    assert.deepEqual(await delegatedCounts(),before);
+    assert.equal(await consumed(g.grantId),0);
+    const pending=(await db!.request()
+      .input("requestId",sql.UniqueIdentifier,g.requestId)
+      .query("SELECT COUNT_BIG(*) AS Total FROM uqp.DashboardChartTrustRequest " +
+        "WHERE RequestId=@requestId")).recordset[0];
+    assert.equal(Number(pending?.Total),0);
+  };
+  stage="DELEGATED_CREATE_ACTOR_DISABLED_AFTER_ISSUE";
+  const disabled=await issue("00000000-0000-4000-8000-000000008001");
+  const beforeDisabled=await delegatedCounts();
+  await q("UPDATE uqp.AppUser SET IsActive=0 WHERE Id=8");
+  try{
+    await denied(runDelegated(disabled));
+    await assertNoDelegatedPartialWrite(disabled,beforeDisabled);
+  }finally{
+    await q("UPDATE uqp.AppUser SET IsActive=1 WHERE Id=8");
+  }
+  // Invalid status was transient. The same unconsumed grant remains eligible
+  // only while its TTL is still current; no failed attempt can consume it.
+  stage="DELEGATED_CREATE_TOKEN_VERSION_REVOKED_AFTER_ISSUE";
+  const versionRevoked=await issue("00000000-0000-4000-8000-000000008002");
+  const beforeVersion=await delegatedCounts();
+  await q("UPDATE uqp.AppUser SET TokenVersion=2 WHERE Id=8");
+  try{
+    await denied(runDelegated(versionRevoked));
+    await assertNoDelegatedPartialWrite(versionRevoked,beforeVersion);
+  }finally{
+    await q("UPDATE uqp.AppUser SET TokenVersion=1 WHERE Id=8");
+  }
+
+  stage="DELEGATED_CREATE_RBAC_REMOVED_AFTER_ISSUE";
+  const roleRevoked=await issue("00000000-0000-4000-8000-000000008003");
+  const beforeRole=await delegatedCounts();
+  await q("DELETE FROM uqp.UserRole WHERE UserId=8 AND RoleId=1");
+  try{
+    await denied(runDelegated(roleRevoked));
+    await assertNoDelegatedPartialWrite(roleRevoked,beforeRole);
+  }finally{
+    await q("INSERT uqp.UserRole(UserId,RoleId) VALUES(8,1)");
+  }
+
+  stage="DELEGATED_CREATE_GRANT_REVOKED_AFTER_ISSUE";
+  const grantRevoked=await issue("00000000-0000-4000-8000-000000008004");
+  const beforeGrantRevoked=await delegatedCounts();
+  await db!.request().input("id",sql.UniqueIdentifier,grantRevoked.grantId)
+    .query("UPDATE uqp.ChartActorDelegationDisposable SET IsRevoked=1 WHERE GrantId=@id");
+  await denied(runDelegated(grantRevoked));
+  await assertNoDelegatedPartialWrite(grantRevoked,beforeGrantRevoked);
+
+  stage="DELEGATED_CREATE_GRANT_EXPIRED_AFTER_ISSUE";
+  const grantExpired=await issue("00000000-0000-4000-8000-000000008005");
+  const beforeExpired=await delegatedCounts();
+  await db!.request().input("id",sql.UniqueIdentifier,grantExpired.grantId)
+    .query("DECLARE @t DATETIME2(3)=DATEADD(MINUTE,-4,SYSUTCDATETIME());" +
+      "UPDATE uqp.ChartActorDelegationDisposable " +
+      "SET IssuedAtUtc=DATEADD(SECOND,-60,@t),ExpiresAtUtc=@t " +
+      "WHERE GrantId=@id");
+  await denied(runDelegated(grantExpired));
+  await assertNoDelegatedPartialWrite(grantExpired,beforeExpired);
+
+  stage="DELEGATED_CREATE_SCOPE_AND_VERSION_NEGATIVES";
+  const scope=await issue("00000000-0000-4000-8000-000000008006");
+  const beforeScope=await delegatedCounts();
+  for(const overrides of [
+    {token:2},{dashboard:8},{profile:23},
+    {requestId:"00000000-0000-4000-8000-000000008099"},
+    {grantId:"00000000-0000-4000-8000-000000008098"},
+    {secret:Buffer.alloc(32,0xa5)},
+    {configJson:JSON.stringify({...JSON.parse(canonical),maxPoints:41})},
+  ]) {
+    await denied(runDelegated(scope,overrides));
+    await assertNoDelegatedPartialWrite(scope,beforeScope);
+  }
+  const validScope=(await runDelegated(scope)).recordset[0];
+  await proveDelegatedReceipt(scope,validScope);
+
+  // 2B-15D-11: failure during Audit INSERT occurs after Grant is marked
+  // consumed and Ledger is inserted, but before Widget/Seal. One rollback
+  // must remove the entire attempted create and preserve grant retryability.
+  stage="DELEGATED_CREATE_AUDIT_FAILURE_SETUP";
+  const auditFailure=await issue("00000000-0000-4000-8000-000000008007");
+  const beforeAuditFailure=await delegatedCounts();
+  await db!.request().batch(
+    "CREATE TRIGGER uqp.TR_ChartDelegated_DisposableAuditFailure " +
+    "ON uqp.AuditLog AFTER INSERT AS BEGIN " +
+    "SET NOCOUNT ON; THROW 51928,N'CHART_DELEGATED_SYNTHETIC_AUDIT_FAILURE',1; END"
+  );
+  try{
+    stage="DELEGATED_CREATE_AUDIT_ROLLBACK";
+    await denied(runDelegated(auditFailure));
+  }finally{
+    await db!.request().batch(
+      "DROP TRIGGER IF EXISTS uqp.TR_ChartDelegated_DisposableAuditFailure");
+  }
+  await assertNoDelegatedPartialWrite(auditFailure,beforeAuditFailure);
+  stage="DELEGATED_CREATE_AUDIT_RETRY_AFTER_ROLLBACK";
+  const afterAuditRetry=(await runDelegated(auditFailure)).recordset[0];
+  await proveDelegatedReceipt(auditFailure,afterAuditRetry);
+  const afterAudit=await delegatedCounts();
+  assert.deepEqual(afterAudit.slice(0,4),
+    beforeAuditFailure.slice(0,4).map(v=>v+1));
+  assert.equal(afterAudit[4],0);
+  assert.equal(afterAudit[5],beforeAuditFailure[5]!+1);
+  console.log("CHART_2B15D11_DISPOSABLE_REVOKE_AUDIT_ROLLBACK_DRAFT_PASS");
+
+  // RELEASE BLOCKER WITNESS: the current synthetic Issuer procedure accepts
+  // arbitrary @ActorId for ANY other valid DESIGN_QUERY user. Even though
+  // the Writer cannot substitute an Actor into a grant for user 8, a forged
+  // grant ISSUED for user 77 will be accepted. This is a KNOWN VULNERABLE
+  // prototype behavior, not a security test PASS or release approval.
+  // A real, independent HTTP-to-Issuer identity binding is still required.
+  stage="DELEGATED_CREATE_ISSUER_ACTOR_SPOOF_WITNESS_BLOCKED";
+  assert.equal(CHART_ATOMIC_CREATE_RUNTIME_ENABLED,false);
+  assert.equal(CHART_WRITER_DB_ACTOR_BINDING_APPROVED,false);
+  assert.equal(CHART_WRITER_APPROVED_PROCEDURE_SHA256,null);
+  const forgedIssuerGrant=await issue(
+    "00000000-0000-4000-8000-000000008077",77);
+  const forgedCreate=(await runDelegated(forgedIssuerGrant,{actor:77})).recordset[0];
+  const forgedAudit=(await db!.request()
+    .input("requestId",sql.UniqueIdentifier,forgedIssuerGrant.requestId)
+    .query("SELECT r.ActorId AS LedgerActor,a.UserId AS AuditActor," +
+      "s.SealedBy AS SealActor,w.WidgetType,d.ConsumedAtUtc " +
+      "FROM uqp.DashboardChartTrustRequest r " +
+      "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId " +
+      "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id " +
+      "JOIN uqp.DashboardWidget w ON w.Id=s.WidgetId " +
+      "JOIN uqp.ChartActorDelegationDisposable d ON d.RequestId=r.RequestId " +
+      "WHERE r.RequestId=@requestId")).recordset;
+  assert.equal(forgedAudit.length,1);
+  assert(Number.isSafeInteger(Number(forgedCreate?.WidgetId)));
+  assert.equal(Number(forgedAudit[0]?.LedgerActor),77);
+  assert.equal(Number(forgedAudit[0]?.AuditActor),77);
+  assert.equal(Number(forgedAudit[0]?.SealActor),77);
+  assert.equal(forgedAudit[0]?.WidgetType,"CHART");
+  assert(forgedAudit[0]?.ConsumedAtUtc instanceof Date);
+  console.log("CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED");
+
+
 
 
 

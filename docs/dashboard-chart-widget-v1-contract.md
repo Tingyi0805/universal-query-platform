@@ -1467,3 +1467,61 @@ AFTER INSERT Trigger 擲出錯誤後，Grant 消耗與另外五類
 `C:\\UQP`，PR #83 維持 Draft。該階段屬
 **程式／草案已提交，SQL 2019／2022 實測待 CI**，
 不等於正式 Release Approval。
+
+
+## 47. 2B-15D-11：撤權、Audit 回滾及 Issuer 冒用阻擋反例（待 CI）
+
+本階段不重新開發已存在的 2B-15D-10 同交易原型，也不觸碰
+任何正式 SQL／HTTP Runtime。擴充既有
+`server/src/scripts/chart928DraftSqlAcceptance.ts` 的
+`UQP_CH_` 一次性 SQL 2019／2022 測試腳本，針對整合程序
+`usp_ChartCreateWithDelegation_IsolatedDraft` 追加：
+
+1. **核發後撤銷權限**：在 Grant 已產生、尚未被 Writer 使用時，
+   停用 Actor、變更 TokenVersion、撤銷 `UserRole`，
+   分別要求 SQL Writer 拒絕建立；於各案例 `finally`
+   恢復合成 Fixture 資料，避免測試互相污染。
+   也檢查 Grant 自身撤銷、到期，以及 Token、Dashboard、
+   Profile、RequestId、GrantId、Secret 和 Config JSON
+   變更都不能消耗委派或留下新增的 Ledger/Audit/Widget/Seal。
+2. **Audit 寫入後期失敗**：在隔離資料庫暫時建立
+   `uqp.AuditLog` AFTER INSERT 測試 Trigger，強制固定
+   51928 錯誤；Writer 應回滾先前消耗的 Grant 及 Ledger，
+   且無部分 Widget／Seal／Permit 殘留。
+   移除 Trigger 後以**原 GrantId + RequestId + Secret**
+   重新執行，核對 Audit Actor、Ledger、Seal、Widget
+   與已消耗 Grant 關聯一致。
+3. **明確重現尚未解決的 Issuer 主體冒用**：在合成資料庫裡，
+   有權限的第二名測試 Actor (77) 可被原型 Issuer
+   當作核發時的 `@ActorId`，縱使沒有它的真實 HTTP
+   JWT/Session 證明。取得該 Grant 後，Writer 的原子交易
+   仍會替 77 建立 Widget/Seal/Audit。
+   若驗證重現，此測試的成功輸出為
+   `CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED`；
+   這表示**部署阻擋已被證實**，絕不代表「反冒用保護通過」。
+
+上述案例是核發後、提交前的**順序性撤權**和 SQL 原型反例。
+**真正並行撤權與 Chart Create 的競爭測試仍需獨立驗證**，
+不可把已做的同 Grant 雙並行消耗測試等同於此要求。
+
+### 目前不可解除的正式上線阻擋
+
+- **可信 Actor 來源**：待完成真正
+  HTTP JWT／TokenVersion／RBAC → 獨立 Issuer SQL
+  `ORIGINAL_LOGIN` → 不可偽造授權委派的綁定，
+  必須避免核發端替另一個有效 Actor 任意核發。
+- **資料與公開螢幕範圍**：正式 Writer 必須在同一 SQL
+  交易內重驗 Query/Dataset 版本、來源範圍、敏感欄位遮蔽、
+  患者資訊稽核及 Display Policy，不可以只檢查
+  `DESIGN_QUERY`。
+- **正式發行證明**：三組真實 SQL Login、核發與 Writer
+  程序固定 SHA-256、最小權限和變更採認未完成，
+  且本輪沒有最新 HEAD 的 CI 證據，不能宣稱 SQL
+  2019／2022 引擎測試或完整 CI 通過。
+
+任何上述阻擋尚在時，`CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false`、
+`CHART_WRITER_APPROVED_PROCEDURE_SHA256=null`、
+`CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false`、
+`CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null` 均不變。
+PR #83 維持 Draft，928 僅為 `.sql.draft`，
+不下載覆蓋或改動正式 `C:\\UQP`，不開放 CHART。
