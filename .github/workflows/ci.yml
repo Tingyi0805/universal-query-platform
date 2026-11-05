@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # PR83 online verification fallback: use push when pull_request events are absent.
+    branches: [main, fix/iis-https-kiosk-82]
   pull_request:
   # Manual validation of the selected PR branch, independent of synchronize events.
   workflow_dispatch:
