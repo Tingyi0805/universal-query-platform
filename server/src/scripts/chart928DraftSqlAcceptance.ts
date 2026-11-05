@@ -1183,6 +1183,12 @@ export async function verifyChart928DraftSql(
   assert.equal(forgedAudit[0]?.WidgetType,"CHART");
   assert(forgedAudit[0]?.ConsumedAtUtc instanceof Date);
   console.log("CHART_2B15D11_ISSUER_ACTOR_SPOOFING_REPRODUCED_RELEASE_BLOCKED");
+  // 2B-15D-14: real SQL 2019/2022 exercises HMAC-SHA256 signed scope,
+  // expiry, unique nonce and separate issuer/writer grants on disposable
+  // synthetic data ONLY. This does NOT close the trusted HTTP actor gap.
+  stage="ISSUER_SIGNED_SCOPE_DISPOSABLE";
+  await (await import("./chart928IssuerMacAcceptance.js"))
+    .verifyChartIssuerMacDisposable(db!);
 
 
 

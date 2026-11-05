@@ -1701,3 +1701,28 @@ Writer／Issuer 程序核准 SHA-256 均為 `null`；
 - 即使新 CI 執行成功，仍需處理可信 HTTP Actor 核發、
   SQL Login／Scope 與隱私政策驗證，正式交付維持 BLOCKED。
 CI trigger verification - 2026-11-05
+
+## 51. 2B-15D-14：隔離 SQL 引擎的 Issuer 簽章範圍驗證（待 CI）
+
+原先合成 Issuer 的 ActorId 完全由呼叫者指定；即使該 Actor 存在且有 RBAC，
+仍不能證明他是 JWT 驗證後的實際 HTTP 使用者。這是已重現的安全阻擋。
+
+新增 server/src/scripts/chart928IssuerMacAcceptance.ts，僅限一次性
+UQP_CH_<12 hex> SQL Server 2019/2022 測試資料庫。每次使用 256-bit 隨機金鑰，
+Node 以標準 HMAC-SHA256 簽章完整合成 Actor、TokenVersion、Dashboard、
+Profile、RequestId、SourceKey、ConfigDigest、位置、尺寸、Nonce、時效。
+SQL Server 在交易內重新組裝簽章訊息，從受限資料列取得 64-byte HMAC pads，
+用 SHA2_256 驗證，並以唯一 Nonce 阻擋重播；Issuer 與 Writer 權限分離。
+測試涵蓋範圍任一欄位竄改、錯誤簽章、過期、重播、權限不足。
+
+警告：此為一次性合成 HMAC 範圍驗證器，不是可部署的 HTTP Actor 綁定。
+它不驗證 JWT、不管理正式簽名金鑰、不整合真正的 Issuer 發行流程。
+舊合成 Issuer 仍容許傳入其他已授權 ActorId，冒用漏洞未修復。
+未來須建立獨立受信任簽發程序、受保護的金鑰及輪替機制、
+禁止直接繞過簽章的 Issuer 發行路徑，並完成交易內 RBAC、
+Query/Dataset、公開螢幕、患者稽核政策驗證與審查。
+
+本階段的 PASS 僅在同一 HEAD 的 SQL 2019 與 2022 真正執行成功後成立。
+安全 Gate 仍為：CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false；
+CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false；Writer/Issuer SHA256=null。
+PR #83 保持 Draft，不合併、不執行 928、不覆蓋 C:\UQP、不開啟 CHART。
