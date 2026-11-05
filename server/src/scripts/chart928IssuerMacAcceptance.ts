@@ -5,8 +5,14 @@
 // The same test deliberately leaves the existing synthetic Issuer unsafe.
 import assert from "node:assert/strict";
 import {createHash,createHmac,randomBytes,randomUUID} from "node:crypto";
+import {createServer} from "node:http";
 import {readFile} from "node:fs/promises";
+import express from "express";
+import jwt from "jsonwebtoken";
 import sql from "mssql";
+import {env} from "../config/env.js";
+import {createAuthenticateJwt} from "../modules/auth/auth.middleware.js";
+import {deriveDormantChartIssuerIntent} from "../modules/dashboard/dashboardChartHttpIssuerHandoff.js";
 
 const forbidden=(error:unknown)=>
   error instanceof Error &&
@@ -341,5 +347,146 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   assert.deepEqual(await countSigned(),beforeSigned.map(v=>v+1));
   console.log("CHART_2B15D15_DISPOSABLE_SIGNED_ISSUER_GRANT_NONCE_ATOMIC_PASS");
   console.log("CHART_2B15D15_HTTP_SIGNER_TRUST_NOT_RELEASE_APPROVED");
+
+  // 2B-15D-16: synthetic loopback HTTP -> verified JWT WeakMap actor ->
+  // test-local HMAC signer -> isolated SQL Issuer. This proves the mapping
+  // in the disposable CI fixture, NOT a physically independent signer.
+  // No production router imports this file. Never return the SQL secret.
+  const previousJwtSecret=env.JWT_SECRET;
+  env.JWT_SECRET="chart-http-synthetic-"+randomBytes(24).toString("hex");
+  let actor8Session={
+    isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY"],
+  };
+  const app=express();
+  app.use(express.json({limit:"12kb"}));
+  app.use(createAuthenticateJwt(async(userId:number)=>{
+    if(userId===8)return actor8Session;
+    if(userId===77)return {
+      isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY"],
+    };
+    return null;
+  }));
+  const httpPath="/synthetic-chart-signed-issuer";
+  app.post(httpPath,async(req,res)=>{
+    // Only a verified JWT + live server-side session can create the intent.
+    // The client cannot supply or replace ActorId, approval, nonce or key.
+    const intent=deriveDormantChartIssuerIntent(req,7,req.body);
+    if(!intent){res.status(403).json({code:"DENIED"});return;}
+    const now=Date.now();
+    const scoped:ProofScope={
+      actor:intent.ActorId,token:intent.TokenVersion,
+      dashboard:intent.DashboardId,profile:intent.ProfileId,
+      requestId:intent.RequestId,source:intent.SourceKey,
+      digest:intent.ConfigSha256,
+      x:intent.X,y:intent.Y,width:intent.Width,height:intent.Height,
+      nonce:randomUUID(),issuedAt:new Date(now-1000),
+      expiresAt:new Date(now+8000),
+    };
+    // This callback deliberately owns the test-only HMAC key, while SQL
+    // independently revalidates the signed scope, nonce, RBAC and profile.
+    const signature=mac(scoped);
+    try{
+      const issuedGrant=(await issueSigned(scoped,signature)).recordset[0];
+      if(!issuedGrant?.GrantId||!Buffer.isBuffer(issuedGrant.Secret))
+        throw Error("SYNTHETIC_ISSUER_RESULT_DENIED");
+      res.status(200).json({accepted:true});
+    }catch{
+      // No SQL error detail, GrantId, secret or signed capability to caller.
+      res.status(403).json({code:"DENIED"});
+    }
+  });
+  const loopback=createServer(app);
+  try{
+    await new Promise<void>(resolve=>loopback.listen(0,"127.0.0.1",resolve));
+    const address=loopback.address();
+    assert(address&&typeof address!=="string");
+    const root="http://127.0.0.1:"+address.port+httpPath;
+    const createToken=(actor:number,version=1)=>jwt.sign({
+      sub:String(actor),tokenVersion:version,username:"synthetic",
+      permissions:[],
+    },env.JWT_SECRET);
+    const jwt8=createToken(8);
+    const jwt77=createToken(77);
+    const body={
+      profileId:22,requestId:randomUUID(),
+      config:{
+        version:1,chartType:"BAR",dataSourceKey:"PRIMARY",
+        categoryColumn:"ROOM",valueColumn:"TOTAL",
+        valueMode:"QUERY_RESULT",maxPoints:20,showLegend:true,
+      },
+      placement:{x:10,y:10,width:600,height:360},
+    };
+    const send=(payload:unknown,token=jwt8)=>fetch(root,{
+      method:"POST",headers:{
+        "Content-Type":"application/json",
+        "Authorization":"Bearer "+token,
+      },
+      body:JSON.stringify(payload),
+    });
+    const beforeHttp=await countSigned();
+    const invalidJwt=jwt.sign({sub:"8",tokenVersion:1},"wrong-test-key");
+    assert.equal((await send(body,invalidJwt)).status,401);
+    assert.equal((await send(body,createToken(8,2))).status,401);
+    for(const forged of [
+      {actorId:77},{ActorId:77},{tokenVersion:5},
+      {grantId:randomUUID()},{issuerSid:"fake"},{secret:"fake"},
+      {signature:"fake"},{nonce:randomUUID()},{approved:true},
+    ])assert.equal((await send({...body,...forged})).status,403);
+    actor8Session={...actor8Session,permissions:[]};
+    assert.equal((await send(body)).status,403);
+    actor8Session={...actor8Session,permissions:["DESIGN_QUERY"],isActive:false};
+    assert.equal((await send(body)).status,401);
+    actor8Session={...actor8Session,isActive:true,tokenVersion:2};
+    assert.equal((await send(body)).status,401);
+    actor8Session={...actor8Session,tokenVersion:1};
+    assert.deepEqual(await countSigned(),beforeHttp);
+    // Even if HTTP mock session is active, SQL's current User state is
+    // independently authoritative before nonce/grant insertion.
+    await db.request().query("UPDATE uqp.AppUser SET IsActive=0 WHERE Id=8");
+    try{
+      assert.equal((await send(body)).status,403);
+    }finally{
+      await db.request().query("UPDATE uqp.AppUser SET IsActive=1 WHERE Id=8");
+    }
+    assert.deepEqual(await countSigned(),beforeHttp);
+    const result=await send(body);
+    assert.equal(result.status,200);
+    assert.deepEqual(await result.json(),{accepted:true});
+    assert.deepEqual(await countSigned(),beforeHttp.map(v=>v+1));
+    const attribution=(await db.request()
+      .input("requestId",sql.UniqueIdentifier,body.requestId)
+      .query("SELECT ActorId,TokenVersion,DashboardId,ProfileId,"+
+        "SourceKey,ConfigSha256 FROM uqp.ChartActorDelegationDisposable "+
+        "WHERE RequestId=@requestId")).recordset;
+    assert.equal(attribution.length,1);
+    assert.equal(Number(attribution[0]?.ActorId),8);
+    assert.equal(Number(attribution[0]?.TokenVersion),1);
+    assert.equal(Number(attribution[0]?.DashboardId),7);
+    assert.equal(Number(attribution[0]?.ProfileId),22);
+    assert.equal(attribution[0]?.SourceKey,"PRIMARY");
+    assert.match(String(attribution[0]?.ConfigSha256),/^[a-f0-9]{64}$/);
+    // A fresh nonce cannot make the same requestId issue a second grant.
+    assert.equal((await send(body)).status,403);
+    assert.deepEqual(await countSigned(),beforeHttp.map(v=>v+1));
+    // Actor 77 has actual SQL DESIGN_QUERY (fixture). A JWT for 77 may
+    // issue its own scope, not be obtained by mutating Actor 8's body.
+    const body77={...body,requestId:randomUUID()};
+    const response77=await send(body77,jwt77);
+    assert.equal(response77.status,200);
+    assert.deepEqual(await response77.json(),{accepted:true});
+    const actor77Row=(await db.request()
+      .input("requestId",sql.UniqueIdentifier,body77.requestId)
+      .query("SELECT ActorId FROM uqp.ChartActorDelegationDisposable "+
+        "WHERE RequestId=@requestId")).recordset[0];
+    assert.equal(Number(actor77Row?.ActorId),77);
+    assert.deepEqual(await countSigned(),beforeHttp.map(v=>v+2));
+    console.log("CHART_2B15D16_DISPOSABLE_VERIFIED_HTTP_JWT_ACTOR_TO_SIGNED_SQL_ISSUER_PASS");
+  }finally{
+    env.JWT_SECRET=previousJwtSecret;
+    if(loopback.listening)
+      await new Promise<void>(resolve=>loopback.close(()=>resolve()));
+  }
+  console.log("CHART_2B15D16_INDEPENDENT_SIGNER_AND_PRODUCTION_BINDING_STILL_BLOCKED");
+
 
 }

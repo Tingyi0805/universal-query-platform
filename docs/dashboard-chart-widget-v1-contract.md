@@ -1755,3 +1755,37 @@ CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false，
 CHART_WRITER_APPROVED_PROCEDURE_SHA256=null，
 CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null。
 PR #83 維持 Draft；928 不執行，正式 C:\UQP 不覆蓋。
+## 53. 2B-15D-16：HTTP/JWT 身分至隔離 SQL Signed Issuer 的端對端驗證（待 CI）
+
+將 server/src/scripts/chart928IssuerMacAcceptance.ts 的隔離 D1 驗收延伸為
+127.0.0.1 隨機埠的 Express 合成 HTTP 入口；不掛入 server production
+router，也不建立正式服務、正式 SQL 連線或測試使用者帳號。
+入口使用既有 createAuthenticateJwt 驗證 JWT 簽章及即時 Session，
+並透過 deriveDormantChartIssuerIntent 僅從 Request-private WeakMap
+已驗證 Actor 與經檢查的 Chart 請求建立不可由 Body 指定的
+ActorId、TokenVersion、Dashboard、Profile、RequestId、Config SHA、位置。
+僅 CI 合成測試可存取的閉包金鑰簽署 10 秒以下的完整範圍，
+交由前一階段 SQL usp_ChartDelegationIssueSigned_IsolatedDraft
+在單一 SERIALIZABLE 交易內驗簽、檢查 Token/RBAC、Nonce 並核發 Grant。
+HTTP 回覆只暴露 accepted true 或 DENIED，不回傳 GrantId、Secret、Key、簽章。
+
+預期實際驗證：失效 JWT／TokenVersion、冒用 Actor 77 的 Body 欄位、
+造假的 issuerSid／grantId／signature、停權或缺少 DESIGN_QUERY、
+SQL 端撤權及重複 RequestId 全部拒絕且不得建立 Grant/Nonce。
+Actor 8 的正確 JWT 核發後，SQL 留存的 ActorId 必須為 8；
+Actor 77 的獨立有效 JWT 可核發屬於自己的新 RequestId。
+static contract 測試另確認絕不改變 CHART 正式 Gate。
+
+**重要限制：** 這仍只證明合成 HTTP/JWT 檢查與合成 SQL Issuer 的串接。
+簽章金鑰仍在單一 CI Node 程序的閉包中，並非獨立的生產簽名服務；
+SQL 測試使用 WITHOUT LOGIN 假 Principal，不是獨立的正式 SQL Login。
+尚未具備部署時金鑰封存、輪替、可信 signer-to-Issuer 認證、
+斷線／重試／分散式多節點的核發控制，也未核准 Query/Dataset、
+公共螢幕、患者資料稽核或實際 CHART CRUD。
+此測試 PASS 絕不可解釋為正式 Actor 身分綁定安全核准。
+
+CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false；
+CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false；
+CHART_WRITER_APPROVED_PROCEDURE_SHA256=null；
+CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null。
+PR #83 維持 Draft、Migration 928 僅 .sql.draft、正式 C:\UQP 不覆蓋。
