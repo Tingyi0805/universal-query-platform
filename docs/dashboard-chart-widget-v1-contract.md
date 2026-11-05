@@ -1789,3 +1789,38 @@ CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false；
 CHART_WRITER_APPROVED_PROCEDURE_SHA256=null；
 CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null。
 PR #83 維持 Draft、Migration 928 僅 .sql.draft、正式 C:\UQP 不覆蓋。
+
+## 54. 2B-15D-17：SQL 原始登入身分與隔離最小權限實測（待 CI）
+
+新增 server/src/scripts/chart928SqlLoginIsolationAcceptance.ts，
+只在 GitHub Actions 既有 D1 SQL Server 2019/2022 隔離 Docker 容器執行。
+嚴格要求 UQP_D1_SCOPE=DISPOSABLE_ONLY、容器名稱符合 uqp-d1-<12hex>、
+SQL Server 位址 127.0.0.1:14336、master 與 UQP_CH_<12hex> 資料庫
+所屬 MachineName 均與隨機 Docker 容器一致；不讀取 PLATFORM_DB_ 等正式配置。
+
+由容器內測試用 sa 在 master 建立三個隨機名稱與密碼的真正 SQL Login：
+Platform、Issuer、Writer。各自映射一次性 UQP_CH 資料庫使用者，
+僅 Issuer 可執行合成的簽章核發 Stored Procedure，
+僅 Writer 可執行合成的 Chart Delegation 寫入 Stored Procedure。
+明確 DENY Issuer 既有任意 ActorId 核發 Stored Procedure 的執行權。
+三個 Login 的連線分別檢查 ORIGINAL_LOGIN()、SQL SID、USER_NAME()、
+非 sysadmin、無直接 Grant INSERT／Pad SELECT／舊核發 EXECUTE 權限。
+
+實際用獨立 Issuer SQL Login 執行失敗與成功簽章核發：
+錯誤簽章不能產生 Grant／Nonce，合法簽章可核發且會在資料庫記錄
+與真正 Issuer ORIGINAL_LOGIN 對應的 IssuerSid；重播再次拒絕。
+Platform／Writer 的直接簽章核發呼叫必須被拒絕。
+結束時先關閉三個連線，再刪除資料庫 User 及 SQL Login。
+所有帳號與金鑰都是測試容器內一次性資料，不會在正式主機建立。
+
+**仍未解除的阻擋：** signer HMAC key 仍由同一個 CI Node 測試流程保管；
+這不是獨立執行、互信隔離、可信身分憑證與金鑰輪替的正式 signer。
+本階段也未涉及正式 SQL Login 的建立或部署，不代表正式權限驗收完成。
+正式 Query/Dataset 範圍、資料遮蔽、患者稽核、公共螢幕政策、
+Webhook/TokenVersion 及正式安全核准仍須另行採認。
+
+CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false；
+CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false；
+CHART_WRITER_APPROVED_PROCEDURE_SHA256=null；
+CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null。
+PR #83 保持 Draft，不合併、不執行 928、不覆蓋 C:\UQP、不啟用 CHART。

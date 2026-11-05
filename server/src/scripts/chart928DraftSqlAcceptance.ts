@@ -1188,7 +1188,7 @@ export async function verifyChart928DraftSql(
   // synthetic data ONLY. This does NOT close the trusted HTTP actor gap.
   stage="ISSUER_SIGNED_SCOPE_DISPOSABLE";
   await (await import("./chart928IssuerMacAcceptance.js"))
-    .verifyChartIssuerMacDisposable(db!);
+    .verifyChartIssuerMacDisposable(db!,admin,config,machine);
 
 
 

@@ -13,6 +13,7 @@ import sql from "mssql";
 import {env} from "../config/env.js";
 import {createAuthenticateJwt} from "../modules/auth/auth.middleware.js";
 import {deriveDormantChartIssuerIntent} from "../modules/dashboard/dashboardChartHttpIssuerHandoff.js";
+import {verifyChartSqlLoginIsolationDisposable} from "./chart928SqlLoginIsolationAcceptance.js";
 
 const forbidden=(error:unknown)=>
   error instanceof Error &&
@@ -35,7 +36,8 @@ const canon=(p:ProofScope)=>[
 ].join("|");
 
 export async function verifyChartIssuerMacDisposable(
-  db:sql.ConnectionPool,
+  db:sql.ConnectionPool,admin:sql.ConnectionPool,
+  config:sql.config,machine:string,
 ):Promise<void>{
   if(process.env.UQP_D1_SCOPE!=="DISPOSABLE_ONLY"||
     !/^uqp-d1-[a-f0-9]{12}$/.test(process.env.UQP_D1_CONTAINER_NAME??"")||
@@ -488,6 +490,12 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
       await new Promise<void>(resolve=>loopback.close(()=>resolve()));
   }
   console.log("CHART_2B15D16_INDEPENDENT_SIGNER_AND_PRODUCTION_BINDING_STILL_BLOCKED");
+  // 2B-15D-17: dedicated real SQL-auth LOGINs in disposable CI only.
+  await verifyChartSqlLoginIsolationDisposable(admin,db,config,machine,{
+    ...proof,requestId:randomUUID(),nonce:randomUUID(),
+    issuedAt:new Date(Date.now()-1000),
+    expiresAt:new Date(Date.now()+8000),
+  },mac);
 
 
 }
