@@ -1726,3 +1726,32 @@ Query/Dataset、公開螢幕、患者稽核政策驗證與審查。
 安全 Gate 仍為：CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false；
 CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false；Writer/Issuer SHA256=null。
 PR #83 保持 Draft，不合併、不執行 928、不覆蓋 C:\UQP、不開啟 CHART。
+## 52. 2B-15D-15：Issuer 原子簽章核發草案（僅 D1 隔離 SQL；待 CI）
+
+新增 database/drafts/928_chart_signed_issuer_atomic_disposable.sql.draft，
+僅限 UQP_CH_<12 hex> 一次性 SQL Server 2019／2022 資料庫，
+不得納入正式 Migration 或任何更新包。此檔不是 928 上線腳本。
+由 db-owner 的受限合成程序在單一 SERIALIZABLE 交易內完成：
+確認完整 HMAC-SHA256（Actor、TokenVersion、Dashboard、Profile、RequestId、
+來源、ConfigSHA256、位置尺寸、Nonce、時效）、取得 nonce 鎖、
+檢查 Dashboard/Profile 與 Actor 即時 TokenVersion、DESIGN_QUERY、
+紀錄一次性 nonce、核發 GrantId 與隨機 32-byte Secret；
+失敗時 nonce 與 Grant 全部回滾，GrantId/Secret 回傳值清空。
+已在合成 Issuer principal 撤銷舊的任意 ActorId 核發 procedure EXECUTE，
+改授權只能呼叫簽章核發；Writer 與 Consumer 被拒絕直接核發。
+驗收涵蓋 Actor/Token/Scope 修改、錯誤簽章、撤權、重播、
+同 RequestId 新 nonce 造成的唯一鍵失敗與交易回滾。
+
+**限制：本階段仍未達正式 HTTP 身分可信綁定。**
+簽名由 D1 的 Node 合成測試使用隨機 key 完成，沒有獨立 signer。
+因此不能把簽章成功視為驗證實際登入者；正式系統需要把
+已驗證的 JWT／會話狀態建立不可由一般 SQL Caller 偽造的身分證據，
+並由獨立簽名服務核發、以安全方式管理 key 與輪替。
+另需檢查系統內全部可繞過驗證的存取路徑，及 Query/Dataset/患者稽核。
+此測試也仍使用 SQL WITHOUT LOGIN 合成 Principal，未證明獨立 SQL Login。
+
+CHART_ATOMIC_CREATE_RUNTIME_ENABLED=false，
+CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false，
+CHART_WRITER_APPROVED_PROCEDURE_SHA256=null，
+CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null。
+PR #83 維持 Draft；928 不執行，正式 C:\UQP 不覆蓋。

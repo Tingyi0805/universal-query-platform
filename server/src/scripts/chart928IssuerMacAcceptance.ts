@@ -4,7 +4,8 @@
 // issued by an independently controlled signer and reject tampering/replay.
 // The same test deliberately leaves the existing synthetic Issuer unsafe.
 import assert from "node:assert/strict";
-import {createHmac,randomBytes,randomUUID} from "node:crypto";
+import {createHash,createHmac,randomBytes,randomUUID} from "node:crypto";
+import {readFile} from "node:fs/promises";
 import sql from "mssql";
 
 const forbidden=(error:unknown)=>
@@ -216,4 +217,129 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   assert.equal(await clean(),1);
   console.log("CHART_2B15D14_DISPOSABLE_HMAC_SHA256_SCOPE_EXPIRY_REPLAY_PASS");
   console.log("CHART_2B15D14_TRUSTED_HTTP_ISSUER_BINDING_STILL_RELEASE_BLOCKED");
+  // 2B-15D-15: the synthetic Issuer must not directly call the old
+  // caller-controlled @ActorId procedure. A single SQL transaction now
+  // verifies the HMAC and uses the nonce before inserting its Grant.
+  const signedScript=await readFile(new URL(
+    "../../../database/drafts/928_chart_signed_issuer_atomic_disposable.sql.draft",
+    import.meta.url),"utf8");
+  await db.request().batch(signedScript);
+  const rightsSigned=async(who:"UQP_Chart_IssuerSynthetic"|"UQP_Chart_Writer"|
+      "UQP_Chart_ConsumerSynthetic")=>(await db.request().query(
+        "EXECUTE AS USER=N'"+who+"';"+
+        "SELECT HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue_IsolatedDraft',"+
+        "N'OBJECT',N'EXECUTE') AS Legacy,"+
+        "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssueSigned_IsolatedDraft',"+
+        "N'OBJECT',N'EXECUTE') AS Signed,"+
+        "HAS_PERMS_BY_NAME(N'uqp.ChartIssuerMacPadsDisposable',"+
+        "N'OBJECT',N'SELECT') AS KeyRead;REVERT;"
+      )).recordset[0];
+  const issuerRights=await rightsSigned("UQP_Chart_IssuerSynthetic");
+  const writerRights=await rightsSigned("UQP_Chart_Writer");
+  const consumerRights=await rightsSigned("UQP_Chart_ConsumerSynthetic");
+  assert.equal(Number(issuerRights?.Legacy),0);
+  assert.equal(Number(issuerRights?.Signed),1);
+  assert.equal(Number(issuerRights?.KeyRead),0);
+  assert.equal(Number(writerRights?.Signed),0);
+  assert.equal(Number(writerRights?.KeyRead),0);
+  assert.equal(Number(consumerRights?.Signed),0);
+  const signed={
+    ...proof,requestId:"00000000-0000-4000-8000-000000009003",
+    nonce:randomUUID(),issuedAt:new Date(Date.now()-1000),
+    expiresAt:new Date(Date.now()+8500),
+  };
+  const countSigned=async()=>{
+    const row=(await db.request().query(
+      "SELECT (SELECT COUNT_BIG(*) FROM uqp.ChartIssuerProofNonceDisposable) AS Nonces,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.ChartActorDelegationDisposable) AS Grants"
+    )).recordset[0];
+    return [Number(row?.Nonces),Number(row?.Grants)];
+  };
+  const issueSigned=(p:ProofScope,signature=mac(p),
+      who:"UQP_Chart_IssuerSynthetic"|"UQP_Chart_Writer"="UQP_Chart_IssuerSynthetic")=>
+    db.request()
+    .input("actor",sql.BigInt,p.actor)
+    .input("token",sql.Int,p.token)
+    .input("dashboard",sql.BigInt,p.dashboard)
+    .input("profile",sql.BigInt,p.profile)
+    .input("request",sql.UniqueIdentifier,p.requestId)
+    .input("source",sql.VarChar(64),p.source)
+    .input("digest",sql.Char(64),p.digest)
+    .input("x",sql.Int,p.x).input("y",sql.Int,p.y)
+    .input("width",sql.Int,p.width).input("height",sql.Int,p.height)
+    .input("nonce",sql.UniqueIdentifier,p.nonce)
+    .input("issued",sql.DateTime2(3),p.issuedAt)
+    .input("expires",sql.DateTime2(3),p.expiresAt)
+    .input("signature",sql.VarBinary(sql.MAX),signature)
+    .query("DECLARE @grant UNIQUEIDENTIFIER,@secret VARBINARY(32);"+
+      "EXECUTE AS USER=N'"+who+"';"+
+      "BEGIN TRY EXEC uqp.usp_ChartDelegationIssueSigned_IsolatedDraft "+
+      "@ActorId=@actor,@TokenVersion=@token,@DashboardId=@dashboard,"+
+      "@ProfileId=@profile,@RequestId=@request,@SourceKey=@source,"+
+      "@ConfigSha256=@digest,@X=@x,@Y=@y,@Width=@width,@Height=@height,"+
+      "@Nonce=@nonce,@IssuedAtUtc=@issued,@ExpiresAtUtc=@expires,"+
+      "@Signature=@signature,@GrantId=@grant OUTPUT,@Secret=@secret OUTPUT;"+
+      "END TRY BEGIN CATCH REVERT; THROW; END CATCH;REVERT;"+
+      "SELECT @grant AS GrantId,@secret AS Secret;");
+  const beforeSigned=await countSigned();
+  for(const mutation of [
+    {actor:77},{token:2},{dashboard:8},{profile:23},
+    {requestId:"00000000-0000-4000-8000-000000009004"},
+    {source:"OTHER"},{digest:"b".repeat(64)},
+    {x:11},{y:12},{width:601},{height:361},{nonce:randomUUID()},
+  ]){
+    await assert.rejects(issueSigned({...signed,...mutation},mac(signed)),forbidden);
+    assert.deepEqual(await countSigned(),beforeSigned);
+  }
+  await assert.rejects(issueSigned(signed,Buffer.alloc(32,0)),forbidden);
+  await assert.rejects(issueSigned(signed,mac(signed),"UQP_Chart_Writer"),
+    (e:unknown)=>e instanceof Error);
+  assert.deepEqual(await countSigned(),beforeSigned);
+  // Valid HMAC is NOT enough if the live Actor is revoked or token changed.
+  await db.request().query("UPDATE uqp.AppUser SET IsActive=0 WHERE Id=8");
+  try {
+    await assert.rejects(issueSigned(signed),forbidden);
+  } finally {
+    await db.request().query("UPDATE uqp.AppUser SET IsActive=1 WHERE Id=8");
+  }
+  const invalidToken={...signed,token:2};
+  await assert.rejects(issueSigned(invalidToken),forbidden);
+  assert.deepEqual(await countSigned(),beforeSigned);
+  const issued=(await issueSigned(signed)).recordset[0];
+  assert.match(String(issued?.GrantId),/^[a-f0-9-]{36}$/i);
+  assert(Buffer.isBuffer(issued?.Secret));
+  assert.equal(issued.Secret.length,32);
+  assert.deepEqual(await countSigned(),beforeSigned.map(v=>v+1));
+  const saved=(await db.request()
+    .input("id",sql.UniqueIdentifier,issued.GrantId)
+    .input("nonce",sql.UniqueIdentifier,signed.nonce)
+    .query("SELECT g.ActorId,g.TokenVersion,g.DashboardId,g.ProfileId,"+
+      "g.RequestId,g.SourceKey,g.ConfigSha256,g.SecretSha256,"+
+      "n.ActorId AS NonceActor FROM uqp.ChartActorDelegationDisposable g "+
+      "JOIN uqp.ChartIssuerProofNonceDisposable n ON n.Nonce=@nonce "+
+      "WHERE g.GrantId=@id")
+  ).recordset[0];
+  assert.equal(Number(saved?.ActorId),8);
+  assert.equal(Number(saved?.TokenVersion),1);
+  assert.equal(Number(saved?.DashboardId),7);
+  assert.equal(Number(saved?.ProfileId),22);
+  assert.equal(saved?.RequestId,signed.requestId);
+  assert.equal(saved?.SourceKey,"PRIMARY");
+  assert.equal(saved?.ConfigSha256,signed.digest);
+  assert.equal(Number(saved?.NonceActor),8);
+  assert(Buffer.isBuffer(saved?.SecretSha256));
+  assert.equal(Buffer.compare(saved.SecretSha256,
+    createHash("sha256").update(issued.Secret).digest()),0);
+  await assert.rejects(issueSigned(signed),forbidden);
+  assert.deepEqual(await countSigned(),beforeSigned.map(v=>v+1));
+  // A valid HMAC and fresh Nonce paired with a duplicated RequestId must
+  // roll back both the Nonce insert and Grant insert atomically.
+  const conflict={...signed,nonce:randomUUID(),
+    issuedAt:new Date(Date.now()-500),expiresAt:new Date(Date.now()+8500)};
+  await assert.rejects(issueSigned(conflict),(e:unknown)=>
+    e instanceof Error && [2601,2627].includes(Number((e as {number?:unknown}).number)));
+  assert.deepEqual(await countSigned(),beforeSigned.map(v=>v+1));
+  console.log("CHART_2B15D15_DISPOSABLE_SIGNED_ISSUER_GRANT_NONCE_ATOMIC_PASS");
+  console.log("CHART_2B15D15_HTTP_SIGNER_TRUST_NOT_RELEASE_APPROVED");
+
 }

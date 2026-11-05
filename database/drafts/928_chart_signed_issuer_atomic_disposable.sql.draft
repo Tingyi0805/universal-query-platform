@@ -1,0 +1,128 @@
+-- 2B-15D-15: disposable signed SQL issuer; NOT a production migration.
+-- Never run except on a fresh UQP_CH_<12 hex> database in isolated CI.
+-- A test harness possesses the signing key: no live HTTP/JWT trust link.
+-- This procedure cannot by itself approve public CHART activation.
+IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19
+ THROW 51928,N'CHART_SIGNED_ISSUER_DISPOSABLE_ONLY',1;
+IF OBJECT_ID(N'uqp.ChartIssuerMacPadsDisposable',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.ChartIssuerProofNonceDisposable',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.ChartActorDelegationDisposable',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.usp_ChartDelegationIssue_IsolatedDraft',N'P') IS NULL
+ OR OBJECT_ID(N'uqp.usp_ChartIssuerMacVerify_IsolatedDraft',N'P') IS NULL
+ THROW 51928,N'CHART_SIGNED_ISSUER_FIXTURE_REQUIRED',1;
+IF OBJECT_ID(N'uqp.usp_ChartDelegationIssueSigned_IsolatedDraft',N'P') IS NOT NULL
+ THROW 51928,N'CHART_SIGNED_ISSUER_ALREADY_INSTALLED',1;
+EXEC(N'CREATE PROCEDURE uqp.usp_ChartDelegationIssueSigned_IsolatedDraft
+ @ActorId BIGINT,@TokenVersion INT,@DashboardId BIGINT,@ProfileId BIGINT,
+ @RequestId UNIQUEIDENTIFIER,@SourceKey VARCHAR(64),@ConfigSha256 CHAR(64),
+ @X INT,@Y INT,@Width INT,@Height INT,@Nonce UNIQUEIDENTIFIER,
+ @IssuedAtUtc DATETIME2(3),@ExpiresAtUtc DATETIME2(3),
+ @Signature VARBINARY(MAX),
+ @GrantId UNIQUEIDENTIFIER OUTPUT,@Secret VARBINARY(32) OUTPUT
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+ SET NOCOUNT ON; SET XACT_ABORT ON;
+ IF LEFT(DB_NAME(),7)<>N''UQP_CH_'' OR LEN(DB_NAME())<>19
+  THROW 51928,N''CHART_SIGNED_ISSUER_DISPOSABLE_ONLY'',1;
+ IF @@TRANCOUNT<>0
+  THROW 51928,N''CHART_SIGNED_ISSUER_OUTER_TX_DENIED'',1;
+ IF @ActorId IS NULL OR @ActorId<=0 OR @TokenVersion IS NULL OR @TokenVersion<=0
+  OR @DashboardId IS NULL OR @DashboardId<=0 OR @ProfileId IS NULL OR @ProfileId<=0
+  OR @RequestId IS NULL OR @Nonce IS NULL
+  OR @SourceKey IS NULL OR LEN(@SourceKey) NOT BETWEEN 1 AND 64
+  OR @SourceKey LIKE ''%[^A-Za-z0-9_]%''
+  OR LEFT(@SourceKey,1) NOT LIKE ''[A-Za-z]''
+  OR @ConfigSha256 IS NULL OR LEN(@ConfigSha256)<>64
+  OR @ConfigSha256 COLLATE Latin1_General_100_BIN2 LIKE ''%[^0-9a-f]%''
+  OR @X IS NULL OR @Y IS NULL OR @X<0 OR @Y<0
+  OR @Width IS NULL OR @Width NOT BETWEEN 160 AND 7680
+  OR @Height IS NULL OR @Height NOT BETWEEN 120 AND 4320
+  OR @Signature IS NULL OR DATALENGTH(@Signature)<>32
+  OR @IssuedAtUtc IS NULL OR @ExpiresAtUtc IS NULL
+  THROW 51928,N''CHART_SIGNED_ISSUER_SCOPE_DENIED'',1;
+ SET @GrantId=NULL; SET @Secret=NULL;
+ BEGIN TRY
+  SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+  BEGIN TRANSACTION;
+  -- All HMAC checks, nonce consumption, RBAC and grant issuance share
+  -- this single transaction. No separate verify/issue API is authorized.
+  DECLARE @now DATETIME2(3)=SYSUTCDATETIME();
+  IF @IssuedAtUtc>@now OR @ExpiresAtUtc<=@now
+   OR DATEDIFF_BIG(MILLISECOND,@IssuedAtUtc,@ExpiresAtUtc) NOT BETWEEN 1 AND 10000
+   THROW 51928,N''CHART_SIGNED_ISSUER_EXPIRED'',1;
+  DECLARE @message VARCHAR(MAX)=CONCAT(
+    ''UQP_CHART_ACTOR_V1|'',CONVERT(VARCHAR(20),@ActorId),''|'',
+    CONVERT(VARCHAR(11),@TokenVersion),''|'',
+    CONVERT(VARCHAR(20),@DashboardId),''|'',
+    CONVERT(VARCHAR(20),@ProfileId),''|'',
+    LOWER(CONVERT(VARCHAR(36),@RequestId)),''|'',
+    @SourceKey,''|'',@ConfigSha256,''|'',
+    CONVERT(VARCHAR(11),@X),''|'',CONVERT(VARCHAR(11),@Y),''|'',
+    CONVERT(VARCHAR(11),@Width),''|'',CONVERT(VARCHAR(11),@Height),''|'',
+    LOWER(CONVERT(VARCHAR(36),@Nonce)),''|'',
+    CONVERT(VARCHAR(23),@IssuedAtUtc,126),''|'',
+    CONVERT(VARCHAR(23),@ExpiresAtUtc,126));
+  DECLARE @ipad VARBINARY(64),@opad VARBINARY(64);
+  SELECT @ipad=InnerPad,@opad=OuterPad
+   FROM uqp.ChartIssuerMacPadsDisposable WITH(UPDLOCK,HOLDLOCK)
+   WHERE KeyId=1;
+  IF @ipad IS NULL OR @opad IS NULL OR DATALENGTH(@ipad)<>64
+   OR DATALENGTH(@opad)<>64
+   THROW 51928,N''CHART_SIGNED_ISSUER_KEY_UNAVAILABLE'',1;
+  DECLARE @verified VARBINARY(32)=HASHBYTES(''SHA2_256'',
+    CONVERT(VARBINARY(MAX),@opad)+HASHBYTES(''SHA2_256'',
+    CONVERT(VARBINARY(MAX),@ipad)+CONVERT(VARBINARY(MAX),@message)));
+  IF @verified IS NULL OR @verified<>@Signature
+   THROW 51928,N''CHART_SIGNED_ISSUER_INVALID_SIGNATURE'',1;
+  IF EXISTS(SELECT 1 FROM uqp.ChartIssuerProofNonceDisposable WITH(UPDLOCK,HOLDLOCK)
+    WHERE Nonce=@Nonce)
+   THROW 51928,N''CHART_SIGNED_ISSUER_REPLAY'',1;
+  IF NOT EXISTS(
+   SELECT 1 FROM uqp.DashboardDisplayProfile WITH(UPDLOCK,HOLDLOCK)
+   WHERE Id=@ProfileId AND DashboardId=@DashboardId)
+   THROW 51928,N''CHART_SIGNED_ISSUER_PROFILE_REVOKED'',1;
+  IF NOT EXISTS(
+    SELECT 1 FROM uqp.AppUser u WITH(UPDLOCK,HOLDLOCK)
+    JOIN uqp.UserRole ur WITH(HOLDLOCK) ON ur.UserId=u.Id
+    JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId AND r.IsActive=1
+    JOIN uqp.RolePermission rp WITH(HOLDLOCK) ON rp.RoleId=r.Id
+    JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
+    WHERE u.Id=@ActorId AND u.IsActive=1
+      AND u.TokenVersion=@TokenVersion AND p.Code=N''DESIGN_QUERY''
+  ) THROW 51928,N''CHART_SIGNED_ISSUER_ACTOR_REVOKED'',1;
+  SET @GrantId=NEWID();
+  SET @Secret=CRYPT_GEN_RANDOM(32);
+  IF @GrantId IS NULL OR @Secret IS NULL OR DATALENGTH(@Secret)<>32
+   THROW 51928,N''CHART_SIGNED_ISSUER_RANDOM_UNAVAILABLE'',1;
+  INSERT uqp.ChartIssuerProofNonceDisposable(Nonce,ActorId,ConsumedAtUtc)
+   VALUES(@Nonce,@ActorId,@now);
+  INSERT uqp.ChartActorDelegationDisposable(
+    GrantId,Purpose,Version,IssuerSid,SecretSha256,ActorId,TokenVersion,
+    DashboardId,ProfileId,RequestId,SourceKey,ConfigSha256,
+    X,Y,Width,Height,IssuedAtUtc,ExpiresAtUtc,ConsumedAtUtc,IsRevoked)
+   VALUES(@GrantId,''CHART_CREATE'',1,SUSER_SID(ORIGINAL_LOGIN()),
+    HASHBYTES(''SHA2_256'',@Secret),@ActorId,@TokenVersion,
+    @DashboardId,@ProfileId,@RequestId,@SourceKey,@ConfigSha256,
+    @X,@Y,@Width,@Height,@now,DATEADD(SECOND,60,@now),NULL,0);
+  COMMIT TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+ END TRY
+ BEGIN CATCH
+  IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+  SET @GrantId=NULL;SET @Secret=NULL;
+  THROW;
+ END CATCH
+END');
+-- Disallow the synthetic Issuer's old, unrestricted ActorId issuer path.
+-- An owner/sa remains privileged in disposable CI; this is not a production policy.
+DENY EXECUTE ON OBJECT::uqp.usp_ChartDelegationIssue_IsolatedDraft
+ TO [UQP_Chart_IssuerSynthetic];
+GRANT EXECUTE ON OBJECT::uqp.usp_ChartDelegationIssueSigned_IsolatedDraft
+ TO [UQP_Chart_IssuerSynthetic];
+DENY EXECUTE ON OBJECT::uqp.usp_ChartDelegationIssueSigned_IsolatedDraft
+ TO [UQP_Chart_Writer];
+DENY EXECUTE ON OBJECT::uqp.usp_ChartDelegationIssueSigned_IsolatedDraft
+ TO [UQP_Chart_ConsumerSynthetic];
+-- Signed proof does not allow Chart writing, login provisioning or a real migration.
