@@ -4,6 +4,7 @@ import {useEffect,useRef,useState,type PointerEvent as ReactPointerEvent} from "
 import {flushSync} from "react-dom";
 import {Link} from "react-router-dom";
 import {DashboardChartProjection} from "../components/DashboardChartProjection";
+import {ChartPlacementNumberInput} from "../components/ChartPlacementNumberInput";
 import {
  chartDraftErrors,clampChartPlacement,newChartDraft,
  type ChartDraft,type ChartDraftConfig,type DraftChartType,
@@ -234,12 +235,13 @@ export function DashboardChartSyntheticLabPage({standalone=false}:{standalone?:b
        </label>
        <h3>位置與尺寸（像素）</h3>
        <div className="chart-lab-coordinates">
-         {(["x","y","width","height"] as const).map(key=><label key={key}>{key.toUpperCase()}
-           <input aria-label={"位置 "+key.toUpperCase()} type="number" step={1}
-             min={key==="width"?160:key==="height"?120:0}
+         {(["x","y","width","height"] as const).map(key=>
+           <ChartPlacementNumberInput key={selected+":"+screen+":"+key}
+             label={key.toUpperCase()} ariaLabel={"位置 "+key.toUpperCase()}
              value={active.draft.placement[key]}
-             onChange={e=>updatePlacement({[key]:Number(e.target.value)})}/>
-         </label>)}
+             min={key==="width"?160:key==="height"?120:0}
+             onCommit={value=>updatePlacement({[key]:value})}/>
+         )}
        </div>
        {chartDraftErrors(active.draft,width,height,SOURCES).length>0&&
         <p role="alert" className="chart-lab-errors">

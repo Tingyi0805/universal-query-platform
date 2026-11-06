@@ -88,6 +88,20 @@ test("2B-14 chart draft is editable but cannot enter saved layout, Query API or 
   await draft.getByLabel("數值欄位（已由 Query 彙總）").fill("AGGREGATED_TOTAL");
   await draft.getByLabel("X",{exact:true}).fill("140");
   await draft.getByLabel("Y",{exact:true}).fill("180");
+  // Full text input must not immediately clamp intermediate width/height digits.
+  const draftWidth=draft.getByLabel("寬",{exact:true});
+  await draftWidth.click();
+  await draftWidth.press("ControlOrMeta+A");
+  await draftWidth.pressSequentially("300");
+  await expect(draftWidth).toHaveValue("300");
+  await draftWidth.press("Enter");
+  await expect(draftWidth).toHaveValue("300");
+  const draftHeight=draft.getByLabel("高",{exact:true});
+  await draftHeight.click();
+  await draftHeight.press("ControlOrMeta+A");
+  await draftHeight.pressSequentially("200");
+  await draftHeight.press("Tab");
+  await expect(draftHeight).toHaveValue("200");
   await expect(draft.getByRole("img",{name:/圓餅圖，僅合成資料示意/})).toBeVisible();
   await expect(draft.getByText("區域 A · 8")).toBeVisible();
   expect(state.writes).toHaveLength(0);

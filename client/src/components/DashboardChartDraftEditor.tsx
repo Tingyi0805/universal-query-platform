@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {DashboardChartProjection} from "./DashboardChartProjection";
+import {ChartPlacementNumberInput} from "./ChartPlacementNumberInput";
 import {
   newChartDraft,clampChartPlacement,chartDraftErrors,syntheticChartPoints,
   chartDraftPersistenceEnabled,type ChartDraft,type ChartDraftConfig,type DraftChartType,
@@ -20,10 +21,10 @@ export function DashboardChartDraftEditor({canvasWidth,canvasHeight,sourceKeys}:
  const configPatch=(patch:Partial<ChartDraftConfig>)=>setDraft(v=>({...v,config:{...v.config,...patch}}));
  const move=(patch:Partial<ChartDraft["placement"]>)=>setDraft(v=>({...v,
    placement:clampChartPlacement({...v.placement,...patch},canvasWidth,canvasHeight)}));
- const numberInput=(key:keyof ChartDraft["placement"],name:string)=><label key={key}>{name}
-   <input type="number" value={placement[key]} step={1} min={key==="width"?160:key==="height"?120:0}
-     onChange={e=>move({[key]:Number(e.target.value)})}/>
- </label>;
+ const numberInput=(key:keyof ChartDraft["placement"],name:string)=>
+   <ChartPlacementNumberInput key={key} label={name}
+     value={placement[key]} min={key==="width"?160:key==="height"?120:0}
+     onCommit={value=>move({[key]:value})}/>;
  return <section className="chart-draft" aria-label="圖表設計草稿">
    <button type="button" className="chart-draft-toggle" aria-expanded={expanded}
      onClick={()=>setExpanded(v=>!v)}>＋ 圖表設計草稿（僅示意）</button>

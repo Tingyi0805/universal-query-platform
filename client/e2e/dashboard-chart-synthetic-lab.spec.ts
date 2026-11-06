@@ -50,3 +50,39 @@ test("Stage 18 chart lab remains permission guarded inside UQP but standalone ne
  await expect(page.getByRole("heading",{name:"Dashboard 圖表功能實測區"})).toBeVisible();
  await expect(page.getByText(/離開／重新整理後不保留/)).toBeVisible();
 });
+
+
+test("Stage 19 coordinates support ordinary select-all and digit-by-digit width/height entry",async({page})=>{
+ await page.goto("/chart-lab.html");
+ const width=page.getByLabel("位置 WIDTH");
+ const height=page.getByLabel("位置 HEIGHT");
+ // Before this regression fix, the first digit 3 was clamped to 160,
+ // so subsequent input could not become 300 by typing normally.
+ await width.click();
+ await width.press("ControlOrMeta+A");
+ await width.pressSequentially("300");
+ await expect(width).toHaveValue("300");
+ await width.press("Enter");
+ await expect(width).toHaveValue("300");
+ await height.click();
+ await height.press("ControlOrMeta+A");
+ await height.pressSequentially("200");
+ await expect(height).toHaveValue("200");
+ await height.press("Tab");
+ await expect(height).toHaveValue("200");
+ // Edited dimensions survive selecting another chart, confirming actual
+ // geometry was updated instead of just showing uncommitted input text.
+ await page.getByRole("button",{name:"＋新增圖表"}).click();
+ await page.getByLabel("選取圖表").selectOption("1");
+ await expect(page.getByLabel("位置 WIDTH")).toHaveValue("300");
+ await expect(page.getByLabel("位置 HEIGHT")).toHaveValue("200");
+ // An unfinished empty edit must restore the last valid value, not min.
+ await width.fill("");
+ await width.press("Tab");
+ await expect(width).toHaveValue("300");
+ // Out-of-bounds final value still clamps only after editing has finished.
+ await height.fill("5");
+ await expect(height).toHaveValue("5");
+ await height.press("Tab");
+ await expect(height).toHaveValue("120");
+});
