@@ -37,7 +37,7 @@ await writeFile(path.join(out,'README-PR88-WINDOWS-TEST-STAGING.txt'),[
  'Only an authorized, manually backed-up and independently checked test deployment may copy from payload/.',
  'Check manifest.json and SHA256SUMS.txt with verify-uqp-pr88-staging.ps1 before any authorized use.',
  'If current C:\\UQP differs from the pinned PR83 baseline, stop and reconcile rather than overwrite.',
-].join('\\n')+'\\n');
+].join(String.fromCharCode(10))+String.fromCharCode(10));
 const files=[];
 async function walk(dir){for(const e of await readdir(dir,{withFileTypes:true})){const absolute=path.join(dir,e.name),rel=path.relative(out,absolute).split(path.sep).join('/');
  if(e.isSymbolicLink())throw Error('RELEASE_LINK_FORBIDDEN');
