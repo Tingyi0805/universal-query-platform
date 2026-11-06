@@ -216,7 +216,7 @@ export function DashboardChartSyntheticLabPage({standalone=false}:{standalone?:b
            onChange={e=>setCustomSize(v=>({...v,height:e.target.value}))}/>
        </label>
        <button type="button" onClick={applyCustomSize}>套用自訂尺寸</button>
-     </div> 
+     </div>}
      <button type="button" onClick={create}>＋新增圖表</button>
      <button type="button" onClick={duplicate}>複製選取圖表</button>
      <button type="button" onClick={remove}>移除選取圖表</button>
