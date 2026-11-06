@@ -22,9 +22,22 @@ if(behind!==0||jobs.some(k=>evidence.jobs?.[k]?.result!=='success'))throw Error(
 if(sha(await readFile('database/migrations/926_dashboard_device_lifecycle.sql'))!==migration)throw Error('926_SOURCE_CHANGED');
 try{await lstat(out);throw Error('RELEASE_OUTPUT_MUST_BE_NEW');}catch(e){if(e.code!=='ENOENT')throw e;}
 await mkdir(out,{recursive:true});
-const sources=['server/dist','server/src','server/node_modules','server/package.json','server/package-lock.json','server/tsconfig.json','server/tsconfig.build.json','client/dist','client/src','client/package.json','client/package-lock.json','client/index.html','client/vite.config.ts','client/PR88-TEST-README.txt','client/tsconfig.json','client/tsconfig.app.json','client/tsconfig.node.json','client/tsconfig.e2e.json','database/migrations','database/drafts/924_dataset_security_scope_binding.sql','tools/sqlserver-acceptance/drafts','docs/dashboard-device-lifecycle-d5-c6.md','docs/dashboard-d6-3-acceptance.md','docs/dashboard-d6-3-second-round.md','tools/test-pr83-node-runtime.mjs'];
+const sources=['server/dist','server/src','server/node_modules','server/package.json','server/package-lock.json','server/tsconfig.json','server/tsconfig.build.json','client/dist','client/src','client/package.json','client/package-lock.json','client/index.html','client/vite.config.ts','client/tsconfig.json','client/tsconfig.app.json','client/tsconfig.node.json','client/tsconfig.e2e.json','database/migrations','database/drafts/924_dataset_security_scope_binding.sql','tools/sqlserver-acceptance/drafts','docs/dashboard-device-lifecycle-d5-c6.md','docs/dashboard-d6-3-acceptance.md','docs/dashboard-d6-3-second-round.md','tools/test-pr83-node-runtime.mjs'];
 for(const rel of sources){const dest=path.join(out,'payload',rel);await mkdir(path.dirname(dest),{recursive:true});await cp(path.join(root,rel),dest,{recursive:true,dereference:false});}
 await cp('tools/verify-uqp-pr88-staging.ps1',path.join(out,'verify-uqp-pr88-staging.ps1'));
+await writeFile(path.join(out,'README-PR88-WINDOWS-TEST-STAGING.txt'),[
+ 'UQP PR #88 - FULL WINDOWS TEST STAGING ONLY',
+ 'This archive contains matching Windows x64 Server and Client binaries built from the same Git commit.',
+ 'It is NOT a production release, not an installer, and not authorization to overwrite C:\\UQP.',
+ 'The payload/ folder mirrors the UQP runtime directory structure. Files are not installed on extraction.',
+ 'Node v24.22.1 / ABI 137 / win32 x64 is mandatory for bundled native modules.',
+ 'Keep existing .env configuration and all business data; the package contains no .env and runs no migrations.',
+ 'Production SQL schema compatibility, dashboard device policy and current deployed version are NOT asserted.',
+ 'CHART stays synthetic-only. No live patient-data CHART authorization or playback is enabled by this archive.',
+ 'Only an authorized, manually backed-up and independently checked test deployment may copy from payload/.',
+ 'Check manifest.json and SHA256SUMS.txt with verify-uqp-pr88-staging.ps1 before any authorized use.',
+ 'If current C:\\UQP differs from the pinned PR83 baseline, stop and reconcile rather than overwrite.',
+].join('\\n')+'\\n');
 const files=[];
 async function walk(dir){for(const e of await readdir(dir,{withFileTypes:true})){const absolute=path.join(dir,e.name),rel=path.relative(out,absolute).split(path.sep).join('/');
  if(e.isSymbolicLink())throw Error('RELEASE_LINK_FORBIDDEN');
