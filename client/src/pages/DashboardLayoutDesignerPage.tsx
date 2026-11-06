@@ -621,6 +621,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
             "--table-row-bg": configText(widget.config, "tableRowBackground", "#ffffff"),
             "--table-alt-row-bg": configText(widget.config, "tableAltRowBackground", "#f8fafc"),
             "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
+            "--table-header-font-size": configNumber(widget.config, "tableHeaderFontSize", 0) > 0 ? `${configNumber(widget.config, "tableHeaderFontSize", 0)}px` : undefined,
+            "--table-row-font-size": configNumber(widget.config, "tableRowFontSize", 0) > 0 ? `${configNumber(widget.config, "tableRowFontSize", 0)}px` : undefined,
           } as CSSProperties}
         >
           <table>
@@ -1098,6 +1100,22 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                 </select>
               </label>
 
+              {selectedWidget.widgetType === "TABLE" && (
+                <div className="layout-style-section">
+                  <strong>表格文字大小（各自設定）</strong>
+                  <div className="layout-inspector-grid">
+                    <ChartPlacementNumberInput label="表頭字體（px）"
+                      value={configNumber(selectedWidget.config,"tableHeaderFontSize",Math.round(selectedWidget.fontSize*.62))}
+                      min={8}
+                      onCommit={value=>{if(value>=8&&value<=120)updateSelectedWidget({config:{...selectedWidget.config,tableHeaderFontSize:value}});}}/>
+                    <ChartPlacementNumberInput label="資料列字體（px）"
+                      value={configNumber(selectedWidget.config,"tableRowFontSize",Math.round(selectedWidget.fontSize*.62))}
+                      min={8}
+                      onCommit={value=>{if(value>=8&&value<=120)updateSelectedWidget({config:{...selectedWidget.config,tableRowFontSize:value}});}}/>
+                  </div>
+                  <small>未變更的舊版型仍沿用原有字體比例。</small>
+                </div>
+              )}
               <div className="layout-style-section">
                 <strong>視覺樣式</strong>
 
