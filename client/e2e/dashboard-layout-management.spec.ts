@@ -147,6 +147,7 @@ test("global typography writes only on explicit save, preserves legacy layout, a
  const global=page.locator(".layout-typography-global");
  await global.getByLabel("字型").selectOption('"Microsoft JhengHei", sans-serif');
  await global.getByLabel("字重").selectOption("600");
+ await global.getByLabel("字體顏色").fill("#123456");
  await global.getByLabel("全域字體大小（px）").fill("30");
  await global.getByLabel("全域字體大小（px）").press("Enter");
  expect(state.writes).toHaveLength(0);
@@ -162,5 +163,7 @@ test("global typography writes only on explicit save, preserves legacy layout, a
   expect(widget.config.fontWeight).toBe(600);
  }
  expect(saved.widgets[2].config.retainedTable).toBe(true);
+ expect(saved.widgets[2].config.tableHeaderTextColor).toBe("#123456");
+ expect(saved.widgets[2].config.textColor).toBe("#123456");
  expect(state.legacy).toEqual([]);
 });
