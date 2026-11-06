@@ -1,4 +1,5 @@
 import { DashboardChartDraftEditor } from "../components/DashboardChartDraftEditor";
+import { ChartPlacementNumberInput } from "../components/ChartPlacementNumberInput";
 import { DashboardDrilldownEditor } from "../components/DashboardDrilldownEditor";
 import { graphIssue, type DrillGraph } from "../dashboard/drilldown";
 import { createPortal } from "react-dom";
@@ -469,6 +470,28 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     setSelectedWidgetKey("");
   }
 
+  // Applies a dashboard-wide typography change without changing existing widget positions.
+  // Individual widgets can still be customized afterward in the inspector.
+  function applyTypography(patch: { fontFamily?: string; fontWeight?: number; textColor?: string; fontSize?: number }) {
+    if (!activeProfile) return;
+    setProfiles((current) => current.map((profile) => profile.clientKey !== activeProfile.clientKey
+      ? profile
+      : {
+          ...profile,
+          config: { ...profile.config, ...patch },
+          widgets: profile.widgets.map((widget) => ({
+            ...widget,
+            fontSize: patch.fontSize ?? widget.fontSize,
+            config: {
+              ...widget.config,
+              ...(patch.fontFamily !== undefined ? { fontFamily: patch.fontFamily } : {}),
+              ...(patch.fontWeight !== undefined ? { fontWeight: patch.fontWeight } : {}),
+              ...(patch.textColor !== undefined ? { textColor: patch.textColor, ...(widget.widgetType === "TABLE" ? { tableHeaderTextColor: patch.textColor } : {}) } : {}),
+            },
+          })),
+        }));
+  }
+
   function addWidget(widgetType: WidgetType) {
     if (!activeProfile) return;
 
@@ -498,12 +521,12 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       y: Math.max(0, Math.round((activeProfile.canvasHeight - height) / 2)),
       width,
       height,
-      fontSize: preset.fontSize,
+      fontSize: configNumber(activeProfile.config, "fontSize", preset.fontSize),
       alignment: "CENTER",
       config: {
-        fontFamily: "system-ui",
-        fontWeight: 700,
-        textColor: "#172033",
+        fontFamily: configText(activeProfile.config, "fontFamily", "system-ui"),
+        fontWeight: configNumber(activeProfile.config, "fontWeight", 700),
+        textColor: configText(activeProfile.config, "textColor", "#172033"),
         backgroundColor: widgetType === "CONTAINER" ? "#eef4fb" : "#ffffff",
         backgroundOpacity: widgetType === "CONTAINER" ? 85 : 100,
         borderColor: widgetType === "CONTAINER" ? "#cbd6e5" : "transparent",
@@ -598,6 +621,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
             "--table-row-bg": configText(widget.config, "tableRowBackground", "#ffffff"),
             "--table-alt-row-bg": configText(widget.config, "tableAltRowBackground", "#f8fafc"),
             "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
+            "--table-header-font-size": configNumber(widget.config, "tableHeaderFontSize", 0) > 0 ? `${configNumber(widget.config, "tableHeaderFontSize", 0)}px` : undefined,
+            "--table-row-font-size": configNumber(widget.config, "tableRowFontSize", 0) > 0 ? `${configNumber(widget.config, "tableRowFontSize", 0)}px` : undefined,
           } as CSSProperties}
         >
           <table>
@@ -819,6 +844,32 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                   })}
                 />
               </label>
+              <fieldset className="layout-typography-global" style={{gridColumn:"1 / -1",border:"1px solid #cbd5e1",borderRadius:8,padding:12}}>
+                <legend>Dashboard 全域字體（套用全部現有元件及新元件）</legend>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8}}>
+                  <label>字型
+                    <select value={configText(activeProfile.config,"fontFamily","system-ui")}
+                      onChange={e=>applyTypography({fontFamily:e.target.value})}>
+                      {fontOptions.map(font=><option key={font.value} value={font.value}>{font.label}</option>)}
+                    </select>
+                  </label>
+                  <ChartPlacementNumberInput label="全域字體大小（px）" value={configNumber(activeProfile.config,"fontSize",36)}
+                    min={8} onCommit={value=>{if(value>=8&&value<=240)applyTypography({fontSize:value});}}/>
+                  <label>字重
+                    <select value={String(configNumber(activeProfile.config,"fontWeight",700))}
+                      onChange={e=>applyTypography({fontWeight:Number(e.target.value)})}>
+                      <option value="400">一般 400</option><option value="500">中等 500</option>
+                      <option value="600">半粗 600</option><option value="700">粗體 700</option>
+                      <option value="800">特粗 800</option>
+                    </select>
+                  </label>
+                  <label>字體顏色
+                    <input type="color" value={configText(activeProfile.config,"textColor","#172033")}
+                      onChange={e=>applyTypography({textColor:e.target.value})}/>
+                  </label>
+                </div>
+                <small>變更全域設定將同步覆寫現有元件的對應字體屬性；需要不同字體的元件，請在下方元件設定另外調整。</small>
+              </fieldset>
               {playbackTarget===undefined&&updateControls}
               <button type="button" disabled={activeProfile.isDefault} onClick={setDefaultProfile}>設為預設</button>
               <button type="button" disabled={profiles.length <= 1} onClick={deleteProfile}>刪除版型</button>
@@ -1049,6 +1100,22 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                 </select>
               </label>
 
+              {selectedWidget.widgetType === "TABLE" && (
+                <div className="layout-style-section">
+                  <strong>表格文字大小（各自設定）</strong>
+                  <div className="layout-inspector-grid">
+                    <ChartPlacementNumberInput label="表頭字體（px）"
+                      value={configNumber(selectedWidget.config,"tableHeaderFontSize",Math.round(selectedWidget.fontSize*.62))}
+                      min={8}
+                      onCommit={value=>{if(value>=8&&value<=120)updateSelectedWidget({config:{...selectedWidget.config,tableHeaderFontSize:value}});}}/>
+                    <ChartPlacementNumberInput label="資料列字體（px）"
+                      value={configNumber(selectedWidget.config,"tableRowFontSize",Math.round(selectedWidget.fontSize*.62))}
+                      min={8}
+                      onCommit={value=>{if(value>=8&&value<=120)updateSelectedWidget({config:{...selectedWidget.config,tableRowFontSize:value}});}}/>
+                  </div>
+                  <small>未變更的舊版型仍沿用原有字體比例。</small>
+                </div>
+              )}
               <div className="layout-style-section">
                 <strong>視覺樣式</strong>
 

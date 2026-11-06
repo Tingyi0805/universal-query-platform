@@ -154,6 +154,16 @@ jobs:
         run: npm ci --prefix ../server --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Upload PR88 Client build (TEST ONLY, NOT production deployment)
+        if: github.event_name == 'pull_request' && github.event.pull_request.number == 88
+        uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr88-client-test-only-${{ github.sha }}
+          path: |
+            client/dist/
+            client/PR88-TEST-README.txt
+          if-no-files-found: error
+          retention-days: 14
       - name: Build standalone synthetic chart lab (no API or database)
         if: github.event_name == 'push' && github.ref == 'refs/heads/fix/iis-https-kiosk-82'
         run: npm run build:chart-lab
@@ -606,4 +616,87 @@ jobs:
             release926.zip
             release926.zip.sha256
           retention-days: 7
+          if-no-files-found: error
+
+  pr88-windows-test-staging:
+    # Full Windows test staging, not a production approval or installer.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 88 && needs.dashboard-ui-scope.outputs.ui_only != 'true'
+    needs: [dashboard-ui-scope, server, client, device-lifecycle-d1-sql, windows-node24-dependencies, windows-kiosk-launcher, dependency-sql-smoke]
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+      - run: npm install --global npm@12.2.1
+      - name: Verify PR88 HEAD, immutable PR83 baseline, Draft status and successful jobs
+        uses: actions/github-script@v7
+        env:
+          UQP_PR88_NEEDS: ${{ toJSON(needs) }}
+          UQP_PR88_HEAD: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const fs=require('node:fs');
+            const [pr88,pr83]=await Promise.all([88,83].map(pull_number=>github.rest.pulls.get({...context.repo,pull_number})));
+            const baseline='846483f6b1151eb12468d60369745fe77f0249b7';
+            if(!pr88.data.draft||pr88.data.merged||pr88.data.head.sha!==process.env.UQP_PR88_HEAD)throw Error('PR88_HEAD_MOVED_OR_NOT_DRAFT');
+            if(!pr83.data.draft||pr83.data.head.sha!==baseline)throw Error('PR83_COMPATIBILITY_BASELINE_CHANGED');
+            const jobs=JSON.parse(process.env.UQP_PR88_NEEDS);
+            for(const name of ['server','client','device-lifecycle-d1-sql','windows-node24-dependencies','windows-kiosk-launcher','dependency-sql-smoke'])
+              if(jobs[name]?.result!=='success')throw Error('PR88_PREREQUISITE_FAILED:'+name);
+            fs.writeFileSync('pr88-staging-evidence.json',JSON.stringify({sourceCommit:pr88.data.head.sha,pr88Draft:true,pr83Baseline:baseline,url:'https://github.com/'+context.repo.owner+'/'+context.repo.repo+'/actions/runs/'+context.runId,jobs},null,2));
+      - name: Build Windows server and client with locked Node 24.22.1 dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location server
+          npm ci
+          if($LASTEXITCODE){throw 'PR88_SERVER_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw 'PR88_SERVER_BUILD_FAILED'}
+          npm prune --omit=dev --ignore-scripts
+          if($LASTEXITCODE){throw 'PR88_SERVER_PRODUCTION_DEPENDENCIES_FAILED'}
+          node ../tools/test-pr83-node-runtime.mjs .
+          if($LASTEXITCODE){throw 'PR88_WINDOWS_NATIVE_RUNTIME_FAILED'}
+          Pop-Location
+          Push-Location client
+          npm ci
+          if($LASTEXITCODE){throw 'PR88_CLIENT_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw 'PR88_CLIENT_BUILD_FAILED'}
+          Pop-Location
+      - name: Build PR88 full Windows test staging and per-file SHA-256 manifest
+        shell: pwsh
+        run: |
+          node tools/package-pr88-staging.mjs pr88-staging pr88-staging-evidence.json
+          if($LASTEXITCODE){throw 'PR88_STAGING_PACKAGE_FAILED'}
+      - name: Verify ZIP, Windows native modules, hashes and tamper rejection
+        shell: powershell
+        run: .\tools\test-uqp-pr88-staging.ps1 -PackageRoot .\pr88-staging -ZipPath .\pr88-staging.zip
+      - name: Recheck PR88 and PR83 heads before publishing staging artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const e=JSON.parse(require('node:fs').readFileSync('pr88-staging-evidence.json','utf8'));
+            const [pr88,pr83]=await Promise.all([88,83].map(pull_number=>github.rest.pulls.get({...context.repo,pull_number})));
+            if(!pr88.data.draft||pr88.data.head.sha!==e.sourceCommit||pr83.data.head.sha!==e.pr83Baseline)throw Error('PR88_OR_PR83_HEAD_CHANGED_REBUILD_REQUIRED');
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr88-windows-full-test-staging-${{ github.event.pull_request.head.sha }}
+          path: |
+            pr88-staging.zip
+            pr88-staging.zip.sha256
+          retention-days: 14
           if-no-files-found: error

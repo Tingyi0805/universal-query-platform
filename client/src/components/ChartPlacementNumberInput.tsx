@@ -1,4 +1,4 @@
-import {useState, type KeyboardEvent} from "react";
+import {useState, useRef, type KeyboardEvent} from "react";
 
 /** Let users type the entire number before clamping placement constraints.
  * The preview is updated only when editing finishes (blur/Enter).
@@ -8,8 +8,10 @@ export function ChartPlacementNumberInput({label,ariaLabel,value,min,onCommit}:{
   label:string;ariaLabel?:string;value:number;min:number;onCommit:(value:number)=>void;
 }){
   const [editing,setEditing]=useState<string|null>(null);
+  const cancelEdit=useRef(false);
   const finish=(raw:string)=>{
     setEditing(null);
+    if(cancelEdit.current){cancelEdit.current=false;return;}
     if(!/^\d+$/.test(raw.trim()))return;
     const valueToCommit=Number(raw.trim());
     if(Number.isSafeInteger(valueToCommit))onCommit(valueToCommit);
@@ -18,7 +20,8 @@ export function ChartPlacementNumberInput({label,ariaLabel,value,min,onCommit}:{
     if(event.key==="Enter")event.currentTarget.blur();
     if(event.key==="Escape"){
       event.preventDefault();
-      event.currentTarget.value=String(value);
+      cancelEdit.current=true;
+      setEditing(null);
       event.currentTarget.blur();
     }
   };

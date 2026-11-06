@@ -63,6 +63,8 @@
   table-layout: fixed;
   font-size: .92em;
 }
+.dashboard-play-table th{font-size:var(--table-header-font-size,inherit)}
+.dashboard-play-table td{font-size:var(--table-row-font-size,inherit)}
 
 .dashboard-play-table th,
 .dashboard-play-table td {

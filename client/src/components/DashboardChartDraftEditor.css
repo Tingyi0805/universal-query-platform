@@ -3,7 +3,8 @@
 .chart-draft-body{display:grid;gap:10px;margin-top:12px}
 .chart-draft-body label{display:grid;gap:5px;font-size:13px}
 .chart-draft-body select,.chart-draft-body input:not([type=checkbox]){box-sizing:border-box;min-width:0;width:100%;padding:7px;border:1px solid #94a3b8;border-radius:6px;background:white;color:#172033}
-.chart-draft-body .chart-draft-check{display:flex;align-items:center;gap:7px}
+.chart-draft-body .chart-draft-check{display:inline-flex;align-items:center;justify-content:flex-start;flex-wrap:nowrap;gap:7px;width:max-content;max-width:100%;white-space:nowrap}
+.chart-draft-body .chart-draft-check input[type=checkbox]{flex:0 0 auto;width:auto;min-width:0;margin:0}
 .chart-draft-warning{background:#f1f5f9;border-left:3px solid #64748b;padding:8px;font-size:12px;line-height:1.5}
 .chart-draft-subtitle{font-weight:700;font-size:13px}
 .chart-draft-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}

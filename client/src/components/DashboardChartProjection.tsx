@@ -2,8 +2,16 @@ import type { ReactNode } from "react";
 import {chartXY,chartPie,pieSlicePath,parseChartProjection} from "../dashboard/chartProjection";
 import "./DashboardChartProjection.css";
 const colors=["#2563eb","#0f766e","#d97706","#7c3aed","#b91c1c","#0369a1"] as const;
-type Props={projection:unknown;ariaLabel?:string;emptyMessage?:string};
-export function DashboardChartProjection({projection,ariaLabel="統計圖表",emptyMessage="沒有可顯示的圖表資料"}:Props){
+export type ChartPreviewTypography = Readonly<{
+  fontFamily: string;
+  fontWeight: 400 | 500 | 600 | 700 | 800;
+  titleSize: number;
+  legendSize: number;
+  axisSize: number;
+  textColor: string;
+}>;
+type Props={projection:unknown;ariaLabel?:string;emptyMessage?:string;typography?:ChartPreviewTypography};
+export function DashboardChartProjection({projection,ariaLabel="統計圖表",emptyMessage="沒有可顯示的圖表資料",typography}:Props){
  const parsed=parseChartProjection(projection);
  if(!parsed)return <div className="dashboard-chart-empty" role="status">圖表資料未通過驗證，停止顯示。</div>;
  if(parsed.points.length===0)return <div className="dashboard-chart-empty" role="status">{emptyMessage}</div>;
@@ -18,7 +26,7 @@ export function DashboardChartProjection({projection,ariaLabel="統計圖表",em
      {shape.bars.map((bar,i)=><g key={bar.label}>
        <rect x={bar.x} y={bar.y} width={bar.width} height={Math.max(0,bar.height)}
          rx="2" fill={colors[i%colors.length]}><title>{bar.label}：{bar.value}</title></rect>
-       {labels&&<text x={bar.x+bar.width/2} y="292" textAnchor="middle" fontSize="13" fill="currentColor">{bar.label}</text>}
+       {labels&&<text x={bar.x+bar.width/2} y="292" textAnchor="middle" fontSize={typography?.axisSize??13} fill="currentColor">{bar.label}</text>}
      </g>)}
    </>;
  }else if(parsed.chartType==="LINE"){
@@ -41,12 +49,17 @@ export function DashboardChartProjection({projection,ariaLabel="統計圖表",em
          </path>;
    });
  }
- return <div className="dashboard-chart-projection">
+ return <div className="dashboard-chart-projection" style={typography?{
+   fontFamily:typography.fontFamily,
+   fontWeight:typography.fontWeight,
+   color:typography.textColor,
+ }:undefined}>
+   {typography&&<div className="dashboard-chart-preview-title" style={{fontSize:typography.titleSize,textAlign:"center",lineHeight:1.4}}>{title}</div>}
    <svg viewBox="0 0 800 310" preserveAspectRatio="xMidYMid meet" role="img"
      aria-label={ariaLabel}>
      <title>{title}</title>{graphic}
    </svg>
-   {parsed.showLegend&&<div className="dashboard-chart-legend" aria-label="圖表圖例">
+   {parsed.showLegend&&<div className="dashboard-chart-legend" style={typography?{fontSize:typography.legendSize}:undefined} aria-label="圖表圖例">
      {parsed.points.map((p,i)=><span key={p.label}>
        <i aria-hidden="true" style={{backgroundColor:colors[i%colors.length]}}/>
        {p.label} · {p.value}

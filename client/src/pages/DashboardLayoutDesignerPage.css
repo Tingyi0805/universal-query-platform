@@ -232,6 +232,8 @@
   table-layout: fixed;
   font-size: .62em;
 }
+.layout-widget-table th{font-size:var(--table-header-font-size,inherit)}
+.layout-widget-table td{font-size:var(--table-row-font-size,inherit)}
 
 .layout-widget-table th,
 .layout-widget-table td {

@@ -917,6 +917,8 @@ export function DashboardDisplayPage() {
             "--table-row-bg": configText(widget.config, "tableRowBackground", "#ffffff"),
             "--table-alt-row-bg": configText(widget.config, "tableAltRowBackground", "#f8fafc"),
             "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
+            "--table-header-font-size": configNumber(widget.config, "tableHeaderFontSize", 0) > 0 ? `${configNumber(widget.config, "tableHeaderFontSize", 0)}px` : undefined,
+            "--table-row-font-size": configNumber(widget.config, "tableRowFontSize", 0) > 0 ? `${configNumber(widget.config, "tableRowFontSize", 0)}px` : undefined,
           } as CSSProperties}
         >
           {userRoute&&!previewKey&&!deviceMode&&accessToken&&user&&hasPermission("VIEW_QUERY")&&hasPermission("EXECUTE_QUERY")&&sourceKey==="PRIMARY"&&widget.config.drilldownRoot===true&&activeProfile&&

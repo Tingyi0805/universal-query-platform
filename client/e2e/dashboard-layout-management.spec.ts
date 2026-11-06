@@ -139,3 +139,31 @@ test("2B-15 synthetic renderer shows bounded BAR/LINE/PIE geometry without savin
  expect(state.legacy).toEqual([]);
  await expect(page.locator(".layout-widget")).toHaveCount(3);
 });
+
+test("global typography writes only on explicit save, preserves legacy layout, and table sizes are independent", async ({page}) => {
+ const state=await setup(page);
+ await page.goto("/designer/dashboards/1/layout");
+ await expect(page.getByText("固定合成文字",{exact:true})).toBeVisible();
+ const global=page.locator(".layout-typography-global");
+ await global.getByLabel("字型").selectOption('"Microsoft JhengHei", sans-serif');
+ await global.getByLabel("字重").selectOption("600");
+ await global.getByLabel("字體顏色").fill("#123456");
+ await global.getByLabel("全域字體大小（px）").fill("30");
+ await global.getByLabel("全域字體大小（px）").press("Enter");
+ expect(state.writes).toHaveLength(0);
+ await save(page).click();
+ await expect(page.getByText("Dashboard 版面已儲存。",{exact:true})).toBeVisible();
+ const saved=state.writes[0].profiles[0];
+ expect(saved.config.retained).toBe(true);
+ expect(saved.config.fontSize).toBe(30);
+ expect(saved.widgets).toHaveLength(3);
+ for(const widget of saved.widgets){
+  expect(widget.fontSize).toBe(30);
+  expect(widget.config.fontFamily).toBe('"Microsoft JhengHei", sans-serif');
+  expect(widget.config.fontWeight).toBe(600);
+ }
+ expect(saved.widgets[2].config.retainedTable).toBe(true);
+ expect(saved.widgets[2].config.tableHeaderTextColor).toBe("#123456");
+ expect(saved.widgets[2].config.textColor).toBe("#123456");
+ expect(state.legacy).toEqual([]);
+});
