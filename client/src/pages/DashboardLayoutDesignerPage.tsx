@@ -486,7 +486,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
               ...widget.config,
               ...(patch.fontFamily !== undefined ? { fontFamily: patch.fontFamily } : {}),
               ...(patch.fontWeight !== undefined ? { fontWeight: patch.fontWeight } : {}),
-              ...(patch.textColor !== undefined ? { textColor: patch.textColor } : {}),
+              ...(patch.textColor !== undefined ? { textColor: patch.textColor, ...(widget.widgetType === "TABLE" ? { tableHeaderTextColor: patch.textColor } : {}) } : {}),
             },
           })),
         }));
