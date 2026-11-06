@@ -851,10 +851,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                       {fontOptions.map(font=><option key={font.value} value={font.value}>{font.label}</option>)}
                     </select>
                   </label>
-                  <label>字體大小（px）
-                    <ChartPlacementNumberInput label="全域字體大小" value={configNumber(activeProfile.config,"fontSize",36)}
-                      min={8} onCommit={value=>{if(value>=8&&value<=240)applyTypography({fontSize:value});}}/>
-                  </label>
+                  <ChartPlacementNumberInput label="全域字體大小（px）" value={configNumber(activeProfile.config,"fontSize",36)}
+                    min={8} onCommit={value=>{if(value>=8&&value<=240)applyTypography({fontSize:value});}}/>
                   <label>字重
                     <select value={String(configNumber(activeProfile.config,"fontWeight",700))}
                       onChange={e=>applyTypography({fontWeight:Number(e.target.value)})}>
