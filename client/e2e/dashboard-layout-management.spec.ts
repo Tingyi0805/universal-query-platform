@@ -73,3 +73,69 @@ test("management flag off or missing trusted version permits only saved-layout v
   state.disabled = false; state.missingVersion = true; page.once("dialog", d => void d.accept()); await page.getByRole("button", { name: "重新載入版型與版本", exact: true }).click();
   await expect(page.getByText("固定合成文字", { exact: true })).toBeVisible(); await expect(save(page)).toBeDisabled(); expect(state.writes).toEqual([]); expect(state.legacy).toEqual([]);
 });
+
+
+test("2B-14 chart draft is editable but cannot enter saved layout, Query API or playback", async ({page}) => {
+  const state=await setup(page),original=structuredClone(state.profiles);
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByText("固定合成文字",{exact:true})).toBeVisible();
+  const draft=page.getByRole("region",{name:"圖表設計草稿"});
+  await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+  await expect(draft.getByText(/只使用合成資料/)).toBeVisible();
+  await draft.getByLabel("圖表類型").selectOption("PIE");
+  await draft.getByLabel("預計使用的 Query Source").selectOption("WARD");
+  await draft.getByLabel("分類欄位（僅填欄位名稱）").fill("REGION");
+  await draft.getByLabel("數值欄位（已由 Query 彙總）").fill("AGGREGATED_TOTAL");
+  await draft.getByLabel("X",{exact:true}).fill("140");
+  await draft.getByLabel("Y",{exact:true}).fill("180");
+  // Full text input must not immediately clamp intermediate width/height digits.
+  const draftWidth=draft.getByLabel("寬",{exact:true});
+  await draftWidth.click();
+  await draftWidth.press("ControlOrMeta+A");
+  await draftWidth.pressSequentially("300");
+  await expect(draftWidth).toHaveValue("300");
+  await draftWidth.press("Enter");
+  await expect(draftWidth).toHaveValue("300");
+  const draftHeight=draft.getByLabel("高",{exact:true});
+  await draftHeight.click();
+  await draftHeight.press("ControlOrMeta+A");
+  await draftHeight.pressSequentially("200");
+  await draftHeight.press("Tab");
+  await expect(draftHeight).toHaveValue("200");
+  await expect(draft.getByRole("img",{name:/圓餅圖，僅合成資料示意/})).toBeVisible();
+  await expect(draft.getByText("區域 A · 8")).toBeVisible();
+  expect(state.writes).toHaveLength(0);
+  await save(page).click();
+  await expect(page.getByText("Dashboard 版面已儲存。",{exact:true})).toBeVisible();
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0].profiles).toEqual(original);
+  expect(JSON.stringify(state.writes)).not.toContain("CHART");
+  expect(state.legacy).toEqual([]);
+  await page.reload();
+  await expect(page.getByText("固定合成文字",{exact:true})).toBeVisible();
+  await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+  await expect(draft.getByLabel("圖表類型")).toHaveValue("BAR");
+  expect(state.writes).toHaveLength(1);
+});
+
+
+test("2B-15 synthetic renderer shows bounded BAR/LINE/PIE geometry without saving or live CHART calls",async({page})=>{
+ const state=await setup(page);
+ await page.goto("/designer/dashboards/1/layout");
+ const draft=page.getByRole("region",{name:"圖表設計草稿"});
+ await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+ for(const [kind,label] of [["BAR","長條圖"],["LINE","折線圖"],["PIE","圓餅圖"]] as const){
+   await draft.getByLabel("圖表類型").selectOption(kind);
+   const graphic=draft.getByRole("img",{name:label+"，僅合成資料示意"});
+   await expect(graphic).toBeVisible();
+   const box=await graphic.boundingBox();
+   expect(box).toBeTruthy();
+   expect(box!.width).toBeGreaterThan(20);
+   expect(box!.height).toBeGreaterThan(20);
+   await expect(draft.getByText("區域 A · 8")).toBeVisible();
+ }
+ const requestCount=state.writes.length;
+ expect(requestCount).toBe(0);
+ expect(state.legacy).toEqual([]);
+ await expect(page.locator(".layout-widget")).toHaveCount(3);
+});

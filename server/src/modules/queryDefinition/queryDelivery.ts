@@ -13,12 +13,14 @@ import { patientAuditService } from "../dataset/patientAuditContract.repository.
 import { getEffectiveQueryAccess } from "./queryDefinition.repository.js";
 import { getQueryAccessRevision } from "./queryAccess.repository.js";
 import { listReportColumns, type ReportColumnRecord } from "./reportColumn.repository.js";
+import { readPinQueryPolicy, pinQueryPolicyAllows } from "./pinQueryPolicy.js";
 
 export class QueryDeliveryError extends Error {
   constructor(readonly code: string, readonly status = 409) { super(code); }
 }
 export type DeliveryAction = "VIEW" | "EXECUTE" | "EXPORT";
-export type RuntimeIdentity = { userId: number; tokenVersion: number; permissions: string[] };
+export type RuntimeIdentity = { userId: number; tokenVersion: number; permissions: string[];
+  pinSession?: { sessionId: string; generation: string; credentialVersion: number; pinVersion: number } };
 
 /** Re-verifies signature, expiry and current session at every delivery boundary. */
 export function createRuntimeIdentityVerifier(session = getTokenSessionState) {
@@ -58,6 +60,7 @@ export const defaultQueryDeliveryDependencies = {
   snapshot: readConfirmedDatasetDeliverySnapshot, dataset: getDataset,
   patientState: patientAuditService.dashboardState, auditPatient: auditDashboardPatientList,
   execute: executeSavedDataset, reports: listReportColumns,
+  pinPolicy: readPinQueryPolicy,
 };
 
 /** Raw rows are request-local and used only for required auditing before the shared policy engine. */
@@ -65,6 +68,7 @@ export function createQueryDelivery(deps = defaultQueryDeliveryDependencies) {
   async function open(queryId: number, action: DeliveryAction, identity: (transaction?: sql.Transaction) => Promise<RuntimeIdentity>) {
     async function inspect(transaction?: sql.Transaction) {
       const actor = await identity(transaction);
+      if (actor.pinSession && action === "EXPORT") throw new QueryDeliveryError("PIN_ASSURANCE_REQUIRED", 403);
       const required = ["VIEW_QUERY", ...(action === "VIEW" ? [] : ["EXECUTE_QUERY"]), ...(action === "EXPORT" ? ["EXPORT_QUERY"] : [])];
       if (!required.every(p => actor.permissions.includes(p))) throw new QueryDeliveryError("FORBIDDEN", 403);
       const query = await deps.access(actor.userId, queryId, transaction);
@@ -75,6 +79,8 @@ export function createQueryDelivery(deps = defaultQueryDeliveryDependencies) {
       if (snapshot.datasetId !== query.datasetId || snapshot.policy.version !== snapshot.sensitivityVersion
         || !/^[0-9a-f]{16}$/u.test(snapshot.definitionVersion)) throw new QueryDeliveryError("QUERY_DELIVERY_VERSION_INVALID", 503);
       applyDatasetDeliveryPolicy({ policy: snapshot.policy, columns: [], rows: [] });
+      const pinPolicy = actor.pinSession ? await deps.pinPolicy(query.datasetId, transaction) : null;
+      if (pinPolicy && !pinQueryPolicyAllows(snapshot, pinPolicy)) throw new QueryDeliveryError("PIN_ASSURANCE_REQUIRED", 403);
       const dataset = await deps.dataset(query.datasetId, transaction);
       if (!dataset?.isActive || dataset.isArchived || dataset.id !== query.datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
       const patient = snapshot.patientAudit.enabled ? await deps.patientState(query.datasetId, transaction) : null;
@@ -88,7 +94,7 @@ export function createQueryDelivery(deps = defaultQueryDeliveryDependencies) {
         query.canView, query.canExecute, query.canExport, query.allowExcelExport];
       const fingerprint = createHash("sha256").update(JSON.stringify([
         actor.userId, actor.tokenVersion, [...actor.permissions].sort(), queryEvidence, revision,
-        snapshot, dataset.dataSourceId, patient?.fingerprint, reports,
+        snapshot, dataset.dataSourceId, patient?.fingerprint, reports, actor.pinSession, pinPolicy,
       ])).digest("hex");
       return { actor, query, snapshot, dataset, reports, fingerprint };
     }

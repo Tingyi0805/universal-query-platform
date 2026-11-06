@@ -1,4 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { configuredPinLength } from "../security/pinPolicy";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 import "./AdminUsersPage.css";
@@ -6,6 +7,7 @@ import "./WorkstationManagement.css";
 
 export function QuickPinPolicyPanel() {
   const { accessToken } = useAuth();
+  const identity=useRef(0);
   const [length, setLength] = useState(6);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -14,21 +16,26 @@ export function QuickPinPolicyPanel() {
   const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    apiRequest<{ pinLength: number }>("/admin/quick-pin-policy", {}, accessToken)
-      .then((result) => setLength(result.pinLength))
-      .catch((err: unknown) => { setReadFailed(true); setError(err instanceof Error ? err.message : "讀取 PIN 政策失敗"); })
-      .finally(() => setLoading(false));
+    const epoch=++identity.current;setLoading(true);setReadFailed(false);setError("");setNotice("");
+    apiRequest<{ pinLength: number }>("/admin/quick-pin-policy", {}, accessToken,()=>identity.current===epoch)
+      .then((result) => {if(identity.current===epoch)setLength(configuredPinLength(result.pinLength));})
+      .catch(()=>{if(identity.current===epoch){setReadFailed(true);setError("讀取 PIN 政策失敗或內容無效，禁止修改。");}})
+      .finally(() => {if(identity.current===epoch)setLoading(false);});
+    return()=>{++identity.current;};
   }, [accessToken]);
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if(loading||readFailed||saving)return;
+    const epoch=identity.current;
     if (!window.confirm("修改 PIN 長度會停用所有已註冊的 PIN，員工須重新設定。確定繼續？")) return;
     setSaving(true); setError(""); setNotice("");
     try {
-      await apiRequest("/admin/quick-pin-policy", { method: "PUT", body: JSON.stringify({ pinLength: length }) }, accessToken);
+      await apiRequest("/admin/quick-pin-policy", { method: "PUT", body: JSON.stringify({ pinLength: configuredPinLength(length) }) }, accessToken,()=>identity.current===epoch);
+      if(identity.current!==epoch)return;
       setNotice("PIN 長度政策已更新。已註冊的 PIN 需重新設定。");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "儲存失敗");
+      if(identity.current===epoch)setError("政策更新未完成，請重新載入確認；不會自動重送。");
     } finally { setSaving(false); }
   }
 

@@ -1,0 +1,7 @@
+.dashboard-chart-projection{width:100%;height:100%;min-width:0;min-height:0;display:flex;flex-direction:column;justify-content:center;overflow:hidden;color:inherit}
+.dashboard-chart-projection svg{display:block;flex:1 1 auto;width:100%;min-height:0;max-height:100%;height:auto}
+.dashboard-chart-legend{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:.35em 1em;align-items:center;justify-content:center;font-size:.7em;line-height:1.5;max-height:33%;overflow:auto}
+.dashboard-chart-legend span{display:inline-flex;gap:.35em;align-items:center}
+.dashboard-chart-legend i{display:inline-block;width:.9em;height:.9em;border-radius:2px;flex-shrink:0}
+.dashboard-chart-empty{width:100%;height:100%;display:flex;align-items:center;justify-content:center;text-align:center;font-size:.8em;color:inherit}
+.dashboard-chart-a11y{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap;border:0}

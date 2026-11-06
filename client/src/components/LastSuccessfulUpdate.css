@@ -1,0 +1,7 @@
+.uqp-last-success { box-sizing:border-box; padding:8px 12px; font-size:13px; line-height:20px; overflow-wrap:anywhere; color:#e2e8f0; background:#172033; max-width:100%; text-align:right; }
+.uqp-last-success[data-position$="LEFT"] { text-align:left; }
+.dashboard-preview-card { display:flex; flex-direction:column; }
+.dashboard-preview-card > .uqp-last-success[data-position^="TOP"] { order:-1; }
+.dashboard-display-screen > .uqp-last-success { position:absolute; z-index:10; right:0; bottom:0; max-width:100vw; }
+.dashboard-display-screen > .uqp-last-success[data-position^="TOP"] { top:0; bottom:auto; }
+.dashboard-display-screen > .uqp-last-success[data-position$="LEFT"] { left:0; right:auto; }

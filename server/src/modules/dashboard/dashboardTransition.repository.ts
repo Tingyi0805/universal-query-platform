@@ -1,3 +1,4 @@
+import { devicePendingInvalidationClause } from "./dashboardDeviceCredentialWriters.js";
 import sql from "mssql";
 import { getTokenSessionState } from "../auth/auth.repository.js";
 import { requireSecuritySchema } from "../securityContract/securityContract.repository.js";
@@ -38,10 +39,11 @@ export function createDashboardTransitionStore(deps = defaultTransitionDependenc
           if (result.rowsAffected[0] !== 1) throw new QuerySourceError("DASHBOARD_TRANSITION_VERSION_CONFLICT");
         },
         async revokeCredentials(id) {
+          const pendingClause=await devicePendingInvalidationClause(request());
           // Retain device identities/settings and eligibility for later explicit Query-only
           // authorization; invalidate every old credential without issuing a replacement.
           await scoped(id).query(`UPDATE uqp.DashboardDisplayDevice
-            SET TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),LastUsedAtUtc=NULL,
+            SET ${pendingClause}TokenHash=CONVERT(CHAR(64),HASHBYTES('SHA2_256',CRYPT_GEN_RANDOM(32)),2),LastUsedAtUtc=NULL,
             QueryModeGrantVersion=NULL,DelegatorTokenVersion=NULL WHERE DashboardId=@id`);
         },
         async updateApprovalParameters(id, parameters) {

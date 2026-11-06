@@ -1,3 +1,8 @@
+import { DashboardChartDraftEditor } from "../components/DashboardChartDraftEditor";
+import { DashboardDrilldownEditor } from "../components/DashboardDrilldownEditor";
+import { graphIssue, type DrillGraph } from "../dashboard/drilldown";
+import { createPortal } from "react-dom";
+import { updatePositions, updateSettings } from "../dashboard/lastSuccessfulUpdate";
 import { dashboardOperationError } from "../dashboard/managementStatus";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
 import { sourcePreviewFailure } from "../dashboard/dataSettings";
@@ -164,11 +169,16 @@ function withClientKeys(profile: Omit<LayoutProfile, "clientKey" | "widgets"> & 
   };
 }
 
-export function DashboardLayoutDesignerPage() {
+export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=false,active=true,playbackTarget,onDirtyChange}:{dashboardId?:number;embedded?:boolean;active?:boolean;playbackTarget?:HTMLElement|null;onDirtyChange?:(dirty:boolean)=>void}={}) {
   const { id } = useParams();
-  const dashboardId = Number(id);
+  const dashboardId = providedId??Number(id);
+  const activeRef=useRef(active);activeRef.current=active;
+  const previewRead=useRef(0),previewRequest=useRef<AbortController|null>(null);
+  const [savedProfiles,setSavedProfiles]=useState<string|null>(null);
   const { accessToken } = useAuth();
 
+  const [drillPending,setDrillPending]=useState(false);
+  const [rootQueryId,setRootQueryId]=useState(0);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
   const [activeProfileKey, setActiveProfileKey] = useState("");
   const [selectedWidgetKey, setSelectedWidgetKey] = useState("");
@@ -230,8 +240,26 @@ export function DashboardLayoutDesignerPage() {
 
   const [sourceVersion, setSourceVersion] = useState<string | undefined>(undefined);
   const loadSequence = useRef(0);
+  const refreshPreview=useCallback(async(configuration?:QuerySourceConfiguration|null)=>{
+    const read=++previewRead.current;previewRequest.current?.abort();const controller=new AbortController();previewRequest.current=controller;
+    if(!activeRef.current)return;
+    const failures:string[]=[];
+    try {
+      configuration??=trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`,{signal:controller.signal},accessToken));
+      const supplemental=configuration.sources.filter(source=>source.isEnabled&&source.queryDefinitionId!==null);
+      const primary=await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)
+        .then(value=>({...value,reportColumns:[],dashboard:{id:dashboardId,name:configuration!.presentation?.name??"Query-only 設計預覽",code:"",parameters:configuration!.primary.parameters??{},pageSize:configuration!.primary.pageSize,pageSeconds:configuration!.primary.pageSeconds}}))
+        .catch(error=>{failures.push(sourcePreviewFailure("PRIMARY",error));return null;});
+      const sources=await Promise.allSettled(supplemental.map(async source=>({key:source.sourceKey,preview:await apiRequest<SupplementalPreview>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/page`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)})));
+      if(read!==previewRead.current||!activeRef.current)return;
+      sources.forEach((result,index)=>{if(result.status==="rejected")failures.push(sourcePreviewFailure(supplemental[index]!.sourceKey,result.reason));});
+      setPreview(primary);setSupplementalPreviews(Object.fromEntries(sources.filter((r):r is PromiseFulfilledResult<{key:string;preview:SupplementalPreview}>=>r.status==="fulfilled").map(r=>[r.value.key,r.value.preview])));
+      if(failures.length)setError(failures.join("\n"));
+    }catch(error){if(read===previewRead.current&&activeRef.current){setPreview(null);setSupplementalPreviews({});setError(managementError(error));}}
+  },[dashboardId,accessToken]);
   const load = useCallback(async () => {
     const sequence = ++loadSequence.current;
+    ++previewRead.current;previewRequest.current?.abort();
     if (!Number.isFinite(dashboardId)) return;
     setLoading(true);
     setError("");
@@ -249,9 +277,10 @@ export function DashboardLayoutDesignerPage() {
       const layoutResult = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & { widgets: Omit<LayoutWidget, "clientKey">[] }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken);
       if (sequence !== loadSequence.current) return;
       const loadedProfiles = layoutResult.profiles.map(withClientKeys);
-      setProfiles(loadedProfiles);
+      setSavedProfiles(JSON.stringify(loadedProfiles));setProfiles(loadedProfiles);
       setActiveProfileKey(loadedProfiles.find(profile => profile.isDefault)?.clientKey ?? loadedProfiles[0]?.clientKey ?? "");
       if (configuration) {
+        setRootQueryId(configuration.primary.queryDefinitionId ?? 0);
         const after = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken));
         if (sequence !== loadSequence.current) return;
         if (after.version !== configuration.version) throw Object.assign(new Error(), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
@@ -260,32 +289,16 @@ export function DashboardLayoutDesignerPage() {
       }
       const supplemental: SupplementalSource[] = configuration?.sources.map(source => ({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled), queryDefinitionId: source.queryDefinitionId })) ?? [];
       setSupplementalSources(supplemental);
-      const previewResult = !configuration ? null : await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page`,
-        { method: "POST", body: JSON.stringify({ page: 1 }) }, accessToken)
-        .then(value => ({ ...value, reportColumns: [], dashboard: { id: dashboardId, name: configuration!.presentation?.name ?? "Query-only 設計預覽", code: "", parameters: configuration!.primary.parameters ?? {}, pageSize: configuration!.primary.pageSize, pageSeconds: configuration!.primary.pageSeconds } }))
-        .catch(error => { failures.push(sourcePreviewFailure("PRIMARY", error)); return null; });
-      const previewSources = supplemental.filter(source => source.isEnabled && source.queryDefinitionId !== null);
-      const sourceResults = await Promise.allSettled(previewSources.map(async source => ({
-        key: source.sourceKey,
-        preview: await apiRequest<SupplementalPreview>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/page`, { method: "POST", body: JSON.stringify({ page: 1 }) }, accessToken),
-      })));
-      if (sequence !== loadSequence.current) return;
-      sourceResults.forEach((result, index) => {
-        if (result.status === "rejected") failures.push(sourcePreviewFailure(previewSources[index]!.sourceKey, result.reason));
-      });
-      if (failures.length) setError(failures.join("\n"));
-      setSupplementalPreviews(Object.fromEntries(sourceResults.filter(
-        (item): item is PromiseFulfilledResult<{ key: string; preview: SupplementalPreview }> => item.status === "fulfilled",
-      ).map(item => [item.value.key, item.value.preview])));
-      setPreview(previewResult);
+      if(failures.length)setError(failures.join("\n"));
+      if(configuration&&activeRef.current&&!embedded)await refreshPreview(configuration);
     } catch (e) {
       if (sequence === loadSequence.current) setError(managementError(e));
     } finally {
       if (sequence === loadSequence.current) setLoading(false);
     }
-  }, [accessToken, dashboardId]);
+  }, [accessToken, dashboardId, refreshPreview, embedded]);
 
-  useEffect(() => { setProfiles([]); setActiveProfileKey(""); setSelectedWidgetKey(""); void load(); return () => { loadSequence.current++; }; }, [load]);
+  useEffect(() => { setProfiles([]); setActiveProfileKey(""); setSelectedWidgetKey(""); void load(); return () => { loadSequence.current++;++previewRead.current;previewRequest.current?.abort(); }; }, [load]);
   useEffect(() => {
     const changed = (event: Event) => { const detail = (event as CustomEvent).detail;
       if (detail?.dashboardId === dashboardId && detail.origin !== "layout") { setSourceVersion(undefined); setError("設定已變更；版型草稿保留，請先另行保存，再重新載入版型與版本。禁止自動覆寫。"); }
@@ -293,6 +306,12 @@ export function DashboardLayoutDesignerPage() {
     window.addEventListener("uqp.dashboard.configuration.changed", changed);
     return () => window.removeEventListener("uqp.dashboard.configuration.changed", changed);
   }, [dashboardId]);
+
+  useEffect(()=>{
+    if(!active){++previewRead.current;previewRequest.current?.abort();setPreview(null);setSupplementalPreviews({});}
+    else if(embedded&&!loading)void refreshPreview();
+  },[active,embedded,loading,refreshPreview]);
+  useEffect(()=>{onDirtyChange?.(savedProfiles!==null&&JSON.stringify(profiles)!==savedProfiles);},[profiles,savedProfiles,onDirtyChange]);
 
   const activeProfile = useMemo(
     () => profiles.find((profile) => profile.clientKey === activeProfileKey) ?? null,
@@ -640,6 +659,11 @@ export function DashboardLayoutDesignerPage() {
 
   async function saveLayout() {
     if (saving) return;
+    if(drillPending){setError("下鑽設定尚未完成，請加入層級或取消新增。");return;}
+    for(const profile of profiles) {
+      const g=profile.config.interactiveDrilldown as DrillGraph|undefined;
+      if(g){const issue=graphIssue(g);if(issue||profile.widgets.filter(w=>w.widgetType==="TABLE"&&w.config.drilldownRoot===true&&String(w.config.dataSourceKey??"PRIMARY")==="PRIMARY").length!==1){setError(issue??"每個下鑽版型必須有且只有一個 PRIMARY TABLE 入口。");return;}}
+    }
     if (unavailableReferences.length) { setError(`Widget 引用來源不可用：${unavailableReferences.join("、")}。請先修正引用或來源，既有版型保留。`); return; }
     if (sourceVersion === undefined) { setError("來源版本不可用或看板仍啟用，禁止儲存。請先安全停用並重新載入。"); return; }
     setSaving(true);
@@ -657,7 +681,7 @@ export function DashboardLayoutDesignerPage() {
       const result = await apiRequest<{ version: string }>(`/dashboards/${dashboardId}/query-sources/v1/layout`, { method: "PUT", body: JSON.stringify({ ...payload, expectedVersion: sourceVersion }) }, accessToken);
       if (sequence !== loadSequence.current) return;
       if (!/^[a-f0-9]{64}$/.test(result.version)) throw new Error("RESPONSE_INVALID");
-      setSourceVersion(result.version); setNotice("Dashboard 版面已儲存。");
+      setSavedProfiles(JSON.stringify(profiles));setSourceVersion(result.version); setNotice("Dashboard 版面已儲存。");
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "layout" } }));
     } catch (e) {
       setSourceVersion(undefined); setError(managementError(e));
@@ -666,20 +690,36 @@ export function DashboardLayoutDesignerPage() {
     }
   }
 
+  const updateControls=activeProfile?<>
+              <label>最後成功更新時間位置<select aria-label="最後成功更新時間位置" value={updateSettings(activeProfile.config).position} onChange={e=>updateActiveProfile({config:{...activeProfile.config,lastSuccessPosition:e.target.value}})}>{Object.entries(updatePositions).map(([value,label])=><option key={value} value={value}>{label}</option>)}</select></label>
+              <label>最後成功更新時間格式<select aria-label="最後成功更新時間格式" value={updateSettings(activeProfile.config).format} onChange={e=>updateActiveProfile({config:{...activeProfile.config,lastSuccessFormat:e.target.value}})}><option value="TIME">時分秒</option><option value="DATE_TIME">日期與時分秒</option></select></label>
+  </>:null;
+  const playbackControls=playbackTarget&&createPortal(<section className="dashboard-editor-card" aria-label="更新時間顯示設定"><h2>最後成功更新時間</h2>
+    <p>與版面設計共用版型草稿；儲存會保留並提交整份版型。</p>
+    <label>時間顯示版型<select aria-label="時間顯示版型" value={activeProfileKey} onChange={e=>setActiveProfileKey(e.target.value)}>{profiles.map(p=><option key={p.clientKey} value={p.clientKey}>{p.name}</option>)}</select></label>
+    <div className="dashboard-editor-form">{updateControls}</div>
+    <button type="button" disabled={saving||sourceVersion===undefined||unavailableReferences.length>0} onClick={()=>void saveLayout()}>儲存版面</button>
+    <button type="button" disabled={saving} onClick={()=>{if(window.confirm("重新載入會取代未儲存的版型草稿，確定繼續？"))void load();}}>重新載入版型與版本</button>
+    {!active&&error&&<p role="alert">{error}</p>}{!active&&notice&&<p role="status">{notice}</p>}
+  </section>,playbackTarget);
+
+  const PageContainer=embedded?"div":"main";
   if (loading) {
-    return <main className="page-shell"><section className="notice">載入版面設計器…</section></main>;
+    return <PageContainer className={embedded?undefined:"page-shell"}><section className="notice">載入版面設計器…</section></PageContainer>;
   }
 
   return (
-    <main className="page-shell dashboard-layout-page">
+    <PageContainer className={embedded?"dashboard-layout-page dashboard-layout-embedded":"page-shell dashboard-layout-page"}>
+      {playbackControls}
       <div className="page-toolbar">
         <div>
           <p className="eyebrow">Dashboard Layout Designer</p>
-          <h1>{preview?.dashboard.name ?? "Dashboard"}－版面設計</h1>
+          {embedded?<h2>{preview?.dashboard.name??"Dashboard"}－版面設計</h2>:<h1>{preview?.dashboard.name??"Dashboard"}－版面設計</h1>}
           <p className="subtitle">依螢幕尺寸建立不同版型；拖曳元件調整位置，使用右側屬性調整大小與內容。</p>
         </div>
         <div className="dashboard-layout-toolbar-actions">
-          <Link className="secondary-button link-button" to="/designer/dashboards">返回 Dashboard</Link>
+          {!embedded&&<Link className="secondary-button link-button" to="/designer/dashboards/chart-lab">合成圖表實測區</Link>}
+          {!embedded&&<Link className="secondary-button link-button" to="/designer/dashboards">返回 Dashboard</Link>}
           {activeProfile && (
             <button
               className="secondary-button"
@@ -698,8 +738,8 @@ export function DashboardLayoutDesignerPage() {
         </div>
       </div>
 
-      {error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
-      {notice && <section className="notice">{notice}</section>}
+      {(!embedded||active)&&error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
+      {(!embedded||active)&&notice && <section className="notice">{notice}</section>}
 
       {unavailableReferences.length > 0 && <p role="alert">Widget 引用來源不可用：{unavailableReferences.join("、")}。既有引用保留，請修正來源或明確變更 Widget；禁止儲存。</p>}
       <p>版型僅透過新版版本化 API 儲存；載入與預覽不會儲存。停用或 pending 來源不能新增引用，既有引用會保留並由後端拒絕不安全儲存。</p>
@@ -779,6 +819,7 @@ export function DashboardLayoutDesignerPage() {
                   })}
                 />
               </label>
+              {playbackTarget===undefined&&updateControls}
               <button type="button" disabled={activeProfile.isDefault} onClick={setDefaultProfile}>設為預設</button>
               <button type="button" disabled={profiles.length <= 1} onClick={deleteProfile}>刪除版型</button>
             </div>
@@ -792,6 +833,12 @@ export function DashboardLayoutDesignerPage() {
               </button>
             ))}
           </div>
+          {activeProfile && <DashboardChartDraftEditor
+            key={activeProfile.clientKey}
+            canvasWidth={activeProfile.canvasWidth}
+            canvasHeight={activeProfile.canvasHeight}
+            sourceKeys={supplementalSources.filter(s=>s.isEnabled&&s.queryDefinitionId!==null).map(s=>s.sourceKey)}
+          />}
         </aside>
 
         <section className="layout-canvas-stage">
@@ -945,6 +992,10 @@ export function DashboardLayoutDesignerPage() {
                 </>
               )}
 
+              {selectedWidget.widgetType === "TABLE" && activeProfile && rootQueryId>0 && String(selectedWidget.config.dataSourceKey??"PRIMARY")==="PRIMARY" &&
+                <DashboardDrilldownEditor key={`${activeProfile.clientKey}:${selectedWidget.clientKey}`} value={activeProfile.config.interactiveDrilldown} rootQueryId={rootQueryId} token={accessToken} onPending={setDrillPending}
+                  onChange={g=>{setProfiles(current=>current.map(p=>{if(p.clientKey!==activeProfile.clientKey)return p;const config={...p.config};if(g)config.interactiveDrilldown=g;else delete config.interactiveDrilldown;
+                    return {...p,config,widgets:p.widgets.map(w=>({...w,config:{...w.config,drilldownRoot:!!g&&w.clientKey===selectedWidget.clientKey}}))};}));}}/>}
               {selectedWidget.widgetType === "TABLE" && (
                 <div className="layout-mask-settings">
                   <strong>表格欄位顯示格式</strong>
@@ -1179,6 +1230,6 @@ export function DashboardLayoutDesignerPage() {
           )}
         </aside>
       </div>
-    </main>
+    </PageContainer>
   );
 }

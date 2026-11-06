@@ -1,9 +1,11 @@
+import { createPortal } from "react-dom";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../api/client";
 import { managementError, sourceSettings, trustedConfiguration, type QuerySourceConfiguration, type QuerySourceSettings } from "../dashboard/querySourceManagement";
 type Query = { id: number; name: string; code: string; canExecute: boolean };
 const initial: QuerySourceSettings = { sourceKey: "", queryDefinitionId: null, refreshSeconds: 30, pageSize: 10, pageSeconds: 15, maxRows: 1000, isEnabled: true };
-export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashboardId: number; accessToken: string | null }) {
+export function DashboardDataSourcesEditor({ dashboardId, accessToken, playbackTarget, playbackActive=false, onDirtyChange }: { dashboardId: number; accessToken: string | null; playbackTarget?:HTMLElement|null; playbackActive?:boolean;onDirtyChange?:(dirty:boolean)=>void }) {
+  const [dirty,setDirty]=useState(false);
   const [configuration, setConfiguration] = useState<QuerySourceConfiguration | null>(null);
   const [queries, setQueries] = useState<Query[]>([]);
   const [draftVersion, setDraftVersion] = useState<string | null>(null);
@@ -12,6 +14,8 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [remove, setRemove] = useState<QuerySourceSettings | null>(null);
+  const [removeVersion,setRemoveVersion]=useState<string|null>(null);
+  useEffect(()=>{onDirtyChange?.(dirty||remove!==null);},[dirty,remove,onDirtyChange]);
   const epoch=useRef(0), configurationRead=useRef(0);
   const base = `/dashboards/${dashboardId}/query-sources/v1`;
   async function reload() {
@@ -25,7 +29,7 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
     ++epoch.current;
     const readVersion=++configurationRead.current;
     let cancelled = false;
-    setQueries([]); setConfiguration(null); setDraft(initial); setParametersJson("{}"); setMessage(""); setRemove(null);
+    setDirty(false); setQueries([]); setConfiguration(null); setDraft(initial); setParametersJson("{}"); setMessage(""); setRemove(null);
     void apiRequest<QuerySourceConfiguration>(`${base}/configuration`, {}, accessToken).then(response => {
       const value = trustedConfiguration(response);
       if (!cancelled && readVersion===configurationRead.current) { setConfiguration(value); setDraftVersion(value.version); }
@@ -40,14 +44,23 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
     window.addEventListener("uqp.dashboard.configuration.changed",changed);
     return ()=>window.removeEventListener("uqp.dashboard.configuration.changed",changed);
   },[dashboardId,accessToken]);
+  const playbackChosen=useRef(false);
+  useEffect(()=>{
+    if(!playbackActive){playbackChosen.current=false;return;}
+    if(playbackChosen.current||busy||!configuration)return;
+    playbackChosen.current=true;
+    if(!dirty&&!draft.sourceKey){setDraftVersion(configuration.version);setDraft({...configuration.primary,maxRows:configuration.primary.maxRows??1000});setParametersJson(JSON.stringify(configuration.primary.parameters??{},null,2));}
+  },[playbackActive,busy,configuration,dirty,draft.sourceKey]);
   function edit(source: QuerySourceSettings) {
+    if(dirty&&!window.confirm("切換來源會捨棄目前來源草稿，確定繼續？"))return;
+    setDirty(false);
     setDraftVersion(configuration?.version ?? null);
     setDraft({ ...source, maxRows: source.maxRows ?? 1000 }); setParametersJson(JSON.stringify(source.parameters ?? {}, null, 2));
     setMessage(source.parameters === undefined ? "此來源參數無法安全讀取；儲存將明確替換參數，請填寫完整設定。" : "");
   }
   async function save(removal?: QuerySourceSettings) {
     const requestEpoch=epoch.current;
-    if (!configuration?.editable || busy || (!removal && draftVersion !== configuration.version)) return;
+    if (!configuration?.editable || busy || (removal?removeVersion!==configuration.version:draftVersion!==configuration.version)) return;
     let settings: ReturnType<typeof sourceSettings> | undefined;
     try {
       if (!removal) {
@@ -77,7 +90,7 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
       await apiRequest(base + (primary ? "/primary" : ""), { method: "PATCH", body: JSON.stringify(body) }, accessToken);
       if(requestEpoch!==epoch.current)return;
       const converted = !removal && draft.sourceKey !== "PRIMARY" && configuration.sources.some(source => source.id === draft.id && source.queryDefinitionId === null);
-      setRemove(null); setDraft(initial); setParametersJson("{}"); setMessage(converted ? "來源已轉換；請確認所選 Dataset 的公共顯示政策。未啟用播放。" : "設定已儲存。");
+      setDirty(false); setRemove(null); setDraft(initial); setParametersJson("{}"); setMessage(converted ? "來源已轉換；請確認所選 Dataset 的公共顯示政策。未啟用播放。" : "設定已儲存。");
       await reload();
       if (requestEpoch !== epoch.current) return;
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed",{detail:{dashboardId,origin:"sources"}}));
@@ -103,6 +116,8 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
     } catch (error) { if (requestEpoch === epoch.current) { setConfiguration(previous => previous ? { ...previous, editable: false } : null); setMessage(managementError(error)); } }
     finally { if (requestEpoch === epoch.current) setBusy(false); }
   }
+  const timingFields=([['refreshSeconds','更新秒數',5,3600],['pageSize','每頁筆數',1,100],['pageSeconds','換頁秒數',5,3600]] as const).map(([key,label,min,max])=><label key={key}>{label}<input type="number" min={min} max={max} value={draft[key]??""} onChange={event=>{setDirty(true);setDraft({...draft,[key]:Number(event.target.value)});}}/></label>);
+  const feedback=<>{message&&<p role="status">{message}</p>}{configuration&&draftVersion!==configuration.version&&<p role="status">來源版本已變更；草稿保留，請明確重選來源或重新載入後確認，不會自動重送。</p>}</>;
   return <section className="dashboard-editor-card">
     <h2>Query-only 資料來源</h2>
     <p>含 PRIMARY 最多 8 個來源。僅能選擇已發布且有執行權限的 Query；須先安全停用看板。遮蔽由後端執行。轉換後仍須重新核准敏感欄位；不會自動啟用播放。pending 來源須由管理員明確選擇與歷史 Dataset 相符的 Query。</p>
@@ -112,31 +127,38 @@ export function DashboardDataSourcesEditor({ dashboardId, accessToken }: { dashb
         <p role="status">PRIMARY 尚未完成新版資料來源轉換。請在 Dashboard 停用時，選取 PRIMARY 並確認 Query、參數及資料量上限；首次儲存前會再次要求確認。未完成轉換前，資料揭露更新可能會被安全機制阻擋。</p>
       )}
       {!configuration.editable && <p role="status">目前不可編輯，請透過既有安全流程停用看板。</p>}
-      <table className="preview-table"><thead><tr><th>來源</th><th>Query</th><th>更新／換頁秒數</th><th>狀態</th><th>操作</th></tr></thead>
+      <div className="dashboard-table-wrap" role="region" aria-label="資料來源設定表格" tabIndex={0}><table className="preview-table"><thead><tr><th>來源</th><th>Query</th><th>更新／換頁秒數</th><th>狀態</th><th>操作</th></tr></thead>
         <tbody>{[configuration.primary, ...configuration.sources].map(source => <tr key={source.sourceKey}>
           <td>{source.sourceKey}</td><td>{queries.find(query => query.id === source.queryDefinitionId)?.name ?? source.queryDefinitionId ?? "待明確選取 Query"}</td>
           <td>{source.refreshSeconds}／{source.pageSeconds}</td><td>{source.errorCode ?? source.bindingState ?? "PRIMARY"}</td>
           <td><button type="button" disabled={busy || !configuration.editable} onClick={() => edit(source)}>編輯 {source.sourceKey}</button>
             {source.id && source.queryDefinitionId === null && <button type="button" disabled={busy || !configuration.editable} onClick={() => void revokePending(source)}>撤銷 {source.sourceKey} 舊核准</button>}
-            {source.id && <button type="button" disabled={busy || !configuration.editable} onClick={() => setRemove(source)}>移除 {source.sourceKey}</button>}</td>
-        </tr>)}</tbody></table>
-      <fieldset disabled={busy || !configuration.editable} className="dashboard-editor-form"><legend>{draft.sourceKey === "PRIMARY" ? "PRIMARY 設定" : "來源設定"}</legend>
+            {source.id && <button type="button" disabled={busy || !configuration.editable} onClick={() => {setRemove(source);setRemoveVersion(configuration.version);}}>移除 {source.sourceKey}</button>}</td>
+        </tr>)}</tbody></table></div>
+      <fieldset disabled={busy || !configuration.editable} className="dashboard-editor-form" onChange={()=>setDirty(true)}><legend>{draft.sourceKey === "PRIMARY" ? "PRIMARY 設定" : "來源設定"}</legend>
         <label>來源代碼<input value={draft.sourceKey} disabled={Boolean(draft.id) || draft.sourceKey === "PRIMARY"} onChange={event => setDraft({ ...draft, sourceKey: event.target.value })}/></label>
         <label>已發布 Query<select aria-label="已發布 Query" value={draft.queryDefinitionId ?? ""} onChange={event => setDraft({ ...draft, queryDefinitionId: Number(event.target.value) || null })}>
           <option value="">請明確選取</option>{queries.map(query => <option key={query.id} value={query.id}>{query.name}（{query.code}）</option>)}
         </select></label>
-        {([['refreshSeconds','更新秒數',5,3600],['pageSize','每頁筆數',1,100],['pageSeconds','換頁秒數',5,3600],['maxRows','資料量上限',1,10000]] as const).map(([key,label,min,max]) =>
-          <label key={key}>{label}<input type="number" min={min} max={max} value={draft[key] ?? ""} onChange={event => setDraft({ ...draft, [key]: Number(event.target.value) })}/></label>)}
+        {playbackTarget===undefined&&timingFields}
+        <label>資料量上限<input type="number" min={1} max={10000} value={draft.maxRows??""} onChange={e=>setDraft({...draft,maxRows:Number(e.target.value)})}/></label>
         <label>查詢參數 JSON<textarea rows={4} value={parametersJson} onChange={event => setParametersJson(event.target.value)}/></label>
         {draft.sourceKey !== "PRIMARY" && <label className="dashboard-source-enabled"><input type="checkbox" checked={draft.isEnabled ?? true} onChange={event => setDraft({ ...draft, isEnabled: event.target.checked })}/><span>啟用來源</span></label>}
         <button type="button" disabled={draftVersion !== configuration.version} onClick={() => void save()}>儲存目前來源</button>
-        <button type="button" onClick={() => { setDraft(initial); setDraftVersion(configuration.version); setParametersJson("{}"); }}>新增來源／取消編輯</button>
+        <button type="button" onClick={() => { setDirty(false);setDraft(initial); setDraftVersion(configuration.version); setParametersJson("{}"); }}>新增來源／取消編輯</button>
       </fieldset>
       {draftVersion !== configuration.version && <p role="status">來源版本已重新載入；原草稿保留，請重新選取來源或新增來源並確認後再儲存。</p>}
       {remove && <div role="alert">確認移除 {remove.sourceKey}？已引用來源會由後端拒絕。
-        <button type="button" disabled={busy} onClick={() => void save(remove)}>確認移除來源</button>
+        {removeVersion!==configuration.version&&<p role="status">待移除來源版本已變更；請重新選取來源並確認，不會自動套用新版本。</p>}
+        <button type="button" disabled={busy||removeVersion!==configuration.version} onClick={() => void save(remove)}>確認移除來源</button>
         <button type="button" onClick={() => setRemove(null)}>取消移除</button></div>}
     </>}
-    {message && <p role="status">{message}</p>}
+    {!playbackActive&&message && <p role="status">{message}</p>}
+    {playbackTarget&&createPortal(<section className="dashboard-editor-card" aria-label="來源播放設定"><h2>更新與換頁</h2>
+      <p>與資料設定共用目前來源草稿；保存會提交完整 Query、參數與播放設定。</p>
+      <label>播放資料來源<select aria-label="播放資料來源" disabled={busy||!configuration?.editable} value={draft.sourceKey} onChange={e=>{const source=[configuration!.primary,...configuration!.sources].find(s=>s.sourceKey===e.target.value);if(source)edit(source);}}><option value="">請選取來源</option>{configuration&&[configuration.primary,...configuration.sources].map(s=><option key={s.sourceKey} value={s.sourceKey}>{s.sourceKey}</option>)}</select></label>
+      {draft.sourceKey?<fieldset className="dashboard-editor-form" disabled={busy||!configuration?.editable}>{timingFields}<button type="button" disabled={draftVersion!==configuration?.version} onClick={()=>void save()}>儲存目前來源</button></fieldset>:<p>請選取來源；不會寫入預設值。</p>}
+      {playbackActive&&feedback}
+    </section>,playbackTarget)}
   </section>;
 }

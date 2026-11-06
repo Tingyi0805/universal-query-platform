@@ -167,10 +167,10 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
       const columns = snapshot.columns.filter((column) => resolveDeviceColumnMask(column.name, masks) !== "OMIT");
       await stillCurrent(state, id.data, token, getRequestSourceIp(req));
       const { parameters: _privateParameters, ...safeDashboard } = dashboard;
-      res.json({ dashboard: safeDashboard, query: { id: query.id, code: query.code, name: query.name },
+      res.json({ deliveredAtUtc:new Date().toISOString(), dashboard: safeDashboard, query: { id: query.id, code: query.code, name: query.name },
         reportColumns,
         result: { columns, rows },
-        page: pageInput.data.page, totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, disclosureId });
+        page: pageInput.data.page, totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, snapshotExpiresAt:snapshot.createdAt+snapshot.ttlMs, disclosureId });
     } catch (error) {
       deliveryFailure(error, res, next);
     }
@@ -237,9 +237,9 @@ export function createDashboardDevicePageRouter(deps: DevicePageDependencies) {
       if (!getDashboardPageSnapshot(snapshot.id, verification.device.id, id.data)) throw new DeliveryError(409, "DASHBOARD_SNAPSHOT_EXPIRED");
       res.setHeader("Cache-Control", "no-store");
       await stillCurrent(state, id.data, token, getRequestSourceIp(req), key.data);
-      res.json({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds,
+      res.json({ deliveredAtUtc:new Date().toISOString(), sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, pageSize: source.pageSize, pageSeconds: source.pageSeconds,
         result: { columns, rows }, page: input.data.page,
-        totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, sensitivityVersion: policy.version, disclosureId });
+        totalPages, totalRows: snapshot.rows.length, snapshotId: snapshot.id, snapshotExpiresAt:snapshot.createdAt+snapshot.ttlMs, sensitivityVersion: policy.version, disclosureId });
     } catch (error) { deliveryFailure(error, res, next); }
   });
 

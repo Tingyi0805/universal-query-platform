@@ -1,0 +1,149 @@
+-- 2B-15D-10: SINGLE-TRANSACTION CHART + GRANT synthetic prototype.
+-- NON-SCANNED DRAFT. DO NOT INSTALL IN ANY SHARED OR PRODUCTION UQP DB.
+-- Must be used ONLY after both 928 disposable draft fixtures in UQP_CH_ DB.
+-- The synthetic issuer accepts arbitrary valid ActorId; NOT deployable.
+IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19
+ THROW 51928,N'CHART_DELEGATED_DISPOSABLE_ONLY',1;
+IF OBJECT_ID(N'uqp.ChartActorDelegationDisposable',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.DashboardChartCreatePermit',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.usp_ChartCreate_IsolatedDraft',N'P') IS NULL
+ OR OBJECT_ID(N'uqp.usp_ChartDelegationIssue_IsolatedDraft',N'P') IS NULL
+ OR OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') IS NULL
+ THROW 51928,N'CHART_DELEGATED_FIXTURE_REQUIRED',1;
+IF OBJECT_ID(N'uqp.usp_ChartCreateWithDelegation_IsolatedDraft',N'P') IS NOT NULL
+ THROW 51928,N'CHART_DELEGATED_ALREADY_INSTALLED',1;
+EXEC(N'CREATE PROCEDURE uqp.usp_ChartCreateWithDelegation_IsolatedDraft
+ @DashboardId bigint,@ProfileId bigint,@ActorId bigint,@TokenVersion int,
+ @RequestId uniqueidentifier,@GrantId uniqueidentifier,@Secret varbinary(max),
+ @SourceKey nvarchar(64),@ConfigJson nvarchar(max),
+ @X int,@Y int,@Width int,@Height int
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+ SET NOCOUNT ON;
+ SET XACT_ABORT ON;
+ IF LEFT(DB_NAME(),7)<>N''UQP_CH_'' OR LEN(DB_NAME())<>19
+  THROW 51928,''CHART_DRAFT_DISPOSABLE_ONLY'',1;
+ IF @@TRANCOUNT<>0
+  THROW 51928,''CHART_DRAFT_EXTERNAL_TRANSACTION_BLOCKED'',1;
+ IF @DashboardId<=0 OR @ProfileId<=0 OR @ActorId<=0 OR @TokenVersion<=0
+   OR @RequestId IS NULL OR @GrantId IS NULL OR @Secret IS NULL
+   OR DATALENGTH(@Secret)<>32 OR @SourceKey IS NULL OR @ConfigJson IS NULL
+   OR @X<0 OR @Y<0 OR @Width<160 OR @Height<120
+   OR @Width>7680 OR @Height>4320 OR DATALENGTH(@ConfigJson)>16384
+   OR ISJSON(@ConfigJson)<>1
+  THROW 51928,''CHART_DRAFT_INPUT_INVALID'',1;
+ IF @SourceKey NOT LIKE N''[A-Za-z]%'' AND @SourceKey<>N''PRIMARY''
+  THROW 51928,''CHART_DRAFT_SOURCE_INVALID'',1;
+ IF JSON_VALUE(@ConfigJson,N''$.dataSourceKey'')<>@SourceKey
+   OR JSON_VALUE(@ConfigJson,N''$.version'')<>N''1''
+   OR JSON_VALUE(@ConfigJson,N''$.valueMode'')<>N''QUERY_RESULT''
+   OR JSON_VALUE(@ConfigJson,N''$.chartType'') NOT IN (N''BAR'',N''LINE'',N''PIE'')
+   OR JSON_VALUE(@ConfigJson,N''$.categoryColumn'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.valueColumn'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.categoryColumn'')=JSON_VALUE(@ConfigJson,N''$.valueColumn'')
+  THROW 51928,''CHART_DRAFT_CONFIG_INVALID'',1;
+ DECLARE @auditRows TABLE(Id bigint NOT NULL);
+ DECLARE @widgetRows TABLE(Id bigint NOT NULL);
+ DECLARE @lockResult int;
+ DECLARE @digest char(64)=LOWER(CONVERT(char(64),HASHBYTES(''SHA2_256'',
+   CONVERT(varbinary(max),CONVERT(varchar(max),
+     @ConfigJson COLLATE Latin1_General_100_CI_AS_SC_UTF8))),2));
+ BEGIN TRY
+  SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+  BEGIN TRANSACTION;
+  DECLARE @lockResource nvarchar(255)=N''UQP:CHART:''+CONVERT(nvarchar(20),@DashboardId);
+  EXEC @lockResult=sys.sp_getapplock
+   @Resource=@lockResource,
+   @LockMode=N''Exclusive'',@LockOwner=N''Transaction'',@LockTimeout=5000;
+  IF @lockResult<0 THROW 51928,''CHART_DRAFT_LOCK_FAILED'',1;
+  IF NOT EXISTS(SELECT 1 FROM uqp.Dashboard WITH(UPDLOCK,HOLDLOCK) WHERE Id=@DashboardId)
+   THROW 51928,''CHART_DRAFT_DASHBOARD_MISSING'',1;
+  IF NOT EXISTS(SELECT 1 FROM uqp.DashboardDisplayProfile WITH(UPDLOCK,HOLDLOCK)
+   WHERE Id=@ProfileId AND DashboardId=@DashboardId)
+   THROW 51928,''CHART_DRAFT_PROFILE_MISMATCH'',1;
+  DECLARE @existingCount bigint;
+  SELECT @existingCount=COUNT_BIG(*) FROM uqp.DashboardWidget WITH(UPDLOCK,HOLDLOCK)
+   WHERE ProfileId=@ProfileId;
+  IF NOT EXISTS(
+   SELECT 1 FROM uqp.AppUser u WITH(HOLDLOCK)
+   JOIN uqp.UserRole ur WITH(HOLDLOCK) ON ur.UserId=u.Id
+   JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId AND r.IsActive=1
+   JOIN uqp.RolePermission rp WITH(HOLDLOCK) ON rp.RoleId=r.Id
+   JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
+   WHERE u.Id=@ActorId AND u.IsActive=1 AND u.TokenVersion=@TokenVersion
+     AND p.Code=N''DESIGN_QUERY''
+  ) THROW 51928,''CHART_DRAFT_AUTH_DENIED'',1;
+  -- Lock the real issuer-owned grant by its primary key in the SAME
+  -- SERIALIZABLE transaction as Ledger/Audit/Widget/Seal creation.
+  -- IMPORTANT: synthetic issuer @ActorId is NOT verified HTTP identity.
+  -- Acquire and retain the PK row lock BEFORE obtaining the current time.
+  -- A pre-lock timestamp could validate a grant already expired while
+  -- this request was waiting for another transaction to release the row.
+  IF NOT EXISTS(
+    SELECT 1 FROM uqp.ChartActorDelegationDisposable WITH(UPDLOCK,HOLDLOCK)
+    WHERE GrantId=@GrantId
+  ) THROW 51928,''CHART_DELEGATED_GRANT_INVALID'',1;
+  DECLARE @consumeAt DATETIME2(3)=SYSUTCDATETIME();
+  IF NOT EXISTS(
+    SELECT 1 FROM uqp.ChartActorDelegationDisposable d WITH(UPDLOCK,HOLDLOCK)
+    WHERE d.GrantId=@GrantId AND d.Purpose=''CHART_CREATE'' AND d.Version=1
+      AND d.SecretSha256=HASHBYTES(''SHA2_256'',@Secret)
+      AND d.ActorId=@ActorId AND d.TokenVersion=@TokenVersion
+      AND d.DashboardId=@DashboardId AND d.ProfileId=@ProfileId
+      AND d.RequestId=@RequestId AND d.SourceKey=@SourceKey
+      AND d.ConfigSha256=@digest
+      AND d.X=@X AND d.Y=@Y AND d.Width=@Width AND d.Height=@Height
+      AND d.IsRevoked=0 AND d.ConsumedAtUtc IS NULL
+      AND d.IssuedAtUtc<=@consumeAt AND d.ExpiresAtUtc>@consumeAt
+      AND DATEDIFF_BIG(MILLISECOND,d.IssuedAtUtc,d.ExpiresAtUtc) BETWEEN 1 AND 60000
+  ) THROW 51928,''CHART_DELEGATED_GRANT_INVALID'',1;
+  UPDATE uqp.ChartActorDelegationDisposable SET ConsumedAtUtc=@consumeAt
+   WHERE GrantId=@GrantId AND ConsumedAtUtc IS NULL AND IsRevoked=0;
+  IF @@ROWCOUNT<>1 THROW 51928,''CHART_DELEGATED_GRANT_CONSUME_RACE'',1;
+
+  INSERT uqp.DashboardChartTrustRequest(RequestId,Action,ActorId)
+   VALUES(@RequestId,N''SEAL_WIDGET'',@ActorId);
+  INSERT uqp.AuditLog(EventType,EventCategory,IsImportant,UserId,Status,ParametersJson,CompletedAtUtc)
+   OUTPUT INSERTED.Id INTO @auditRows
+   VALUES(N''CHART_SEAL_WIDGET'',N''CONFIG'',1,@ActorId,N''SUCCESS'',
+     N''{"requestId":"''+CONVERT(nvarchar(36),@RequestId)+N''"}'',SYSUTCDATETIME());
+  IF (SELECT COUNT(*) FROM @auditRows)<>1
+   THROW 51928,''CHART_DRAFT_AUDIT_REQUIRED'',1;
+  DECLARE @AuditId bigint=(SELECT TOP(1) Id FROM @auditRows);
+  UPDATE uqp.DashboardChartTrustRequest SET AuditLogId=@AuditId WHERE RequestId=@RequestId;
+  IF @@ROWCOUNT<>1 THROW 51928,''CHART_DRAFT_LEDGER_FAILED'',1;
+  INSERT uqp.DashboardChartCreatePermit(SessionId,TransactionId,ProfileId,SourceKey,ConfigJson)
+   VALUES(@@SPID,CURRENT_TRANSACTION_ID(),@ProfileId,@SourceKey,@ConfigJson);
+  INSERT uqp.DashboardWidget(ProfileId,WidgetType,Title,SourceKey,
+    X,Y,Width,Height,ConfigJson)
+    OUTPUT INSERTED.Id INTO @widgetRows
+    VALUES(@ProfileId,N''CHART'',N''隔離測試圖表'',@SourceKey,@X,@Y,@Width,@Height,@ConfigJson);
+  IF (SELECT COUNT(*) FROM @widgetRows)<>1
+   THROW 51928,''CHART_DRAFT_WIDGET_INSERT_FAILED'',1;
+  DECLARE @WidgetId bigint=(SELECT TOP(1) Id FROM @widgetRows);
+  INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)
+   VALUES(@WidgetId,@digest,1,@ActorId,@AuditId);
+  DELETE uqp.DashboardChartCreatePermit
+   WHERE SessionId=@@SPID AND TransactionId=CURRENT_TRANSACTION_ID();
+  IF @@ROWCOUNT<>1 THROW 51928,''CHART_DRAFT_PERMIT_CLEANUP_FAILED'',1;
+  COMMIT TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+  SELECT @WidgetId AS WidgetId,@AuditId AS AuditLogId,@digest AS Digest;
+ END TRY
+ BEGIN CATCH
+  IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+  THROW;
+ END CATCH
+END');
+-- The old insecure ActorId-only prototype must no longer be callable by
+-- the synthetic Writer principal after the delegated variant is installed.
+-- A DB owner/sa remains able to execute it in the DISPOSABLE fixture;
+-- production approval and separate SQL Login guarantees are still absent.
+DENY EXECUTE ON OBJECT::uqp.usp_ChartCreate_IsolatedDraft TO [UQP_Chart_Writer];
+GRANT EXECUTE ON OBJECT::uqp.usp_ChartCreateWithDelegation_IsolatedDraft
+ TO [UQP_Chart_Writer];
+-- No production grants. No release Gate or SchemaMigration changed.

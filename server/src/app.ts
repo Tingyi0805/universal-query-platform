@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import cors from "cors";
 import express, { type Request, type Response } from "express";
 import helmet from "helmet";
+import { validateProxyRequest } from "./utils/clientIp.js";
 import pinoHttpModule from "pino-http";
 import { env } from "./config/env.js";
 import { logger } from "./config/logger.js";
@@ -11,6 +12,7 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import { adminRouter } from "./modules/admin/admin.routes.js";
 import { auditRouter } from "./modules/audit/audit.routes.js";
 import { authRouter } from "./modules/auth/auth.routes.js";
+import { createWorkstationPinRouter } from "./modules/auth/workstationPin.routes.js";
 import { dataSourceRouter } from "./modules/datasource/datasource.routes.js";
 import { datasetRouter } from "./modules/dataset/dataset.routes.js";
 import { dashboardRouter } from "./modules/dashboard/dashboard.routes.js";
@@ -31,6 +33,7 @@ export const app = express();
 
 app.disable("x-powered-by");
 app.use(helmet());
+app.use(validateProxyRequest);
 app.use(
   cors({
     origin(origin, callback) {
@@ -62,6 +65,7 @@ app.use(
 
 app.use("/api/status", healthRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/workstations/current", createWorkstationPinRouter());
 app.use("/api/admin", adminRouter);
 app.use("/api/audit", auditRouter);
 app.use("/api/datasources", dataSourceRouter);

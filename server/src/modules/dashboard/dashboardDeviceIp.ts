@@ -1,10 +1,6 @@
 import { isIP } from "node:net";
-
-export function normalizeClientIp(value: string | null | undefined): string {
-  const raw = String(value ?? "").trim();
-  if (raw.startsWith("::ffff:")) return raw.slice(7);
-  return raw;
-}
+import { normalizeIp as normalizeClientIp } from "../../utils/ipAddress.js";
+export { normalizeIp as normalizeClientIp } from "../../utils/ipAddress.js";
 
 function ipv4ToInt(ip: string): number | null {
   if (isIP(ip) !== 4) return null;
@@ -38,6 +34,7 @@ export function matchesIpRestriction(
   allowedCidr: string | null,
 ): boolean {
   const normalized = normalizeClientIp(clientIp);
+  if (!normalized) return false;
 
   if (allowedIp && normalizeClientIp(allowedIp) === normalized) return true;
   if (!allowedCidr) return false;

@@ -172,3 +172,9 @@ test("an opaque alias explicitly classified as NAME is still refused as patient 
   await assert.rejects(f.service.put(1, { ...input, patientKeyColumn: "OPAQUE_7" }, 2), { code: "PATIENT_KEY_INVALID" });
   assert.equal(f.control.state.config, null); assert.equal(f.control.audits.length, 0);
 });
+
+for(const alias of ["NAME","BED_NO"])test(`D6-3 OR_001-like missing trusted metadata cannot bootstrap patient audit from ${alias}`,async()=>{
+ const f=patientFixture();f.control.state.metadata=null;f.control.state.definition.sqlText="SELECT NAME, BED_NO FROM synthetic_owner_source";
+ const before=structuredClone(f.control.state);const view=await f.service.get(1);assert.equal(view.metadataStatus,"METADATA_UNCONFIRMED");assert.deepEqual(view.columns,[]);
+ await assert.rejects(f.service.put(1,{...input,patientKeyColumn:alias},2),{code:"METADATA_UNCONFIRMED"});assert.deepEqual(f.control.state,before);assert.equal(f.control.state.config,null);
+});

@@ -14,3 +14,6 @@ Thumbs.db
 *.tsbuildinfo
 client/test-results/
 client/playwright-report/
+
+# Stage 18 synthetic-only preview output (never commit built bundle)
+client/chart-lab-dist/

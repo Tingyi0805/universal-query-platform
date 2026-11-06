@@ -1,5 +1,7 @@
 # UQP 正式升級機制 — Phase R0（僅規劃與靜態檢查）
 
+> 2026-10-31：目前來源／Ledger 差異請併讀 [D5-C-3 Migration Inventory](database-migration-inventory.md) 與 [Schema 使用清冊](database-schema-inventory.md)；下文保留 R0 歷史計畫，不授權執行 Migration。
+
 **狀態：PREPARATION_ONLY，禁止資料庫寫入。** 正式 UQP 在 Windows Server；Windows 11 測試新版但原先共用同一正式 SQL Server 資料庫。方案 B 規劃建立同一 SQL Server 實例的獨立 `UQP_TEST` 資料庫，但目前尚未建立、尚未核准，因此不能進行實際 CRUD、DDL、Migration 或回滾驗收。
 
 ## 第一關：固定版本與盤點

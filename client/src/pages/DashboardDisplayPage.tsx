@@ -1,3 +1,6 @@
+import { DashboardDrilldownHost } from "../components/DashboardDrilldownHost";
+import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
+import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
 import { flushSync } from "react-dom";
 import { SecurityManagementLinks } from "../components/SecurityManagementLinks";
@@ -32,6 +35,7 @@ type ReportColumn = {
 };
 
 type PreviewResult = {
+  deliveredAtUtc?:string;
   page?: number;
   totalPages?: number;
   totalRows?: number;
@@ -130,6 +134,7 @@ export function DashboardDisplayPage() {
   const persistentCapable = deviceMode && window.location.protocol === "https:" && Number.isSafeInteger(intendedDeviceId) && intendedDeviceId > 0;
   const [restoringDevice,setRestoringDevice] = useState(false);
   const [persistDevice, setPersistDevice] = useState(persistentCapable);
+  const [reenrollDevice, setReenrollDevice] = useState(false);
   const cookieSession = deviceToken === "COOKIE_SESSION";
   const deviceHeaders: Record<string,string> = cookieSession ? {"X-UQP-Kiosk":"1", "X-UQP-Device-Id":String(intendedDeviceId)} : {"X-Dashboard-Device-Token":deviceToken ?? "", ...(Number.isSafeInteger(intendedDeviceId) && intendedDeviceId>0 ? {"X-UQP-Expected-Device-Id":String(intendedDeviceId)} : {})};
   const [deviceExpiryInfo,setDeviceExpiryInfo]=useState<{expiresAtUtc:string|null;offset:number}|null>(null);
@@ -149,7 +154,7 @@ export function DashboardDisplayPage() {
       setActivationError(""); setDeviceToken(token); setActivationRequired(false);
     }, () => setActivationError("安全交接未完成或已逾時。請保持管理頁開啟，重新核發並從管理頁開啟播放。"), handoffRequestId.current);
   },[dashboardId,deviceMode,deviceToken]);
-  const { accessToken } = useAuth();
+  const { accessToken, user, hasPermission, logout } = useAuth();
   const userRoute = !deviceMode && !queryPreview && !window.location.pathname.startsWith("/designer/");
   const [userMode, setUserMode] = useState<"LEGACY" | "QUERY_ONLY" | null>(null);
   const userSourceExpiry = useRef(new Map<string, number>());
@@ -176,6 +181,7 @@ export function DashboardDisplayPage() {
   const [layoutWarning, setLayoutWarning] = useState("");
   const [layoutRetryCount, setLayoutRetryCount] = useState(0);
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
+  useEffect(()=>setLastUpdatedAt(null),[dashboardId,accessToken,deviceToken]);
   const [retryDelaySeconds, setRetryDelaySeconds] = useState(5);
   const [online, setOnline] = useState(() => navigator.onLine);
   const [page, setPage] = useState(1);
@@ -320,13 +326,13 @@ export function DashboardDisplayPage() {
     const previewCache = new Map<string, { id: string; data: SupplementalPage }>();
     let previewRevision = 0;
     const stops = keys.map((key) => startSourcePlayback<SupplementalPage>({
+      refreshBeforeExpiry:serverPaged,
       fetchPage: async (requestedPage, snapshotId, signal) => {
         if (deviceMode) return apiRequest<SupplementalPage>(
           `/dashboards/device/${dashboardId}/data-sources/${encodeURIComponent(key)}/page`,
           { method: "POST", signal, body: JSON.stringify({ page: requestedPage, ...(snapshotId ? { snapshotId } : {}) }),
             headers: deviceHeaders }, null);
         if (userMode === "QUERY_ONLY") {
-          if (!snapshotId) setSupplementalPages(previous => { const next = {...previous}; delete next[key]; return next; });
           return apiRequest<SupplementalPage>(`/dashboards/${dashboardId}/playback/v1/${encodeURIComponent(key)}/page`,
             { method: "POST", signal, body: JSON.stringify({page: requestedPage, ...(snapshotId ? {snapshotId} : {})}) }, accessToken).catch(error => {
               if (generation === supplementalRequestGeneration.current) clearUserPlayback("來源安全驗證失敗，已清除所有患者資料；請重新開啟播放。");
@@ -358,8 +364,9 @@ export function DashboardDisplayPage() {
       },
       show: (result) => {
         if (generation !== supplementalRequestGeneration.current || !navigator.onLine) return;
-        if (userRoute && userMode === "QUERY_ONLY") {
-          if (!Number.isFinite(result.snapshotExpiresAt) || result.snapshotExpiresAt! <= Date.now()) { clearUserPlayback("快照期限證據失效，已停止播放。"); return; }
+        if(userRoute&&userMode==="QUERY_ONLY"&&(!Number.isFinite(result.snapshotExpiresAt)||result.snapshotExpiresAt!<=Date.now())){clearUserPlayback("快照期限證據失效，已停止播放。");return;}
+        if (Number.isFinite(result.snapshotExpiresAt)) {
+          if(result.snapshotExpiresAt!<=Date.now())throw Object.assign(new Error("DASHBOARD_SNAPSHOT_EXPIRED"),{code:"DASHBOARD_SNAPSHOT_EXPIRED"});
           window.clearTimeout(userSourceExpiry.current.get(key));
           userSourceExpiry.current.set(key, window.setTimeout(() => {
             if (generation !== supplementalRequestGeneration.current) return;
@@ -397,7 +404,7 @@ export function DashboardDisplayPage() {
       },
     }));
     return () => { ++supplementalRequestGeneration.current; stops.forEach(stop => stop()); };
-  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken, queryPreview, previewAuthorized, userRoute, userMode, clearUserPlayback, intendedDeviceId, userRoute ? snapshotReloadKey : 0]);
+  }, [dashboardId, deviceMode, deviceToken, online, activationRequired, profiles, accessToken, queryPreview, previewAuthorized, userRoute, userMode, clearUserPlayback, intendedDeviceId, serverPaged]);
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(dashboardId) || (userRoute && userMode === null)) return;
@@ -442,8 +449,9 @@ export function DashboardDisplayPage() {
         pageSnapshotId.current = result.snapshotId ?? null;
       }
       if (userRoute && userMode === "QUERY_ONLY" && (!Number.isFinite(result.snapshotExpiresAt) || result.snapshotExpiresAt! <= Date.now())) throw new Error("SNAPSHOT_EXPIRY_INVALID");
+      if(serverPaged&&result.snapshotExpiresAt!==undefined&&(!Number.isFinite(result.snapshotExpiresAt)||result.snapshotExpiresAt<=Date.now()))throw new Error("SNAPSHOT_EXPIRY_INVALID");
       setPreview(result);
-      setLastUpdatedAt(new Date());
+      setLastUpdatedAt(deliveryTime(result.deliveredAtUtc)?new Date(result.deliveredAtUtc!):null);
       setDataWarning("");
       setRetryDelaySeconds(5);
       setError("");
@@ -505,6 +513,13 @@ export function DashboardDisplayPage() {
       }
     }
   }, [accessToken, dashboardId, deviceMode, deviceToken, page, snapshotReloadKey, queryPreview, previewAuthorized, serverPaged, userRoute, userMode, clearUserPlayback]);
+
+  // Retain only a still-valid delivered page while refreshing; expiry never waits for a slow request.
+  useEffect(()=>{
+    if(!serverPaged||!Number.isFinite(preview?.snapshotExpiresAt))return;
+    const timer=window.setTimeout(()=>{pageSnapshotId.current=null;setPreview(null);setCountdown(0);setDataWarning("資料交付期限已到，等待安全重新載入。");},Math.max(0,preview!.snapshotExpiresAt!-Date.now()));
+    return()=>window.clearTimeout(timer);
+  },[serverPaged,preview]);
 
   const loadLayout = useCallback(async () => {
     if (!Number.isFinite(dashboardId) || (userRoute && userMode !== "LEGACY")) return;
@@ -748,7 +763,7 @@ export function DashboardDisplayPage() {
 
   const pageRows = useMemo(() => {
     if (!preview) return [];
-    if (serverPaged) return preview.page === safePage ? preview.result.rows : [];
+    if (serverPaged) return preview.result.rows;
     const start = (safePage - 1) * pageSize;
     return preview.result.rows.slice(start, start + pageSize);
   }, [deviceMode, queryPreview, pageSize, preview, safePage, serverPaged]);
@@ -782,9 +797,8 @@ export function DashboardDisplayPage() {
         !preview) return;
     const timer = window.setTimeout(() => {
       pageSnapshotId.current = null;
-      if (userRoute) { setPreview(null); ++supplementalRequestGeneration.current; setSupplementalPages({}); }
       setSnapshotReloadKey((key) => key + 1);
-    }, Math.max(1, (userRoute && preview.snapshotExpiresAt ? preview.snapshotExpiresAt - Date.now() : refreshSeconds * 1000 - (Date.now() - pageSnapshotCreatedAt.current))));
+    }, Math.max(1, (preview.snapshotExpiresAt ? preview.snapshotExpiresAt - Date.now() - 1000 : refreshSeconds * 1000 - (Date.now() - pageSnapshotCreatedAt.current))));
     return () => window.clearTimeout(timer);
   }, [deviceMode, queryPreview, previewAuthorized, activationRequired, deviceToken, online, dataWarning, preview, totalPages, refreshSeconds, serverPaged, userRoute]);
 
@@ -795,7 +809,7 @@ export function DashboardDisplayPage() {
     const delay = dataWarning ? retryDelaySeconds : refreshSeconds;
     const timer = window.setTimeout(() => void loadData(), delay * 1000);
     return () => window.clearTimeout(timer);
-  }, [loadData, refreshSeconds, dataWarning, retryDelaySeconds, lastUpdatedAt, deviceMode, queryPreview, activationRequired, serverPaged]);
+  }, [loadData, refreshSeconds, dataWarning, retryDelaySeconds, preview, deviceMode, queryPreview, activationRequired, serverPaged]);
 
   useEffect(() => {
     if (deviceMode && activationRequired) return;
@@ -873,7 +887,7 @@ export function DashboardDisplayPage() {
     if (!activeProfile) return 1;
     return Math.min(
       viewport.width / activeProfile.canvasWidth,
-      viewport.height / activeProfile.canvasHeight,
+      Math.max(1,viewport.height - 128) / activeProfile.canvasHeight,
     );
   }, [activeProfile, viewport]);
 
@@ -905,6 +919,8 @@ export function DashboardDisplayPage() {
             "--table-grid": configText(widget.config, "tableGridColor", "#dddddd"),
           } as CSSProperties}
         >
+          {userRoute&&!previewKey&&!deviceMode&&accessToken&&user&&hasPermission("VIEW_QUERY")&&hasPermission("EXECUTE_QUERY")&&sourceKey==="PRIMARY"&&widget.config.drilldownRoot===true&&activeProfile&&
+            <DashboardDrilldownHost key={`${dashboardId}:${activeProfile.id}:${user.id}:${accessToken}`} dashboardId={dashboardId} profileId={activeProfile.id} token={accessToken} onLogout={logout}/>}
           <table>
             <thead>
               <tr>
@@ -928,7 +944,7 @@ export function DashboardDisplayPage() {
               ))}
             </tbody>
           </table>
-          {widgetRows.length === 0 && <div className="dashboard-play-empty" role={sourceFailure ? "alert" : undefined}>{sourceFailure || "目前沒有資料"}</div>}
+          {widgetRows.length === 0 && <div className="dashboard-play-empty" role={sourceFailure ? "alert" : undefined}>{sourceFailure || ((sourceKey==="PRIMARY"?preview:supplemental)?"目前無符合條件資料":"資料更新中…")}</div>}
         </div>
       );
     }
@@ -951,7 +967,7 @@ export function DashboardDisplayPage() {
         value = now.toLocaleString("zh-TW", { hour12: false });
         break;
       case "PAGE_INFO":
-        value = `目前頁數：${safePage} / ${totalPages}`;
+        value = `目前頁數：${serverPaged&&preview?.page?preview.page:safePage} / ${totalPages}`;
         break;
       case "COUNTDOWN":
         value = `換頁倒數：${countdown} 秒`;
@@ -970,9 +986,14 @@ export function DashboardDisplayPage() {
 
   async function activateDevice(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (activationBusy || restoringDevice) return;
     const token = activationInput.trim();
     if (!token || !Number.isInteger(dashboardId) || dashboardId <= 0) {
       setActivationError("請輸入有效的裝置 Token。");
+      return;
+    }
+    if (reenrollDevice && (!persistentCapable || !persistDevice)) {
+      setActivationError("重新授權須使用原 BAT 專用瀏覽器與 HTTPS 裝置播放網址。");
       return;
     }
     const attempt = ++activationAttempt.current;
@@ -982,7 +1003,7 @@ export function DashboardDisplayPage() {
       // Verify with the server BEFORE persisting; this endpoint enforces dashboard,
       // revocation, expiry and source-IP restrictions.
       if (persistDevice && persistentCapable) {
-        const value = await apiRequest<{deviceId:number;dashboardId:number;authorizationExpiresAt:number}>(`/dashboards/device/${dashboardId}/kiosk/enrollment`,{method:"POST",headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId,token})});
+        const value = await apiRequest<{deviceId:number;dashboardId:number;authorizationExpiresAt:number}>(`/dashboards/device/${dashboardId}/kiosk/${reenrollDevice ? "enrollment-proof" : "enrollment"}`,{method:"POST",headers:{"X-UQP-Kiosk":"1"},body:JSON.stringify({deviceId:intendedDeviceId,token})});
         if (attempt !== activationAttempt.current || !navigator.onLine) return;
         if (value.deviceId !== intendedDeviceId || value.dashboardId !== dashboardId) throw new Error("KIOSK_DEVICE_MISMATCH");
         armDeviceLease(value.authorizationExpiresAt);
@@ -1035,7 +1056,9 @@ export function DashboardDisplayPage() {
           <p>Dashboard #{dashboardId} 尚未在目前瀏覽器設定檔完成驗證，或原有憑證已失效。</p>
           <p>請輸入管理員提供的 Device Token。若驗證失敗，系統會區分 Token 無效、到期、裝置停用或來源 IP 不符合限制。驗證成功後會自動播放，不需要登入管理後台。</p>
           <form onSubmit={(event) => void activateDevice(event)} style={{ display: "grid", gap: 12, marginTop: 16 }}>
-            {persistentCapable ? <label><input type="checkbox" checked={persistDevice} onChange={e=>setPersistDevice(e.target.checked)}/>在此瀏覽器持久授權裝置 #{intendedDeviceId}（僅限受管理裝置；HTTPS 安全 Cookie）</label> : <p>目前僅支援本次頁面授權。持久授權須使用管理者提供的 HTTPS 裝置播放網址。</p>}
+            {persistentCapable ? <label><input type="checkbox" checked={persistDevice} onChange={e=>{setPersistDevice(e.target.checked);if(!e.target.checked)setReenrollDevice(false);}}/>在此瀏覽器持久授權裝置 #{intendedDeviceId}（僅限受管理裝置；HTTPS 安全 Cookie）</label> : <p>目前僅支援本次頁面授權。持久授權須使用管理者提供的 HTTPS 裝置播放網址。</p>}
+            {persistentCapable && persistDevice && <label><input type="checkbox" checked={reenrollDevice} onChange={e=>setReenrollDevice(e.target.checked)}/>使用恢復後的新 Token 重新授權</label>}
+            <p>暫停／恢復後，請使用原 BAT 專用瀏覽器、HTTPS 播放網址，勾選「使用恢復後的新 Token 重新授權」並輸入新 Token；完成 Enrollment 後才可播放。</p>
             {window.location.protocol==="http:" && <p>HTTP 僅限信任的內網手動播放，Token 可能遭網路攔截；不提供重啟後自動恢復。請優先使用 HTTPS。</p>}
             <p>未啟用持久授權時，Token 僅保留於本次頁面記憶體；重新整理或關閉後需重新啟用。</p>
             <label htmlFor="dashboard-device-activation-token">Device Token</label>
@@ -1079,10 +1102,11 @@ export function DashboardDisplayPage() {
 
   return (
     <main className="dashboard-display-screen">
+      <LastSuccessfulUpdate at={lastUpdatedAt?.toISOString()} config={activeProfile.config}/>
       {!deviceMode && (dataWarning || error) && <aside role="status">{dataWarning || error}<SecurityManagementLinks dashboardId={Number(dashboardId)} /></aside>}
       {deviceMode && (
         <div role="status" aria-live="polite" style={{
-          position: "fixed", right: 12, bottom: 12, zIndex: 9999,
+          position: "fixed", right: 12, bottom: 72, zIndex: 9999,
           padding: "6px 10px", borderRadius: 6,
           background: !online || dataWarning || layoutWarning ? "#7f1d1d" : "rgba(0,0,0,.65)",
           color: "#fff", fontSize: 12, maxWidth: "min(75vw, 480px)",
@@ -1091,7 +1115,7 @@ export function DashboardDisplayPage() {
             dataWarning || layoutWarning ? dataWarning || layoutWarning :
             "播放正常"}
           {deviceExpiryInfo && deviceExpiry(deviceExpiryInfo.expiresAtUtc,now.getTime()+deviceExpiryInfo.offset).band==="DUE7" && <span> · 播放授權將於 7 天內到期，請通知管理者。</span>}
-          {lastUpdatedAt && " · 最後更新 " + lastUpdatedAt.toLocaleTimeString("zh-TW")}
+
           {cookieSession && <button type="button" onClick={()=>void forgetPersistentDevice()}>清除此瀏覽器持久授權</button>}
         </div>
       )}

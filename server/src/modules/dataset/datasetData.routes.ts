@@ -1,3 +1,4 @@
+import { getClientIp } from "../../utils/clientIp.js";
 import { syncDatasetColumns, DatasetColumnSyncError } from "./column.repository.js";
 import type sql from "mssql";
 import { Router, type Request, type Response } from "express";
@@ -40,7 +41,7 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
     try {
       const actor = await deps.identity(req.headers.authorization);
       auditId = await deps.startAudit({ eventType, datasetId, userId: actor.userId, parameters,
-        ipAddress: req.ip, userAgent: req.get("user-agent") ?? null });
+        ipAddress: getClientIp(req), userAgent: req.get("user-agent") ?? null });
       if (!Number.isSafeInteger(auditId) || Number(auditId) <= 0) throw new QueryDeliveryError("DELIVERY_AUDIT_REQUIRED", 503);
       await context.revalidate();
       const { payload, rowCount } = await run();
@@ -69,7 +70,7 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
         datasetId, userId: actor.userId,
         parameters: { purpose: "METADATA_ONLY_UNBOUND_CANDIDATE",
           definitionVersion: context.definitionVersion, configurationVersion: context.configurationVersion },
-        ipAddress: req.ip, userAgent: req.get("user-agent") ?? null });
+        ipAddress: getClientIp(req), userAgent: req.get("user-agent") ?? null });
       if (!Number.isSafeInteger(auditId) || auditId <= 0)
         throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
       await context.revalidate();
@@ -114,7 +115,7 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
       const context = await deps.candidate.open(id);
       auditId = await deps.startAudit({ eventType: "DATASET_COLUMN_CANDIDATE_DESCRIPTION", datasetId: id, userId: actor.userId,
         parameters: { purpose: "DISPLAY_COLUMN_OPTIONS_ONLY", definitionVersion: context.definitionVersion,
-          configurationVersion: context.configurationVersion }, ipAddress: req.ip, userAgent: req.get("user-agent") ?? null });
+          configurationVersion: context.configurationVersion }, ipAddress: getClientIp(req), userAgent: req.get("user-agent") ?? null });
       if (!Number.isSafeInteger(auditId) || auditId <= 0) { auditId = null; throw new DatasetColumnSyncError("DATASET_COLUMN_SYNC_FAILED"); }
       const description = await context.describe();
       await context.revalidate();

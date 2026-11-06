@@ -1,3 +1,5 @@
+import { createDrilldownRouter, validateDrillLayout } from "./dashboardDrilldown.routes.js";
+import { createDeviceEnrollmentService } from "./dashboardDeviceEnrollment.service.js";
 import { createKioskRouter } from "./dashboardKiosk.routes.js";
 import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
 import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
@@ -197,8 +199,9 @@ const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPla
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
   execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 
+const deviceEnrollment = createDeviceEnrollmentService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT && env.DASHBOARD_QUERY_DEVICE_PLAYBACK);
 export const dashboardRouter = Router();
-dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect}));
+dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect, enroll: deviceEnrollment.enroll}));
 
 dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
   try {
@@ -297,11 +300,13 @@ dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, ch
   auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createDrilldownRouter());
+dashboardRouter.use("/:id/query-sources/v1/layout", requirePermission("DESIGN_QUERY"), validateDrillLayout);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));
-dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
+dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT), deviceEnrollment));
 dashboardRouter.use(createQueryModeRouter(createQueryModeService(queryModeStore, () => env.DASHBOARD_QUERY_DEVICE_PLAYBACK)));
 dashboardRouter.use(createQuerySourceRouter(createQuerySourceManagement(querySourceStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 
@@ -773,7 +778,7 @@ dashboardRouter.get("/:id/layout", async (req, res, next) => {
       }
     }
 
-    res.json(await getDashboardLayout(id.data));
+    res.json(await getDashboardLayout(id.data, canDesign));
   } catch (error) {
     next(error);
   }
@@ -825,6 +830,9 @@ dashboardRouter.put("/:id/layout", requirePermission("DESIGN_QUERY"), async (req
       return;
     }
 
+    if (parsed.data.profiles.some(p => Object.hasOwn(p.config,"interactiveDrilldown"))) {
+      res.status(409).json({error:{code:"VERSIONED_API_REQUIRED",message:"下鑽設定須使用版本化版型 API。"}}); return;
+    }
     const defaults = parsed.data.profiles.filter((profile) => profile.isDefault).length;
     if (defaults > 1) {
       res.status(400).json({

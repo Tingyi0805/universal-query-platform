@@ -2,10 +2,109 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # PR83 online verification fallback: use push when pull_request events are absent.
+    branches: [main, fix/iis-https-kiosk-82]
   pull_request:
+  # Manual validation of the selected PR branch, independent of synchronize events.
+  workflow_dispatch:
 
 jobs:
+  dashboard-ui-scope:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      ui_only: ${{ steps.scope.outputs.ui_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate explicitly requested PR83 UI-only scope against the verified baseline
+        id: scope
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {execFileSync}=require('node:child_process');
+            const git=(...args)=>execFileSync('git',args,{encoding:'utf8'});
+            const baseline='cb73828defbb0aff86f8e6366c75b2fbe8584b24'; // Full CI #1262, including SQL 2019/2022.
+            const requested=context.eventName==='pull_request'&&context.payload.pull_request.number===83&&git('log','-1','--format=%B').includes('[ui-only-no-migrations]');
+            if(requested){
+              const base=context.payload.pull_request.base.sha;
+              if(!/^[a-f0-9]{40}$/.test(base))throw Error('UI_ONLY_BASE_INVALID');
+              git('merge-base','--is-ancestor',baseline,'HEAD');
+              git('merge-base','--is-ancestor',base,baseline);
+              const files=git('diff','--name-only','-z',baseline,'HEAD').split('\0').filter(Boolean);
+              if(files.some(file=>!file.startsWith('client/')&&!file.startsWith('docs/')&&file!=='.github/workflows/ci.yml'))throw Error('UI_ONLY_SCOPE_REJECTED');
+              core.notice('UI-only: verified unchanged Server/SQL baseline; no SQL acceptance, migration, or staging packaging. Server/Client unit, typecheck, build and Browser regression remain required.');
+            }
+            core.setOutput('ui_only',String(requested));
+
+  device-lifecycle-d1-sql:
+    needs: dashboard-ui-scope
+    if: needs.dashboard-ui-scope.outputs.ui_only != 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        sql: [2019, 2022]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Verify Chart 928 SQL against the actual PR HEAD, not an
+          # implicit synthetic PR merge checkout or an older commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Require exact immutable D1 SQL acceptance HEAD
+        shell: bash
+        working-directory: .
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          if [[ ! "$EXPECTED_HEAD" =~ ^[a-f0-9]{40}$ || "$actual" != "$EXPECTED_HEAD" ]]; then
+            echo "D1_SQL_HEAD_SHA_MISMATCH" >&2
+            exit 1
+          fi
+          echo "D1_SQL_ACCEPTANCE_HEAD=$actual SQL_SERVER=${{ matrix.sql }}"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - run: npm install --global npm@12.2.1
+      - run: npm ci --ignore-scripts
+      - name: Create dedicated D1 disposable SQL instance
+        shell: bash
+        run: |
+          set -euo pipefail
+          uqp_d1_name="uqp-d1-$(openssl rand -hex 6)"
+          uqp_d1_password="D1!$(openssl rand -hex 22)Z"
+          echo "::add-mask::$uqp_d1_password"
+          echo "UQP_D1_CONTAINER_NAME=$uqp_d1_name" >> "$GITHUB_ENV"
+          echo "UQP_D1_SQL_PASSWORD=$uqp_d1_password" >> "$GITHUB_ENV"
+          docker run -d --rm --name "$uqp_d1_name" --hostname "$uqp_d1_name" \
+            --label uqp.d1.disposable=true -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$uqp_d1_password" \
+            -p 127.0.0.1:14336:1433 mcr.microsoft.com/mssql/server:${{ matrix.sql }}-latest >/dev/null
+          docker inspect --format '{{.Id}} {{.Config.Hostname}} {{.Config.Image}} {{index .Config.Labels "uqp.d1.disposable"}}' "$uqp_d1_name"
+      - name: Verify D1 and D3 production writers in disposable synthetic SQL DB
+        env:
+          UQP_D1_SCOPE: DISPOSABLE_ONLY
+        run: node --import tsx src/scripts/deviceLifecycle926Acceptance.ts
+      - name: Destroy only the D1 disposable instance
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${UQP_D1_CONTAINER_NAME:-}" =~ ^uqp-d1-[a-f0-9]{12}$ ]]; then
+            docker rm -f "$UQP_D1_CONTAINER_NAME" >/dev/null 2>&1 || true
+          fi
+
   server:
     runs-on: ubuntu-latest
     defaults:
@@ -15,7 +114,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.15.0
+          node-version: 24.22.1
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
@@ -25,6 +124,8 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Validate offline SQL Schema usage inventory
+        run: node ../tools/validate-database-schema-inventory.mjs
       - name: Measure tracked source and clean Server build bytes
         run: node ../tools/measure-browser-build.mjs
 
@@ -37,7 +138,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.15.0
+          node-version: 24.22.1
           cache: npm
           cache-dependency-path: client/package-lock.json
       - run: npm install --global npm@12.2.1
@@ -53,6 +154,21 @@ jobs:
         run: npm ci --prefix ../server --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Build standalone synthetic chart lab (no API or database)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/iis-https-kiosk-82'
+        run: npm run build:chart-lab
+      - name: Upload test-only chart lab (NOT a production update)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/fix/iis-https-kiosk-82'
+        uses: actions/upload-artifact@v4
+        with:
+          name: uqp-chart-synthetic-lab-NOT-FOR-PRODUCTION-${{ github.sha }}
+          path: |
+            client/chart-lab-dist/
+            client/chart-lab-preview-server.mjs
+            client/start-chart-lab.bat
+            client/CHART-LAB-README.txt
+          if-no-files-found: error
+          retention-days: 14
 
   sql-923-ephemeral:
     # Experimental acceptance only, scoped to the existing Draft PR.
@@ -332,7 +448,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.15.0
+          node-version: 24.22.1
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
@@ -357,11 +473,13 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.15.0
+          node-version: 24.22.1
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
       - run: npm ci
+      - name: Load Windows native dependencies on Node 24.22.1 ABI 137
+        run: node ../tools/test-pr83-node-runtime.mjs .
       - name: Locate OpenSSL for synthetic credential tests
         shell: powershell
         run: |
@@ -377,6 +495,8 @@ jobs:
       - run: npm run build
 
   dependency-sql-smoke:
+    needs: dashboard-ui-scope
+    if: needs.dashboard-ui-scope.outputs.ui_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -386,7 +506,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 24.15.0
+          node-version: 24.22.1
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
@@ -409,3 +529,81 @@ jobs:
         if: always()
         shell: bash
         run: docker rm -f uqp75-sql >/dev/null 2>&1 || true
+
+  pr83-926-release:
+    # A staging artifact, never an authorization to overwrite production or run a migration.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 83 && needs.dashboard-ui-scope.outputs.ui_only != 'true'
+    needs: [dashboard-ui-scope, server, client, device-lifecycle-d1-sql, windows-node24-dependencies, windows-kiosk-launcher, dependency-sql-smoke]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+      - run: npm install --global npm@12.2.1
+      - name: Bind current PR heads and successful prerequisite jobs
+        uses: actions/github-script@v7
+        env:
+          UQP_RELEASE_NEEDS: ${{ toJSON(needs) }}
+          UQP_RELEASE_HEAD: ${{ github.event.pull_request.head.sha }}
+        with:
+          script: |
+            const fs=require('node:fs');
+            const [pr83,pr66]=await Promise.all([83,66].map(pull_number=>github.rest.pulls.get({...context.repo,pull_number})));
+            if(!pr83.data.draft||pr83.data.merged||pr83.data.head.sha!==process.env.UQP_RELEASE_HEAD)throw Error('PR83_HEAD_MOVED_OR_NOT_DRAFT');
+            fs.writeFileSync('release926-evidence.json',JSON.stringify({sourceCommit:pr83.data.head.sha,pr83Draft:true,pr66Head:pr66.data.head.sha,url:`https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,jobs:JSON.parse(process.env.UQP_RELEASE_NEEDS)},null,2));
+      - name: Build Windows server and client from locked dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location server
+          npm ci
+          if($LASTEXITCODE){throw '926_SERVER_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw '926_SERVER_BUILD_FAILED'}
+          npm prune --omit=dev --ignore-scripts
+          if($LASTEXITCODE){throw '926_PRODUCTION_DEPENDENCIES_FAILED'}
+          node ../tools/test-pr83-node-runtime.mjs .
+          if($LASTEXITCODE){throw '926_NATIVE_RUNTIME_FAILED'}
+          Pop-Location
+          Push-Location client
+          npm ci
+          if($LASTEXITCODE){throw '926_CLIENT_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw '926_CLIENT_BUILD_FAILED'}
+          Pop-Location
+      - name: Package matching source, built runtime, SQL resources and checksums
+        shell: pwsh
+        run: |
+          node tools/package-pr83-926.mjs release926 release926-evidence.json
+          if($LASTEXITCODE){throw '926_PACKAGE_FAILED'}
+      - name: Verify ZIP round trip and Windows PowerShell 5.1 rejection guards
+        shell: powershell
+        run: .\tools\test-uqp-pr83-926-package.ps1 -PackageRoot .\release926 -ZipPath .\release926.zip
+      - name: Recheck latest heads before publishing staging artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const e=JSON.parse(require('node:fs').readFileSync('release926-evidence.json','utf8'));
+            const [a,b]=await Promise.all([83,66].map(pull_number=>github.rest.pulls.get({...context.repo,pull_number})));
+            if(!a.data.draft||a.data.merged||a.data.head.sha!==e.sourceCommit||b.data.head.sha!==e.pr66Head)throw Error('RELEASE_HEAD_CHANGED_REBUILD_REQUIRED');
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr83-926-windows-staging-${{ github.event.pull_request.head.sha }}
+          path: |
+            release926.zip
+            release926.zip.sha256
+          retention-days: 7
+          if-no-files-found: error

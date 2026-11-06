@@ -90,3 +90,11 @@ for (const status of [403, 400, 503]) test(`source ${status} remains local while
   assert.equal(unauthorized, 0); assert.equal(good, 5); assert.equal(errors, 3);
   stopBad(); stopGood(); assert.equal(c.count(), 0);
 });
+
+test("authenticated sources refresh before hard expiry without resetting 20s rotation or clearing valid rows",async()=>{
+ const c=clock(),calls:{at:number;page:number}[]=[];let serial=0,clears=0;
+ const stop=startSourcePlayback({clock:c.api,refreshBeforeExpiry:true,fetchPage:async(page,snapshot)=>{
+   calls.push({at:c.api.now(),page});return {page,totalPages:3,snapshotId:snapshot??`s${++serial}`,snapshotExpiresAt:c.api.now()+10000,refreshSeconds:10,pageSeconds:20};
+ },show:()=>{},clear:()=>{clears++;},unauthorized:()=>assert.fail()});
+ await c.flush();await c.advance(20000);assert.equal(clears,0);assert(calls.some(c=>c.at===9000&&c.page===1));assert.equal(calls.at(-1)!.page,2);stop();assert.equal(clears,1);
+});

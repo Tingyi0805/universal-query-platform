@@ -155,7 +155,7 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
           executionContext: subject.context ?? (subject.deviceId !== undefined ? "device" : "designer"), sourceKey: key, sourceId: binding.sourceId, bindingRevision: binding.bindingRevision, accessRevision: initial.accessRevision,
           authorizationRevision: subject.tokenVersion, modeVersion, bindingFingerprint: initial.fingerprint,
           sensitivityVersion: sensitivity.version, sourceScope: `datasource:${dataset.dataSourceId}:dashboard:${id}:source:${key}`,
-          ttlSeconds: binding.refreshSeconds, columns: result.columns, rows: result.rows });
+          ttlSeconds: binding.refreshSeconds, executionMs: typeof result.elapsedMs === "number" && Number.isFinite(result.elapsedMs) && result.elapsedMs>=0 ? result.elapsedMs : null, truncated: typeof result.truncated === "boolean" ? result.truncated : null, columns: result.columns, rows: result.rows });
       }
       const totalPages = Math.max(1, Math.ceil(snapshot.rows.length / binding.pageSize));
       if (input.page > totalPages) throw new QuerySourceError("DASHBOARD_PAGE_OUT_OF_RANGE", 400);
@@ -184,9 +184,9 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
         throw new QuerySourceError("PATIENT_AUDIT_NOT_CONFIGURED", 503);
       await current();
       if (!getDashboardPageSnapshot(snapshot.id, ownerId, id)) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
-      return { sourceKey: key, modeVersion, query: { id: query.id, code: query.code, name: query.name }, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
+      return { deliveredAtUtc:new Date().toISOString(), sourceKey: key, modeVersion, query: { id: query.id, code: query.code, name: query.name }, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
         pageSize: binding.pageSize, page: input.page, totalPages, totalRows: snapshot.rows.length,
-        snapshotId: snapshot.id, snapshotExpiresAt: snapshot.createdAt + snapshot.ttlMs, disclosureId, result: { columns, rows } };
+        snapshotId: snapshot.id, snapshotExpiresAt: snapshot.createdAt + snapshot.ttlMs, disclosureId, result: { columns, rows, ...(subject.context==="admin-preview"?{rowCount:rows.length,elapsedMs:snapshot.executionMs??null,truncated:snapshot.truncated??null}:{}) } };
     },
   };
 }

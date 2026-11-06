@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { z } from "zod";
+import { isIP } from "node:net";
 
 const optionalString = z.preprocess(
   (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
@@ -21,13 +22,18 @@ const envBoolean = (defaultValue: boolean) =>
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
+  LISTEN_HOST: z.string().refine(value => isIP(value) !== 0).default("0.0.0.0"),
   CLIENT_ORIGIN: z.string().default("http://localhost:5173"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
   PLATFORM_TIME_ZONE: z.string().default("Asia/Taipei"),
 
   TRUST_PROXY_ENABLED: envBoolean(false),
-  TRUST_PROXY_ADDRESSES: z.string().default("127.0.0.1,::1"),
+  TRUST_PROXY_ADDRESSES: z.string().refine(value => value.split(",").map(v => v.trim()).filter(Boolean).every(v => isIP(v) !== 0 && !v.includes("%"))).default("127.0.0.1,::1"),
   CLIENT_IP_DIAGNOSTICS: envBoolean(false),
+  WORKSTATION_PIN_RUNTIME: envBoolean(false),
+  WORKSTATION_PIN_ORIGIN: optionalString,
+  WORKSTATION_PIN_PEPPER_ID: optionalString,
+  WORKSTATION_PIN_PEPPER: optionalString,
   DASHBOARD_QUERY_SOURCE_MANAGEMENT: envBoolean(false),
   DASHBOARD_QUERY_SOURCE_EXECUTION: envBoolean(false),
   DASHBOARD_PUBLIC_CLIENT_ORIGIN: optionalString,
@@ -45,6 +51,17 @@ const envSchema = z.object({
   PLATFORM_DB_PASSWORD: optionalString,
   PLATFORM_DB_ENCRYPT: envBoolean(false),
   PLATFORM_DB_TRUST_SERVER_CERTIFICATE: envBoolean(true),
+
+  // Dedicated CHART Writer settings are ignored until two code-level gates
+  // (reviewed schema and fixed procedure digest) are explicitly released.
+  CHART_WRITER_DB_ENABLED: envBoolean(false),
+  CHART_WRITER_DB_SERVER: optionalString,
+  CHART_WRITER_DB_PORT: z.coerce.number().int().min(1).max(65535).default(1433),
+  CHART_WRITER_DB_DATABASE: optionalString,
+  CHART_WRITER_DB_USER: optionalString,
+  CHART_WRITER_DB_PASSWORD: optionalString,
+  CHART_WRITER_DB_ENCRYPT: envBoolean(true),
+  CHART_WRITER_DB_TRUST_SERVER_CERTIFICATE: envBoolean(false),
 
   JWT_SECRET: optionalString,
   JWT_EXPIRES_IN: z.string().default("8h"),

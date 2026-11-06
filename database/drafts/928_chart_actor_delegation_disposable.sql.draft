@@ -1,0 +1,178 @@
+-- 2B-15D-7. NON-SCANNED DISPOSABLE SQL DRAFT ONLY.
+-- Only isolated UQP_CH_<12 hex> databases. Never run in a real UQP database.
+-- Synthetic EXECUTE AS USER is NOT independent SQL LOGIN/JWT identity proof.
+IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19
+ THROW 51928,N'CHART_DELEGATION_DISPOSABLE_ONLY',1;
+IF OBJECT_ID(N'uqp.AppUser',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.DashboardDisplayProfile',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') IS NULL
+ THROW 51928,N'CHART_DELEGATION_FIXTURE_REQUIRED',1;
+IF OBJECT_ID(N'uqp.ChartActorDelegationDisposable',N'U') IS NOT NULL
+ OR OBJECT_ID(N'uqp.usp_ChartDelegationIssue_IsolatedDraft',N'P') IS NOT NULL
+ OR OBJECT_ID(N'uqp.usp_ChartDelegationConsume_IsolatedDraft',N'P') IS NOT NULL
+ THROW 51928,N'CHART_DELEGATION_ALREADY_INSTALLED',1;
+
+CREATE TABLE uqp.ChartActorDelegationDisposable(
+ GrantId UNIQUEIDENTIFIER NOT NULL
+  CONSTRAINT PK_ChartDelegationDisposable PRIMARY KEY,
+ Purpose VARCHAR(20) NOT NULL,
+ Version INT NOT NULL,
+ IssuerSid VARBINARY(85) NOT NULL,
+ SecretSha256 BINARY(32) NOT NULL,
+ ActorId BIGINT NOT NULL,TokenVersion INT NOT NULL,
+ DashboardId BIGINT NOT NULL,ProfileId BIGINT NOT NULL,
+ RequestId UNIQUEIDENTIFIER NOT NULL,
+ SourceKey NVARCHAR(64) NOT NULL,
+ ConfigSha256 CHAR(64) COLLATE Latin1_General_100_BIN2 NOT NULL,
+ X INT NOT NULL,Y INT NOT NULL,Width INT NOT NULL,Height INT NOT NULL,
+ IssuedAtUtc DATETIME2(3) NOT NULL,
+ ExpiresAtUtc DATETIME2(3) NOT NULL,
+ ConsumedAtUtc DATETIME2(3) NULL,
+ IsRevoked BIT NOT NULL,
+ CONSTRAINT UQ_ChartDelegationDisposable_Request UNIQUE(RequestId),
+ CONSTRAINT CK_ChartDelegationDisposable_Lifetime CHECK(
+  ExpiresAtUtc>IssuedAtUtc
+  AND DATEDIFF_BIG(MILLISECOND,IssuedAtUtc,ExpiresAtUtc) BETWEEN 1 AND 60000),
+ CONSTRAINT CK_ChartDelegationDisposable_Purpose CHECK(
+  Purpose='CHART_CREATE' AND Version=1),
+ CONSTRAINT CK_ChartDelegationDisposable_Config CHECK(
+  LEN(ConfigSha256)=64 AND ConfigSha256 NOT LIKE '%[^0-9a-f]%'),
+ CONSTRAINT CK_ChartDelegationDisposable_Placement CHECK(
+  X>=0 AND Y>=0 AND Width BETWEEN 160 AND 7680 AND Height BETWEEN 120 AND 4320),
+ CONSTRAINT FK_ChartDelegationDisposable_Actor
+  FOREIGN KEY(ActorId) REFERENCES uqp.AppUser(Id)
+);
+
+CREATE USER [UQP_Chart_IssuerSynthetic] WITHOUT LOGIN;
+CREATE USER [UQP_Chart_ConsumerSynthetic] WITHOUT LOGIN;
+EXEC(N'CREATE PROCEDURE uqp.usp_ChartDelegationIssue_IsolatedDraft
+ @ActorId BIGINT,@TokenVersion INT,@DashboardId BIGINT,@ProfileId BIGINT,
+ @RequestId UNIQUEIDENTIFIER,@SourceKey NVARCHAR(64),@ConfigSha256 CHAR(64),
+ @X INT,@Y INT,@Width INT,@Height INT,
+ @GrantId UNIQUEIDENTIFIER OUTPUT,@Secret VARBINARY(32) OUTPUT
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+ SET NOCOUNT ON; SET XACT_ABORT ON;
+ IF LEFT(DB_NAME(),7)<>N''UQP_CH_'' OR LEN(DB_NAME())<>19
+  THROW 51928,N''CHART_DELEGATION_DISPOSABLE_ONLY'',1;
+ IF @@TRANCOUNT<>0 THROW 51928,N''CHART_DELEGATION_OUTER_TX_BLOCKED'',1;
+ IF @ActorId<=0 OR @TokenVersion<=0 OR @DashboardId<=0 OR @ProfileId<=0
+  OR @RequestId IS NULL OR @SourceKey IS NULL OR @ConfigSha256 IS NULL
+  OR LEN(@ConfigSha256)<>64 OR @ConfigSha256 LIKE ''%[^0-9a-f]%''
+  OR @X<0 OR @Y<0 OR @Width NOT BETWEEN 160 AND 7680
+  OR @Height NOT BETWEEN 120 AND 4320
+  THROW 51928,N''CHART_DELEGATION_BAD_REQUEST'',1;
+ BEGIN TRY
+  SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+  BEGIN TRANSACTION;
+  IF NOT EXISTS(
+   SELECT 1 FROM uqp.DashboardDisplayProfile WITH(UPDLOCK,HOLDLOCK)
+    WHERE Id=@ProfileId AND DashboardId=@DashboardId)
+   THROW 51928,N''CHART_DELEGATION_SCOPE_REJECTED'',1;
+  IF NOT EXISTS(
+    SELECT 1 FROM uqp.AppUser u WITH(UPDLOCK,HOLDLOCK)
+    JOIN uqp.UserRole ur WITH(HOLDLOCK) ON ur.UserId=u.Id
+    JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId AND r.IsActive=1
+    JOIN uqp.RolePermission rp WITH(HOLDLOCK) ON rp.RoleId=r.Id
+    JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
+    WHERE u.Id=@ActorId AND u.IsActive=1
+     AND u.TokenVersion=@TokenVersion AND p.Code=N''DESIGN_QUERY''
+  ) THROW 51928,N''CHART_DELEGATION_ACTOR_REVOKED'',1;
+  DECLARE @issued DATETIME2(3)=SYSUTCDATETIME();
+  SET @GrantId=NEWID();
+  SET @Secret=CRYPT_GEN_RANDOM(32);
+  IF @Secret IS NULL OR DATALENGTH(@Secret)<>32
+   THROW 51928,N''CHART_DELEGATION_RANDOM_UNAVAILABLE'',1;
+  INSERT uqp.ChartActorDelegationDisposable(
+   GrantId,Purpose,Version,IssuerSid,SecretSha256,ActorId,TokenVersion,
+   DashboardId,ProfileId,RequestId,SourceKey,ConfigSha256,
+   X,Y,Width,Height,IssuedAtUtc,ExpiresAtUtc,ConsumedAtUtc,IsRevoked)
+  VALUES(@GrantId,''CHART_CREATE'',1,SUSER_SID(ORIGINAL_LOGIN()),
+   HASHBYTES(''SHA2_256'',@Secret),@ActorId,@TokenVersion,
+   @DashboardId,@ProfileId,@RequestId,@SourceKey,@ConfigSha256,
+   @X,@Y,@Width,@Height,@issued,DATEADD(SECOND,60,@issued),NULL,0);
+  COMMIT TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+ END TRY
+ BEGIN CATCH
+  IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+  SET @GrantId=NULL; SET @Secret=NULL;
+  THROW;
+ END CATCH
+END');
+EXEC(N'CREATE PROCEDURE uqp.usp_ChartDelegationConsume_IsolatedDraft
+ @GrantId UNIQUEIDENTIFIER,@Secret VARBINARY(MAX),
+ @ActorId BIGINT,@TokenVersion INT,@DashboardId BIGINT,@ProfileId BIGINT,
+ @RequestId UNIQUEIDENTIFIER,@SourceKey NVARCHAR(64),@ConfigSha256 CHAR(64),
+ @X INT,@Y INT,@Width INT,@Height INT
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+ SET NOCOUNT ON; SET XACT_ABORT ON;
+ IF LEFT(DB_NAME(),7)<>N''UQP_CH_'' OR LEN(DB_NAME())<>19
+  THROW 51928,N''CHART_DELEGATION_DISPOSABLE_ONLY'',1;
+ IF @@TRANCOUNT<>0 THROW 51928,N''CHART_DELEGATION_OUTER_TX_BLOCKED'',1;
+ IF @GrantId IS NULL OR @Secret IS NULL OR DATALENGTH(@Secret)<>32
+  OR @ActorId<=0 OR @TokenVersion<=0 OR @DashboardId<=0
+  OR @ProfileId<=0 OR @RequestId IS NULL OR @SourceKey IS NULL
+  OR @ConfigSha256 IS NULL
+  THROW 51928,N''CHART_DELEGATION_BAD_REQUEST'',1;
+ BEGIN TRY
+  SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+  BEGIN TRANSACTION;
+  DECLARE @now DATETIME2(3)=SYSUTCDATETIME();
+  -- UPDLOCK/HOLDLOCK serializes both consumers by GrantId. Never use
+  -- SESSION_CONTEXT, caller''s actor flags or SQL role as an actor grant.
+  IF NOT EXISTS(
+   SELECT 1 FROM uqp.ChartActorDelegationDisposable d WITH(UPDLOCK,HOLDLOCK)
+   WHERE d.GrantId=@GrantId AND d.Purpose=''CHART_CREATE'' AND d.Version=1
+    AND d.SecretSha256=HASHBYTES(''SHA2_256'',@Secret)
+    AND d.ActorId=@ActorId AND d.TokenVersion=@TokenVersion
+    AND d.DashboardId=@DashboardId AND d.ProfileId=@ProfileId
+    AND d.RequestId=@RequestId AND d.SourceKey=@SourceKey
+    AND d.ConfigSha256=@ConfigSha256
+    AND d.X=@X AND d.Y=@Y AND d.Width=@Width AND d.Height=@Height
+    AND d.IsRevoked=0 AND d.ConsumedAtUtc IS NULL
+    AND d.IssuedAtUtc<=@now AND d.ExpiresAtUtc>@now
+    AND DATEDIFF_BIG(MILLISECOND,d.IssuedAtUtc,d.ExpiresAtUtc) BETWEEN 1 AND 60000
+  ) THROW 51928,N''CHART_DELEGATION_INVALID_OR_CONSUMED'',1;
+  IF NOT EXISTS(
+    SELECT 1 FROM uqp.AppUser u WITH(UPDLOCK,HOLDLOCK)
+    JOIN uqp.UserRole ur WITH(HOLDLOCK) ON ur.UserId=u.Id
+    JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId AND r.IsActive=1
+    JOIN uqp.RolePermission rp WITH(HOLDLOCK) ON rp.RoleId=r.Id
+    JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
+    WHERE u.Id=@ActorId AND u.IsActive=1
+     AND u.TokenVersion=@TokenVersion AND p.Code=N''DESIGN_QUERY''
+  ) THROW 51928,N''CHART_DELEGATION_ACTOR_REVOKED'',1;
+  IF NOT EXISTS(
+   SELECT 1 FROM uqp.DashboardDisplayProfile WITH(UPDLOCK,HOLDLOCK)
+   WHERE Id=@ProfileId AND DashboardId=@DashboardId)
+   THROW 51928,N''CHART_DELEGATION_SCOPE_REJECTED'',1;
+  UPDATE uqp.ChartActorDelegationDisposable SET ConsumedAtUtc=@now
+   WHERE GrantId=@GrantId AND ConsumedAtUtc IS NULL AND IsRevoked=0;
+  IF @@ROWCOUNT<>1 THROW 51928,N''CHART_DELEGATION_ALREADY_CONSUMED'',1;
+  -- This draft only proves atomic one-time consumption. It does NOT write a
+  -- Chart Widget, Seal, Audit or Trust Ledger, nor authenticate HTTP callers.
+  COMMIT TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+  SELECT CAST(1 AS BIT) AS Consumed;
+ END TRY
+ BEGIN CATCH
+  IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+  SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
+  THROW;
+ END CATCH
+END');
+-- Execute rights ONLY to synthetic database principals. The HTTP/JWT actor
+-- issuer bridge and independent ORIGINAL_LOGIN security remain UNSOLVED.
+GRANT EXECUTE ON OBJECT::uqp.usp_ChartDelegationIssue_IsolatedDraft
+ TO [UQP_Chart_IssuerSynthetic];
+GRANT EXECUTE ON OBJECT::uqp.usp_ChartDelegationConsume_IsolatedDraft
+ TO [UQP_Chart_ConsumerSynthetic];
+DENY INSERT,UPDATE,DELETE,SELECT ON OBJECT::uqp.ChartActorDelegationDisposable
+ TO [UQP_Chart_IssuerSynthetic];
+DENY INSERT,UPDATE,DELETE,SELECT ON OBJECT::uqp.ChartActorDelegationDisposable
+ TO [UQP_Chart_ConsumerSynthetic];

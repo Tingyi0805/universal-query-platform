@@ -13,6 +13,9 @@ export async function apiRequest<T>(
   path: string,
   options: RequestInit = {},
   accessToken?: string | null,
+  // A failed request from a disposed identity must not log out a newer UI session.
+  // This only scopes the UI notification: every HTTP error still throws.
+  authIdentityIsCurrent: () => boolean = () => true,
 ): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
@@ -29,7 +32,7 @@ export async function apiRequest<T>(
     const body = (await response.json().catch(() => ({}))) as T & ApiError;
 
     if (!response.ok) {
-      notifyAuthInvalid(body.error?.code);
+      if (authIdentityIsCurrent()) notifyAuthInvalid(body.error?.code);
       const message = body.error?.message ?? "系統發生錯誤。";
       const detail = body.error?.detail?.trim();
       const text = detail ? `${message}（${detail}）` : message;

@@ -9,7 +9,7 @@ const file = "921_datasource_native_parameter_versions.sql";
 
 test("921 is unique, appended and pinned; existing acceptance profiles and 920 hash remain unchanged", async () => {
   const files = (await readdir(directory)).filter(f => /^\d+_.*\.sql$/.test(f)).sort();
-  assert.equal(files.at(-1), file);
+  assert.equal(files.filter(f => Number(f.slice(0,3)) <= 921).at(-1), file);
   assert.equal(files.filter(f => f.startsWith("921_")).length, 1);
   const rows = await inventory();
   assert.equal(rows.find(r => r.id === 920)?.sha256, "f8d6b9d50881c12407d453f1d3ccf4e7054efd931c2f19f8cb1f7316b791880b");

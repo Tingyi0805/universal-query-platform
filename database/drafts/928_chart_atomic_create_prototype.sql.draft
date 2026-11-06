@@ -1,0 +1,139 @@
+-- 2B-15C isolated CREATE prototype only. NON-SCANNED DRAFT.
+-- No production GRANT, no API registration. Running on a real UQP DB is refused.
+-- Temporary same-transaction permit is inaccessible to ordinary DML callers.
+IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19
+ THROW 51928,'CHART_DRAFT_DISPOSABLE_ONLY',1;
+IF OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') IS NULL
+ OR COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),N'Id','IsIdentity')<>1
+ OR COLUMNPROPERTY(OBJECT_ID(N'uqp.AuditLog'),N'Id','IsIdentity')<>1
+ THROW 51928,'CHART_DRAFT_SCHEMA_IDENTITY_REQUIRED',1;
+IF OBJECT_ID(N'uqp.DashboardChartCreatePermit',N'U') IS NOT NULL
+ OR OBJECT_ID(N'uqp.usp_ChartCreate_IsolatedDraft',N'P') IS NOT NULL
+ THROW 51928,'CHART_DRAFT_ALREADY_INSTALLED',1;
+CREATE TABLE uqp.DashboardChartCreatePermit(
+ SessionId int NOT NULL,
+ TransactionId bigint NOT NULL,
+ ProfileId bigint NOT NULL,
+ SourceKey nvarchar(64) NOT NULL,
+ ConfigJson nvarchar(max) COLLATE Latin1_General_100_BIN2 NOT NULL,
+ CONSTRAINT PK_ChartCreatePermit PRIMARY KEY(SessionId,TransactionId),
+ CONSTRAINT CK_ChartCreatePermit_Config CHECK(ISJSON(ConfigJson)=1)
+);
+EXEC(N'ALTER TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget
+AFTER INSERT,UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM deleted WHERE WidgetType=N''CHART'')
+ OR EXISTS(SELECT 1 FROM inserted i JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=i.Id)
+ OR EXISTS(SELECT 1 FROM deleted d JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=d.Id)
+  THROW 51928,''CHART_928_WIDGET_FROZEN'',1;
+ IF EXISTS(SELECT 1 FROM inserted WHERE WidgetType=N''CHART'')
+ BEGIN
+  IF (SELECT COUNT(*) FROM inserted WHERE WidgetType=N''CHART'')<>1
+   THROW 51928,''CHART_928_BOOTSTRAP_SINGLE_ROW_REQUIRED'',1;
+  IF EXISTS(SELECT 1 FROM inserted i WHERE i.WidgetType=N''CHART''
+   AND NOT EXISTS(
+    SELECT 1 FROM uqp.DashboardChartCreatePermit p WITH(HOLDLOCK)
+    WHERE p.SessionId=@@SPID AND p.TransactionId=CURRENT_TRANSACTION_ID()
+      AND p.ProfileId=i.ProfileId AND p.SourceKey=i.SourceKey
+      AND p.ConfigJson COLLATE Latin1_General_100_BIN2 =
+          i.ConfigJson COLLATE Latin1_General_100_BIN2
+   ))
+   THROW 51928,''CHART_928_WIDGET_FROZEN'',1;
+ END
+END');
+EXEC(N'CREATE PROCEDURE uqp.usp_ChartCreate_IsolatedDraft
+ @DashboardId bigint,@ProfileId bigint,@ActorId bigint,@TokenVersion int,
+ @RequestId uniqueidentifier,@SourceKey nvarchar(64),@ConfigJson nvarchar(max),
+ @X int,@Y int,@Width int,@Height int
+WITH EXECUTE AS OWNER
+AS
+BEGIN
+ SET NOCOUNT ON;
+ SET XACT_ABORT ON;
+ IF LEFT(DB_NAME(),7)<>N''UQP_CH_'' OR LEN(DB_NAME())<>19
+  THROW 51928,''CHART_DRAFT_DISPOSABLE_ONLY'',1;
+ IF @@TRANCOUNT<>0
+  THROW 51928,''CHART_DRAFT_EXTERNAL_TRANSACTION_BLOCKED'',1;
+ IF @DashboardId<=0 OR @ProfileId<=0 OR @ActorId<=0 OR @TokenVersion<=0
+   OR @RequestId IS NULL OR @SourceKey IS NULL OR @ConfigJson IS NULL
+   OR @X<0 OR @Y<0 OR @Width<160 OR @Height<120
+   OR @Width>7680 OR @Height>4320 OR DATALENGTH(@ConfigJson)>16384
+   OR ISJSON(@ConfigJson)<>1
+  THROW 51928,''CHART_DRAFT_INPUT_INVALID'',1;
+ IF @SourceKey NOT LIKE N''[A-Za-z]%'' AND @SourceKey<>N''PRIMARY''
+  THROW 51928,''CHART_DRAFT_SOURCE_INVALID'',1;
+ IF JSON_VALUE(@ConfigJson,N''$.dataSourceKey'')<>@SourceKey
+   OR JSON_VALUE(@ConfigJson,N''$.version'')<>N''1''
+   OR JSON_VALUE(@ConfigJson,N''$.valueMode'')<>N''QUERY_RESULT''
+   OR JSON_VALUE(@ConfigJson,N''$.chartType'') NOT IN (N''BAR'',N''LINE'',N''PIE'')
+   OR JSON_VALUE(@ConfigJson,N''$.categoryColumn'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.valueColumn'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.categoryColumn'')=JSON_VALUE(@ConfigJson,N''$.valueColumn'')
+  THROW 51928,''CHART_DRAFT_CONFIG_INVALID'',1;
+ DECLARE @auditRows TABLE(Id bigint NOT NULL);
+ DECLARE @widgetRows TABLE(Id bigint NOT NULL);
+ DECLARE @lockResult int;
+ DECLARE @digest char(64)=LOWER(CONVERT(char(64),HASHBYTES(''SHA2_256'',
+   CONVERT(varbinary(max),CONVERT(varchar(max),
+     @ConfigJson COLLATE Latin1_General_100_CI_AS_SC_UTF8))),2));
+ BEGIN TRY
+  SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+  BEGIN TRANSACTION;
+  DECLARE @lockResource nvarchar(255)=N''UQP:CHART:''+CONVERT(nvarchar(20),@DashboardId);
+  EXEC @lockResult=sys.sp_getapplock
+   @Resource=@lockResource,
+   @LockMode=N''Exclusive'',@LockOwner=N''Transaction'',@LockTimeout=5000;
+  IF @lockResult<0 THROW 51928,''CHART_DRAFT_LOCK_FAILED'',1;
+  IF NOT EXISTS(SELECT 1 FROM uqp.Dashboard WITH(UPDLOCK,HOLDLOCK) WHERE Id=@DashboardId)
+   THROW 51928,''CHART_DRAFT_DASHBOARD_MISSING'',1;
+  IF NOT EXISTS(SELECT 1 FROM uqp.DashboardDisplayProfile WITH(UPDLOCK,HOLDLOCK)
+   WHERE Id=@ProfileId AND DashboardId=@DashboardId)
+   THROW 51928,''CHART_DRAFT_PROFILE_MISMATCH'',1;
+  DECLARE @existingCount bigint;
+  SELECT @existingCount=COUNT_BIG(*) FROM uqp.DashboardWidget WITH(UPDLOCK,HOLDLOCK)
+   WHERE ProfileId=@ProfileId;
+  IF NOT EXISTS(
+   SELECT 1 FROM uqp.AppUser u WITH(HOLDLOCK)
+   JOIN uqp.UserRole ur WITH(HOLDLOCK) ON ur.UserId=u.Id
+   JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId AND r.IsActive=1
+   JOIN uqp.RolePermission rp WITH(HOLDLOCK) ON rp.RoleId=r.Id
+   JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
+   WHERE u.Id=@ActorId AND u.IsActive=1 AND u.TokenVersion=@TokenVersion
+     AND p.Code=N''DESIGN_QUERY''
+  ) THROW 51928,''CHART_DRAFT_AUTH_DENIED'',1;
+  INSERT uqp.DashboardChartTrustRequest(RequestId,Action,ActorId)
+   VALUES(@RequestId,N''SEAL_WIDGET'',@ActorId);
+  INSERT uqp.AuditLog(EventType,EventCategory,IsImportant,UserId,Status,ParametersJson,CompletedAtUtc)
+   OUTPUT INSERTED.Id INTO @auditRows
+   VALUES(N''CHART_SEAL_WIDGET'',N''CONFIG'',1,@ActorId,N''SUCCESS'',
+     N''{"requestId":"''+CONVERT(nvarchar(36),@RequestId)+N''"}'',SYSUTCDATETIME());
+  IF (SELECT COUNT(*) FROM @auditRows)<>1
+   THROW 51928,''CHART_DRAFT_AUDIT_REQUIRED'',1;
+  DECLARE @AuditId bigint=(SELECT TOP(1) Id FROM @auditRows);
+  UPDATE uqp.DashboardChartTrustRequest SET AuditLogId=@AuditId WHERE RequestId=@RequestId;
+  IF @@ROWCOUNT<>1 THROW 51928,''CHART_DRAFT_LEDGER_FAILED'',1;
+  INSERT uqp.DashboardChartCreatePermit(SessionId,TransactionId,ProfileId,SourceKey,ConfigJson)
+   VALUES(@@SPID,CURRENT_TRANSACTION_ID(),@ProfileId,@SourceKey,@ConfigJson);
+  INSERT uqp.DashboardWidget(ProfileId,WidgetType,Title,SourceKey,
+    X,Y,Width,Height,ConfigJson)
+    OUTPUT INSERTED.Id INTO @widgetRows
+    VALUES(@ProfileId,N''CHART'',N''隔離測試圖表'',@SourceKey,@X,@Y,@Width,@Height,@ConfigJson);
+  IF (SELECT COUNT(*) FROM @widgetRows)<>1
+   THROW 51928,''CHART_DRAFT_WIDGET_INSERT_FAILED'',1;
+  DECLARE @WidgetId bigint=(SELECT TOP(1) Id FROM @widgetRows);
+  INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)
+   VALUES(@WidgetId,@digest,1,@ActorId,@AuditId);
+  DELETE uqp.DashboardChartCreatePermit
+   WHERE SessionId=@@SPID AND TransactionId=CURRENT_TRANSACTION_ID();
+  IF @@ROWCOUNT<>1 THROW 51928,''CHART_DRAFT_PERMIT_CLEANUP_FAILED'',1;
+  COMMIT TRANSACTION;
+  SELECT @WidgetId AS WidgetId,@AuditId AS AuditLogId,@digest AS Digest;
+ END TRY
+ BEGIN CATCH
+  IF XACT_STATE()<>0 ROLLBACK TRANSACTION;
+  THROW;
+ END CATCH
+END');
+-- NO GRANT EXECUTE OR DML. Future authorization requires a separate approval.

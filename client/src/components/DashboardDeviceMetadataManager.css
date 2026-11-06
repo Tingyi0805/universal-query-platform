@@ -15,3 +15,49 @@
 .uqp-device-actions { display: flex; justify-content: flex-end; margin-top: 20px; }
 .uqp-device-actions button { min-height: 42px; padding: 8px 18px; max-width: 100%; white-space: normal; }
 @media (max-width: 600px) { .uqp-device-fields { grid-template-columns: minmax(0,1fr); } .uqp-device-actions button { width: 100%; } }
+.uqp-device-manager dialog { width: min(560px, calc(100vw - 48px)); max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.uqp-device-manager dialog textarea { width: 100%; min-width: 0; box-sizing: border-box; }
+.uqp-device-manager dialog button { margin: 8px 8px 0 0; white-space: normal; }
+.uqp-expiry-input { min-width: 0; display: grid; gap: 7px; }
+.uqp-expiry-row { display: flex; gap: 8px; align-items: center; }
+.uqp-expiry-row > input { flex: 1; min-width: 0; }
+.uqp-expiry-input input, .uqp-expiry-input select, .uqp-expiry-input button { min-height: 44px; padding: 8px; font: inherit; box-sizing: border-box; }
+.uqp-expiry-input dialog label { display: grid; gap: 6px; margin: 12px 0; }
+.uqp-device-list-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 16px 0; min-width: 0; }
+.uqp-device-list-tools label { display: grid; gap: 6px; min-width: 0; max-width: 100%; }
+.uqp-device-list-tools input, .uqp-device-list-tools select, .uqp-device-list-tools button { min-height: 44px; padding: 8px; font: inherit; max-width: 100%; box-sizing: border-box; }
+.uqp-device-list-tools input { width: min(260px, 100%); }
+.uqp-device-manager dialog.uqp-device-history { width: min(960px, calc(100vw - 32px)); max-height: 90vh; overflow: auto; }
+.uqp-device-history .audit-filter { flex-wrap: wrap; }
+.uqp-device-history .audit-filter label { min-width: min(160px, 100%); max-width: 100%; }
+.uqp-device-history input, .uqp-device-history select, .uqp-device-history button, .uqp-device-manager summary { min-height: 44px; padding: 8px; box-sizing: border-box; font: inherit; }
+.uqp-device-history .history-table { width: 100%; table-layout: fixed; }
+.uqp-device-history .history-table td { overflow-wrap: anywhere; white-space: normal; }
+@media (max-width: 640px) {
+ .uqp-device-history .history-table, .uqp-device-history .history-table tbody, .uqp-device-history .history-table tr, .uqp-device-history .history-table td { display: block; width: 100%; box-sizing: border-box; }
+ .uqp-device-history .history-table thead { display: none; }
+ .uqp-device-history .history-table tr { border-bottom: 1px solid #dde5f0; padding: 8px 0; }
+ .uqp-device-history .history-table td::before { content: attr(data-label) "："; font-weight: 700; }
+}
+/* Keep wide device operations local to their table, including touch tablets. */
+.uqp-device-table-scroll { min-width:0; max-width:100%; overflow-x:auto; overscroll-behavior-x:contain; }
+.uqp-device-table-scroll table { width:100%; table-layout:fixed; min-width:640px; }
+.dashboard-designer-page .uqp-device-table-scroll :is(th,td) { white-space:normal; overflow-wrap:anywhere; vertical-align:top; }
+.uqp-device-table-scroll td:last-child { width:32%; }
+.uqp-device-table-scroll td button { display:inline-block; margin:4px 8px 4px 0; }
+.uqp-device-table-scroll td span { display:block; line-height:1.7; }
+
+.uqp-device-steps { display:grid; gap:12px; padding-left:24px; line-height:1.7; }
+.uqp-device-manager > ul > li { border:1px solid #cbd5e1; border-radius:8px; padding:16px; margin:16px 0; list-style:none; }
+.uqp-device-manager > ul { padding-left:0; }
+.uqp-device-manager > ul > li > div:first-child { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+@media (max-width:1280px) {
+ .uqp-device-table-scroll { overflow-x:visible; }
+ .uqp-device-table-scroll :is(table,tbody,tr,td) { display:block; width:100%; min-width:0; box-sizing:border-box; }
+ .uqp-device-table-scroll thead { display:none; }
+ .uqp-device-table-scroll tr { border:1px solid #cbd5e1; border-radius:8px; margin:12px 0; padding:12px; }
+ .uqp-device-table-scroll td:last-child { width:100%; }
+ .uqp-device-table-scroll td::before { content:attr(data-label) "："; font-weight:700; }
+}
+
+.uqp-device-guide { border:1px solid #94a3b8; border-radius:8px; padding:16px; margin:16px 0; line-height:1.8; overflow-wrap:anywhere; }

@@ -1,4 +1,4 @@
-export type PlaybackPage = { page: number; totalPages: number; snapshotId: string; refreshSeconds: number; pageSeconds: number };
+export type PlaybackPage = { snapshotExpiresAt?: number; page: number; totalPages: number; snapshotId: string; refreshSeconds: number; pageSeconds: number };
 export type PlaybackClock = { now(): number; schedule(callback: () => void, delay: number): unknown; cancel(handle: unknown): void };
 const browserClock: PlaybackClock = { now: Date.now, schedule: (f, ms) => setTimeout(f, ms), cancel: h => clearTimeout(h as ReturnType<typeof setTimeout>) };
 
@@ -10,6 +10,7 @@ export function startSourcePlayback<T extends PlaybackPage>(options: {
   unauthorized(): void;
   failed?(status?: number, error?: unknown): void;
   clock?: PlaybackClock;
+  refreshBeforeExpiry?:boolean;
 }) {
   const clock = options.clock ?? browserClock;
   let stopped = false;
@@ -44,7 +45,10 @@ export function startSourcePlayback<T extends PlaybackPage>(options: {
       snapshot = result.snapshotId;
       page = result.page;
       totalPages = Math.max(1, result.totalPages);
-      if (newSnapshot) refreshAt = now + Math.max(5, Math.min(3600, result.refreshSeconds)) * 1000;
+      if (newSnapshot) {
+        refreshAt = now + Math.max(5, Math.min(3600, result.refreshSeconds)) * 1000;
+        if(options.refreshBeforeExpiry&&Number.isFinite(result.snapshotExpiresAt))refreshAt=Math.max(now+1,Math.min(refreshAt,result.snapshotExpiresAt!-1000));
+      }
       if (!rotateAt || rotateDue || page !== requestedPage) rotateAt = now + Math.max(5, Math.min(3600, result.pageSeconds)) * 1000;
       options.show(result);
       failures = 0;
