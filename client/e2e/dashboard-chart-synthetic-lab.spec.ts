@@ -16,6 +16,17 @@ test("Stage 18 standalone synthetic charts add edit, rearrange and preview fulls
  await page.getByLabel("圖表標題").fill("合成門診狀態");
  await page.getByLabel("合成資料情境").selectOption("rooms");
  await page.getByLabel("資料來源標籤").selectOption("OR");
+ const legend=page.locator(".chart-lab-editor label.chart-lab-check");
+ const checkbox=legend.getByRole("checkbox",{name:"顯示圖例"});
+ const legendText=legend.locator("span");
+ await expect(legend).toBeVisible();
+ const checkRect=await checkbox.boundingBox(),textRect=await legendText.boundingBox();
+ expect(checkRect).not.toBeNull();expect(textRect).not.toBeNull();
+ expect(textRect!.x-(checkRect!.x+checkRect!.width)).toBeGreaterThanOrEqual(0);
+ expect(textRect!.x-(checkRect!.x+checkRect!.width)).toBeLessThan(16);
+ expect(Math.abs((checkRect!.y+checkRect!.height/2)-(textRect!.y+textRect!.height/2))).toBeLessThan(6);
+ await checkbox.check();await expect(checkbox).toBeChecked();
+ await checkbox.uncheck();await expect(checkbox).not.toBeChecked();
  await page.getByLabel("位置 X").fill("170");
  await expect(page.getByLabel("位置 X")).toHaveValue("170");
  await page.getByRole("button",{name:"＋新增圖表"}).click();
@@ -85,4 +96,45 @@ test("Stage 19 coordinates support ordinary select-all and digit-by-digit width/
  await expect(height).toHaveValue("5");
  await height.press("Tab");
  await expect(height).toHaveValue("120");
+});
+
+
+test("Stage 19 custom screen width and height apply only after validation, across landscape and portrait",async({page})=>{
+ await page.goto("/chart-lab.html");
+ const selector=page.getByLabel("螢幕版型");
+ const canvas=page.getByLabel("合成圖表編排畫布");
+ await expect(page.getByRole("heading",{name:"合成畫布 · 1920 × 1080"})).toBeVisible();
+ await selector.selectOption("custom");
+ const width=page.getByLabel("自訂畫布寬度");
+ const height=page.getByLabel("自訂畫布高度");
+ await width.fill("1600");
+ await height.fill("900");
+ // The draft is independent: no partial resizing while typing.
+ await expect(page.getByRole("heading",{name:"合成畫布 · 1920 × 1080"})).toBeVisible();
+ await page.getByRole("button",{name:"套用自訂尺寸"}).click();
+ await expect(page.getByRole("heading",{name:"合成畫布 · 1600 × 900"})).toBeVisible();
+ await expect(canvas.locator(".chart-lab-item")).toHaveCount(1);
+ // Portrait size can also be arbitrary, not merely a fixed preset.
+ await width.fill("900");
+ await height.fill("1600");
+ await page.getByRole("button",{name:"套用自訂尺寸"}).click();
+ await expect(page.getByRole("heading",{name:"合成畫布 · 900 × 1600"})).toBeVisible();
+ // Invalid values are rejected without changing any existing chart.
+ await width.fill("100");
+ await page.getByRole("button",{name:"套用自訂尺寸"}).click();
+ await expect(page.getByRole("alert")).toContainText("寬度 320～7680");
+ await expect(page.getByRole("heading",{name:"合成畫布 · 900 × 1600"})).toBeVisible();
+ await width.fill("3840");
+ await height.fill("2160");
+ await page.getByRole("button",{name:"套用自訂尺寸"}).click();
+ await expect(page.getByRole("alert")).toHaveCount(0);
+ await expect(page.getByRole("heading",{name:"合成畫布 · 3840 × 2160"})).toBeVisible();
+ await selector.selectOption("1366x768");
+ await expect(page.getByRole("heading",{name:"合成畫布 · 1366 × 768"})).toBeVisible();
+ await page.getByRole("button",{name:"開啟合成全螢幕預覽"}).click();
+ await expect(page.getByRole("dialog",{name:"合成圖表全螢幕預覽"})).toContainText("1366 × 768");
+ await page.getByRole("button",{name:"退出全螢幕"}).click();
+ await page.getByRole("button",{name:"重設所有合成設定"}).click();
+ await expect(selector).toHaveValue("1920x1080");
+ await expect(page.getByRole("heading",{name:"合成畫布 · 1920 × 1080"})).toBeVisible();
 });

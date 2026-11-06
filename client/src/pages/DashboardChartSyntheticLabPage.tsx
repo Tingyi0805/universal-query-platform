@@ -29,6 +29,7 @@ const SCREENS={
  "1366x768":{width:1366,height:768,label:"1366 × 768"},
 } as const;
 type Screen=keyof typeof SCREENS;
+type ScreenChoice=Screen|"custom";
 const first=():LabItem=>({
  id:1,title:"候診統計（合成資料）",scenario:"waiting",draft:newChartDraft(),
 });
@@ -40,13 +41,16 @@ const withPlacement=(item:LabItem,width:number,height:number):LabItem=>({
 export function DashboardChartSyntheticLabPage({standalone=false}:{standalone?:boolean}={}){
  const [items,setItems]=useState<LabItem[]>(()=>[first()]);
  const [selected,setSelected]=useState(1);
- const [screen,setScreen]=useState<Screen>("1920x1080");
+ const [screen,setScreen]=useState<ScreenChoice>("1920x1080");
+ const [canvasSize,setCanvasSize]=useState<{width:number;height:number}>({width:1920,height:1080});
+ const [customSize,setCustomSize]=useState({width:"1600",height:"900"});
+ const [screenError,setScreenError]=useState("");
  const [preview,setPreview]=useState(false);
  const idRef=useRef(2);
  const canvasRef=useRef<HTMLDivElement>(null);
  const fullscreenRef=useRef<HTMLDivElement>(null);
  const dragRef=useRef<{id:number;pointer:number;x:number;y:number;startX:number;startY:number}|null>(null);
- const {width,height}=SCREENS[screen];
+ const {width,height}=canvasSize;
  const active=items.find(i=>i.id===selected)??items[0]!;
  const update=(fn:(item:LabItem)=>LabItem)=>
    setItems(list=>list.map(item=>item.id===selected?fn(item):item));
@@ -81,14 +85,37 @@ export function DashboardChartSyntheticLabPage({standalone=false}:{standalone?:b
    setItems(old=>old.filter(item=>item.id!==selected));
    setSelected(items.find(item=>item.id!==selected)!.id);
  };
- const resize=(next:Screen)=>{
-   const {width:w,height:h}=SCREENS[next];
-   setScreen(next);
+ const applyCanvasSize=(w:number,h:number)=>{
+   setCanvasSize({width:w,height:h});
    setItems(old=>old.map(i=>withPlacement(i,w,h)));
+ };
+ const resize=(next:ScreenChoice)=>{
+   setScreen(next);
+   setScreenError("");
+   if(next==="custom"){
+     setCustomSize({width:String(width),height:String(height)});
+     return;
+   }
+   applyCanvasSize(SCREENS[next].width,SCREENS[next].height);
+ };
+ const applyCustomSize=()=>{
+   const rawWidth=customSize.width.trim(),rawHeight=customSize.height.trim();
+   const w=Number(rawWidth),h=Number(rawHeight);
+   if(!/^\d+$/.test(rawWidth)||!/^\d+$/.test(rawHeight)||
+     !Number.isSafeInteger(w)||!Number.isSafeInteger(h)||
+     w<320||w>7680||h<240||h>4320){
+     setScreenError("自訂尺寸須為整數：寬度 320～7680，高度 240～4320 像素。");
+     return;
+   }
+   setScreenError("");
+   applyCanvasSize(w,h);
  };
  const reset=()=>{
    setItems([first()]);setSelected(1);idRef.current=2;
    setScreen("1920x1080");
+   setCanvasSize({width:1920,height:1080});
+   setCustomSize({width:"1600",height:"900"});
+   setScreenError("");
  };
  const beginDrag=(e:ReactPointerEvent<HTMLButtonElement>,item:LabItem)=>{
    if(preview||e.button!==0)return;
@@ -173,16 +200,30 @@ export function DashboardChartSyntheticLabPage({standalone=false}:{standalone?:b
    <div className="chart-lab-toolbar">
      <label>螢幕版型
        <select aria-label="螢幕版型" value={screen}
-         onChange={e=>resize(e.target.value as Screen)}>
+         onChange={e=>resize(e.target.value as ScreenChoice)}>
          {Object.entries(SCREENS).map(([key,s])=><option value={key} key={key}>{s.label}</option>)}
+         <option value="custom">自訂寬度 × 高度</option>
        </select>
      </label>
+     {screen==="custom"&&<div className="chart-lab-custom-size" role="group" aria-label="自訂螢幕尺寸">
+       <label>寬度（px）
+         <input aria-label="自訂畫布寬度" inputMode="numeric" value={customSize.width}
+           onChange={e=>setCustomSize(v=>({...v,width:e.target.value}))}/>
+       </label>
+       <span aria-hidden="true">×</span>
+       <label>高度（px）
+         <input aria-label="自訂畫布高度" inputMode="numeric" value={customSize.height}
+           onChange={e=>setCustomSize(v=>({...v,height:e.target.value}))}/>
+       </label>
+       <button type="button" onClick={applyCustomSize}>套用自訂尺寸</button>
+     </div> 
      <button type="button" onClick={create}>＋新增圖表</button>
      <button type="button" onClick={duplicate}>複製選取圖表</button>
      <button type="button" onClick={remove}>移除選取圖表</button>
      <button type="button" onClick={openPreview}>開啟合成全螢幕預覽</button>
      <button type="button" onClick={reset}>重設所有合成設定</button>
    </div>
+   {screenError&&<p role="alert" className="chart-lab-screen-error">{screenError}</p>}
    <div className="chart-lab-layout">
      <aside className="chart-lab-editor" aria-label="合成圖表編輯器">
        <h2>圖表編輯</h2>
@@ -231,7 +272,7 @@ export function DashboardChartSyntheticLabPage({standalone=false}:{standalone?:b
        </label>
        <label className="chart-lab-check">
          <input type="checkbox" checked={active.draft.config.showLegend}
-           onChange={e=>updateConfig({showLegend:e.target.checked})}/>顯示圖例
+           onChange={e=>updateConfig({showLegend:e.target.checked})}/><span>顯示圖例</span>
        </label>
        <h3>位置與尺寸（像素）</h3>
        <div className="chart-lab-coordinates">

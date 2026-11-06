@@ -12,7 +12,9 @@
 .chart-lab-editor h3{font-size:14px;margin:12px 0 6px}
 .chart-lab-editor>label{display:flex;flex-direction:column;gap:4px;margin-bottom:12px;font-size:13px}
 .chart-lab-editor>label input,.chart-lab-editor>label select{width:100%;box-sizing:border-box}
-.chart-lab-editor>.chart-lab-check{flex-direction:row;align-items:center}
+.chart-lab-editor>label.chart-lab-check{display:inline-flex;flex-direction:row;align-items:center;justify-content:flex-start;gap:7px;white-space:nowrap;width:auto;max-width:100%}
+.chart-lab-editor>label.chart-lab-check input[type="checkbox"]{width:16px;height:16px;min-width:16px;flex:0 0 16px;box-sizing:border-box;margin:0;padding:0;cursor:pointer}
+.chart-lab-editor>label.chart-lab-check span{display:inline-block;line-height:20px;white-space:nowrap}
 .chart-lab-coordinates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
 .chart-lab-coordinates label{font-size:12px;display:grid;gap:3px}
 .chart-lab-coordinates input{min-width:0;width:100%;box-sizing:border-box}
@@ -35,3 +37,9 @@
 .chart-lab-fullscreen p{font-size:12px;margin:0;color:#cbd5e1}
 @media (max-width:900px){.chart-lab-layout{grid-template-columns:1fr}.chart-lab-item-heading{font-size:10px}}
 @media (prefers-reduced-motion:reduce){.chart-lab *{scroll-behavior:auto}}
+
+.chart-lab-custom-size{display:flex;flex-wrap:wrap;align-items:end;gap:8px;padding:5px 8px;border:1px solid #cbd5e1;border-radius:8px}
+.chart-lab-custom-size label{display:flex;flex-direction:column;gap:4px;font-size:13px}
+.chart-lab-custom-size input{width:105px;max-width:100%;padding:8px 10px;border:1px solid #94a3b8;border-radius:7px;background:#fff;color:#172033;box-sizing:border-box;font:inherit}
+.chart-lab-custom-size>span{padding-bottom:9px;color:#475569;font-size:14px}
+.chart-lab-screen-error{font-size:13px;line-height:1.5;background:#fff1f2;color:#991b1b;border-left:3px solid #e11d48;padding:8px 12px;margin:0 0 12px}
