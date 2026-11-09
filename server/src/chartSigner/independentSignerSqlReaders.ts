@@ -47,7 +47,7 @@ export function createIndependentSignerSqlReaders(pool:sql.ConnectionPool){
           .input("profileId",sql.BigInt,profileId)
           .input("sourceKey",sql.NVarChar(64),sourceKey)
           .query(`
-            SELECT TOP(1) CAST(1 AS bit) AS Approved
+            SELECT CAST(1 AS bit) AS Approved
             FROM uqp.AppUser actor
             JOIN uqp.Dashboard d ON d.Id=@dashboardId
               AND d.IsActive=1 AND d.QueryMode=N'QUERY_ONLY'
