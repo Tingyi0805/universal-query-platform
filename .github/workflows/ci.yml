@@ -126,7 +126,21 @@ jobs:
         run: npm ci --ignore-scripts
       - run: npm audit --omit=dev --audit-level=low
       - run: npm audit --audit-level=low
-      - run: npm test
+      - name: Run Linux JS-only Server tests (Windows CI runs entire native suite)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f src/dependencies/dependencyContracts.test.ts
+          test -f src/dependencies/zod4Contracts.test.ts
+          mapfile -d '' tests < <(find src -type f -name '*.test.ts' \\
+            ! -path 'src/dependencies/dependencyContracts.test.ts' \\
+            ! -path 'src/dependencies/zod4Contracts.test.ts' -print0)
+          if (( ${#tests[@]} < 100 )); then
+            echo 'SERVER_LINUX_JS_TEST_DISCOVERY_INCOMPLETE'
+            exit 1
+          fi
+          echo 'SERVER_LINUX_JS_TESTS=ON; WINDOWS_FULL_NATIVE_TESTS=REQUIRED'
+          node --import tsx --test "${tests[@]}"
       - run: npm run typecheck
       - run: npm run build
       - name: Validate offline SQL Schema usage inventory
