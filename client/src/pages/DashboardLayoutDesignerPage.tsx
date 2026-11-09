@@ -1072,10 +1072,18 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
               )}
 
               <div className="layout-inspector-grid">
-                <label>X<input type="number" value={selectedWidget.x} onChange={(e) => updateSelectedWidget({ x: Number(e.target.value) })} /></label>
-                <label>Y<input type="number" value={selectedWidget.y} onChange={(e) => updateSelectedWidget({ y: Number(e.target.value) })} /></label>
-                <label>寬<input type="number" min={40} value={selectedWidget.width} onChange={(e) => updateSelectedWidget({ width: Number(e.target.value) })} /></label>
-                <label>高<input type="number" min={30} value={selectedWidget.height} onChange={(e) => updateSelectedWidget({ height: Number(e.target.value) })} /></label>
+                <ChartPlacementNumberInput key={selectedWidget.clientKey+":x"}
+                  label="X" value={selectedWidget.x} min={0}
+                  onCommit={x=>updateSelectedWidget({x})}/>
+                <ChartPlacementNumberInput key={selectedWidget.clientKey+":y"}
+                  label="Y" value={selectedWidget.y} min={0}
+                  onCommit={y=>updateSelectedWidget({y})}/>
+                <ChartPlacementNumberInput key={selectedWidget.clientKey+":width"}
+                  label="寬" value={selectedWidget.width} min={40}
+                  onCommit={width=>updateSelectedWidget({width})}/>
+                <ChartPlacementNumberInput key={selectedWidget.clientKey+":height"}
+                  label="高" value={selectedWidget.height} min={30}
+                  onCommit={height=>updateSelectedWidget({height})}/>
               </div>
 
               <label>元件排序<input type="number" min={-10000} max={10000} value={selectedWidget.sortOrder}
