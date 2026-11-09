@@ -136,6 +136,27 @@ export async function verifyChart928DraftSql(
     "FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')")).recordset[0]?.Total),
     Number(beforeCatalog?.Total));
   console.log("CHART_928_READONLY_PREFLIGHT_ABSENT_BLOCKED_PASS");
+  stage="READONLY_928_ADOPTION_PREFLIGHT_PARTIAL";
+  // Only the DISPOSABLE CI database is modified by the test fixture.
+  // The preflight itself is still SELECT-only.
+  await q("CREATE TABLE uqp.DashboardChartTrustRequest(PreflightOnly int NOT NULL)");
+  try{
+    const partialPreflight=await db!.request().batch(readinessScript);
+    const partialSets=partialPreflight.recordsets;
+    assert(Array.isArray(partialSets) && partialSets.length===9);
+    assert.equal(partialSets[0]?.[0]?.MayInstall928,false);
+    assert.equal(partialSets[4]?.[0]?.Assessment,
+      "BLOCKED_PARTIAL_OR_CONFLICT");
+    assert.equal(Number(partialSets[4]?.[0]?.Present),1);
+    const count=(await q("SELECT COUNT_BIG(*) AS Total FROM sys.columns "+
+      "WHERE object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest')"))
+      .recordset[0]?.Total;
+    assert.equal(Number(count),1);
+    console.log("CHART_928_READONLY_PREFLIGHT_PARTIAL_BLOCKED_PASS");
+  }finally{
+    await q("DROP TABLE uqp.DashboardChartTrustRequest");
+  }
+
   stage="OUTER_ROLLBACK";
   const outer=new sql.Transaction(db);
   await outer.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
