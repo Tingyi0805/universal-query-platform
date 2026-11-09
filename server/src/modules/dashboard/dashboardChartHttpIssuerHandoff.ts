@@ -5,6 +5,10 @@ import type {Request} from "express";
 import type sql from "mssql";
 import {getTokenSessionState} from "../auth/auth.repository.js";
 import {planVerifiedChartCreateRequest} from "./dashboardChartAuthenticatedCreate.js";
+import type {DormantChartCreatePlan} from "./dashboardChartAtomicCreate.contract.js";
+import {
+  CHART_ACTOR_ATTESTATION_PINNED_KEYS,verifyChartActorAttestation,
+} from "./dashboardChartActorAttestation.js";
 import {
   CHART_ATOMIC_CREATE_RUNTIME_ENABLED,
 } from "./dashboardChartAtomicCreate.contract.js";
@@ -31,11 +35,7 @@ export type DormantChartIssuerIntent=Readonly<{
  * jwt.verify AND the live database session check. It cannot be supplied
  * by headers, body or a forged req.authUser object.
  */
-export function deriveDormantChartIssuerIntent(
- req:Request,dashboardId:number,rawBody:unknown,
-):DormantChartIssuerIntent|null{
- const plan=planVerifiedChartCreateRequest(req,dashboardId,rawBody);
- if(!plan)return null;
+function intentFromPlan(plan:DormantChartCreatePlan):DormantChartIssuerIntent{
  return Object.freeze({
    ActorId:plan.actorId,TokenVersion:plan.tokenVersion,
    DashboardId:plan.dashboardId,ProfileId:plan.profileId,
@@ -45,10 +45,21 @@ export function deriveDormantChartIssuerIntent(
    Width:plan.placement.width,Height:plan.placement.height,
  });
 }
+export function deriveDormantChartIssuerIntent(
+ req:Request,dashboardId:number,rawBody:unknown,
+):DormantChartIssuerIntent|null{
+ const plan=planVerifiedChartCreateRequest(req,dashboardId,rawBody);
+ return plan?intentFromPlan(plan):null;
+}
 
 /** DORMANT preflight: deliberately refuses until four independent hard-coded
  * review conditions are approved. It never issues a SQL grant or invokes
  * an issuer procedure, including if all metadata checks ever succeed.
+ *
+ * In addition to the original gates, an independently signed Ed25519
+ * actor/scope/expiry proof is mandatory. Production trust keys are pinned
+ * to an empty registry until an independently approved signer exists.
+ * Even a valid proof cannot replace the DB-owned one-time grant consumption.
  *
  * In particular, the SQL Issuer prototype currently accepts @ActorId;
  * checking that Actor's RBAC is not cryptographic proof of the HTTP caller.
@@ -60,13 +71,19 @@ export async function prepareDormantChartIssuerHandoff(
  req:Request,dashboardId:number,rawBody:unknown,
  platformPool:sql.ConnectionPool,issuerPool:sql.ConnectionPool,
  writerPool:sql.ConnectionPool,
+ // Only an independent authenticated signer may provide this server-side.
+ // Never forward a user-supplied body field or untrusted service response.
+ independentActorAttestation:unknown=null,
 ):Promise<DormantChartIssuerIntent|null>{
  if(!CHART_ATOMIC_CREATE_RUNTIME_ENABLED||
     !CHART_WRITER_DB_ACTOR_BINDING_APPROVED||
     !CHART_WRITER_APPROVED_PROCEDURE_SHA256||
     !CHART_ISSUER_APPROVED_PROCEDURE_SHA256)return null;
- const intent=deriveDormantChartIssuerIntent(req,dashboardId,rawBody);
- if(!intent)return null;
+ const plan=planVerifiedChartCreateRequest(req,dashboardId,rawBody);
+ if(!plan||!verifyChartActorAttestation(
+     independentActorAttestation,plan,CHART_ACTOR_ATTESTATION_PINNED_KEYS))
+   return null;
+ const intent=intentFromPlan(plan);
  try{
    // Extra current-session check before the planned issuance. This has a
    // TOCTOU gap: the future SQL issuer must recheck identity/permissions
