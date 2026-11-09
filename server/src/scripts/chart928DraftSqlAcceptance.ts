@@ -978,6 +978,21 @@ export async function verifyChart928DraftSql(
     stage="DELEGATED_RECEIPT_SEAL_AUDIT";
     assert.equal(String(item?.SealAuditId),audit);
     stage="DELEGATED_RECEIPT_SEAL_ROWVERSION";
+    if(item?.CurrentSealRevision!==created.SealRevision){
+      // Only non-sensitive type/shape diagnostics from the disposable SQL
+      // database. Never print revision values, SQL, patient or credential data.
+      const actual=item?.CurrentSealRevision;
+      const expected=created.SealRevision;
+      console.error("CHART_DRAFT_ROWVERSION_SHAPE:"+JSON.stringify({
+        actualType:typeof actual,expectedType:typeof expected,
+        actualLength:typeof actual==="string"?actual.length:-1,
+        expectedLength:typeof expected==="string"?expected.length:-1,
+        actualBuffer:Buffer.isBuffer(actual),
+        actualPrefixed:typeof actual==="string"&&actual.startsWith("0x"),
+        equalTrimLower:typeof actual==="string"&&typeof expected==="string"&&
+          actual.trim().toLowerCase()===expected.trim().toLowerCase(),
+      }));
+    }
     assert.equal(item?.CurrentSealRevision,created.SealRevision);
     stage="DELEGATED_RECEIPT_WIDGET_JOIN";
     assert.equal(Number(item?.WidgetId),widget);
