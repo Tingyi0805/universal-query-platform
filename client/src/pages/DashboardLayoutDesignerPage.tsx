@@ -1,3 +1,4 @@
+import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import { DashboardChartDraftEditor } from "../components/DashboardChartDraftEditor";
 import { ChartPlacementNumberInput } from "../components/ChartPlacementNumberInput";
 import { DashboardDrilldownEditor } from "../components/DashboardDrilldownEditor";
@@ -44,7 +45,7 @@ type PreviewResult = {
 type SupplementalSource = { sourceKey: string; refreshSeconds: number; isEnabled: boolean; queryDefinitionId: number | null };
 type SupplementalPreview = { result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
 
-type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
+type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER" | "CHART";
 
 type LayoutWidget = {
   id?: number | null;
@@ -92,6 +93,7 @@ const widgetLabels: Record<WidgetType, string> = {
   COUNTDOWN: "換頁倒數",
   TABLE: "資料表格",
   CONTAINER: "區塊容器",
+  CHART: "受控圖表（唯讀）",
 };
 
 const fontOptions = [
@@ -493,7 +495,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function addWidget(widgetType: WidgetType) {
-    if (!activeProfile) return;
+    if (!activeProfile || widgetType === "CHART") return;
 
     const defaults: Record<WidgetType, Pick<LayoutWidget,
       "width" | "height" | "fontSize" | "title" | "staticText">> = {
@@ -505,6 +507,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       COUNTDOWN: { width: 420, height: 70, fontSize: 28, title: "換頁倒數", staticText: null },
       TABLE: { width: 1000, height: 520, fontSize: 36, title: null, staticText: null },
       CONTAINER: { width: 700, height: 260, fontSize: 24, title: "區塊", staticText: null },
+      CHART: { width: 620, height: 360, fontSize: 20, title: "圖表", staticText: null },
     };
 
     const preset = defaults[widgetType];
@@ -573,7 +576,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function deleteSelectedWidget() {
-    if (!activeProfile || !selectedWidget) return;
+    if (!activeProfile || !selectedWidget || selectedWidget.widgetType === "CHART") return;
     setProfiles((current) => current.map((profile) =>
       profile.clientKey === activeProfile.clientKey
         ? { ...profile, widgets: profile.widgets.filter((widget) => widget.clientKey !== selectedWidget.clientKey) }
@@ -584,6 +587,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
   function startDrag(event: ReactPointerEvent, widget: LayoutWidget) {
     if (event.button !== 0) return;
+    if (widget.widgetType === "CHART") {
+      setSelectedWidgetKey(widget.clientKey);
+      return;
+    }
     event.preventDefault();
     setSelectedWidgetKey(widget.clientKey);
     setDrag({
@@ -596,6 +603,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function renderWidget(widget: LayoutWidget) {
+    if (widget.widgetType === "CHART") {
+      // Never inspect sealed ConfigJson or raw preview rows in the legacy editor.
+      return <div className="layout-widget-value" role="status">受控 CHART：請使用已授權的播放預覽查看</div>;
+    }
     const selectedSource = String(widget.config?.dataSourceKey ?? "PRIMARY");
     const sourcePreview = selectedSource === "PRIMARY" ? preview : supplementalPreviews[selectedSource];
     const widgetColumns = selectedSource === "PRIMARY" ? visibleColumns
@@ -677,6 +688,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     );
   }
 
+  const chartSaveBlocked = hasSealedChartWidgets(profiles);
   const unavailableReferences = [...new Set(profiles.flatMap(profile => profile.widgets
     .filter(widget => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
     .map(widget => String(widget.config.dataSourceKey ?? "PRIMARY")))
@@ -684,6 +696,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
   async function saveLayout() {
     if (saving) return;
+    if (hasSealedChartWidgets(profiles)) {
+      setError("此版型含受控 CHART，舊版儲存 API 不支援安全寫入；已禁止整份版型覆寫，原圖表資料不變。");
+      return;
+    }
     if(drillPending){setError("下鑽設定尚未完成，請加入層級或取消新增。");return;}
     for(const profile of profiles) {
       const g=profile.config.interactiveDrilldown as DrillGraph|undefined;
@@ -723,7 +739,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     <p>與版面設計共用版型草稿；儲存會保留並提交整份版型。</p>
     <label>時間顯示版型<select aria-label="時間顯示版型" value={activeProfileKey} onChange={e=>setActiveProfileKey(e.target.value)}>{profiles.map(p=><option key={p.clientKey} value={p.clientKey}>{p.name}</option>)}</select></label>
     <div className="dashboard-editor-form">{updateControls}</div>
-    <button type="button" disabled={saving||sourceVersion===undefined||unavailableReferences.length>0} onClick={()=>void saveLayout()}>儲存版面</button>
+    <button type="button" disabled={saving||sourceVersion===undefined||unavailableReferences.length>0||chartSaveBlocked} onClick={()=>void saveLayout()}>儲存版面</button>
     <button type="button" disabled={saving} onClick={()=>{if(window.confirm("重新載入會取代未儲存的版型草稿，確定繼續？"))void load();}}>重新載入版型與版本</button>
     {!active&&error&&<p role="alert">{error}</p>}{!active&&notice&&<p role="status">{notice}</p>}
   </section>,playbackTarget);
@@ -757,7 +773,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
             </button>
           )}
           <button type="button" disabled={saving} onClick={() => { if (window.confirm("重新載入會取代未儲存的版型草稿；請先另行保存。確定重新載入？")) void load(); }}>重新載入版型與版本</button>
-          <button className="primary-button" type="button" disabled={saving || sourceVersion === undefined || unavailableReferences.length > 0} onClick={() => void saveLayout()}>
+          <button className="primary-button" type="button" disabled={saving || sourceVersion === undefined || unavailableReferences.length > 0 || chartSaveBlocked} onClick={() => void saveLayout()}>
             {saving ? "儲存中…" : "儲存版面"}
           </button>
         </div>
@@ -766,6 +782,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       {(!embedded||active)&&error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
       {(!embedded||active)&&notice && <section className="notice">{notice}</section>}
 
+      {chartSaveBlocked && <p role="alert">此版型包含受控 CHART：目前僅允許安全檢視，舊版版面儲存已鎖定，以避免覆寫已簽核的圖表。待專用 CHART 儲存 API 通過獨立驗收後才可編輯。</p>}
       {unavailableReferences.length > 0 && <p role="alert">Widget 引用來源不可用：{unavailableReferences.join("、")}。既有引用保留，請修正來源或明確變更 Widget；禁止儲存。</p>}
       <p>版型僅透過新版版本化 API 儲存；載入與預覽不會儲存。停用或 pending 來源不能新增引用，既有引用會保留並由後端拒絕不安全儲存。</p>
       {supplementalSources.filter(source => !source.isEnabled || source.queryDefinitionId === null).map(source => <p role="status" key={source.sourceKey}>來源 {source.sourceKey}：{!source.isEnabled ? "已停用" : "pending，尚未選 Query"}；請先處理來源，再確認 Widget 引用。</p>)}
@@ -878,7 +895,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
           <h2>新增 Widget</h2>
           <div className="layout-widget-toolbox">
-            {(Object.keys(widgetLabels) as WidgetType[]).map((type) => (
+            {(Object.keys(widgetLabels) as WidgetType[]).filter(type => type !== "CHART").map((type) => (
               <button key={type} type="button" onClick={() => addWidget(type)}>
                 ＋ {widgetLabels[type]}
               </button>
@@ -977,7 +994,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
           <h2>Widget 屬性</h2>
           {!selectedWidget && <p className="layout-hint">選取畫布上的 Widget 後即可調整。</p>}
 
-          {selectedWidget && (
+          {selectedWidget?.widgetType === "CHART" && <p role="status">受控 CHART 目前為唯讀，不能在舊版設計器修改、移動、刪除或重新儲存。</p>}
+          {selectedWidget && selectedWidget.widgetType !== "CHART" && (
             <div className="layout-inspector-form">
               <strong>{widgetLabels[selectedWidget.widgetType]}</strong>
 
