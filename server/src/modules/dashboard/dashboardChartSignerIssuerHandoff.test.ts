@@ -60,7 +60,7 @@ function scenario(){
       return session;
     },
     requestSignedReceipt:async(
-      requestPlan:typeof plan,header:string,
+      requestPlan:NonNullable<typeof plan>,header:string,
     ):Promise<unknown>=>{
       signerCalls++;
       assert.deepEqual(requestPlan,plan);
