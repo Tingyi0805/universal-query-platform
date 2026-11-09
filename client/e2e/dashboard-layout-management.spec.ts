@@ -3,6 +3,7 @@ async function setup(page: Page) {
   const widget = { id: 1, widgetType: "TEXT", title: "合成標題", sourceKey: null, staticText: "固定合成文字", x: 10, y: 20, width: 300, height: 60, fontSize: 24, alignment: "LEFT", config: { color: "#112233", preservedStyle: { marker: "synthetic" } }, sortOrder: 0 };
   const state = { revision: 1, conflict: false, disabled: false, race: false, pending: false, sourceEnabled: true, missingVersion: false, writes: [] as any[], legacy: [] as string[],
     chartProjectionCalls: [] as {method:string;body:string|null;authorization:string|null}[],
+    chartProjectionRevoked: false,
     profiles: [
       { id: 1, name: "橫向合成版型", isDefault: true, sortOrder: 0, canvasWidth: 1920, canvasHeight: 1080, config: { backgroundColor: "#abcdef", retained: true }, widgets: [widget,
         { ...widget, id: 2, widgetType: "FIELD", staticText: null, sourceKey: "NAME", y: 100, config: { dataSourceKey: "WARD", color: "#223344" } },
@@ -18,6 +19,10 @@ async function setup(page: Page) {
     if (path.endsWith("/configuration")) { await route.fulfill(state.disabled ? { status: 404, json: { error: { code: "QUERY_SOURCE_MANAGEMENT_DISABLED", message: "SQL private synthetic" } } } : { json: config() }); return; }
     if (path === "/api/dashboards/1/charts/v1/88/projection") {
       state.chartProjectionCalls.push({method:request.method(),body:request.postData(),authorization:request.headers()["authorization"]??null});
+      if(state.chartProjectionRevoked){
+        await route.fulfill({status:503,json:{error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}}});
+        return;
+      }
       await route.fulfill({json:{chartType:"BAR",showLegend:true,points:[{label:"診間 A",value:9}]}});
       return;
     }
@@ -295,4 +300,30 @@ test("native layout designer renders saved sealed CHART from server projection w
   expect(state.writes).toHaveLength(0);
   await expect(page.getByText("FORBIDDEN_CONFIG_ROW")).toHaveCount(0);
   await expect(page.getByText("PATIENT_ID")).toHaveCount(0);
+});
+
+test("saved CHART rechecks seal and hides revoked data without changing layout version",async({page})=>{
+  // Virtual clock: no 30-second wall-clock delay or unapproved SQL fixture.
+  await page.clock.install();
+  const state=await setup(page);
+  const chart={...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",
+    title:"已封印彙總",staticText:null,x:1160,y:460,width:620,height:360,
+    config:{privateMarker:"NEVER_RENDER_RAW"}};
+  (state.profiles[0]!.widgets as unknown[]).push(chart);
+  await page.goto("/designer/dashboards/1/layout");
+  const image=page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"});
+  await expect(image).toBeVisible();
+  const firstCount=state.chartProjectionCalls.length;
+  state.chartProjectionRevoked=true;
+  await page.clock.fastForward(30_000);
+  await expect(page.getByText("圖表未取得核准的彙總資料，停止顯示")).toBeVisible();
+  await expect(image).toHaveCount(0);
+  expect(state.chartProjectionCalls.length).toBeGreaterThan(firstCount);
+  const revokedCount=state.chartProjectionCalls.length;
+  state.chartProjectionRevoked=false;
+  await page.clock.fastForward(30_000);
+  await expect(image).toBeVisible();
+  expect(state.chartProjectionCalls.length).toBeGreaterThan(revokedCount);
+  await expect(page.getByText("NEVER_RENDER_RAW")).toHaveCount(0);
+  expect(state.writes).toHaveLength(0);
 });
