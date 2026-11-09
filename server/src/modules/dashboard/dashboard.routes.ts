@@ -18,6 +18,18 @@ import { queryModeStore, readDashboardQueryMode } from "./dashboardQueryMode.rep
 import { createQueryDeviceRouter } from "./dashboardQueryDevice.routes.js";
 import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
+// Issue #89: production CHART projection adapter remains hard-disabled until
+// sealed Widget, DB 928, trusted aggregate and HTTP release are approved.
+import {
+  CHART_PROJECTION_HTTP_RELEASE_APPROVED,
+  createChartProjectionRouter,
+} from "./dashboardChartProjection.routes.js";
+import {
+  createDormantChartCoordinator,
+  createDormantSqlChartFactsReader,
+} from "./dashboardChartDelivery.coordinator.js";
+import { createDormantChartTrustReaders } from "./dashboardChartTrust.repository.js";
+import { readChartRevisionFence } from "./dashboardChartRevisionFence.js";
 import { loadQueryExecutionBinding, loadUserPlaybackSources, readUserPlaybackMode, legacySourceIsQueryBound } from "./dashboardQuerySourceExecution.repository.js";
 import { getTokenSessionState } from "../auth/auth.repository.js";
 import { env } from "../../config/env.js";
@@ -304,6 +316,21 @@ dashboardRouter.use(createDrilldownRouter());
 dashboardRouter.use("/:id/query-sources/v1/layout", requirePermission("DESIGN_QUERY"), validateDrillLayout);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
+// Real server repositories and audited Query-only delivery are bound here.
+// Both release gates remain false: no CHART SQL reads, live data or DML occur.
+const chartTrustReaders = createDormantChartTrustReaders();
+const trustedChartProjection = createDormantChartCoordinator({
+  enabled: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
+  readSavedWidget: chartTrustReaders.readSavedWidget,
+  createFactsReader: createDormantSqlChartFactsReader,
+  auditedPage: queryExecution,
+  readFence: readChartRevisionFence,
+  readPublicReview: chartTrustReaders.readPublicReview,
+});
+dashboardRouter.use(createChartProjectionRouter({
+  approved: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
+  project: trustedChartProjection,
+}));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));
 dashboardRouter.use(createDeviceManagementRouter(createDeviceManagementService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT), deviceEnrollment));
