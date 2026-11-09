@@ -136,15 +136,17 @@ test("malformed, injected, altered or substituted proof always fails closed",()=
     {...raw,Attestation:{...raw.Attestation,Signature:"invalid"}},
     {...raw,Attestation:{...raw.Attestation,SqlSignature:"client"}},
   ]) {
-    const matched=parseIndependentChartIssuerProof(value,plan,trusted,now);
-    // HMAC itself is NOT checked by Node. A well-shaped but invalid HMAC
-    // is rejected by SQL (not UQP). Only structural failures reject here.
-    if(recordWithFakeMac(value,raw)) {
-      assert(matched);
-    }else assert.equal(matched,null);
+    assert.equal(parseIndependentChartIssuerProof(value,plan,trusted,now),null);
   }
   assert.equal(parseIndependentChartIssuerProof(
     raw,plan,{"separate-signer-1":"not a public key"},now),null);
+  // An invalid-but-canonical HMAC is structurally valid here; SQL MUST
+  // independently recompute and reject the signature before any grant.
+  const wrongMac={...raw,SqlMac:Buffer.alloc(32,7).toString("base64url")};
+  const parsed=parseIndependentChartIssuerProof(wrongMac,plan,trusted,now);
+  assert(parsed);
+  assert.notDeepEqual(parsed.Signature,
+    Buffer.from(raw.SqlMac,"base64url"));
   const wrongKey=generateKeyPairSync("ed25519");
   assert.equal(parseIndependentChartIssuerProof(raw,plan,{
     "separate-signer-1":wrongKey.publicKey.export({
@@ -152,12 +154,6 @@ test("malformed, injected, altered or substituted proof always fails closed",()=
     }).toString(),
   },now),null);
 });
-
-function recordWithFakeMac(value:unknown,raw:ReturnType<typeof makeDual>):boolean{
-  return typeof value==="object"&&value!==null&&
-    "SqlMac" in value&&(value as {SqlMac:unknown}).SqlMac==="a".repeat(43)
-    &&(value as {Attestation?:unknown}).Attestation===raw.Attestation;
-}
 
 test("SQL 10-second bound is stricter than Ed25519 60-second receipt",()=>{
   for(const data of [
