@@ -42,11 +42,15 @@ export type DormantSqlChartCreateDependencies=Readonly<{
   enabled:()=>boolean;
   now?:()=>number;
 }>;
-const uuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
+// A 128-bit random nonce converted to SQL UNIQUEIDENTIFIER is NOT an
+// RFC-4122 UUID: its version/variant bits are arbitrary. The SQL Issuer
+// verifies the MAC and consumes the exact nonce, not an RFC variant bit.
+const sqlNonceGuid=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+// Only the grant produced by SQL NEWID() is required to be a v4 UUID.
+const grantGuid=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const exact=(raw:unknown,keys:string):raw is Record<string,unknown>=>
   !!raw&&typeof raw==="object"&&!Array.isArray(raw)&&
   Object.keys(raw).sort().join("|")===keys;
-const validId=(v:unknown)=>typeof v==="number"&&Number.isSafeInteger(v)&&v>0;
 const validTime=(v:unknown)=>typeof v==="number"&&Number.isSafeInteger(v)&&v>0;
 
 function validatedPlan(plan:DormantChartCreatePlan):boolean{
@@ -68,7 +72,7 @@ function proofMatches(
      p.Signature.length!==32||
      !(p.IssuedAtUtc instanceof Date)||
      !(p.ExpiresAtUtc instanceof Date)||
-     !uuid.test(p.Nonce))return false;
+     !sqlNonceGuid.test(p.Nonce))return false;
   const issued=p.IssuedAtUtc.valueOf(),expires=p.ExpiresAtUtc.valueOf();
   return validTime(issued)&&validTime(expires)&&
     issued<=now&&now<expires&&expires-issued<=10_000&&
@@ -122,7 +126,7 @@ export function createDormantSqlChartAtomicCreate(
       const rows=issuerResult.recordset;
       if(rows?.length!==1||!exact(rows[0],"GrantId|Secret")||
          typeof rows[0].GrantId!=="string"||
-         !uuid.test(rows[0].GrantId)||
+         !grantGuid.test(rows[0].GrantId)||
          !Buffer.isBuffer(rows[0].Secret)||
          rows[0].Secret.length!==32)return null;
       const grantId=rows[0].GrantId;
