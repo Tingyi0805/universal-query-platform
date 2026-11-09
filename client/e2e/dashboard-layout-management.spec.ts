@@ -47,10 +47,14 @@ test("existing multi-screen layouts round-trip fixed text fields tables geometry
 });
 
 test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape without intermediate clamping", async ({ page }) => {
+  // This covers multiple complete UI edit gestures + save + reload. Keep the
+  // per-test timeout independent of the 350-case single-worker browser suite.
+  test.setTimeout(60_000);
   const state = await setup(page);
   await page.goto("/designer/dashboards/1/layout");
   await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
   await page.locator(".layout-widget").first().click();
+  console.log("PR90_WIDGET_EDIT:SELECTED");
   const placement = page.locator(".layout-inspector-grid");
   const width = placement.getByLabel("寬", {exact:true});
   await width.click();
@@ -68,6 +72,7 @@ test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape 
   await height.pressSequentially("150");
   await height.press("Tab");
   await expect(height).toHaveValue("150");
+  console.log("PR90_WIDGET_EDIT:SIZES_COMMITTED");
 
   await width.click();
   await width.press("ControlOrMeta+A");
@@ -82,6 +87,7 @@ test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape 
   await y.fill("70");
   await y.press("Tab");
   expect(state.writes).toHaveLength(0);
+  console.log("PR90_WIDGET_EDIT:GEOMETRY_COMMITTED");
 
   await save(page).click();
   await expect(page.getByText("Dashboard 版面已儲存。", {exact:true})).toBeVisible();
@@ -91,6 +97,7 @@ test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape 
   });
   expect(state.writes[0].profiles[0].widgets).toHaveLength(3);
   expect(state.legacy).toEqual([]);
+  console.log("PR90_WIDGET_EDIT:SAVED");
 
   await page.reload();
   await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
