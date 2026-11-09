@@ -266,7 +266,7 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     )).recordset[0];
     return [Number(row?.Nonces),Number(row?.Grants)];
   };
-  const issueSigned=(p:ProofScope,signature=mac(p),
+  const issueSigned=(p:ProofScope,signature:Buffer=mac(p),
       who:"UQP_Chart_IssuerSynthetic"|"UQP_Chart_Writer"="UQP_Chart_IssuerSynthetic")=>
     db.request()
     .input("actor",sql.BigInt,p.actor)
