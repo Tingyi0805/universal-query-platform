@@ -199,7 +199,7 @@ test("same SQL pool for Issuer and Writer is forbidden before any work",async()=
 test("release-bound SQL composition never queries any login, signer or Writer",async()=>{
   const f=fixture();f.setApproved(true);
   let queried=0;
-  const platform={request:()=>{queried++;throw Error("NOT_APPROVED");}}
+  const platform=({request:()=>{queried++;throw Error("NOT_APPROVED");}})
     as unknown as sql.ConnectionPool;
   const release=createReleaseDisabledChartSqlAtomicCreate({
     ...f.deps,platformPool:platform,
