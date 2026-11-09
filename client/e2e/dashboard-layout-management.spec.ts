@@ -46,6 +46,74 @@ test("existing multi-screen layouts round-trip fixed text fields tables geometry
   await expect(page.getByText("直向固定合成文字", { exact: true })).toBeVisible(); await expect(page.getByLabel("畫布高度", { exact: true })).toHaveValue("1920");
 });
 
+test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape without intermediate clamping", async ({ page }) => {
+  // This covers multiple complete UI edit gestures + save + reload. Keep the
+  // per-test timeout independent of the 350-case single-worker browser suite.
+  test.setTimeout(60_000);
+  const state = await setup(page);
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
+  // Click the visible top-left label area; synthetic widgets intentionally overlap.
+  await page.locator(".layout-widget").first().click({position:{x:8,y:8}});
+  console.log("PR90_WIDGET_EDIT:SELECTED");
+  const placement = page.locator(".layout-inspector-grid");
+  const width = placement.getByLabel("寬", {exact:true});
+  await width.click();
+  await width.press("ControlOrMeta+A");
+  await width.pressSequentially("400");
+  await expect(width).toHaveValue("400");
+  // Editing is still local, so no partial geometry or server write occurs.
+  expect(state.writes).toHaveLength(0);
+  await width.press("Enter");
+  await expect(width).toHaveValue("400");
+
+  const height = placement.getByLabel("高", {exact:true});
+  await height.click();
+  await height.press("ControlOrMeta+A");
+  await height.pressSequentially("150");
+  await height.press("Tab");
+  await expect(height).toHaveValue("150");
+  console.log("PR90_WIDGET_EDIT:SIZES_COMMITTED");
+
+  await width.click();
+  await width.press("ControlOrMeta+A");
+  await width.pressSequentially("800");
+  await width.press("Escape");
+  await expect(width).toHaveValue("400");
+
+  const x = placement.getByLabel("X", {exact:true});
+  await x.fill("100");
+  await x.press("Enter");
+  const y = placement.getByLabel("Y", {exact:true});
+  await y.fill("70");
+  await y.press("Tab");
+  expect(state.writes).toHaveLength(0);
+  console.log("PR90_WIDGET_EDIT:GEOMETRY_COMMITTED");
+
+  await save(page).click();
+  await expect(page.getByText("Dashboard 版面已儲存。", {exact:true})).toBeVisible();
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0].profiles[0].widgets[0]).toMatchObject({
+    x:100, y:70, width:400, height:150,
+  });
+  expect(state.writes[0].profiles[0].widgets).toHaveLength(3);
+  expect(state.legacy).toEqual([]);
+  console.log("PR90_WIDGET_EDIT:SAVED");
+
+  // Exercise the editor's explicit, revision-aware reload path rather than
+  // a whole-page navigation, which is covered by separate navigation tests.
+  page.once("dialog", dialog => void dialog.accept());
+  await page.getByRole("button", {name:"重新載入版型與版本", exact:true}).click();
+  console.log("PR90_WIDGET_EDIT:RELOAD_CLICKED");
+  await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
+  // Click the visible top-left label area; synthetic widgets intentionally overlap.
+  await page.locator(".layout-widget").first().click({position:{x:8,y:8}});
+  console.log("PR90_WIDGET_EDIT:RESELECTED");
+  await expect(page.locator(".layout-inspector-grid").getByLabel("寬", {exact:true})).toHaveValue("400");
+  await expect(page.locator(".layout-inspector-grid").getByLabel("高", {exact:true})).toHaveValue("150");
+  console.log("PR90_WIDGET_EDIT:RELOADED_ASSERTED");
+});
+
 test("layout conflict preserves local draft locks saving and only explicit reload takes another administrator's layout", async ({ page }) => {
   const state = await setup(page); await page.goto("/designer/dashboards/1/layout");
   await page.getByLabel("畫布寬度", { exact: true }).fill("2000"); state.conflict = true; await save(page).click();
