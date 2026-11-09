@@ -251,10 +251,11 @@ test("sealed CHART persisted by future audited writer remains read-only and neve
  (state.profiles[0]!.widgets as unknown[]).push(chart);
  await page.goto("/designer/dashboards/1/layout");
  await expect(page.getByText(/已載入版型曾包含受控 CHART/)).toBeVisible();
- await expect(page.getByText("受控 CHART：請使用已授權的播放預覽查看")).toBeVisible();
+ await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toBeVisible();
+ await expect(page.getByLabel("圖表圖例")).toContainText("診間 A");
  await expect(save(page)).toBeDisabled();
  await expect(page.getByRole("button",{name:"＋ 受控圖表（唯讀）"})).toHaveCount(0);
- await page.locator(".layout-widget").filter({hasText:"受控 CHART：請使用已授權的播放預覽查看"}).click();
+ await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
  await expect(page.getByText(/受控 CHART 目前為唯讀/)).toBeVisible();
  await expect(page.locator(".layout-inspector-grid")).toHaveCount(0);
  expect(state.writes).toHaveLength(0);
