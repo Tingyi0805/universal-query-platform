@@ -95,16 +95,22 @@ export function createIndependentChartSigner(deps:IndependentChartSignerDeps){
        !isRecord(raw)||!strictKeys(raw,[
          "dashboardId","profileId","requestId","config","placement",
        ]))return null;
-    let actorId:number,tokenVersion:number;
+    let actorId:number,tokenVersion:number,tokenExpiresAt:number;
     try{
+      const checkedAt=now();
+      if(!Number.isSafeInteger(checkedAt)||checkedAt<=0)return null;
       const token=jwt.verify(
         authorizationHeader.slice(7),deps.jwtVerificationKey,
-        {algorithms:["HS256"]},
+        {algorithms:["HS256"],clockTimestamp:Math.floor(checkedAt/1000)},
       );
       if(typeof token!=="object"||token===null)return null;
       actorId=Number(token.sub);
       tokenVersion=Number(token.tokenVersion);
-      if(!positive(actorId)||!positive(tokenVersion))return null;
+      tokenExpiresAt=Number(token.exp)*1000;
+      if(!positive(actorId)||!positive(tokenVersion)||
+         !Number.isSafeInteger(tokenExpiresAt)||
+         tokenExpiresAt<=checkedAt+CHART_SIGNER_MAX_LIFETIME_MS)
+        return null;
     }catch{return null;}
 
     // Build trusted immutable plan only with actor and tokenVersion read
@@ -127,7 +133,8 @@ export function createIndependentChartSigner(deps:IndependentChartSignerDeps){
       // pre-authorized stale scope. SQL Writer repeats all checks at commit.
       const issued=now(),expires=issued+CHART_SIGNER_MAX_LIFETIME_MS;
       if(!Number.isSafeInteger(issued)||issued<=0||
-         !Number.isSafeInteger(expires))return null;
+         !Number.isSafeInteger(expires)||expires>=tokenExpiresAt)
+        return null;
       const nonceBytes=nonceFactory();
       if(!Buffer.isBuffer(nonceBytes)||nonceBytes.length!==16)return null;
       const nonce=nonceBytes.toString("hex");
