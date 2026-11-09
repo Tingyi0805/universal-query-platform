@@ -183,6 +183,16 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   // Preserve the loaded trust boundary even if a profile is removed locally.
   const [loadedSealedChartPresent,setLoadedSealedChartPresent]=useState(false);
   const { accessToken, hasPermission } = useAuth();
+  const [chartOnline, setChartOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const update = () => setChartOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
 
   const [drillPending,setDrillPending]=useState(false);
   const [rootQueryId,setRootQueryId]=useState(0);
@@ -616,7 +626,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
         dashboardId, widgetId: widget.id ?? 0,
         queryPreview: true, deviceMode: false, userRoute: false,
         previewAuthorized: active && !embedded && sourceVersion !== undefined && preview !== null,
-        online: navigator.onLine, hasDataWarning: Boolean(error),
+        online: chartOnline, hasDataWarning: Boolean(error),
         accessTokenPresent: Boolean(accessToken),
         canDesignQuery: hasPermission("DESIGN_QUERY"),
         canExecuteQuery: hasPermission("EXECUTE_QUERY"),

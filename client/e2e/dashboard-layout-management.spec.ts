@@ -284,6 +284,13 @@ test("native layout designer renders saved sealed CHART from server projection w
   for(const call of state.chartProjectionCalls)expect(call).toEqual({
     method:"POST",body:null,authorization:"Bearer synthetic",
   });
+  const initialCalls=state.chartProjectionCalls.length;
+  await page.context().setOffline(true);
+  await expect(page.getByText("圖表尚未獲准在此播放模式顯示")).toBeVisible();
+  await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toHaveCount(0);
+  await page.context().setOffline(false);
+  await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toBeVisible();
+  expect(state.chartProjectionCalls.length).toBeGreaterThan(initialCalls);
   expect(state.writes).toHaveLength(0);
   await expect(page.getByText("FORBIDDEN_CONFIG_ROW")).toHaveCount(0);
   await expect(page.getByText("PATIENT_ID")).toHaveCount(0);
