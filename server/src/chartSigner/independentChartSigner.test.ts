@@ -27,8 +27,10 @@ const raw={
 const token=(claims:Record<string,unknown>={})=>
   "Bearer "+jwt.sign({
     sub:"8",tokenVersion:3,username:"synthetic",
-    permissions:["DANGEROUS_CLAIM"],...claims,
-  },jwtKey,{algorithm:"HS256",expiresIn:3600});
+    permissions:["DANGEROUS_CLAIM"],
+    iat:Math.floor(now/1000),exp:Math.floor(now/1000)+3600,
+    ...claims,
+  },jwtKey,{algorithm:"HS256"});
 const live:IndependentSignerLiveSession={
   isActive:true,tokenVersion:3,permissions:validPermissions,
 };
@@ -159,6 +161,7 @@ test("expired or revoked JWT, disabled user, stale token and insufficient curren
   }
   const h=harness();
   assert.equal(await h.signer("Bearer "+expired,raw),null);
+  assert.equal(await h.signer(token({exp:Math.floor(now/1000)+3}),raw),null);
   assert.equal(h.counts().dbReads,0);
   const denied=harness({allowed:false});
   assert.equal(await denied.signer(token(),raw),null);
