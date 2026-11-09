@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { readVerifiedJwtActor, requirePermission } from "../auth/auth.middleware.js";
+import { readVerifiedJwtActor } from "../auth/auth.middleware.js";
 import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 
 // Independent, reviewed release approval must be committed explicitly.
