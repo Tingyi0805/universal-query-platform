@@ -7,8 +7,12 @@ import {getTokenSessionState} from "../auth/auth.repository.js";
 import {planVerifiedChartCreateRequest} from "./dashboardChartAuthenticatedCreate.js";
 import type {DormantChartCreatePlan} from "./dashboardChartAtomicCreate.contract.js";
 import {
-  CHART_ACTOR_ATTESTATION_PINNED_KEYS,verifyChartActorAttestation,
+  CHART_ACTOR_ATTESTATION_PINNED_KEYS,
 } from "./dashboardChartActorAttestation.js";
+import {
+  CHART_DUAL_PROOF_RELEASE_APPROVED,parseIndependentChartIssuerProof,
+  type VerifiedSqlChartIssuerProof,
+} from "./dashboardChartIndependentIssuerProof.js";
 import {
   CHART_ATOMIC_CREATE_RUNTIME_ENABLED,
 } from "./dashboardChartAtomicCreate.contract.js";
@@ -28,6 +32,11 @@ export type DormantChartIssuerIntent=Readonly<{
   ActorId:number;TokenVersion:number;DashboardId:number;ProfileId:number;
   RequestId:string;SourceKey:string;ConfigSha256:string;
   X:number;Y:number;Width:number;Height:number;
+}>;
+/** SQL proof is server-private and must NEVER be included in an HTTP response. */
+export type DormantChartVerifiedIssuerHandoff=Readonly<{
+  intent:DormantChartIssuerIntent;
+  proof:VerifiedSqlChartIssuerProof;
 }>;
 
 /** Testable data mapping only. A returned object is NOT an issuer grant.
@@ -74,15 +83,20 @@ export async function prepareDormantChartIssuerHandoff(
  // Only an independent authenticated signer may provide this server-side.
  // Never forward a user-supplied body field or untrusted service response.
  independentActorAttestation:unknown=null,
-):Promise<DormantChartIssuerIntent|null>{
- if(!CHART_ATOMIC_CREATE_RUNTIME_ENABLED||
+):Promise<DormantChartVerifiedIssuerHandoff|null>{
+ if(!CHART_DUAL_PROOF_RELEASE_APPROVED||
+    !CHART_ATOMIC_CREATE_RUNTIME_ENABLED||
     !CHART_WRITER_DB_ACTOR_BINDING_APPROVED||
     !CHART_WRITER_APPROVED_PROCEDURE_SHA256||
     !CHART_ISSUER_APPROVED_PROCEDURE_SHA256)return null;
  const plan=planVerifiedChartCreateRequest(req,dashboardId,rawBody);
- if(!plan||!verifyChartActorAttestation(
-     independentActorAttestation,plan,CHART_ACTOR_ATTESTATION_PINNED_KEYS))
-   return null;
+ if(!plan)return null;
+ // Require BOTH the pinned Ed25519 receipt and SQL HMAC for the same
+ // nonce/actor/config/placement/timestamps. SQL must independently verify
+ // HMAC before grant issuance; Node cannot mint or skip it.
+ const proof=parseIndependentChartIssuerProof(
+   independentActorAttestation,plan,CHART_ACTOR_ATTESTATION_PINNED_KEYS);
+ if(!proof)return null;
  const intent=intentFromPlan(plan);
  try{
    // Extra current-session check before the planned issuance. This has a
@@ -93,7 +107,9 @@ export async function prepareDormantChartIssuerHandoff(
       live.tokenVersion!==intent.TokenVersion||
       !live.permissions.includes("DESIGN_QUERY"))return null;
    await attestChartIssuerSqlPools(platformPool,issuerPool,writerPool);
-   return intent;
+   // Not a SQL grant. Caller must invoke the approved DB Issuer with this
+   // exact scope; unapproved runtime and production keys still block here.
+   return {intent,proof};
  }catch{
    // Never disclose SQL metadata, logins, private grant data, or secrets.
    return null;
