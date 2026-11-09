@@ -21,6 +21,7 @@ export const chartWriterIdentitySql = [
   "IS_MEMBER(N'db_ddladmin') AS DbDdlAdmin,",
   "IS_MEMBER(N'db_securityadmin') AS DbSecurityAdmin,",
   "IS_MEMBER(N'db_datawriter') AS DbDataWriter,",
+  "IS_MEMBER(N'db_datareader') AS DbDataReader,",
   "IS_MEMBER(N'db_accessadmin') AS DbAccessAdmin,",
   "HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'ALTER ANY USER') AS DbAlterAnyUser,",
   "HAS_PERMS_BY_NAME(DB_NAME(),N'DATABASE',N'ALTER ANY ROLE') AS DbAlterAnyRole,",
@@ -58,7 +59,7 @@ const str=(v:unknown):v is string=>typeof v==="string"&&v.length>0;
 const forbidden=[
  "Sysadmin","ServerControl","ServerImpersonateAny","ServerAlterLogins",
  "ServerAlterRoles","ServerSelectAllUserData",
- "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbAccessAdmin",
+ "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbDataReader","DbAccessAdmin",
  "DbAlterAnyUser","DbAlterAnyRole","DbAlterAnySchema",
  "DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
  "CreateAlter","PermitInsert","SealInsert","LedgerInsert","ReviewUpdate",

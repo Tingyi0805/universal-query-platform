@@ -15,7 +15,7 @@ const base={
  ProcedureId:101,ProcedureSha256:EXPECTED_SHA,
  Sysadmin:0,ServerControl:0,ServerImpersonateAny:0,ServerAlterLogins:0,
  ServerAlterRoles:0,ServerSelectAllUserData:0,
- DbOwner:0,DbDdlAdmin:0,DbSecurityAdmin:0,DbDataWriter:0,DbAccessAdmin:0,
+ DbOwner:0,DbDdlAdmin:0,DbSecurityAdmin:0,DbDataWriter:0,DbDataReader:0,DbAccessAdmin:0,
  DbAlterAnyUser:0,DbAlterAnyRole:0,DbAlterAnySchema:0,
  DbControl:0,SchemaControl:0,SchemaAlter:0,
  ImpersonateWriter:0,CreateExecute:0,CreateAlter:0,
@@ -50,12 +50,13 @@ test("2B-15C broad roles, SQL DML sidecars, impersonation fail closed",()=>{
    "ALTER ANY LOGIN","ALTER ANY SERVER ROLE","SELECT ALL USER SECURABLES"]){
    assert(chartWriterIdentitySql.includes("N'"+name+"'"));
  }
+ assert.match(chartWriterIdentitySql,/IS_MEMBER\(N'db_datareader'\) AS DbDataReader/);
  assert(chartWriterIdentitySql.includes("N'ALTER ANY USER'"));
  assert(chartWriterIdentitySql.includes("N'ALTER ANY ROLE'"));
  assert(chartWriterIdentitySql.includes("N'ALTER ANY SCHEMA'"));
  for(const key of ["Sysadmin","ServerControl","ServerImpersonateAny",
  "ServerAlterLogins","ServerAlterRoles","ServerSelectAllUserData",
- "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbAccessAdmin",
+ "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbDataReader","DbAccessAdmin",
  "DbAlterAnyUser","DbAlterAnyRole","DbAlterAnySchema",
  "DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
  "CreateAlter","PermitInsert","SealInsert","LedgerInsert","ReviewUpdate"]){
