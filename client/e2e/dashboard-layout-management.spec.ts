@@ -235,3 +235,24 @@ test("global typography writes only on explicit save, preserves legacy layout, a
  expect(saved.widgets[2].config.textColor).toBe("#123456");
  expect(state.legacy).toEqual([]);
 });
+
+
+test("sealed CHART persisted by future audited writer remains read-only and never leaks into legacy layout PUT", async ({page})=>{
+ const state=await setup(page);
+ const chart={...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",
+   x:1200,y:400,width:450,height:300,
+   title:"受控統計",staticText:null,config:{sealedId:88,privateMarker:"NEVER_RENDER_RAW"}};
+ state.profiles[0]!.widgets.push(chart);
+ await page.goto("/designer/dashboards/1/layout");
+ await expect(page.getByText(/此版型包含受控 CHART/)).toBeVisible();
+ await expect(page.getByText("受控 CHART：請使用已授權的播放預覽查看")).toBeVisible();
+ await expect(save(page)).toBeDisabled();
+ await expect(page.getByRole("button",{name:"＋ 受控圖表（唯讀）"})).toHaveCount(0);
+ await page.locator(".layout-widget").filter({hasText:"受控 CHART：請使用已授權的播放預覽查看"}).click();
+ await expect(page.getByText(/受控 CHART 目前為唯讀/)).toBeVisible();
+ await expect(page.locator(".layout-inspector-grid")).toHaveCount(0);
+ expect(state.writes).toHaveLength(0);
+ expect(state.legacy).toEqual([]);
+ expect(JSON.stringify(state.profiles[0]!.widgets)).toContain("NEVER_RENDER_RAW");
+ await expect(page.getByText("NEVER_RENDER_RAW")).toHaveCount(0);
+});
