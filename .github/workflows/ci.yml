@@ -118,6 +118,11 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
+      - name: Provide native ODBC source-build fallback when IBM prebuild is unavailable
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends unixodbc-dev
+          test -f /usr/include/sql.h
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=low
       - run: npm audit --audit-level=low
@@ -520,6 +525,11 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
+      - name: Provide native ODBC source-build fallback when IBM prebuild is unavailable
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends unixodbc-dev
+          test -f /usr/include/sql.h
       - run: npm ci
       - name: Start disposable SQL Server (no user databases or migrations)
         shell: bash
