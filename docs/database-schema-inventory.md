@@ -1901,6 +1901,7 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | Path | SHA-256 |
 |---|---|---|
 | SOURCE | database/acceptance/catalog-probe.sql | 7667ce492379c20fd67b76bcab4dae118d29044bfe051a69b5fd1536e372e5d4 |
+| SOURCE | database/acceptance/chart-928-adoption-preflight-readonly.sql | 7f3dc7db2238226a76273f7c1b402aae185faeab4b6bd6f91eb3cc044c1a7aff |
 | SOURCE | database/acceptance/production-migration-ledger-readonly.sql | 92972a41de342855d7946f529175de2eb47075ecbb5ce5d9732c4e2a81537626 |
 | SOURCE | database/acceptance/production-schema-readonly-inventory.sql | 935254cec51251772acad9ed08b9a85f96cfc96c0e3d72f5ac41862b8dd62bf8 |
 | SOURCE | database/drafts/924_dataset_security_scope_binding.sql | 9d37c02255acfe88614eb6e19780a7b6a502e95a3bfcf1ef996c6f64ec83c107 |
