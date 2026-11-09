@@ -56,7 +56,8 @@ test("Ed25519 signature, domain separation and immutable plan scope match",()=>{
   const proof=signed(unsigned());
   assert.equal(verifyChartActorAttestation(proof,plan,registry,now),true);
   const bytes=chartActorAttestationBytes(proof);
-  assert(bytes?.toString().startsWith("UQP_CHART_ACTOR_ATTESTATION_V1\n"));
+  assert(bytes);
+  assert(bytes.toString().startsWith("UQP_CHART_ACTOR_ATTESTATION_V1\n"));
   assert(!bytes.toString().includes("Signature"));
   assert(!bytes.toString().includes(proof.Signature));
   assert.equal(verifyChartActorAttestation(proof,plan,{},now),false);
