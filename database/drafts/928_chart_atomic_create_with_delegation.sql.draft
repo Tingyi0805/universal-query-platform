@@ -13,7 +13,29 @@ IF OBJECT_ID(N'uqp.ChartActorDelegationDisposable',N'U') IS NULL
  OR OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') IS NULL
  THROW 51928,N'CHART_DELEGATED_FIXTURE_REQUIRED',1;
 IF OBJECT_ID(N'uqp.usp_ChartCreateWithDelegation_IsolatedDraft',N'P') IS NOT NULL
+ OR OBJECT_ID(N'uqp.ChartWriterApprovedIssuerDisposable',N'U') IS NOT NULL
  THROW 51928,N'CHART_DELEGATED_ALREADY_INSTALLED',1;
+-- Owner-provisioned trust anchor for the DISPOSABLE database only.
+-- The original CI synthetic issuer runs under the SA original login;
+-- separate real SQL logins must be explicitly approved in their test.
+-- No environment, caller, JWT, procedure parameter or SESSION_CONTEXT
+-- can modify the Writer's approved SQL login SID.
+CREATE TABLE uqp.ChartWriterApprovedIssuerDisposable(
+ ApprovalId TINYINT NOT NULL
+  CONSTRAINT PK_ChartWriterApprovedIssuerDisposable PRIMARY KEY
+  CONSTRAINT CK_ChartWriterApprovedIssuerId CHECK(ApprovalId=1),
+ IssuerSid VARBINARY(85) NOT NULL,
+ IsEnabled BIT NOT NULL,
+ CONSTRAINT CK_ChartWriterApprovedIssuerSid CHECK(DATALENGTH(IssuerSid) BETWEEN 1 AND 85)
+);
+INSERT uqp.ChartWriterApprovedIssuerDisposable(ApprovalId,IssuerSid,IsEnabled)
+ VALUES(1,SUSER_SID(ORIGINAL_LOGIN()),1);
+DENY SELECT,INSERT,UPDATE,DELETE ON OBJECT::uqp.ChartWriterApprovedIssuerDisposable
+ TO [UQP_Chart_Writer];
+DENY SELECT,INSERT,UPDATE,DELETE ON OBJECT::uqp.ChartWriterApprovedIssuerDisposable
+ TO [UQP_Chart_IssuerSynthetic];
+DENY SELECT,INSERT,UPDATE,DELETE ON OBJECT::uqp.ChartWriterApprovedIssuerDisposable
+ TO [UQP_Chart_Untrusted];
 EXEC(N'CREATE PROCEDURE uqp.usp_ChartCreateWithDelegation_IsolatedDraft
  @DashboardId bigint,@ProfileId bigint,@ActorId bigint,@TokenVersion int,
  @RequestId uniqueidentifier,@GrantId uniqueidentifier,@Secret varbinary(max),
@@ -87,8 +109,14 @@ BEGIN
     WHERE GrantId=@GrantId
   ) THROW 51928,''CHART_DELEGATED_GRANT_INVALID'',1;
   DECLARE @consumeAt DATETIME2(3)=SYSUTCDATETIME();
+  -- The DB-owner controlled approved Issuer SID must match the SID
+  -- stamped on the Grant. Read/lock BOTH rows inside the Writer's own
+  -- SERIALIZABLE transaction, before consuming Grant or writing Audit.
+  -- If the policy row is missing, disabled or mismatched: fail closed.
   IF NOT EXISTS(
     SELECT 1 FROM uqp.ChartActorDelegationDisposable d WITH(UPDLOCK,HOLDLOCK)
+    INNER JOIN uqp.ChartWriterApprovedIssuerDisposable a WITH(UPDLOCK,HOLDLOCK)
+      ON a.ApprovalId=1 AND a.IsEnabled=1 AND a.IssuerSid=d.IssuerSid
     WHERE d.GrantId=@GrantId AND d.Purpose=''CHART_CREATE'' AND d.Version=1
       AND d.SecretSha256=HASHBYTES(''SHA2_256'',@Secret)
       AND d.ActorId=@ActorId AND d.TokenVersion=@TokenVersion
