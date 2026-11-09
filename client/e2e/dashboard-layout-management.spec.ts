@@ -46,6 +46,59 @@ test("existing multi-screen layouts round-trip fixed text fields tables geometry
   await expect(page.getByText("直向固定合成文字", { exact: true })).toBeVisible(); await expect(page.getByLabel("畫布高度", { exact: true })).toHaveValue("1920");
 });
 
+test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape without intermediate clamping", async ({ page }) => {
+  const state = await setup(page);
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
+  await page.locator(".layout-widget").first().click();
+  const placement = page.locator(".layout-inspector-grid");
+  const width = placement.getByLabel("寬", {exact:true});
+  await width.click();
+  await width.press("ControlOrMeta+A");
+  await width.pressSequentially("400");
+  await expect(width).toHaveValue("400");
+  // Editing is still local, so no partial geometry or server write occurs.
+  expect(state.writes).toHaveLength(0);
+  await width.press("Enter");
+  await expect(width).toHaveValue("400");
+
+  const height = placement.getByLabel("高", {exact:true});
+  await height.click();
+  await height.press("ControlOrMeta+A");
+  await height.pressSequentially("150");
+  await height.press("Tab");
+  await expect(height).toHaveValue("150");
+
+  await width.click();
+  await width.press("ControlOrMeta+A");
+  await width.pressSequentially("800");
+  await width.press("Escape");
+  await expect(width).toHaveValue("400");
+
+  const x = placement.getByLabel("X", {exact:true});
+  await x.fill("100");
+  await x.press("Enter");
+  const y = placement.getByLabel("Y", {exact:true});
+  await y.fill("70");
+  await y.press("Tab");
+  expect(state.writes).toHaveLength(0);
+
+  await save(page).click();
+  await expect(page.getByText("Dashboard 版面已儲存。", {exact:true})).toBeVisible();
+  expect(state.writes).toHaveLength(1);
+  expect(state.writes[0].profiles[0].widgets[0]).toMatchObject({
+    x:100, y:70, width:400, height:150,
+  });
+  expect(state.writes[0].profiles[0].widgets).toHaveLength(3);
+  expect(state.legacy).toEqual([]);
+
+  await page.reload();
+  await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
+  await page.locator(".layout-widget").first().click();
+  await expect(page.locator(".layout-inspector-grid").getByLabel("寬", {exact:true})).toHaveValue("400");
+  await expect(page.locator(".layout-inspector-grid").getByLabel("高", {exact:true})).toHaveValue("150");
+});
+
 test("layout conflict preserves local draft locks saving and only explicit reload takes another administrator's layout", async ({ page }) => {
   const state = await setup(page); await page.goto("/designer/dashboards/1/layout");
   await page.getByLabel("畫布寬度", { exact: true }).fill("2000"); state.conflict = true; await save(page).click();
