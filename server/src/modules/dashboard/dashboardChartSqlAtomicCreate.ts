@@ -10,6 +10,21 @@ import {
 import type {VerifiedSqlChartIssuerProof} from
   "./dashboardChartIndependentIssuerProof.js";
 import {parseChartCreateSqlReceipt} from "./dashboardChartCreateReceipt.js";
+import {
+  createDormantChartSqlPrincipalPreflight,
+  type ReviewedChartSqlProcedures,
+} from "./dashboardChartSqlPrincipalPreflight.js";
+import {
+  CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
+} from "./dashboardChartIssuerBoundary.js";
+import {
+  CHART_WRITER_APPROVED_PROCEDURE_SHA256,
+  CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
+} from "./dashboardChartWriterBoundary.js";
+import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "./dashboardChartAtomicCreate.contract.js";
+import {CHART_DUAL_PROOF_RELEASE_APPROVED} from "./dashboardChartIndependentIssuerProof.js";
+import {CHART_SIGNER_ISSUER_HANDOFF_RELEASE_APPROVED} from "./dashboardChartSignerIssuerHandoff.js";
+import {CHART_SIGNER_CLIENT_RELEASE_APPROVED} from "./dashboardChartSignerClient.js";
 
 export const CHART_SQL_ATOMIC_CREATE_RELEASE_APPROVED=false as const;
 export const chartIssuerGrantSql=[
@@ -176,4 +191,49 @@ export function createDormantSqlChartAtomicCreate(
       if(secret&&!issuerSecrets.includes(secret))secret.fill(0);
     }
   };
+}
+
+/** The actual three-login, two-procedure attestor is supplied to the same
+ * SQL grant -> Writer executor. This is the future integration seam: no
+ * self-asserted "attestation succeeded" callback can be used by this factory.
+ * Only isolated CI tests may supply synthetic reviewed procedure hashes.
+ */
+export type ChartPreflightBoundSqlCreateDependencies=Omit<
+  DormantSqlChartCreateDependencies,"attestIndependentPrincipals"
+>&Readonly<{
+  platformPool:sql.ConnectionPool;
+  reviewed:ReviewedChartSqlProcedures;
+}>;
+export function createPreflightBoundDormantSqlChartAtomicCreate(
+  deps:ChartPreflightBoundSqlCreateDependencies,
+){
+  const preflight=createDormantChartSqlPrincipalPreflight({
+    platform:deps.platformPool,issuer:deps.issuerPool,writer:deps.writerPool,
+  },deps.reviewed,deps.enabled);
+  return createDormantSqlChartAtomicCreate({
+    ...deps,attestIndependentPrincipals:preflight,
+  });
+}
+
+/** PRODUCTION-BOUND factory, kept offline. It intentionally does not allow
+ * injected test flags, reviewed hashes, SQL principal approval, JWT trust
+ * keys, or env strings to override the hard release gates. Even if called
+ * from a future HTTP route it returns before any SQL request while blocked.
+ */
+export function createReleaseDisabledChartSqlAtomicCreate(
+  deps:Omit<ChartPreflightBoundSqlCreateDependencies,"enabled"|"reviewed">,
+){
+  return createPreflightBoundDormantSqlChartAtomicCreate({
+    ...deps,
+    enabled:()=>CHART_SQL_ATOMIC_CREATE_RELEASE_APPROVED &&
+      CHART_WRITER_DB_ACTOR_BINDING_APPROVED &&
+      CHART_ATOMIC_CREATE_RUNTIME_ENABLED &&
+      CHART_DUAL_PROOF_RELEASE_APPROVED &&
+      CHART_SIGNER_ISSUER_HANDOFF_RELEASE_APPROVED &&
+      CHART_SIGNER_CLIENT_RELEASE_APPROVED,
+    reviewed:{
+      issuerSha256:CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
+      writerSha256:CHART_WRITER_APPROVED_PROCEDURE_SHA256,
+    },
+  });
 }

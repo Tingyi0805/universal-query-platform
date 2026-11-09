@@ -4,6 +4,8 @@ import type sql from "mssql";
 import {
   CHART_SQL_ATOMIC_CREATE_RELEASE_APPROVED,
   chartIssuerGrantSql,chartWriterCreateSql,createDormantSqlChartAtomicCreate,
+  createPreflightBoundDormantSqlChartAtomicCreate,
+  createReleaseDisabledChartSqlAtomicCreate,
 } from "./dashboardChartSqlAtomicCreate.js";
 import {
   planDormantChartCreate,
@@ -192,4 +194,30 @@ test("same SQL pool for Issuer and Writer is forbidden before any work",async()=
   });
   assert.equal(await execute(plan,bearer),null);
   assert.equal(f.attestCalls,0);
+});
+
+test("release-bound SQL composition never queries any login, signer or Writer",async()=>{
+  const f=fixture();f.setApproved(true);
+  let queried=0;
+  const platform={request:()=>{queried++;throw Error("NOT_APPROVED");}}
+    as unknown as sql.ConnectionPool;
+  const release=createReleaseDisabledChartSqlAtomicCreate({
+    ...f.deps,platformPool:platform,
+  });
+  assert.equal(await release(plan,bearer),null);
+  assert.equal(f.issuerCalls,0);
+  assert.equal(f.writerCalls,0);
+  assert.equal(f.handoffCalls,0);
+  assert.equal(queried,0);
+  // A synthetic caller opting into the test seam is STILL blocked by
+  // an absent reviewed SQL procedure digest, before the first query.
+  const unreviewed=createPreflightBoundDormantSqlChartAtomicCreate({
+    ...f.deps,platformPool:platform,
+    reviewed:{issuerSha256:null,writerSha256:null},
+  });
+  assert.equal(await unreviewed(plan,bearer),null);
+  assert.equal(f.issuerCalls,0);
+  assert.equal(f.writerCalls,0);
+  assert.equal(f.handoffCalls,0);
+  assert.equal(queried,0);
 });
