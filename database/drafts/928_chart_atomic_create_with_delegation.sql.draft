@@ -154,12 +154,23 @@ BEGIN
   DECLARE @WidgetId bigint=(SELECT TOP(1) Id FROM @widgetRows);
   INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)
    VALUES(@WidgetId,@digest,1,@ActorId,@AuditId);
+  -- The returned revision must be the actual DB-owned SealRowVersion, read
+  -- inside the SAME transaction. A caller digest or synthetic revision is
+  -- not evidence of durable seal identity.
+  DECLARE @SealRevision varchar(16)=NULL;
+  SELECT @SealRevision=LOWER(CONVERT(varchar(16),s.SealRowVersion,2))
+   FROM uqp.DashboardChartWidgetSeal s WITH(HOLDLOCK)
+   WHERE s.WidgetId=@WidgetId AND s.IsActive=1 AND s.AuditLogId=@AuditId;
+  IF @SealRevision IS NULL OR LEN(@SealRevision)<>16
+   THROW 51928,''CHART_DRAFT_SEAL_RECEIPT_REQUIRED'',1;
   DELETE uqp.DashboardChartCreatePermit
    WHERE SessionId=@@SPID AND TransactionId=CURRENT_TRANSACTION_ID();
   IF @@ROWCOUNT<>1 THROW 51928,''CHART_DRAFT_PERMIT_CLEANUP_FAILED'',1;
   COMMIT TRANSACTION;
   SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
-  SELECT @WidgetId AS WidgetId,@AuditId AS AuditLogId,@digest AS Digest;
+  -- Audit ID is BIGINT. Return decimal TEXT to prevent JS precision loss.
+  SELECT @WidgetId AS WidgetId,CONVERT(varchar(20),@AuditId) AS AuditLogId,
+    @digest AS Digest,@SealRevision AS SealRevision;
  END TRY
  BEGIN CATCH
   IF XACT_STATE()<>0 ROLLBACK TRANSACTION;

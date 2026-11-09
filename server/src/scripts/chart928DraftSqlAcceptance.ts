@@ -939,10 +939,12 @@ export async function verifyChart928DraftSql(
     );
   // Expected digest is recomputed inside SQL from canonical UTF-8 JSON.
   // An extra caller digest argument must NEVER be trusted by this Writer.
-  const proveDelegatedReceipt=async(g:SyntheticGrant,created:{WidgetId?:unknown;AuditLogId?:unknown;Digest?:unknown})=>{
-    const widget=Number(created.WidgetId),audit=Number(created.AuditLogId);
+  const proveDelegatedReceipt=async(g:SyntheticGrant,created:{WidgetId?:unknown;AuditLogId?:unknown;Digest?:unknown;SealRevision?:unknown})=>{
+    const widget=Number(created.WidgetId),audit=String(created.AuditLogId??"");
     assert(Number.isSafeInteger(widget)&&widget>0);
-    assert(Number.isSafeInteger(audit)&&audit>0);
+    assert.match(audit,/^[1-9][0-9]{0,19}$/);
+    assert.equal(typeof created.AuditLogId,"string");
+    assert.match(String(created.SealRevision??""),/^[a-f0-9]{16}$/);
     assert.equal(created.Digest,expected);
     const receipt=(await db!.request()
       .input("requestId",sql.UniqueIdentifier,g.requestId)
@@ -951,6 +953,7 @@ export async function verifyChart928DraftSql(
         "a.EventType,a.UserId AS AuditActor,a.Status," +
         "w.Id AS WidgetId,w.WidgetType,w.ConfigJson,w.SourceKey," +
         "s.ConfigDigest,s.SealedBy,s.AuditLogId AS SealAuditId," +
+        "LOWER(CONVERT(varchar(16),s.SealRowVersion,2)) AS CurrentSealRevision," +
         "d.ConsumedAtUtc FROM uqp.DashboardChartTrustRequest r " +
         "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId " +
         "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id " +
@@ -963,8 +966,9 @@ export async function verifyChart928DraftSql(
     assert.equal(Number(item?.ActorId),8);
     assert.equal(Number(item?.AuditActor),8);
     assert.equal(Number(item?.SealedBy),8);
-    assert.equal(Number(item?.LedgerAuditId),audit);
-    assert.equal(Number(item?.SealAuditId),audit);
+    assert.equal(String(item?.LedgerAuditId),audit);
+    assert.equal(String(item?.SealAuditId),audit);
+    assert.equal(item?.CurrentSealRevision,created.SealRevision);
     assert.equal(Number(item?.WidgetId),widget);
     assert.equal(item?.EventType,"CHART_SEAL_WIDGET");
     assert.equal(item?.Status,"SUCCESS");
