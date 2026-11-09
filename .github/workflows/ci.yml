@@ -118,12 +118,12 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
-      - name: Provide native ODBC source-build fallback when IBM prebuild is unavailable
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends unixodbc-dev
-          test -f /usr/include/sql.h
-      - run: npm ci
+      # Linux test jobs do not exercise ODBC native bindings. Keep the
+      # separate Windows Node 24 job as the mandatory native-load witness;
+      # IBM's Linux prebuilt download can return 504 and source compilation
+      # of odbc@2.6.0 is not compatible with this Node 24 CI toolchain.
+      - name: Install Linux JavaScript/SQL-test dependencies (no native scripts)
+        run: npm ci --ignore-scripts
       - run: npm audit --omit=dev --audit-level=low
       - run: npm audit --audit-level=low
       - run: npm test
@@ -525,12 +525,12 @@ jobs:
           cache: npm
           cache-dependency-path: server/package-lock.json
       - run: npm install --global npm@12.2.1
-      - name: Provide native ODBC source-build fallback when IBM prebuild is unavailable
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends unixodbc-dev
-          test -f /usr/include/sql.h
-      - run: npm ci
+      # Linux test jobs do not exercise ODBC native bindings. Keep the
+      # separate Windows Node 24 job as the mandatory native-load witness;
+      # IBM's Linux prebuilt download can return 504 and source compilation
+      # of odbc@2.6.0 is not compatible with this Node 24 CI toolchain.
+      - name: Install Linux JavaScript/SQL-test dependencies (no native scripts)
+        run: npm ci --ignore-scripts
       - name: Start disposable SQL Server (no user databases or migrations)
         shell: bash
         run: |
