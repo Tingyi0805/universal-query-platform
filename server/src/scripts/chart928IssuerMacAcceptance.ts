@@ -509,6 +509,80 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   assert.deepEqual(await writerCounts(),retryAfter);
   console.log("CHART_ISSUE89_DISPOSABLE_SIGNED_WRITER_LATE_ROLLBACK_RETRY_PASS");
 
+  // Same signed immutable scope, two independent proofs: Ed25519 actor
+  // attestation is verified by Node; HMAC is verified by the SQL Issuer.
+  // CI ephemeral keys only. This does NOT install an external signer.
+  const dualScope=chartScope();
+  const dualPlan=planDormantChartCreate({
+    actorId:dualScope.actor,tokenVersion:dualScope.token,
+    dashboardId:dualScope.dashboard,profileId:dualScope.profile,
+    requestId:dualScope.requestId,config:JSON.parse(chartJson),
+    placement:{x:dualScope.x,y:dualScope.y,
+      width:dualScope.width,height:dualScope.height},
+  });
+  assert(dualPlan);
+  assert.equal(dualPlan.config.sha256,dualScope.digest);
+  const edSigner=generateKeyPairSync("ed25519");
+  const signerPublic=Object.freeze({"ci-only-ed25519":
+    edSigner.publicKey.export({format:"pem",type:"spki"}).toString()});
+  const rawAttestation={
+    Version:1,Purpose:"CHART_ACTOR_BIND",
+    Audience:"UQP_SQL_CHART_ISSUER_V1",KeyId:"ci-only-ed25519",
+    ActorId:dualScope.actor,TokenVersion:dualScope.token,
+    DashboardId:dualScope.dashboard,ProfileId:dualScope.profile,
+    RequestId:dualScope.requestId,SourceKey:dualScope.source,
+    ConfigSha256:dualScope.digest,
+    X:dualScope.x,Y:dualScope.y,Width:dualScope.width,Height:dualScope.height,
+    Nonce:dualScope.nonce.replaceAll("-",""),
+    IssuedAtUtcMs:dualScope.issuedAt.valueOf(),
+    ExpiresAtUtcMs:dualScope.expiresAt.valueOf(),
+    Signature:Buffer.alloc(64).toString("base64url"),
+  };
+  const attestationBytes=chartActorAttestationBytes(rawAttestation);
+  assert(attestationBytes);
+  const edReceipt={...rawAttestation,
+    Signature:sign(null,attestationBytes,edSigner.privateKey)
+      .toString("base64url")};
+  const dualEnvelope={
+    Attestation:edReceipt,SqlMac:mac(dualScope).toString("base64url")};
+  const verifiedDual=parseIndependentChartIssuerProof(
+    dualEnvelope,dualPlan,signerPublic,Date.now());
+  assert(verifiedDual);
+  assert.equal(sqlChartIssuerCanonicalScope(verifiedDual),canon(dualScope));
+  for(const changed of [
+    {ActorId:77},{TokenVersion:2},{ConfigSha256:"b".repeat(64)},
+    {Nonce:"f".repeat(32)},{Width:dualScope.width+1},
+  ])assert.equal(parseIndependentChartIssuerProof({
+    ...dualEnvelope,Attestation:{...edReceipt,...changed},
+  },dualPlan,signerPublic,Date.now()),null);
+  const dualBefore=await countSigned();
+  // Structurally valid but forged SQL signature: Node accepts its shape,
+  // yet SQL's HMAC verifier must reject WITHOUT Nonce/Grant inserts.
+  const wrongMac=parseIndependentChartIssuerProof({
+    ...dualEnvelope,SqlMac:Buffer.alloc(32,0x77).toString("base64url"),
+  },dualPlan,signerPublic,Date.now());
+  assert(wrongMac);
+  await assert.rejects(issueSigned(dualScope,wrongMac.Signature),forbidden);
+  assert.deepEqual(await countSigned(),dualBefore);
+  const dualGrant=(await issueSigned(dualScope,verifiedDual.Signature))
+    .recordset[0];
+  assert.match(String(dualGrant?.GrantId),/^[a-f0-9-]{36}$/i);
+  assert(Buffer.isBuffer(dualGrant?.Secret));
+  const dualBeforeWrite=await writerCounts();
+  const dualCreated=(await writeSigned(dualScope,dualGrant)).recordset[0];
+  assert(Number(dualCreated?.WidgetId)>0);
+  assert(Number(dualCreated?.AuditLogId)>0);
+  assert.equal(dualCreated?.Digest,dualScope.digest);
+  const dualAfterWrite=await writerCounts();
+  assert.deepEqual(dualAfterWrite.slice(0,4),
+    dualBeforeWrite.slice(0,4).map(n=>n+1));
+  assert.equal(dualAfterWrite[5],dualBeforeWrite[5]!+1);
+  await assert.rejects(issueSigned(dualScope,verifiedDual.Signature),forbidden);
+  await assert.rejects(writeSigned(dualScope,dualGrant),forbidden);
+  assert.deepEqual(await writerCounts(),dualAfterWrite);
+  console.log("CHART_ISSUE89_DUAL_ED25519_HMAC_SQL_ATOMIC_WIDGET_PASS");
+
+
 
   // 2B-15D-16: synthetic loopback HTTP -> verified JWT WeakMap actor ->
   // test-local HMAC signer -> isolated SQL Issuer. This proves the mapping
