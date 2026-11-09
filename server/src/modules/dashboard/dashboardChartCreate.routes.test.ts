@@ -10,6 +10,7 @@ import {
   createChartCreateRouter,
 } from "./dashboardChartCreate.routes.js";
 import type { DormantChartCreatePlan } from "./dashboardChartAtomicCreate.contract.js";
+import {canonicalChartConfig} from "./dashboardChartAtomicCreate.contract.js";
 
 const body = {
   profileId: 22,
@@ -24,6 +25,10 @@ const body = {
 const receipt = {
   widgetId: 88, sealRevision: "0011223344556677",
   auditLogId: "9007199254740993",
+};
+const sqlReceipt = {
+  WidgetId:"88",SealRevision:receipt.sealRevision,
+  AuditLogId:receipt.auditLogId,Digest:canonicalChartConfig(body.config)!.sha256,
 };
 type Session = { isActive: boolean; tokenVersion: number; permissions: string[] };
 
@@ -54,7 +59,7 @@ async function fixture(
     create: async (plan,bearerHeader) => {
       plans.push(plan);
       forwardedHeaders.push(bearerHeader);
-      return create ? create(plan,bearerHeader) : receipt;
+      return create ? create(plan,bearerHeader) : sqlReceipt;
     },
   }));
   const server = createServer(app);
@@ -131,9 +136,12 @@ test("test-only transport honors only verified JWT actor, strict plan and safe a
 
 test("malformed/oversharing Writer results never reach HTTP, SQL errors are redacted",async()=>{
   for(const create of [
-    async()=>({...receipt,sql:"PATIENT_ID_SECRET"}),
-    async()=>({...receipt,auditLogId:9007199254740993}),
-    async()=>({...receipt,widgetId:-1}),
+    async()=>({...sqlReceipt,sql:"PATIENT_ID_SECRET"}),
+    async()=>({...sqlReceipt,AuditLogId:9007199254740993}),
+    async()=>({...sqlReceipt,WidgetId:-1}),
+    async()=>({...sqlReceipt,WidgetId:"9007199254740993"}),
+    async()=>({...sqlReceipt,SealRevision:"not-a-rowversion"}),
+    async()=>({...sqlReceipt,Digest:"0".repeat(64)}),
     async()=>{throw Error("PRIVATE_PACS_SQL_PATIENT_ID");},
   ]){
     const f=await fixture(true,create);
