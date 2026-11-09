@@ -178,6 +178,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const activeRef=useRef(active);activeRef.current=active;
   const previewRead=useRef(0),previewRequest=useRef<AbortController|null>(null);
   const [savedProfiles,setSavedProfiles]=useState<string|null>(null);
+  // Preserve the loaded trust boundary even if a profile is removed locally.
+  const [loadedSealedChartPresent,setLoadedSealedChartPresent]=useState(false);
   const { accessToken } = useAuth();
 
   const [drillPending,setDrillPending]=useState(false);
@@ -280,6 +282,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       const layoutResult = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & { widgets: Omit<LayoutWidget, "clientKey">[] }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken);
       if (sequence !== loadSequence.current) return;
       const loadedProfiles = layoutResult.profiles.map(withClientKeys);
+      setLoadedSealedChartPresent(hasSealedChartWidgets(loadedProfiles));
       setSavedProfiles(JSON.stringify(loadedProfiles));setProfiles(loadedProfiles);
       setActiveProfileKey(loadedProfiles.find(profile => profile.isDefault)?.clientKey ?? loadedProfiles[0]?.clientKey ?? "");
       if (configuration) {
@@ -688,7 +691,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     );
   }
 
-  const chartSaveBlocked = hasSealedChartWidgets(profiles);
+  const chartSaveBlocked = loadedSealedChartPresent || hasSealedChartWidgets(profiles);
   const unavailableReferences = [...new Set(profiles.flatMap(profile => profile.widgets
     .filter(widget => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
     .map(widget => String(widget.config.dataSourceKey ?? "PRIMARY")))
@@ -696,8 +699,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
   async function saveLayout() {
     if (saving) return;
-    if (hasSealedChartWidgets(profiles)) {
-      setError("此版型含受控 CHART，舊版儲存 API 不支援安全寫入；已禁止整份版型覆寫，原圖表資料不變。");
+    if (loadedSealedChartPresent || hasSealedChartWidgets(profiles)) {
+      setError("載入時曾存在受控 CHART；舊版儲存 API 不支援安全寫入，即使在草稿中刪除版型也不可覆寫。");
       return;
     }
     if(drillPending){setError("下鑽設定尚未完成，請加入層級或取消新增。");return;}
@@ -782,7 +785,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       {(!embedded||active)&&error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
       {(!embedded||active)&&notice && <section className="notice">{notice}</section>}
 
-      {chartSaveBlocked && <p role="alert">此版型包含受控 CHART：目前僅允許安全檢視，舊版版面儲存已鎖定，以避免覆寫已簽核的圖表。待專用 CHART 儲存 API 通過獨立驗收後才可編輯。</p>}
+      {chartSaveBlocked && <p role="alert">此 Dashboard 的已載入版型曾包含受控 CHART：目前僅允許安全檢視，即使先刪除該版型也不允許經舊版 API 覆寫。待專用 CHART 儲存 API 通過獨立驗收後才可編輯。</p>}
       {unavailableReferences.length > 0 && <p role="alert">Widget 引用來源不可用：{unavailableReferences.join("、")}。既有引用保留，請修正來源或明確變更 Widget；禁止儲存。</p>}
       <p>版型僅透過新版版本化 API 儲存；載入與預覽不會儲存。停用或 pending 來源不能新增引用，既有引用會保留並由後端拒絕不安全儲存。</p>
       {supplementalSources.filter(source => !source.isEnabled || source.queryDefinitionId === null).map(source => <p role="status" key={source.sourceKey}>來源 {source.sourceKey}：{!source.isEnabled ? "已停用" : "pending，尚未選 Query"}；請先處理來源，再確認 Widget 引用。</p>)}
