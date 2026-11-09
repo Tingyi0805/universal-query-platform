@@ -124,7 +124,9 @@ export async function verifyChartSqlLoginIsolationDisposable(
       "HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreateWithDelegation_IsolatedDraft',"+
       "N'OBJECT',N'EXECUTE') AS WriterExecute,"+
       "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',"+
-      "N'OBJECT',N'INSERT') AS DirectWidgetInsert");
+      "N'OBJECT',N'INSERT') AS DirectWidgetInsert,"+
+      "HAS_PERMS_BY_NAME(N'uqp.ChartWriterApprovedIssuerDisposable',"+
+      "N'OBJECT',N'UPDATE') AS ApproveIssuerUpdate");
     return result.recordset[0];
   }));
   assert.equal(new Set(metadata.map(r=>r?.OriginalSid)).size,3);
@@ -142,6 +144,7 @@ export async function verifyChartSqlLoginIsolationDisposable(
     assert.equal(Number(row?.SignedExecute),role==="issuer"?1:0);
     assert.equal(Number(row?.WriterExecute),role==="writer"?1:0);
     assert.notEqual(Number(row?.DirectWidgetInsert),1);
+    assert.notEqual(Number(row?.ApproveIssuerUpdate),1);
   }
   for(const role of ["platform","writer"] as const){
     await assert.rejects(
@@ -221,19 +224,20 @@ export async function verifyChartSqlLoginIsolationDisposable(
   assert.equal(issuerGrant.ConsumedAtUtc,null);
   const runWriter=(pool:sql.ConnectionPool,changes:Readonly<{
     actor?:number;token?:number;secret?:Buffer;config?:string;
-  }>={})=>pool.request()
-    .input("grant",sql.UniqueIdentifier,realGrant.GrantId)
-    .input("secret",sql.VarBinary(sql.MAX),changes.secret??realGrant.Secret)
-    .input("actor",sql.BigInt,changes.actor??chartScope.actor)
-    .input("token",sql.Int,changes.token??chartScope.token)
-    .input("dashboard",sql.BigInt,chartScope.dashboard)
-    .input("profile",sql.BigInt,chartScope.profile)
-    .input("request",sql.UniqueIdentifier,chartScope.requestId)
-    .input("source",sql.NVarChar(64),chartScope.source)
+  }>={},targetGrant:{GrantId:string;Secret:Buffer}=realGrant,
+     targetScope:SqlLoginSignedScope=chartScope)=>pool.request()
+    .input("grant",sql.UniqueIdentifier,targetGrant.GrantId)
+    .input("secret",sql.VarBinary(sql.MAX),changes.secret??targetGrant.Secret)
+    .input("actor",sql.BigInt,changes.actor??targetScope.actor)
+    .input("token",sql.Int,changes.token??targetScope.token)
+    .input("dashboard",sql.BigInt,targetScope.dashboard)
+    .input("profile",sql.BigInt,targetScope.profile)
+    .input("request",sql.UniqueIdentifier,targetScope.requestId)
+    .input("source",sql.NVarChar(64),targetScope.source)
     .input("config",sql.NVarChar(sql.MAX),changes.config??chartJson)
-    .input("x",sql.Int,chartScope.x).input("y",sql.Int,chartScope.y)
-    .input("width",sql.Int,chartScope.width)
-    .input("height",sql.Int,chartScope.height)
+    .input("x",sql.Int,targetScope.x).input("y",sql.Int,targetScope.y)
+    .input("width",sql.Int,targetScope.width)
+    .input("height",sql.Int,targetScope.height)
     .query("EXEC uqp.usp_ChartCreateWithDelegation_IsolatedDraft "+
       "@DashboardId=@dashboard,@ProfileId=@profile,"+
       "@ActorId=@actor,@TokenVersion=@token,"+
@@ -251,7 +255,75 @@ export async function verifyChartSqlLoginIsolationDisposable(
     return ["Ledger","Audit","Widgets","Seals","Consumed"]
       .map(name=>Number(row?.[name]));
   };
+  // Initially only the disposable admin's synthetic-original-login SID
+  // is pinned. A correctly signed Grant issued by the REAL dedicated Issuer
+  // MUST be rejected until the DB owner explicitly approves that exact SID.
+  const initialApproval=(await db.request().query(
+    "SELECT CONVERT(varchar(256),IssuerSid,2) AS Sid,IsEnabled "+
+    "FROM uqp.ChartWriterApprovedIssuerDisposable WHERE ApprovalId=1"
+  )).recordset[0];
+  assert.equal(Number(initialApproval?.IsEnabled),1);
+  assert.notEqual(initialApproval?.Sid,metadata[1]?.OriginalSid);
   const beforeWriter=await counts();
+  await assert.rejects(runWriter(pools.writer!),isDenied);
+  assert.deepEqual(await counts(),beforeWriter);
+  const beforeDenied=(await db.request()
+    .input("grant",sql.UniqueIdentifier,realGrant.GrantId)
+    .query("SELECT ConsumedAtUtc FROM uqp.ChartActorDelegationDisposable "+
+      "WHERE GrantId=@grant")).recordset[0];
+  assert.equal(beforeDenied?.ConsumedAtUtc,null);
+
+  // This change is done only by the ephemeral CI database owner, never by
+  // HTTP input or the Platform, Issuer or Writer login. It is NOT a
+  // production enrollment/configuration endpoint.
+  const rotated=(await db.request()
+    .input("issuerLogin",sql.NVarChar(128),identities.issuer.name)
+    .query("UPDATE uqp.ChartWriterApprovedIssuerDisposable "+
+      "SET IssuerSid=SUSER_SID(@issuerLogin),IsEnabled=1 "+
+      "WHERE ApprovalId=1;"+
+      "SELECT CONVERT(varchar(256),IssuerSid,2) AS Sid "+
+      "FROM uqp.ChartWriterApprovedIssuerDisposable WHERE ApprovalId=1")
+  ).recordset[0];
+  assert.equal(rotated?.Sid,metadata[1]?.OriginalSid);
+
+  // A missing, disabled, or reverted policy row must fail closed, and the
+  // outstanding real Issuer grant must remain available after each denial.
+  await db.request().query(
+    "UPDATE uqp.ChartWriterApprovedIssuerDisposable SET IsEnabled=0 WHERE ApprovalId=1");
+  await assert.rejects(runWriter(pools.writer!),isDenied);
+  await db.request().query(
+    "UPDATE uqp.ChartWriterApprovedIssuerDisposable SET IsEnabled=1 WHERE ApprovalId=1");
+  await db.request().input("sid",sql.VarBinary(85),
+      Buffer.from(String(initialApproval?.Sid),"hex"))
+    .query("UPDATE uqp.ChartWriterApprovedIssuerDisposable "+
+      "SET IssuerSid=@sid WHERE ApprovalId=1");
+  await assert.rejects(runWriter(pools.writer!),isDenied);
+  await db.request().input("issuerLogin",sql.NVarChar(128),identities.issuer.name)
+    .query("UPDATE uqp.ChartWriterApprovedIssuerDisposable "+
+      "SET IssuerSid=SUSER_SID(@issuerLogin) WHERE ApprovalId=1");
+  assert.deepEqual(await counts(),beforeWriter);
+
+  // A valid HMAC scope issued through privileged disposable SA is STILL
+  // not an approved Issuer once the pinned SID belongs to the real Issuer.
+  const unapprovedScope={...chartScope,requestId:randomUUID(),nonce:randomUUID(),
+    issuedAt:new Date(Date.now()-600),expiresAt:new Date(Date.now()+8500)};
+  const unapprovedGrant=(await sqlCall(
+    unapprovedScope,sign(unapprovedScope),db)).recordset[0];
+  assert(Buffer.isBuffer(unapprovedGrant?.Secret));
+  const unapprovedSid=(await db.request()
+    .input("grant",sql.UniqueIdentifier,unapprovedGrant.GrantId)
+    .query("SELECT CONVERT(varchar(256),IssuerSid,2) AS Sid "+
+      "FROM uqp.ChartActorDelegationDisposable WHERE GrantId=@grant")
+  ).recordset[0];
+  assert.equal(unapprovedSid?.Sid,initialApproval?.Sid);
+  await assert.rejects(runWriter(pools.writer!,{},
+    unapprovedGrant,unapprovedScope),isDenied);
+  assert.deepEqual(await counts(),beforeWriter);
+  assert.equal((await db.request()
+    .input("grant",sql.UniqueIdentifier,unapprovedGrant.GrantId)
+    .query("SELECT ConsumedAtUtc FROM uqp.ChartActorDelegationDisposable "+
+      "WHERE GrantId=@grant")).recordset[0]?.ConsumedAtUtc,null);
+  console.log("CHART_ISSUE89_DISPOSABLE_WRITER_PINNED_ISSUER_SID_DENY_PASS");
   for(const disallowed of [pools.platform!,pools.issuer!])
     await assert.rejects(runWriter(disallowed),isDenied);
   await assert.rejects(runWriter(pools.writer!,{actor:77}),isDenied);
