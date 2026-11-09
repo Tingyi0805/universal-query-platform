@@ -958,7 +958,9 @@ export async function verifyChart928DraftSql(
         "a.EventType,a.UserId AS AuditActor,a.Status," +
         "w.Id AS WidgetId,w.WidgetType,w.ConfigJson,w.SourceKey," +
         "s.ConfigDigest,s.SealedBy,s.AuditLogId AS SealAuditId," +
-        "LOWER(CONVERT(varchar(16),s.SealRowVersion,2)) AS CurrentSealRevision," +
+        // ROWVERSION needs an explicit VARBINARY cast: direct conversion
+        // returns 8 raw chars, not a stable 16-character hexadecimal value.
+        "LOWER(CONVERT(varchar(16),CONVERT(varbinary(8),s.SealRowVersion),2)) AS CurrentSealRevision," +
         "d.ConsumedAtUtc FROM uqp.DashboardChartTrustRequest r " +
         "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId " +
         "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id " +
@@ -978,21 +980,6 @@ export async function verifyChart928DraftSql(
     stage="DELEGATED_RECEIPT_SEAL_AUDIT";
     assert.equal(String(item?.SealAuditId),audit);
     stage="DELEGATED_RECEIPT_SEAL_ROWVERSION";
-    if(item?.CurrentSealRevision!==created.SealRevision){
-      // Only non-sensitive type/shape diagnostics from the disposable SQL
-      // database. Never print revision values, SQL, patient or credential data.
-      const actual=item?.CurrentSealRevision;
-      const expected=created.SealRevision;
-      console.error("CHART_DRAFT_ROWVERSION_SHAPE:"+JSON.stringify({
-        actualType:typeof actual,expectedType:typeof expected,
-        actualLength:typeof actual==="string"?actual.length:-1,
-        expectedLength:typeof expected==="string"?expected.length:-1,
-        actualBuffer:Buffer.isBuffer(actual),
-        actualPrefixed:typeof actual==="string"&&actual.startsWith("0x"),
-        equalTrimLower:typeof actual==="string"&&typeof expected==="string"&&
-          actual.trim().toLowerCase()===expected.trim().toLowerCase(),
-      }));
-    }
     assert.equal(item?.CurrentSealRevision,created.SealRevision);
     stage="DELEGATED_RECEIPT_WIDGET_JOIN";
     assert.equal(Number(item?.WidgetId),widget);
