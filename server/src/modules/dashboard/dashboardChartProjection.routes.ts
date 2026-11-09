@@ -5,7 +5,7 @@
 import { createHash } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
-import { readVerifiedJwtActor } from "../auth/auth.middleware.js";
+import { readVerifiedChartExecuteActor } from "../auth/auth.middleware.js";
 import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 
 // Independent, reviewed release approval must be committed explicitly.
@@ -70,8 +70,8 @@ export function createChartProjectionRouter(deps: ChartProjectionRouterDependenc
         res.status(404).json({error:{code:"CHART_NOT_AVAILABLE"}});
         return;
       }
-      const actor = readVerifiedJwtActor(req);
-      if (!actor || !req.authUser?.permissions.includes("EXECUTE_QUERY")) {
+      const actor = readVerifiedChartExecuteActor(req);
+      if (!actor) {
         res.status(403).json({error:{code:"FORBIDDEN"}});
         return;
       }
@@ -86,7 +86,8 @@ export function createChartProjectionRouter(deps: ChartProjectionRouterDependenc
         return;
       }
       try {
-        const bearer = req.header("Authorization")?.slice(7) ?? "";
+        // The verified token is captured before mutable later middleware.
+        const bearer = actor.originalBearerHeader.slice(7);
         const subject: ExecutionSubject = {
           context: "designer",
           userId: actor.userId,

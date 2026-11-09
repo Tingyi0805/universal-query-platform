@@ -3,7 +3,7 @@
 // NOT approved or wired. A disabled request must never touch a database.
 import { Router } from "express";
 import { z } from "zod";
-import { readVerifiedJwtActor } from "../auth/auth.middleware.js";
+import { readVerifiedChartExecuteActor } from "../auth/auth.middleware.js";
 import {
   planVerifiedChartCreateRequest,
 } from "./dashboardChartAuthenticatedCreate.js";
@@ -29,7 +29,9 @@ export type ChartCreateRouterDependencies = Readonly<{
   // approved, SQL-owned, SERIALIZABLE grant-consumption + Widget/Seal/Audit
   // stored procedure, after independent Signer/Issuer preflight. The
   // production application currently injects a function that always throws.
-  create: (plan: DormantChartCreatePlan) => Promise<unknown>;
+  // A future independently authenticated mTLS signer MUST reverify this
+  // exact original JWT. Never use req.headers or a browser-provided actor.
+  create: (plan: DormantChartCreatePlan, originalBearerHeader:string) => Promise<unknown>;
 }>;
 
 export function createChartCreateRouter(deps: ChartCreateRouterDependencies) {
@@ -46,9 +48,8 @@ export function createChartCreateRouter(deps: ChartCreateRouterDependencies) {
         res.status(404).json({ error: { code: "CHART_NOT_AVAILABLE" } });
         return;
       }
-      const actor = readVerifiedJwtActor(req);
-      if (!actor || !req.authUser?.permissions.includes("DESIGN_QUERY") ||
-          !req.authUser.permissions.includes("EXECUTE_QUERY")) {
+      const actor = readVerifiedChartExecuteActor(req);
+      if (!actor) {
         res.status(403).json({ error: { code: "FORBIDDEN" } });
         return;
       }
@@ -65,7 +66,8 @@ export function createChartCreateRouter(deps: ChartCreateRouterDependencies) {
         return;
       }
       try {
-        const receipt = receiptSchema.safeParse(await deps.create(plan));
+        const receipt = receiptSchema.safeParse(
+          await deps.create(plan,actor.originalBearerHeader));
         if (!receipt.success) throw Error("CHART_CREATE_RECEIPT_INVALID");
         // No ConfigJson, actor, SQL text, signatures, patient data, keys,
         // grant or internal approval claims are ever returned over HTTP.

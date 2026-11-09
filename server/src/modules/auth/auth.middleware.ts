@@ -14,9 +14,10 @@ declare global {
 
 // Unforgeable by request JSON, headers, JWT decode or a hand-built req.authUser.
 // Written only after jwt.verify AND current database session validation.
-// A future CHART mutation route may read this value, but no route exists now.
+// CHART routes use this proof only after the independently reviewed HTTP gate.
 const verifiedActors = new WeakMap<Request,Readonly<{
   userId:number;tokenVersion:number;designQueryAllowed:boolean;
+  executeQueryAllowed:boolean; originalBearerHeader:string;
 }>>();
 export function readVerifiedJwtActor(req: Request):Readonly<{userId:number;tokenVersion:number}>|null {
   const actor=verifiedActors.get(req);
@@ -24,8 +25,28 @@ export function readVerifiedJwtActor(req: Request):Readonly<{userId:number;token
   // Permission must already have existed in the live DB session verified by
   // this middleware; later replacement of req.authUser cannot grant it.
   if(!actor?.designQueryAllowed || req.authUser?.id!==actor.userId ||
+     !Array.isArray(req.authUser.permissions) ||
      !req.authUser.permissions.includes("DESIGN_QUERY"))return null;
   return {userId:actor.userId,tokenVersion:actor.tokenVersion};
+}
+
+/** Chart-only immutable, verified JWT and live-DB EXECUTE_QUERY scope.
+ * Never reconstruct the bearer from a later, mutable request header: the
+ * independent signer must verify the ORIGINAL JWT that was authenticated.
+ * Do not expose originalBearerHeader in logs, API results or browser code.
+ */
+export function readVerifiedChartExecuteActor(req: Request):Readonly<{
+  userId:number;tokenVersion:number;originalBearerHeader:string;
+}>|null {
+  const actor=readVerifiedJwtActor(req);
+  const proof=verifiedActors.get(req);
+  if(!actor||!proof?.executeQueryAllowed||
+     !req.authUser?.permissions.includes("EXECUTE_QUERY")||
+     !/^Bearer [A-Za-z0-9_.-]+$/.test(proof.originalBearerHeader))return null;
+  return {
+    userId:actor.userId,tokenVersion:actor.tokenVersion,
+    originalBearerHeader:proof.originalBearerHeader,
+  };
 }
 
 export function createAuthenticateJwt(getSession = getTokenSessionState): RequestHandler {
@@ -78,6 +99,8 @@ export function createAuthenticateJwt(getSession = getTokenSessionState): Reques
       verifiedActors.set(req,Object.freeze({
         userId,tokenVersion,
         designQueryAllowed:session.permissions.includes("DESIGN_QUERY"),
+        executeQueryAllowed:session.permissions.includes("EXECUTE_QUERY"),
+        originalBearerHeader:header,
       }));
       next();
     } catch (error) {

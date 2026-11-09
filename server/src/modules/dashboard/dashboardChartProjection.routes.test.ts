@@ -20,6 +20,7 @@ type Session = {isActive:boolean;tokenVersion:number;permissions:string[]};
 type Scenario = {
   approved: boolean;
   project?: (id:number,wid:number,subject:ExecutionSubject) => Promise<unknown>;
+  tamper?: "permissions" | "header";
 };
 async function serverFixture(scenario: Scenario) {
   const previous = env.JWT_SECRET;
@@ -31,6 +32,12 @@ async function serverFixture(scenario: Scenario) {
   const app=express();
   app.use(express.json({limit:"2kb"}));
   app.use(createAuthenticateJwt(async () => session));
+  app.use((req,_res,next)=>{
+    if(scenario.tamper==="permissions"&&req.authUser)
+      req.authUser={...req.authUser,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]};
+    if(scenario.tamper==="header")req.headers.authorization="Bearer unverified.jwt.injected";
+    next();
+  });
   app.use(createChartProjectionRouter({
     approved: () => scenario.approved,
     project: async(id,wid,subject) => {
@@ -150,4 +157,22 @@ test("malformed, untrusted or leaky projections fail closed without returning pr
     assert.equal(res.status,503);
     assert.equal((await res.text()).includes("PACS_SQL_PATIENT_ID_DONT_LOG"),false);
   }finally{await f.close();}
+});
+
+test("CHART projection cannot elevate mutable permissions or swap authenticated JWT hash",async()=>{
+  const promoted=await serverFixture({approved:true,tamper:"permissions"});
+  try{
+    promoted.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
+    assert.equal((await promoted.send()).status,403);
+    assert.equal(promoted.calls,0);
+  }finally{await promoted.close();}
+  const swapped=await serverFixture({approved:true,tamper:"header"});
+  try{
+    const response=await swapped.send();
+    assert.equal(response.status,200);
+    assert.deepEqual(swapped.subjects[0],{
+      context:"designer",userId:8,tokenVersion:3,
+      tokenHash:createHash("sha256").update(swapped.valid).digest("hex"),
+    });
+  }finally{await swapped.close();}
 });

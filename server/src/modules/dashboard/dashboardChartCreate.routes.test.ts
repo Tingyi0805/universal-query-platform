@@ -27,7 +27,11 @@ const receipt = {
 };
 type Session = { isActive: boolean; tokenVersion: number; permissions: string[] };
 
-async function fixture(approved: boolean, create?: (plan: DormantChartCreatePlan)=>Promise<unknown>) {
+async function fixture(
+  approved: boolean,
+  create?: (plan: DormantChartCreatePlan, bearerHeader:string)=>Promise<unknown>,
+  tamper: "none" | "permissions" | "header" = "none",
+) {
   const previous = env.JWT_SECRET;
   env.JWT_SECRET = "issue89-chart-create-http-synthetic-only";
   let session: Session = {
@@ -35,14 +39,22 @@ async function fixture(approved: boolean, create?: (plan: DormantChartCreatePlan
     permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"],
   };
   const plans: DormantChartCreatePlan[] = [];
+  const forwardedHeaders:string[]=[];
   const app = express();
   app.use(express.json({limit:"4kb"}));
   app.use(createAuthenticateJwt(async()=>session));
+  app.use((req,_res,next)=>{
+    if(tamper==="permissions"&&req.authUser)
+      req.authUser={...req.authUser,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]};
+    if(tamper==="header")req.headers.authorization="Bearer unverified.jwt.injected";
+    next();
+  });
   app.use(createChartCreateRouter({
     approved: () => approved,
-    create: async plan => {
+    create: async (plan,bearerHeader) => {
       plans.push(plan);
-      return create ? create(plan) : receipt;
+      forwardedHeaders.push(bearerHeader);
+      return create ? create(plan,bearerHeader) : receipt;
     },
   }));
   const server = createServer(app);
@@ -58,7 +70,7 @@ async function fixture(approved: boolean, create?: (plan: DormantChartCreatePlan
       Authorization:"Bearer "+token,"Content-Type":"application/json",
     },body:JSON.stringify(payload)});
   return {
-    send, valid, invalid, plans,
+    send, valid, invalid, plans, forwardedHeaders,
     session: (next:Session)=>{session=next;},
     close: async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));env.JWT_SECRET=previous;},
   };
@@ -135,4 +147,27 @@ test("malformed/oversharing Writer results never reach HTTP, SQL errors are reda
       assert.equal(f.plans.length,1);
     }finally{await f.close();}
   }
+});
+
+test("CHART creation requires immutable live EXECUTE_QUERY and passes original JWT only",async()=>{
+  // A mutable Express authUser must not add a permission missing from the
+  // DB-verified snapshot. No Writer/Signer calls occur.
+  const promoted=await fixture(true,undefined,"permissions");
+  try{
+    promoted.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
+    assert.equal((await promoted.send()).status,403);
+    assert.equal(promoted.plans.length,0);
+    assert.equal(promoted.forwardedHeaders.length,0);
+  }finally{await promoted.close();}
+
+  // Later request-header mutation cannot swap the independently signed
+  // identity used by a future mTLS signer.
+  const swapped=await fixture(true,undefined,"header");
+  try{
+    const response=await swapped.send();
+    assert.equal(response.status,201);
+    assert.deepEqual(await response.json(),receipt);
+    assert.deepEqual(swapped.forwardedHeaders,["Bearer "+swapped.valid]);
+    assert.equal(JSON.stringify(receipt).includes(swapped.valid),false);
+  }finally{await swapped.close();}
 });
