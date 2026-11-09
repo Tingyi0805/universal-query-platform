@@ -20,6 +20,7 @@ import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
 // Issue #89: production CHART projection adapter remains hard-disabled until
 // sealed Widget, DB 928, trusted aggregate and HTTP release are approved.
+import { CHART_CREATE_HTTP_RELEASE_APPROVED, createChartCreateRouter } from "./dashboardChartCreate.routes.js";
 import {
   CHART_PROJECTION_HTTP_RELEASE_APPROVED,
   createChartProjectionRouter,
@@ -330,6 +331,12 @@ const trustedChartProjection = createDormantChartCoordinator({
 dashboardRouter.use(createChartProjectionRouter({
   approved: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
   project: trustedChartProjection,
+}));
+// Deliberately inert: no signer, issuer, SQL writer, or migration 928 is
+// provisioned in the application. The injected handler MUST fail closed.
+dashboardRouter.use(createChartCreateRouter({
+  approved: () => CHART_CREATE_HTTP_RELEASE_APPROVED,
+  create: async () => { throw Error("CHART_CREATE_NOT_RELEASED"); },
 }));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));
