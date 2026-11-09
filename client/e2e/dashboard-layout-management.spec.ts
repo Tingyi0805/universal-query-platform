@@ -99,11 +99,17 @@ test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape 
   expect(state.legacy).toEqual([]);
   console.log("PR90_WIDGET_EDIT:SAVED");
 
-  await page.reload();
+  // Exercise the editor's explicit, revision-aware reload path rather than
+  // a whole-page navigation, which is covered by separate navigation tests.
+  page.once("dialog", dialog => void dialog.accept());
+  await page.getByRole("button", {name:"重新載入版型與版本", exact:true}).click();
+  console.log("PR90_WIDGET_EDIT:RELOAD_CLICKED");
   await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
   await page.locator(".layout-widget").first().click();
+  console.log("PR90_WIDGET_EDIT:RESELECTED");
   await expect(page.locator(".layout-inspector-grid").getByLabel("寬", {exact:true})).toHaveValue("400");
   await expect(page.locator(".layout-inspector-grid").getByLabel("高", {exact:true})).toHaveValue("150");
+  console.log("PR90_WIDGET_EDIT:RELOADED_ASSERTED");
 });
 
 test("layout conflict preserves local draft locks saving and only explicit reload takes another administrator's layout", async ({ page }) => {
