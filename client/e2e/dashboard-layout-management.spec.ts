@@ -53,7 +53,8 @@ test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape 
   const state = await setup(page);
   await page.goto("/designer/dashboards/1/layout");
   await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
-  await page.locator(".layout-widget").first().click();
+  // Click the visible top-left label area; synthetic widgets intentionally overlap.
+  await page.locator(".layout-widget").first().click({position:{x:8,y:8}});
   console.log("PR90_WIDGET_EDIT:SELECTED");
   const placement = page.locator(".layout-inspector-grid");
   const width = placement.getByLabel("寬", {exact:true});
@@ -105,7 +106,8 @@ test("saved Dashboard widgets accept complete X/Y/width/height edits and Escape 
   await page.getByRole("button", {name:"重新載入版型與版本", exact:true}).click();
   console.log("PR90_WIDGET_EDIT:RELOAD_CLICKED");
   await expect(page.getByText("固定合成文字", {exact:true})).toBeVisible();
-  await page.locator(".layout-widget").first().click();
+  // Click the visible top-left label area; synthetic widgets intentionally overlap.
+  await page.locator(".layout-widget").first().click({position:{x:8,y:8}});
   console.log("PR90_WIDGET_EDIT:RESELECTED");
   await expect(page.locator(".layout-inspector-grid").getByLabel("寬", {exact:true})).toHaveValue("400");
   await expect(page.locator(".layout-inspector-grid").getByLabel("高", {exact:true})).toHaveValue("150");
