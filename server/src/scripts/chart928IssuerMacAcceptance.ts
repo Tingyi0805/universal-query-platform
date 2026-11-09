@@ -4,7 +4,7 @@
 // issued by an independently controlled signer and reject tampering/replay.
 // The same test deliberately leaves the existing synthetic Issuer unsafe.
 import assert from "node:assert/strict";
-import {createHash,createHmac,randomBytes,randomUUID} from "node:crypto";
+import {createHash,createHmac,generateKeyPairSync,randomBytes,randomUUID,sign} from "node:crypto";
 import {createServer} from "node:http";
 import {readFile} from "node:fs/promises";
 import express from "express";
@@ -13,6 +13,9 @@ import sql from "mssql";
 import {env} from "../config/env.js";
 import {createAuthenticateJwt} from "../modules/auth/auth.middleware.js";
 import {deriveDormantChartIssuerIntent} from "../modules/dashboard/dashboardChartHttpIssuerHandoff.js";
+import {chartActorAttestationBytes} from "../modules/dashboard/dashboardChartActorAttestation.js";
+import {planDormantChartCreate} from "../modules/dashboard/dashboardChartAtomicCreate.contract.js";
+import {parseIndependentChartIssuerProof,sqlChartIssuerCanonicalScope} from "../modules/dashboard/dashboardChartIndependentIssuerProof.js";
 import {verifyChartSqlLoginIsolationDisposable} from "./chart928SqlLoginIsolationAcceptance.js";
 
 const forbidden=(error:unknown)=>
