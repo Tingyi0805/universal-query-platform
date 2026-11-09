@@ -812,7 +812,24 @@ export async function verifyChart928DraftSql(
     grantTimePosition>grantLockPosition&&
     grantScopePosition>grantTimePosition);
   assert.equal(delegatedDraft.split(grantTimeStatement).length-1,1);
+  // The pinned Issuer SID is checked under DB-owned transaction locks,
+  // not through caller-provided actor/approval flags or a preflight SELECT.
+  const issuerSidJoin=delegatedDraft.indexOf(
+    "INNER JOIN uqp.ChartWriterApprovedIssuerDisposable a WITH(UPDLOCK,HOLDLOCK)");
+  const issuerSidCompare=delegatedDraft.indexOf(
+    "a.ApprovalId=1 AND a.IsEnabled=1 AND a.IssuerSid=d.IssuerSid");
+  const grantConsume=delegatedDraft.indexOf(
+    "UPDATE uqp.ChartActorDelegationDisposable SET ConsumedAtUtc=");
+  assert(issuerSidJoin>grantTimePosition &&
+    issuerSidCompare>issuerSidJoin && grantConsume>issuerSidCompare);
+  assert.equal(delegatedDraft.split("a.IssuerSid=d.IssuerSid").length-1,1);
   await db!.request().batch(delegatedDraft);
+  const disposablePinned=(await q(
+    "SELECT COUNT_BIG(*) AS Total FROM uqp.ChartWriterApprovedIssuerDisposable "+
+    "WHERE ApprovalId=1 AND IsEnabled=1 "+
+    "AND IssuerSid=SUSER_SID(ORIGINAL_LOGIN())"
+  )).recordset[0];
+  assert.equal(Number(disposablePinned?.Total),1);
   stage="DELEGATED_CREATE_WRITER_PERMISSION";
   const delegatedRights=(await q(
     "EXECUTE AS USER=N'UQP_Chart_Writer';" +
