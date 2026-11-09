@@ -16,6 +16,7 @@ import {CHART_ATOMIC_CREATE_RUNTIME_ENABLED} from "../modules/dashboard/dashboar
 import {attestChartWriterBaseSqlCatalog} from "./chart928WriterBaseSchema.js";
 
 const sqlPath=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url);
+const readinessPath=new URL("../../../database/acceptance/chart-928-adoption-preflight-readonly.sql",import.meta.url);
 export async function verifyChart928DraftSql(
  admin:sql.ConnectionPool,config:sql.config,machine:string,
 ):Promise<void>{
@@ -31,6 +32,10 @@ export async function verifyChart928DraftSql(
   throw Error("CHART_928_TARGET_IDENTITY_MISMATCH");
  const name="UQP_CH_"+randomBytes(6).toString("hex");
  const script=await readFile(sqlPath,"utf8");
+ const readinessScript=await readFile(readinessPath,"utf8");
+ // This tool must remain a SELECT-only catalog report, not a migration.
+ assert(!/^\s*(?:CREATE|ALTER|DROP|MERGE|INSERT|UPDATE|DELETE|TRUNCATE|EXEC(?:UTE)?|GRANT|REVOKE|DENY)\b/im.test(readinessScript));
+ assert(!/\bFROM\s+uqp\./i.test(readinessScript));
  let db:sql.ConnectionPool|undefined,created=false,stage="CREATE_DB";
  const check=async()=>{const x=(await db!.request().query(
   "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardWidget WHERE WidgetType=N'CHART') AS Charts, " +
@@ -116,6 +121,21 @@ export async function verifyChart928DraftSql(
   )).recordset[0];
   assert.equal(Number(identity?.WidgetIdentity),1);
   assert.equal(Number(identity?.AuditIdentity),1);
+  stage="READONLY_928_ADOPTION_PREFLIGHT_ABSENT";
+  const beforeCatalog=(await q("SELECT COUNT_BIG(*) AS Total "+
+    "FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')")).recordset[0];
+  const absentPreflight=await db!.request().batch(readinessScript);
+  const absentSets=absentPreflight.recordsets;
+  assert(Array.isArray(absentSets) && absentSets.length===9);
+  assert.equal(absentSets[0]?.[0]?.MayInstall928,false);
+  assert.equal(absentSets[0]?.[0]?.Assessment,"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED");
+  assert.equal(absentSets[2]?.[0]?.Assessment,"BLOCKED_925_TABLES_MISSING");
+  assert.equal(absentSets[4]?.[0]?.Assessment,"ABSENT_NOT_AUTHORIZED");
+  assert.equal(Number(absentSets[4]?.[0]?.Present),0);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total "+
+    "FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')")).recordset[0]?.Total),
+    Number(beforeCatalog?.Total));
+  console.log("CHART_928_READONLY_PREFLIGHT_ABSENT_BLOCKED_PASS");
   stage="OUTER_ROLLBACK";
   const outer=new sql.Transaction(db);
   await outer.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
@@ -130,6 +150,22 @@ export async function verifyChart928DraftSql(
   stage="FIRST_INSTALL";
   await db.request().batch(script);
   await check();
+  stage="READONLY_928_ADOPTION_PREFLIGHT_PRESENT";
+  const installedCatalog=(await q("SELECT COUNT_BIG(*) AS Total "+
+    "FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')")).recordset[0];
+  const installedPreflight=await db!.request().batch(readinessScript);
+  const installedSets=installedPreflight.recordsets;
+  assert(Array.isArray(installedSets) && installedSets.length===9);
+  assert.equal(installedSets[0]?.[0]?.MayInstall928,false);
+  assert.equal(installedSets[0]?.[0]?.Assessment,"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED");
+  assert.equal(installedSets[4]?.[0]?.Assessment,
+    "PRESENT_REQUIRES_EXACT_ATTESTATION");
+  assert.equal(Number(installedSets[4]?.[0]?.Present),3);
+  assert.equal(installedSets[2]?.[0]?.Exact925IndependentlyAttested,false);
+  assert.equal(Number((await q("SELECT COUNT_BIG(*) AS Total "+
+    "FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')")).recordset[0]?.Total),
+    Number(installedCatalog?.Total));
+  console.log("CHART_928_READONLY_PREFLIGHT_PRESENT_UNATTESTED_BLOCKED_PASS");
   stage="IDEMPOTENT_RERUN";
   await db.request().batch(script);
   await check();
