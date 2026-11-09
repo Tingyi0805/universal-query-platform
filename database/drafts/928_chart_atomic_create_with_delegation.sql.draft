@@ -110,7 +110,7 @@ BEGIN
   ) THROW 51928,''CHART_DELEGATED_GRANT_INVALID'',1;
   DECLARE @consumeAt DATETIME2(3)=SYSUTCDATETIME();
   -- The DB-owner controlled approved Issuer SID must match the SID
-  -- stamped on the Grant. Read/lock BOTH rows inside the Writer's own
+  -- stamped on the Grant. Read/lock BOTH rows inside the Writer-owned
   -- SERIALIZABLE transaction, before consuming Grant or writing Audit.
   -- If the policy row is missing, disabled or mismatched: fail closed.
   IF NOT EXISTS(
