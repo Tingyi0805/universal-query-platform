@@ -350,6 +350,163 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   console.log("CHART_2B15D15_DISPOSABLE_SIGNED_ISSUER_GRANT_NONCE_ATOMIC_PASS");
   console.log("CHART_2B15D15_HTTP_SIGNER_TRUST_NOT_RELEASE_APPROVED");
 
+  // Issue #89: join the formerly separate disposable SQL guarantees:
+  // signed Issuer -> one-time Grant -> SERIALIZABLE Writer ->
+  // Widget + Seal + Audit + Ledger, then prove replay denial and rollback.
+  // This remains test-local HMAC (not a production independent signer).
+  // The fixture's unsafe unrestricted Issuer is DENIED above.
+  const chartJson=JSON.stringify({
+    version:1,chartType:"BAR",dataSourceKey:"PRIMARY",
+    categoryColumn:"ROOM",valueColumn:"TOTAL",
+    valueMode:"QUERY_RESULT",maxPoints:20,showLegend:true,
+  });
+  const chartDigest=createHash("sha256").update(chartJson,"utf8").digest("hex");
+  const chartScope=(requestId=randomUUID()):ProofScope=>({
+    ...signed,requestId,nonce:randomUUID(),digest:chartDigest,
+    issuedAt:new Date(Date.now()-1000),
+    expiresAt:new Date(Date.now()+8000),
+  });
+  const writerCounts=async()=>{
+    const row=(await db.request().query(
+      "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardChartTrustRequest) AS Ledger,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.AuditLog) AS Audit,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardWidget WHERE WidgetType=N'CHART') AS Widgets,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartWidgetSeal) AS Seals,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartCreatePermit) AS Permits,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.ChartActorDelegationDisposable WHERE ConsumedAtUtc IS NOT NULL) AS Consumed"
+    )).recordset[0];
+    return ["Ledger","Audit","Widgets","Seals","Permits","Consumed"]
+      .map(key=>Number(row?.[key]));
+  };
+  const writeSigned=(s:ProofScope,grant:{GrantId:string;Secret:Buffer},
+      changes:Readonly<{actor?:number;token?:number;config?:string;secret?:Buffer;
+        requestId?:string;profile?:number;dashboard?:number}>={})=>
+    db.request()
+      .input("grant",sql.UniqueIdentifier,grant.GrantId)
+      .input("secret",sql.VarBinary(sql.MAX),changes.secret??grant.Secret)
+      .input("actor",sql.BigInt,changes.actor??s.actor)
+      .input("token",sql.Int,changes.token??s.token)
+      .input("dashboard",sql.BigInt,changes.dashboard??s.dashboard)
+      .input("profile",sql.BigInt,changes.profile??s.profile)
+      .input("request",sql.UniqueIdentifier,changes.requestId??s.requestId)
+      .input("source",sql.NVarChar(64),s.source)
+      .input("config",sql.NVarChar(sql.MAX),changes.config??chartJson)
+      .input("x",sql.Int,s.x).input("y",sql.Int,s.y)
+      .input("width",sql.Int,s.width).input("height",sql.Int,s.height)
+      .query(
+        "EXECUTE AS USER=N'UQP_Chart_Writer';"+
+        "BEGIN TRY EXEC uqp.usp_ChartCreateWithDelegation_IsolatedDraft "+
+        "@DashboardId=@dashboard,@ProfileId=@profile,"+
+        "@ActorId=@actor,@TokenVersion=@token,"+
+        "@RequestId=@request,@GrantId=@grant,@Secret=@secret,"+
+        "@SourceKey=@source,@ConfigJson=@config,"+
+        "@X=@x,@Y=@y,@Width=@width,@Height=@height;"+
+        "END TRY BEGIN CATCH REVERT; THROW; END CATCH; REVERT;"+
+        "SELECT @@TRANCOUNT AS OpenTransactions"
+      );
+  const signedChart=chartScope();
+  const signedChartGrant=(await issueSigned(signedChart)).recordset[0];
+  assert.match(String(signedChartGrant?.GrantId),/^[a-f0-9-]{36}$/i);
+  assert(Buffer.isBuffer(signedChartGrant?.Secret));
+  assert.equal(signedChartGrant.Secret.length,32);
+  const beforeWrite=await writerCounts();
+  for(const modifications of [
+    {actor:77},{token:2},{dashboard:8},{profile:23},
+    {config:JSON.stringify({...JSON.parse(chartJson),maxPoints:21})},
+    {secret:Buffer.alloc(32,0x55)},{requestId:randomUUID()},
+  ]){
+    await assert.rejects(writeSigned(signedChart,signedChartGrant,modifications),forbidden);
+    assert.deepEqual(await writerCounts(),beforeWrite);
+  }
+  // A valid signed grant is still denied if the Actor is revoked after issue
+  // and before SQL Writer obtains its transaction-scoped locks.
+  await db.request().query("UPDATE uqp.AppUser SET IsActive=0 WHERE Id=8");
+  try{
+    await assert.rejects(writeSigned(signedChart,signedChartGrant),forbidden);
+  }finally{
+    await db.request().query("UPDATE uqp.AppUser SET IsActive=1 WHERE Id=8");
+  }
+  assert.deepEqual(await writerCounts(),beforeWrite);
+  const committed=await writeSigned(signedChart,signedChartGrant);
+  const output=committed.recordset[0];
+  const widgetId=Number(output?.WidgetId),auditId=Number(output?.AuditLogId);
+  assert(Number.isSafeInteger(widgetId)&&widgetId>0);
+  assert(Number.isSafeInteger(auditId)&&auditId>0);
+  assert.equal(output?.Digest,chartDigest);
+  assert.equal(Number(Object.values(committed.recordsets).at(-1)?.[0]?.OpenTransactions),0);
+  const linked=(await db.request()
+    .input("request",sql.UniqueIdentifier,signedChart.requestId)
+    .input("grant",sql.UniqueIdentifier,signedChartGrant.GrantId)
+    .query(
+      "SELECT r.ActorId,r.AuditLogId AS LedgerAuditId,"+
+      "a.EventType,a.UserId AS AuditActor,a.Status,"+
+      "w.Id AS WidgetId,w.WidgetType,w.ConfigJson,w.SourceKey,"+
+      "s.ConfigDigest,s.SealedBy,s.AuditLogId AS SealAuditId,"+
+      "d.ConsumedAtUtc FROM uqp.DashboardChartTrustRequest r "+
+      "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId "+
+      "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id "+
+      "JOIN uqp.DashboardWidget w ON w.Id=s.WidgetId "+
+      "JOIN uqp.ChartActorDelegationDisposable d ON d.RequestId=r.RequestId "+
+      "WHERE r.RequestId=@request AND d.GrantId=@grant"
+    )).recordset;
+  assert.equal(linked.length,1);
+  const record=linked[0];
+  assert.equal(Number(record?.ActorId),8);
+  assert.equal(Number(record?.AuditActor),8);
+  assert.equal(Number(record?.SealedBy),8);
+  assert.equal(Number(record?.LedgerAuditId),auditId);
+  assert.equal(Number(record?.SealAuditId),auditId);
+  assert.equal(Number(record?.WidgetId),widgetId);
+  assert.equal(record?.EventType,"CHART_SEAL_WIDGET");
+  assert.equal(record?.Status,"SUCCESS");
+  assert.equal(record?.WidgetType,"CHART");
+  assert.equal(record?.SourceKey,"PRIMARY");
+  assert.equal(record?.ConfigJson,chartJson);
+  assert.equal(record?.ConfigDigest,chartDigest);
+  assert(record?.ConsumedAtUtc instanceof Date);
+  const afterWrite=await writerCounts();
+  assert.deepEqual(afterWrite.slice(0,4),beforeWrite.slice(0,4).map(n=>n+1));
+  assert.equal(afterWrite[4],0);
+  assert.equal(afterWrite[5],beforeWrite[5]!+1);
+  await assert.rejects(writeSigned(signedChart,signedChartGrant),forbidden);
+  assert.deepEqual(await writerCounts(),afterWrite);
+  console.log("CHART_ISSUE89_DISPOSABLE_SIGNED_ISSUER_TO_ATOMIC_WRITER_RECEIPT_REPLAY_PASS");
+
+  // Failure injection after the grant has been locked must roll back all
+  // writes, including the grant's consumed bit. A retry may then complete.
+  const retryScope=chartScope();
+  const retryGrant=(await issueSigned(retryScope)).recordset[0];
+  assert.match(String(retryGrant?.GrantId),/^[a-f0-9-]{36}$/i);
+  assert(Buffer.isBuffer(retryGrant?.Secret));
+  const retryBefore=await writerCounts();
+  await db.request().batch(
+    "CREATE TRIGGER uqp.TR_ChartSignedDisposableSealFailure "+
+    "ON uqp.DashboardChartWidgetSeal AFTER INSERT AS BEGIN "+
+    "SET NOCOUNT ON; THROW 51928,N'CHART_SIGNED_SEAL_FAILURE_TEST',1; END"
+  );
+  try{
+    await assert.rejects(writeSigned(retryScope,retryGrant),forbidden);
+  }finally{
+    await db.request().batch(
+      "DROP TRIGGER IF EXISTS uqp.TR_ChartSignedDisposableSealFailure");
+  }
+  assert.deepEqual(await writerCounts(),retryBefore);
+  const retryConsumed=(await db.request()
+    .input("grant",sql.UniqueIdentifier,retryGrant.GrantId)
+    .query("SELECT ConsumedAtUtc FROM uqp.ChartActorDelegationDisposable WHERE GrantId=@grant")
+  ).recordset[0];
+  assert.equal(retryConsumed?.ConsumedAtUtc,null);
+  const retryResult=await writeSigned(retryScope,retryGrant);
+  assert(Number(retryResult.recordset[0]?.WidgetId)>0);
+  const retryAfter=await writerCounts();
+  assert.deepEqual(retryAfter.slice(0,4),retryBefore.slice(0,4).map(n=>n+1));
+  assert.equal(retryAfter[4],0);
+  assert.equal(retryAfter[5],retryBefore[5]!+1);
+  await assert.rejects(writeSigned(retryScope,retryGrant),forbidden);
+  assert.deepEqual(await writerCounts(),retryAfter);
+  console.log("CHART_ISSUE89_DISPOSABLE_SIGNED_WRITER_LATE_ROLLBACK_RETRY_PASS");
+
+
   // 2B-15D-16: synthetic loopback HTTP -> verified JWT WeakMap actor ->
   // test-local HMAC signer -> isolated SQL Issuer. This proves the mapping
   // in the disposable CI fixture, NOT a physically independent signer.
