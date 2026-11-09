@@ -242,7 +242,7 @@ test("sealed CHART persisted by future audited writer remains read-only and neve
  const chart={...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",
    x:1200,y:400,width:450,height:300,
    title:"受控統計",staticText:null,config:{sealedId:88,privateMarker:"NEVER_RENDER_RAW"}};
- state.profiles[0]!.widgets.push(chart as (typeof state.profiles)[number]["widgets"][number]);
+ (state.profiles[0]!.widgets as unknown[]).push(chart);
  await page.goto("/designer/dashboards/1/layout");
  await expect(page.getByText(/已載入版型曾包含受控 CHART/)).toBeVisible();
  await expect(page.getByText("受控 CHART：請使用已授權的播放預覽查看")).toBeVisible();
