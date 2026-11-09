@@ -17,7 +17,7 @@ import {
 } from "./dashboardChartIndependentIssuerProof.js";
 
 const now=1_800_000_000_000;
-const plan=planDormantChartCreate({
+const nullablePlan=planDormantChartCreate({
   actorId:8,tokenVersion:3,dashboardId:7,profileId:22,
   requestId:"00000000-0000-4000-8000-000000000011",
   config:{version:1,chartType:"BAR",dataSourceKey:"PRIMARY",
@@ -25,7 +25,8 @@ const plan=planDormantChartCreate({
     valueMode:"QUERY_RESULT",maxPoints:20,showLegend:true},
   placement:{x:80,y:90,width:600,height:360},
 });
-assert(plan);
+assert(nullablePlan);
+const plan=nullablePlan;
 const signer=generateKeyPairSync("ed25519");
 const hmacKey=randomBytes(32);
 const trusted=Object.freeze({
