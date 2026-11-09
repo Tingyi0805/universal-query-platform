@@ -132,8 +132,8 @@ jobs:
           set -euo pipefail
           test -f src/dependencies/dependencyContracts.test.ts
           test -f src/dependencies/zod4Contracts.test.ts
-          mapfile -d '' tests < <(find src -type f -name '*.test.ts' \\
-            ! -path 'src/dependencies/dependencyContracts.test.ts' \\
+          mapfile -d '' tests < <(find src -type f -name '*.test.ts' \
+            ! -path 'src/dependencies/dependencyContracts.test.ts' \
             ! -path 'src/dependencies/zod4Contracts.test.ts' -print0)
           if (( ${#tests[@]} < 100 )); then
             echo 'SERVER_LINUX_JS_TEST_DISCOVERY_INCOMPLETE'
