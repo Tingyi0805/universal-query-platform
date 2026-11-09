@@ -132,15 +132,18 @@ test("synthetic signed grant is handed to distinct SQL Writer exactly once",asyn
 });
 test("invalid issuer receipts never reach Writer and secret is scrubbed",async()=>{
   for(const row of [
-    null,{GrantId:"invalid",Secret:Buffer.alloc(32)},
-    {GrantId:grant,Secret:Buffer.alloc(16)},
+    null,{GrantId:"invalid",Secret:Buffer.alloc(32,0x77)},
+    {GrantId:grant,Secret:Buffer.alloc(16,0x77)},
     {GrantId:grant,Secret:"RAW_SECRET"},
-    {GrantId:grant,Secret:Buffer.alloc(32),ActorId:77},
+    {GrantId:grant,Secret:Buffer.alloc(32,0x77),ActorId:77},
   ]){
     const f=fixture();f.setApproved(true);
     f.setIssuer(row===null?[]:[row]);
     assert.equal(await f.execute(plan,bearer),null);
     assert.equal(f.issuerCalls,1);assert.equal(f.writerCalls,0);
+    if(row&&Buffer.isBuffer(row.Secret))
+      assert(row.Secret.equals(Buffer.alloc(row.Secret.length)),
+        "invalid Issuer grant must not retain any secret bytes");
   }
 });
 test("no SQL call on invalid scope, disabled permissions or altered signer proof",async()=>{

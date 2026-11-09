@@ -100,6 +100,7 @@ export function createDormantSqlChartAtomicCreate(
        !/^Bearer [A-Za-z0-9_.-]+$/.test(originalBearerHeader))
       return null;
     let secret:Buffer|null=null;
+    const issuerSecrets:Buffer[]=[];
     try{
       // Caller must pin all login SIDs and exact reviewed SQL procedure
       // digests. A missing 928 schema or cross-grant must DENY here.
@@ -124,6 +125,13 @@ export function createDormantSqlChartAtomicCreate(
         .input("signature",sql.VarBinary(32),proof.Signature);
       const issuerResult=await issuer.query(chartIssuerGrantSql);
       const rows=issuerResult.recordset;
+      // A malformed/multi-row Issuer result must not leave a usable secret
+      // resident in process memory, even when its grant ID is invalid.
+      for(const candidate of rows??[]){
+        if(candidate&&typeof candidate==="object"&&
+           Buffer.isBuffer((candidate as Record<string,unknown>).Secret))
+          issuerSecrets.push((candidate as {Secret:Buffer}).Secret);
+      }
       if(rows?.length!==1||!exact(rows[0],"GrantId|Secret")||
          typeof rows[0].GrantId!=="string"||
          !grantGuid.test(rows[0].GrantId)||
@@ -133,8 +141,9 @@ export function createDormantSqlChartAtomicCreate(
       secret=rows[0].Secret;
       // A short-lived signer proof cannot be converted to a long-lived
       // locally buffered grant; SQL itself also checks nonce/expiry.
-      if(!validTime(deps.now?.()??Date.now())||
-         (deps.now?.()??Date.now())>=proof.ExpiresAtUtc.valueOf())
+      const beforeWrite=deps.now?.()??Date.now();
+      if(!validTime(beforeWrite)||
+         beforeWrite>=proof.ExpiresAtUtc.valueOf())
         return null;
       const writer=deps.writerPool.request()
         .input("dashboard",sql.BigInt,plan.dashboardId)
@@ -163,7 +172,8 @@ export function createDormantSqlChartAtomicCreate(
     }finally{
       // The single-use SQL grant secret must not remain in this process
       // after the Writer request completes or fails.
-      if(secret)secret.fill(0);
+      for(const issuedSecret of issuerSecrets)issuedSecret.fill(0);
+      if(secret&&!issuerSecrets.includes(secret))secret.fill(0);
     }
   };
 }
