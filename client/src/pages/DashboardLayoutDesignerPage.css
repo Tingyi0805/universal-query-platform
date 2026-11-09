@@ -179,6 +179,8 @@
   user-select: none;
 }
 
+.layout-widget-readonly { cursor: default; }
+
 .layout-widget:hover {
   outline: 2px solid #9bb7dc;
   outline-offset: -2px;

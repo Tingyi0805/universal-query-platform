@@ -1,4 +1,6 @@
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
+import { mayRequestSealedChartProjection } from "../dashboard/nativeChartPlayback";
+import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
 import { DashboardChartDraftEditor } from "../components/DashboardChartDraftEditor";
 import { ChartPlacementNumberInput } from "../components/ChartPlacementNumberInput";
 import { DashboardDrilldownEditor } from "../components/DashboardDrilldownEditor";
@@ -180,7 +182,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [savedProfiles,setSavedProfiles]=useState<string|null>(null);
   // Preserve the loaded trust boundary even if a profile is removed locally.
   const [loadedSealedChartPresent,setLoadedSealedChartPresent]=useState(false);
-  const { accessToken } = useAuth();
+  const { accessToken, hasPermission } = useAuth();
 
   const [drillPending,setDrillPending]=useState(false);
   const [rootQueryId,setRootQueryId]=useState(0);
@@ -484,7 +486,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       : {
           ...profile,
           config: { ...profile.config, ...patch },
-          widgets: profile.widgets.map((widget) => ({
+          widgets: profile.widgets.map((widget) => widget.widgetType === "CHART" ? widget : ({
             ...widget,
             fontSize: patch.fontSize ?? widget.fontSize,
             config: {
@@ -557,7 +559,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function updateSelectedWidget(patch: Partial<LayoutWidget>) {
-    if (!activeProfile || !selectedWidget) return;
+    if (!activeProfile || !selectedWidget || selectedWidget.widgetType === "CHART") return;
 
     setProfiles((current) => current.map((profile) => {
       if (profile.clientKey !== activeProfile.clientKey) return profile;
@@ -607,8 +609,21 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
   function renderWidget(widget: LayoutWidget) {
     if (widget.widgetType === "CHART") {
-      // Never inspect sealed ConfigJson or raw preview rows in the legacy editor.
-      return <div className="layout-widget-value" role="status">受控 CHART：請使用已授權的播放預覽查看</div>;
+      // Only a stored positive Widget ID may be projected; ConfigJson, raw
+      // Query rows and local draft state are never used as chart data.
+      const allowed = mayRequestSealedChartProjection({
+        widgetType: widget.widgetType,
+        dashboardId, widgetId: widget.id ?? 0,
+        queryPreview: true, deviceMode: false, userRoute: false,
+        previewAuthorized: active && !embedded && sourceVersion !== undefined && preview !== null,
+        online: navigator.onLine, hasDataWarning: Boolean(error),
+        accessTokenPresent: Boolean(accessToken),
+        canDesignQuery: hasPermission("DESIGN_QUERY"),
+        canExecuteQuery: hasPermission("EXECUTE_QUERY"),
+      });
+      return <DashboardSavedChartWidget dashboardId={dashboardId}
+        widgetId={widget.id ?? 0} authorized={allowed}
+        accessToken={accessToken} refreshKey={sourceVersion ?? ""}/>;
     }
     const selectedSource = String(widget.config?.dataSourceKey ?? "PRIMARY");
     const sourcePreview = selectedSource === "PRIMARY" ? preview : supplementalPreviews[selectedSource];
@@ -969,7 +984,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                     {[...activeProfile.widgets].sort((a,b) => a.sortOrder-b.sortOrder).map((widget) => (
                       <div
                         key={widget.clientKey}
-                        className={`layout-widget ${selectedWidgetKey === widget.clientKey ? "selected" : ""}`}
+                        className={`layout-widget ${widget.widgetType === "CHART" ? "layout-widget-readonly" : ""} ${selectedWidgetKey === widget.clientKey ? "selected" : ""}`}
                         style={{
                           left: widget.x,
                           top: widget.y,

@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 async function setup(page: Page) {
   const widget = { id: 1, widgetType: "TEXT", title: "合成標題", sourceKey: null, staticText: "固定合成文字", x: 10, y: 20, width: 300, height: 60, fontSize: 24, alignment: "LEFT", config: { color: "#112233", preservedStyle: { marker: "synthetic" } }, sortOrder: 0 };
   const state = { revision: 1, conflict: false, disabled: false, race: false, pending: false, sourceEnabled: true, missingVersion: false, writes: [] as any[], legacy: [] as string[],
+    chartProjectionCalls: [] as {method:string;body:string|null;authorization:string|null}[],
     profiles: [
       { id: 1, name: "橫向合成版型", isDefault: true, sortOrder: 0, canvasWidth: 1920, canvasHeight: 1080, config: { backgroundColor: "#abcdef", retained: true }, widgets: [widget,
         { ...widget, id: 2, widgetType: "FIELD", staticText: null, sourceKey: "NAME", y: 100, config: { dataSourceKey: "WARD", color: "#223344" } },
@@ -15,6 +16,11 @@ async function setup(page: Page) {
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path.endsWith("/configuration")) { await route.fulfill(state.disabled ? { status: 404, json: { error: { code: "QUERY_SOURCE_MANAGEMENT_DISABLED", message: "SQL private synthetic" } } } : { json: config() }); return; }
+    if (path === "/api/dashboards/1/charts/v1/88/projection") {
+      state.chartProjectionCalls.push({method:request.method(),body:request.postData(),authorization:request.headers()["authorization"]??null});
+      await route.fulfill({json:{chartType:"BAR",showLegend:true,points:[{label:"診間 A",value:9}]}});
+      return;
+    }
     if (path === "/api/dashboards/1/layout" && request.method() === "GET") {
       const profiles = structuredClone(state.profiles);
       if (state.race) { state.revision++; state.race = false; }
@@ -261,4 +267,24 @@ test("sealed CHART persisted by future audited writer remains read-only and neve
  await expect(save(page)).toBeDisabled();
  await expect(page.getByText(/已載入版型曾包含受控 CHART/)).toBeVisible();
  expect(state.writes).toHaveLength(0);
+});
+
+
+test("native layout designer renders saved sealed CHART from server projection without using untrusted config",async({page})=>{
+  const state=await setup(page);
+  const chart={...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",
+    title:"門診彙總",staticText:null,x:1160,y:460,width:620,height:360,
+    config:{approved:true,patientRows:[{PATIENT_ID:"FORBIDDEN_CONFIG_ROW"}]}};
+  (state.profiles[0]!.widgets as unknown[]).push(chart);
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toBeVisible();
+  await expect(page.getByLabel("圖表圖例")).toContainText("診間 A");
+  await expect(save(page)).toBeDisabled();
+  expect(state.chartProjectionCalls.length).toBeGreaterThanOrEqual(1);
+  for(const call of state.chartProjectionCalls)expect(call).toEqual({
+    method:"POST",body:null,authorization:"Bearer synthetic",
+  });
+  expect(state.writes).toHaveLength(0);
+  await expect(page.getByText("FORBIDDEN_CONFIG_ROW")).toHaveCount(0);
+  await expect(page.getByText("PATIENT_ID")).toHaveCount(0);
 });
