@@ -152,16 +152,18 @@ BEGIN
   IF (SELECT COUNT(*) FROM @widgetRows)<>1
    THROW 51928,''CHART_DRAFT_WIDGET_INSERT_FAILED'',1;
   DECLARE @WidgetId bigint=(SELECT TOP(1) Id FROM @widgetRows);
+  -- Capture the exact server-generated RowVersion as part of the INSERT,
+  -- with the Grant/Audit/Ledger/Widget/Seal in the same transaction.
+  -- OUTPUT INTO supports the audited AFTER INSERT seal trigger.
+  DECLARE @sealRows TABLE(Revision binary(8) NOT NULL);
   INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)
+   OUTPUT INSERTED.SealRowVersion INTO @sealRows(Revision)
    VALUES(@WidgetId,@digest,1,@ActorId,@AuditId);
-  -- The returned revision must be the actual DB-owned SealRowVersion, read
-  -- inside the SAME transaction. A caller digest or synthetic revision is
-  -- not evidence of durable seal identity.
-  DECLARE @SealRevision varchar(16)=NULL;
-  SELECT @SealRevision=LOWER(CONVERT(varchar(16),s.SealRowVersion,2))
-   FROM uqp.DashboardChartWidgetSeal s WITH(HOLDLOCK)
-   WHERE s.WidgetId=@WidgetId AND s.IsActive=1 AND s.AuditLogId=@AuditId;
-  IF @SealRevision IS NULL OR LEN(@SealRevision)<>16
+  IF (SELECT COUNT(*) FROM @sealRows)<>1
+   THROW 51928,''CHART_DRAFT_SEAL_RECEIPT_REQUIRED'',1;
+  DECLARE @SealRevision varchar(16)=(
+   SELECT LOWER(CONVERT(varchar(16),Revision,2)) FROM @sealRows);
+  IF @SealRevision IS NULL OR DATALENGTH(@SealRevision)<>16
    THROW 51928,''CHART_DRAFT_SEAL_RECEIPT_REQUIRED'',1;
   DELETE uqp.DashboardChartCreatePermit
    WHERE SessionId=@@SPID AND TransactionId=CURRENT_TRANSACTION_ID();

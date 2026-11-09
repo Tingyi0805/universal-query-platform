@@ -79,7 +79,7 @@ test("2B-15D-13 Grant, Ledger, Audit, Widget and Seal share the transaction",asy
    "INSERT uqp.DashboardChartCreatePermit(SessionId,TransactionId,ProfileId",
    "INSERT uqp.DashboardWidget(ProfileId,WidgetType,Title,SourceKey",
    "INSERT uqp.DashboardChartWidgetSeal(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId)",
-   "SELECT @SealRevision=LOWER(CONVERT(varchar(16),s.SealRowVersion,2))",
+   "OUTPUT INSERTED.SealRowVersion INTO @sealRows(Revision)",
    "DELETE uqp.DashboardChartCreatePermit",
    "COMMIT TRANSACTION;",
  ];
@@ -94,6 +94,7 @@ test("2B-15D-13 Grant, Ledger, Audit, Widget and Seal share the transaction",asy
  assert.match(source,/CONVERT\(varchar\(20\),@AuditId\) AS AuditLogId/);
  assert.match(source,/@SealRevision AS SealRevision/);
  assert.match(source,/CHART_DRAFT_SEAL_RECEIPT_REQUIRED/);
+ assert.match(source,/DATALENGTH\(@SealRevision\)<>16/);
  assert.match(source,/ROLLBACK TRANSACTION;\s+SET TRANSACTION ISOLATION LEVEL READ COMMITTED;/);
 });
 
