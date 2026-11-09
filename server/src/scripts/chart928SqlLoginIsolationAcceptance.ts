@@ -120,7 +120,11 @@ export async function verifyChartSqlLoginIsolationDisposable(
       "HAS_PERMS_BY_NAME(N'uqp.ChartIssuerMacPadsDisposable',"+
       "N'OBJECT',N'SELECT') AS PadsRead,"+
       "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegationDisposable',"+
-      "N'OBJECT',N'INSERT') AS GrantInsert");
+      "N'OBJECT',N'INSERT') AS GrantInsert,"+
+      "HAS_PERMS_BY_NAME(N'uqp.usp_ChartCreateWithDelegation_IsolatedDraft',"+
+      "N'OBJECT',N'EXECUTE') AS WriterExecute,"+
+      "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',"+
+      "N'OBJECT',N'INSERT') AS DirectWidgetInsert");
     return result.recordset[0];
   }));
   assert.equal(new Set(metadata.map(r=>r?.OriginalSid)).size,3);
@@ -136,6 +140,8 @@ export async function verifyChartSqlLoginIsolationDisposable(
     assert.notEqual(Number(row?.GrantInsert),1);
     assert.notEqual(Number(row?.LegacyExecute),1);
     assert.equal(Number(row?.SignedExecute),role==="issuer"?1:0);
+    assert.equal(Number(row?.WriterExecute),role==="writer"?1:0);
+    assert.notEqual(Number(row?.DirectWidgetInsert),1);
   }
   for(const role of ["platform","writer"] as const){
     await assert.rejects(
@@ -185,6 +191,127 @@ export async function verifyChartSqlLoginIsolationDisposable(
   )).recordset[0];
   assert.equal(Number(final?.Grants),Number(before?.Grants)+1);
   assert.equal(Number(final?.Nonces),Number(before?.Nonces)+1);
+
+  // Issue #89: real SQL-auth logins must complete an actual independent
+  // Issuer -> Writer transaction, not merely prove IssuerSid metadata.
+  // Only the dedicated writer login may consume a signed one-time grant.
+  const chartJson=JSON.stringify({
+    version:1,chartType:"BAR",dataSourceKey:"PRIMARY",
+    categoryColumn:"ROOM",valueColumn:"TOTAL",
+    valueMode:"QUERY_RESULT",maxPoints:20,showLegend:true,
+  });
+  const chartScope={
+    ...initial,requestId:randomUUID(),nonce:randomUUID(),
+    digest:createHash("sha256").update(chartJson,"utf8").digest("hex"),
+    issuedAt:new Date(Date.now()-800),expiresAt:new Date(Date.now()+8500),
+  };
+  const realGrant=(await sqlCall(chartScope,sign(chartScope),pools.issuer!))
+    .recordset[0];
+  assert.match(String(realGrant?.GrantId),/^[a-f0-9-]{36}$/i);
+  assert(Buffer.isBuffer(realGrant?.Secret));
+  assert.equal(realGrant.Secret.length,32);
+  const issuerGrant=(await db.request()
+    .input("grant",sql.UniqueIdentifier,realGrant.GrantId)
+    .query("SELECT IssuerSid,ActorId,TokenVersion,ConsumedAtUtc "+
+      "FROM uqp.ChartActorDelegationDisposable WHERE GrantId=@grant")
+  ).recordset[0];
+  assert.equal(h64(issuerGrant.IssuerSid as Buffer),metadata[1]?.OriginalSid);
+  assert.equal(Number(issuerGrant.ActorId),chartScope.actor);
+  assert.equal(Number(issuerGrant.TokenVersion),chartScope.token);
+  assert.equal(issuerGrant.ConsumedAtUtc,null);
+  const runWriter=(pool:sql.ConnectionPool,changes:Readonly<{
+    actor?:number;token?:number;secret?:Buffer;config?:string;
+  }>={})=>pool.request()
+    .input("grant",sql.UniqueIdentifier,realGrant.GrantId)
+    .input("secret",sql.VarBinary(sql.MAX),changes.secret??realGrant.Secret)
+    .input("actor",sql.BigInt,changes.actor??chartScope.actor)
+    .input("token",sql.Int,changes.token??chartScope.token)
+    .input("dashboard",sql.BigInt,chartScope.dashboard)
+    .input("profile",sql.BigInt,chartScope.profile)
+    .input("request",sql.UniqueIdentifier,chartScope.requestId)
+    .input("source",sql.NVarChar(64),chartScope.source)
+    .input("config",sql.NVarChar(sql.MAX),changes.config??chartJson)
+    .input("x",sql.Int,chartScope.x).input("y",sql.Int,chartScope.y)
+    .input("width",sql.Int,chartScope.width)
+    .input("height",sql.Int,chartScope.height)
+    .query("EXEC uqp.usp_ChartCreateWithDelegation_IsolatedDraft "+
+      "@DashboardId=@dashboard,@ProfileId=@profile,"+
+      "@ActorId=@actor,@TokenVersion=@token,"+
+      "@RequestId=@request,@GrantId=@grant,@Secret=@secret,"+
+      "@SourceKey=@source,@ConfigJson=@config,"+
+      "@X=@x,@Y=@y,@Width=@width,@Height=@height;");
+  const counts=async()=> {
+    const row=(await db.request().query(
+      "SELECT (SELECT COUNT_BIG(*) FROM uqp.DashboardChartTrustRequest) AS Ledger,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.AuditLog) AS Audit,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardWidget WHERE WidgetType=N'CHART') AS Widgets,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartWidgetSeal) AS Seals,"+
+      "(SELECT COUNT_BIG(*) FROM uqp.ChartActorDelegationDisposable WHERE ConsumedAtUtc IS NOT NULL) AS Consumed"
+    )).recordset[0];
+    return ["Ledger","Audit","Widgets","Seals","Consumed"]
+      .map(name=>Number(row?.[name]));
+  };
+  const beforeWriter=await counts();
+  for(const disallowed of [pools.platform!,pools.issuer!])
+    await assert.rejects(runWriter(disallowed),isDenied);
+  await assert.rejects(runWriter(pools.writer!,{actor:77}),isDenied);
+  await assert.rejects(runWriter(pools.writer!,{token:chartScope.token+1}),isDenied);
+  await assert.rejects(runWriter(pools.writer!,{secret:Buffer.alloc(32)}),isDenied);
+  await assert.rejects(runWriter(pools.writer!,{
+    config:JSON.stringify({...JSON.parse(chartJson),maxPoints:21}),
+  }),isDenied);
+  assert.deepEqual(await counts(),beforeWriter);
+  // A signed grant is not sufficient when the DB user is later revoked.
+  await db.request().input("actor",sql.BigInt,chartScope.actor)
+    .query("UPDATE uqp.AppUser SET IsActive=0 WHERE Id=@actor");
+  try {
+    await assert.rejects(runWriter(pools.writer!),isDenied);
+  } finally {
+    await db.request().input("actor",sql.BigInt,chartScope.actor)
+      .query("UPDATE uqp.AppUser SET IsActive=1 WHERE Id=@actor");
+  }
+  assert.deepEqual(await counts(),beforeWriter);
+  const created=(await runWriter(pools.writer!)).recordset[0];
+  const widget=Number(created?.WidgetId),audit=Number(created?.AuditLogId);
+  assert(Number.isSafeInteger(widget)&&widget>0);
+  assert(Number.isSafeInteger(audit)&&audit>0);
+  assert.equal(created.Digest,chartScope.digest);
+  const linked=(await db.request()
+    .input("request",sql.UniqueIdentifier,chartScope.requestId)
+    .input("grant",sql.UniqueIdentifier,realGrant.GrantId)
+    .query("SELECT r.ActorId,r.AuditLogId AS LedgerAuditId,"+
+      "a.UserId AS AuditActor,a.Status,a.EventType,"+
+      "w.Id AS WidgetId,w.WidgetType,w.ConfigJson,"+
+      "s.ConfigDigest,s.AuditLogId AS SealAuditId,s.SealedBy,"+
+      "g.ConsumedAtUtc,g.IssuerSid "+
+      "FROM uqp.DashboardChartTrustRequest r "+
+      "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId "+
+      "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id "+
+      "JOIN uqp.DashboardWidget w ON w.Id=s.WidgetId "+
+      "JOIN uqp.ChartActorDelegationDisposable g ON g.RequestId=r.RequestId "+
+      "WHERE r.RequestId=@request AND g.GrantId=@grant")
+  ).recordset;
+  assert.equal(linked.length,1);
+  const receipt=linked[0];
+  assert.equal(Number(receipt.ActorId),chartScope.actor);
+  assert.equal(Number(receipt.AuditActor),chartScope.actor);
+  assert.equal(Number(receipt.SealedBy),chartScope.actor);
+  assert.equal(Number(receipt.LedgerAuditId),audit);
+  assert.equal(Number(receipt.SealAuditId),audit);
+  assert.equal(Number(receipt.WidgetId),widget);
+  assert.equal(receipt.Status,"SUCCESS");
+  assert.equal(receipt.EventType,"CHART_SEAL_WIDGET");
+  assert.equal(receipt.WidgetType,"CHART");
+  assert.equal(receipt.ConfigJson,chartJson);
+  assert.equal(receipt.ConfigDigest,chartScope.digest);
+  assert.equal(h64(receipt.IssuerSid as Buffer),metadata[1]?.OriginalSid);
+  assert(receipt.ConsumedAtUtc instanceof Date);
+  const afterWriter=await counts();
+  assert.deepEqual(afterWriter,beforeWriter.map(n=>n+1));
+  await assert.rejects(runWriter(pools.writer!),isDenied);
+  assert.deepEqual(await counts(),afterWriter);
+  console.log("CHART_ISSUE89_SQL_REAL_LOGINS_ISSUER_WRITER_ATOMIC_REPLAY_PASS");
+
   console.log("CHART_2B15D17_DISPOSABLE_REAL_SQL_LOGIN_SID_GRANT_ATTESTED_PASS");
   console.log("CHART_2B15D17_INDEPENDENT_HTTP_SIGNER_AND_PRODUCTION_LOGIN_RELEASE_BLOCKED");
  } finally {
