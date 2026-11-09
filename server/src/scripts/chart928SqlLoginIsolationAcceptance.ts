@@ -293,6 +293,12 @@ export async function verifyChartSqlLoginIsolationDisposable(
   await assert.rejects(runWriter(pools.writer!),isDenied);
   await db.request().query(
     "UPDATE uqp.ChartWriterApprovedIssuerDisposable SET IsEnabled=1 WHERE ApprovalId=1");
+  await db.request().query(
+    "DELETE FROM uqp.ChartWriterApprovedIssuerDisposable WHERE ApprovalId=1");
+  await assert.rejects(runWriter(pools.writer!),isDenied);
+  await db.request().input("issuerLogin",sql.NVarChar(128),identities.issuer.name)
+    .query("INSERT uqp.ChartWriterApprovedIssuerDisposable "+
+      "(ApprovalId,IssuerSid,IsEnabled) VALUES(1,SUSER_SID(@issuerLogin),1)");
   await db.request().input("sid",sql.VarBinary(85),
       Buffer.from(String(initialApproval?.Sid),"hex"))
     .query("UPDATE uqp.ChartWriterApprovedIssuerDisposable "+
