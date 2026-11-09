@@ -941,10 +941,15 @@ export async function verifyChart928DraftSql(
   // An extra caller digest argument must NEVER be trusted by this Writer.
   const proveDelegatedReceipt=async(g:SyntheticGrant,created:{WidgetId?:unknown;AuditLogId?:unknown;Digest?:unknown;SealRevision?:unknown})=>{
     const widget=Number(created.WidgetId),audit=String(created.AuditLogId??"");
+    stage="DELEGATED_RECEIPT_WIDGET_ID";
     assert(Number.isSafeInteger(widget)&&widget>0);
+    stage="DELEGATED_RECEIPT_AUDIT_DECIMAL";
     assert.match(audit,/^[1-9][0-9]{0,19}$/);
+    stage="DELEGATED_RECEIPT_AUDIT_STRING";
     assert.equal(typeof created.AuditLogId,"string");
+    stage="DELEGATED_RECEIPT_REVISION_FORMAT";
     assert.match(String(created.SealRevision??""),/^[a-f0-9]{16}$/);
+    stage="DELEGATED_RECEIPT_DIGEST";
     assert.equal(created.Digest,expected);
     const receipt=(await db!.request()
       .input("requestId",sql.UniqueIdentifier,g.requestId)
@@ -961,15 +966,22 @@ export async function verifyChart928DraftSql(
         "JOIN uqp.ChartActorDelegationDisposable d ON d.RequestId=r.RequestId " +
         "WHERE r.RequestId=@requestId AND d.GrantId=@grantId"
       )).recordset;
+    stage="DELEGATED_RECEIPT_JOIN_COUNT";
     assert.equal(receipt.length,1);
     const item=receipt[0];
+    stage="DELEGATED_RECEIPT_ACTOR";
     assert.equal(Number(item?.ActorId),8);
     assert.equal(Number(item?.AuditActor),8);
     assert.equal(Number(item?.SealedBy),8);
+    stage="DELEGATED_RECEIPT_LEDGER_AUDIT";
     assert.equal(String(item?.LedgerAuditId),audit);
+    stage="DELEGATED_RECEIPT_SEAL_AUDIT";
     assert.equal(String(item?.SealAuditId),audit);
+    stage="DELEGATED_RECEIPT_SEAL_ROWVERSION";
     assert.equal(item?.CurrentSealRevision,created.SealRevision);
+    stage="DELEGATED_RECEIPT_WIDGET_JOIN";
     assert.equal(Number(item?.WidgetId),widget);
+    stage="DELEGATED_RECEIPT_AUDIT_FIELDS";
     assert.equal(item?.EventType,"CHART_SEAL_WIDGET");
     assert.equal(item?.Status,"SUCCESS");
     assert.equal(item?.WidgetType,"CHART");
