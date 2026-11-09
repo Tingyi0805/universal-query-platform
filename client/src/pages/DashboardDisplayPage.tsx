@@ -1,4 +1,6 @@
 import { DashboardDrilldownHost } from "../components/DashboardDrilldownHost";
+import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
+import {mayRequestSealedChartProjection} from "../dashboard/nativeChartPlayback";
 import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
 import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
@@ -52,7 +54,7 @@ type PreviewResult = {
 type LayoutWidget = {
   id: number;
   profileId: number;
-  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
+  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER" | "CHART";
   title: string | null;
   sourceKey: string | null;
   staticText: string | null;
@@ -892,6 +894,26 @@ export function DashboardDisplayPage() {
   }, [activeProfile, viewport]);
 
   function renderWidget(widget: LayoutWidget) {
+    if(widget.widgetType === "CHART"){
+      // The device/user routes have no independently approved chart
+      // projection contract. Never reuse patient page rows, client Widget
+      // ConfigJson or a designer JWT as a public-display authorization.
+      const authorized=mayRequestSealedChartProjection({
+        widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+        queryPreview,deviceMode,userRoute,previewAuthorized,online,
+        hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+        accessTokenPresent:Boolean(accessToken),
+        canDesignQuery:hasPermission("DESIGN_QUERY"),
+        canExecuteQuery:hasPermission("EXECUTE_QUERY"),
+      });
+      const refreshKey=preview
+        ? `${snapshotReloadKey}:${preview.snapshotId??preview.deliveredAtUtc??""}`
+        : "";
+      return <DashboardSavedChartWidget
+        dashboardId={dashboardId} widgetId={widget.id}
+        authorized={authorized} accessToken={accessToken}
+        refreshKey={refreshKey}/>;
+    }
     const sourceKey = typeof widget.config?.dataSourceKey === "string" ? widget.config.dataSourceKey : "PRIMARY";
     const supplemental = sourceKey !== "PRIMARY" ? supplementalPages[sourceKey] : undefined;
     const widgetRows = sourceKey === "PRIMARY" ? pageRows : supplemental?.result.rows ?? [];
