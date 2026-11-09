@@ -244,7 +244,7 @@ test("sealed CHART persisted by future audited writer remains read-only and neve
    title:"受控統計",staticText:null,config:{sealedId:88,privateMarker:"NEVER_RENDER_RAW"}};
  state.profiles[0]!.widgets.push(chart);
  await page.goto("/designer/dashboards/1/layout");
- await expect(page.getByText(/此版型包含受控 CHART/)).toBeVisible();
+ await expect(page.getByText(/已載入版型曾包含受控 CHART/)).toBeVisible();
  await expect(page.getByText("受控 CHART：請使用已授權的播放預覽查看")).toBeVisible();
  await expect(save(page)).toBeDisabled();
  await expect(page.getByRole("button",{name:"＋ 受控圖表（唯讀）"})).toHaveCount(0);
@@ -255,4 +255,10 @@ test("sealed CHART persisted by future audited writer remains read-only and neve
  expect(state.legacy).toEqual([]);
  expect(JSON.stringify(state.profiles[0]!.widgets)).toContain("NEVER_RENDER_RAW");
  await expect(page.getByText("NEVER_RENDER_RAW")).toHaveCount(0);
+ // Deleting the only CHART-containing profile locally must not restore legacy write access.
+ page.once("dialog",d=>void d.accept());
+ await page.getByRole("button",{name:"刪除版型",exact:true}).click();
+ await expect(save(page)).toBeDisabled();
+ await expect(page.getByText(/已載入版型曾包含受控 CHART/)).toBeVisible();
+ expect(state.writes).toHaveLength(0);
 });
