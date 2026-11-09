@@ -23,8 +23,10 @@ export function createIndependentSignerSqlReaders(pool:sql.ConnectionPool){
             JOIN uqp.RolePermission rp ON rp.RoleId=r.Id
             JOIN uqp.Permission p ON p.Id=rp.PermissionId
             WHERE ur.UserId=@userId;`);
-        const session=result.recordsets?.[0]?.[0];
-        const permissions=result.recordsets?.[1];
+        const sets=result.recordsets;
+        if(!Array.isArray(sets)||sets.length!==2)return null;
+        const session=sets[0]?.[0];
+        const permissions=sets[1];
         const version=Number(session?.TokenVersion);
         if(!session||!Number.isSafeInteger(version)||version<1||
            !Array.isArray(permissions))return null;
