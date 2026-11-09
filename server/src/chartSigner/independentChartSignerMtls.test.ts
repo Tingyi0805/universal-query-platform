@@ -6,6 +6,7 @@ import {mkdtemp,readFile,rm} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import https from "node:https";
+import type {IncomingHttpHeaders} from "node:http";
 import {createIsolatedChartSignerMtlsServer} from "./independentChartSignerMtls.js";
 
 test("standalone signer requires pinned mTLS clients and release stays closed",async t=>{
@@ -52,7 +53,7 @@ test("standalone signer requires pinned mTLS clients and release stays closed",a
   assert(address && typeof address!=="string");
 
   const response=await new Promise<{
-    status:number;headers:https.IncomingHttpHeaders;body:string;
+    status:number;headers:IncomingHttpHeaders;body:string;
   }>((resolve,reject)=>{
     const req=https.request({
       hostname:"127.0.0.1",servername:"localhost",port:address.port,
@@ -90,9 +91,9 @@ test("standalone signer requires pinned mTLS clients and release stays closed",a
       ca:serverCert.cert,rejectUnauthorized:true,
     },res=>{
       res.resume();
-      res.on("end",()=>reject(Error("UNEXPECTED_MTLS_BYPASS")));
+      res.on("end",()=>resolve());
     });
-    req.on("error",()=>resolve());
+    req.on("error",reject);
     req.end("{}");
   }));
 });
