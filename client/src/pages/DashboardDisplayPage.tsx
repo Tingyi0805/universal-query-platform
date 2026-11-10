@@ -1,6 +1,8 @@
 import { DashboardDrilldownHost } from "../components/DashboardDrilldownHost";
 import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
-import {mayRequestSealedChartProjection} from "../dashboard/nativeChartPlayback";
+import {
+  mayRequestSealedChartProjection,mayRequestSealedDeviceChartProjection,
+} from "../dashboard/nativeChartPlayback";
 import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
 import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
@@ -895,23 +897,37 @@ export function DashboardDisplayPage() {
 
   function renderWidget(widget: LayoutWidget) {
     if(widget.widgetType === "CHART"){
-      // The device/user routes have no independently approved chart
-      // projection contract. Never reuse patient page rows, client Widget
-      // ConfigJson or a designer JWT as a public-display authorization.
-      const authorized=mayRequestSealedChartProjection({
-        widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
-        queryPreview,deviceMode,userRoute,previewAuthorized,online,
-        hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
-        accessTokenPresent:Boolean(accessToken),
-        canDesignQuery:hasPermission("DESIGN_QUERY"),
-        canExecuteQuery:hasPermission("EXECUTE_QUERY"),
-      });
+      // Public-device and designer preview use different server routes
+      // and credentials; never reinterpret the device token as a JWT.
+      // Both live device CHART gates remain hard-OFF until approved.
+      const expectedDeviceId=Number.isSafeInteger(intendedDeviceId)&&
+        intendedDeviceId>0?intendedDeviceId:null;
+      const authorized=deviceMode
+        ? mayRequestSealedDeviceChartProjection({
+            widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+            deviceMode,userRoute,queryPreview,activationRequired,
+            previewAuthorized,online,
+            hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+            deviceToken:cookieSession?null:deviceToken,
+            expectedDeviceId,
+          })
+        : mayRequestSealedChartProjection({
+            widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+            queryPreview,deviceMode,userRoute,previewAuthorized,online,
+            hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+            accessTokenPresent:Boolean(accessToken),
+            canDesignQuery:hasPermission("DESIGN_QUERY"),
+            canExecuteQuery:hasPermission("EXECUTE_QUERY"),
+          });
       const refreshKey=preview
         ? `${snapshotReloadKey}:${preview.snapshotId??preview.deliveredAtUtc??""}`
         : "";
       return <DashboardSavedChartWidget
         dashboardId={dashboardId} widgetId={widget.id}
-        authorized={authorized} accessToken={accessToken}
+        authorized={authorized} accessToken={deviceMode?null:accessToken}
+        deviceMode={deviceMode}
+        deviceToken={deviceMode&&!cookieSession?deviceToken:null}
+        expectedDeviceId={deviceMode?expectedDeviceId:null}
         refreshKey={refreshKey}/>;
     }
     const sourceKey = typeof widget.config?.dataSourceKey === "string" ? widget.config.dataSourceKey : "PRIMARY";

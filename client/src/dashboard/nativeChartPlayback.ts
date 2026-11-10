@@ -38,3 +38,53 @@ export function sealedChartProjectionPath(
      !Number.isSafeInteger(widgetId)||widgetId<=0)return null;
   return `/dashboards/${dashboardId}/charts/v1/${widgetId}/projection`;
 }
+
+export type NativeDeviceChartContext=Readonly<{
+  widgetType:string;dashboardId:number;widgetId:number;
+  deviceMode:boolean;userRoute:boolean;queryPreview:boolean;
+  activationRequired:boolean;previewAuthorized:boolean;
+  online:boolean;hasDataWarning:boolean;
+  deviceToken:string|null;expectedDeviceId?:number|null;
+}>;
+
+/** Device token is NEVER an Authorization bearer or a browser SQL claim.
+ * The cookie-only kiosk sentinel is not a token. Server checks source IP,
+ * live creator permissions, grant versions and expiry for every request.
+ */
+export function sealedDeviceChartProjectionHeaders(
+  deviceToken:string|null,expectedDeviceId?:number|null,
+):Record<string,string>|null{
+  if(typeof deviceToken!=="string"||
+     !/^[A-Za-z0-9_-]{43}$/.test(deviceToken)||
+     (expectedDeviceId!=null&&(!Number.isSafeInteger(expectedDeviceId)||
+       expectedDeviceId<1)))return null;
+  return {
+    "X-Dashboard-Device-Token":deviceToken,
+    ...(expectedDeviceId==null?{}:
+      {"X-UQP-Expected-Device-Id":String(expectedDeviceId)}),
+  };
+}
+export function sealedDeviceChartProjectionPath(
+  dashboardId:number,widgetId:number,
+):string|null{
+  if(!Number.isSafeInteger(dashboardId)||dashboardId<=0||
+     !Number.isSafeInteger(widgetId)||widgetId<=0)return null;
+  return `/dashboards/device/${dashboardId}/charts/v1/${widgetId}/projection`;
+}
+/** Separate public-device eligibility; deliberately cannot be unlocked
+ * by a URL, JWT permission, runtime env or a dashboard configuration.
+ * A later release must independently review the server's gate, privacy,
+ * device Token/IP validation, cookie kiosk support, and real IIS UAT.
+ */
+export function mayRequestSealedDeviceChartProjection(
+  context:NativeDeviceChartContext,
+):boolean{
+  return CHART_DEVICE_PLAYBACK_RELEASE_APPROVED &&
+    context.widgetType==="CHART" &&
+    context.deviceMode && !context.userRoute && !context.queryPreview &&
+    !context.activationRequired && context.previewAuthorized &&
+    context.online && !context.hasDataWarning &&
+    sealedDeviceChartProjectionPath(context.dashboardId,context.widgetId)!==null &&
+    sealedDeviceChartProjectionHeaders(
+      context.deviceToken,context.expectedDeviceId)!==null;
+}
