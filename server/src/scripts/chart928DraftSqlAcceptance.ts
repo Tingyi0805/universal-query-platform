@@ -111,9 +111,9 @@ export async function verifyChart928DraftSql(
   console.log("CHART_2B15C_BASE_SCHEMA_COLUMNS_FK_2019_2022_PASS");
   stage="ATOMIC_CREATE_ROLE_FIXTURE";
   await q("INSERT uqp.Role(Id,IsActive) VALUES(1,1);" +
-    "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY');" +
+    "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY'),(5,N'EXECUTE_QUERY');" +
     "INSERT uqp.UserRole(UserId,RoleId) VALUES(8,1);" +
-    "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4);");
+    "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4),(1,5);");
   stage="IDENTITY_SCHEMA_PARITY";
   const identity=(await q(
     "SELECT COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),N'Id','IsIdentity') AS WidgetIdentity, " +
