@@ -40,7 +40,7 @@ export type DormantChartVerifiedIssuerHandoff=Readonly<{
 }>;
 
 /** Testable data mapping only. A returned object is NOT an issuer grant.
- * readVerifiedJwtActor uses a Request-private WeakMap populated after
+ * readVerifiedChartExecuteActor uses a Request-private WeakMap populated after
  * jwt.verify AND the live database session check. It cannot be supplied
  * by headers, body or a forged req.authUser object.
  */
@@ -105,7 +105,8 @@ export async function prepareDormantChartIssuerHandoff(
    const live=await getTokenSessionState(intent.ActorId);
    if(!live||live.isActive!==true||
       live.tokenVersion!==intent.TokenVersion||
-      !live.permissions.includes("DESIGN_QUERY"))return null;
+      !live.permissions.includes("DESIGN_QUERY")||
+      !live.permissions.includes("EXECUTE_QUERY"))return null;
    await attestChartIssuerSqlPools(platformPool,issuerPool,writerPool);
    // Not a SQL grant. Caller must invoke the approved DB Issuer with this
    // exact scope; unapproved runtime and production keys still block here.
