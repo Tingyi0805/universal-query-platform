@@ -230,31 +230,44 @@ export async function inspectChart928ReadOnlyTarget(
   });
 }
 
-/** CLI exit 0 means the checked-in 925/926/927 catalog validators matched
- * and the 928 sidecars remain absent. Migration source provenance, independent
- * Signer/Writer, privacy and change
- * control still require separate authorization. Missing/contradictory
- * history must exit 2, never silently look like a complete preflight.
+/** CLI exit 0 means CHART-related 925/926 catalog metadata are
+ * reviewable and 928 remains absent. Unrelated workstation PIN migration 927
+ * may be cleanly absent; 926's known missing Ledger is separately reported
+ * and must be resolved by change control before any migration approval.
+ * Exit 0 never means installation, signer/Writer or public release approval.
  */
 export function hasReviewableChart928MetadataFootprint(
   result:Chart928ReadOnlyTargetEvidence,
 ):boolean{
+  // 926 is used by device lifecycle. Its *catalog* must be exact, but a
+  // missing SchemaMigration receipt cannot be repaired by this SELECT-only
+  // report. Keep the evidence visible and do not turn it into a 928 grant.
+  const lifecycleVerified=
+    result.historicalExactCatalog.schema926==="EXACT_REVIEWED_CATALOG_MATCH"&&
+    result.schema926.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
+    result.schema926.exactAttested===false&&
+    ((result.schema926.ledger==="RECORDED_NOT_ATTESTED"&&
+      result.schema926.consistency==="COHERENT_NOT_ATTESTED")||
+     (result.schema926.ledger==="NOT_RECORDED"&&
+      result.schema926.consistency==="BLOCKED_LEDGER_CATALOG_CONFLICT"));
+  // 927 is solely shared-workstation PIN runtime, not a CHART 928 DDL
+  // prerequisite. Cleanly ABSENT is acceptable for metadata review; partial
+  // installation or an inconsistent Ledger must continue to fail closed.
+  const pinCleanlyAbsent=
+    result.schema927.status==="ABSENT"&&
+    result.schema927.ledger==="NOT_RECORDED"&&
+    result.schema927.consistency==="COHERENT_NOT_ATTESTED"&&
+    result.historicalExactCatalog.schema927==="NOT_RUN_FOOTPRINT_INCOMPLETE";
+  const pinVerifiedInstalled=
+    result.schema927.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
+    result.schema927.ledger==="RECORDED_NOT_ATTESTED"&&
+    result.schema927.consistency==="COHERENT_NOT_ATTESTED"&&
+    result.historicalExactCatalog.schema927==="EXACT_REVIEWED_CATALOG_MATCH";
   return result.catalog925.status==="EXACT_MATCH"&&
-    // This pre-adoption checker must block partial/present 928, even if
-    // 925-927 look healthy. A future approved 928 release needs its own
-    // independent exact-schema and provenance verifier.
     result.phase928==="ABSENT_NOT_AUTHORIZED"&&
     result.sidecarsPresent===0&&
-    result.historicalExactCatalog.schema926==="EXACT_REVIEWED_CATALOG_MATCH"&&
-    result.historicalExactCatalog.schema927==="EXACT_REVIEWED_CATALOG_MATCH"&&
     result.historicalExactCatalog.approves928===false&&
-    result.schema926.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
-    result.schema927.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
-    result.schema926.ledger==="RECORDED_NOT_ATTESTED"&&
-    result.schema927.ledger==="RECORDED_NOT_ATTESTED"&&
-    result.schema926.consistency==="COHERENT_NOT_ATTESTED"&&
-    result.schema927.consistency==="COHERENT_NOT_ATTESTED"&&
-    result.schema926.exactAttested===false&&
+    lifecycleVerified&&(pinCleanlyAbsent||pinVerifiedInstalled)&&
     result.schema927.exactAttested===false&&
     result.mayInstall928===false&&result.chartCanBeEnabled===false&&
     result.assessment==="BLOCKED_INDEPENDENT_APPROVAL_REQUIRED";

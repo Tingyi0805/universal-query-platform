@@ -71,13 +71,15 @@ The result independently distinguishes `catalog925.status=EXACT_MATCH`,
 `chartCanBeEnabled=false`, and
 `assessment=BLOCKED_INDEPENDENT_APPROVAL_REQUIRED` are **immutable**
 regardless of 925 status or observed 928 objects. Missing catalog visibility
-blocks exact attestation. A non-exact 925, missing/partial/invisible
-926 or 927 footprint, contradictory Ledger, or unrecorded 926/927 exits with
-status 2. Target/SQL/report errors exit with status 1. Exit 0 means **only**
-that the exact 925 and existing reviewed 926/927 catalog validators match,
-their observed Ledger entries are coherent, and 928 is absent;
-it does NOT attest independent migration-source provenance, identify
-approved Signer or Writer principals, or grant permission to proceed with 928.
+blocks exact attestation. Exit 2 means the CHART-related 925 or 926
+catalog is not exact, 928 sidecars are not absent, or the independent 927 PIN
+migration is partially installed or has contradictory evidence. **A cleanly
+absent 927 is acceptable**, because workstation PIN is not a dependency of
+the CHART 928 DDL. A present 926 with exact reviewed catalog but no 926
+SchemaMigration row is reviewable for **metadata triage only**; the Ledger
+gap remains visible and requires separate change approval before any real
+migration. Target/SQL/report errors exit 1. Exit 0 is NEVER install approval:
+`mayInstall928=false` and `chartCanBeEnabled=false` are immutable.
 
 CI invokes this same inspection against disposable, correctly installed 925
 catalogs and verifies the `sys.objects` count is unchanged before/after.
@@ -163,15 +165,16 @@ constraint metadata. The latter uses temporary in-session T-SQL table
 variables for expected metadata, with no application-table DML, persistent
 writes, credential access, or migration-ledger changes.
 
-A pre-adoption exit code 0 now requires **exact 925, reviewed 926 and
-927 catalog matches, coherent recorded Ledger, and ABSENT 928 sidecars**.
-All other valid but incomplete combinations return 2; database/identity/
-report errors return 1. Even exit 0 only establishes checked-in catalog
-compatibility, **not** independent target migration-source provenance,
-Signer/Writer identity approval, patient privacy review, backup signoff,
-928 installation authority or permission to enable CHART. The existing
-`exactAttested=false` on the two footprint records continues to mean
-that filename+presence alone never prove full migration provenance.
+A pre-adoption exit code 0 requires **exact 925, reviewed exact 926
+catalog, cleanly absent OR exactly verified installed 927, and absent 928
+sidecars**. An absent 926 Ledger is reported as a discrepancy but does not
+force an unrelated repair merely to review CHART metadata. Partially
+installed 927 or inconsistent 927 Ledger remains blocked. Exit 0 is
+read-only reviewability **only**: it does not prove migration-source
+provenance, authorize writing a missing Ledger row, approve any production
+928 SQL, identify Signer/Writer principals, approve patient privacy,
+or permit CHART activation. `exactAttested=false` on the footprint
+records still means filename+presence do not prove provenance.
 Public playback and every CHART release hard gate remain OFF.
 
 Disposable SQL Server 2019/2022 acceptance verifies the footprint query

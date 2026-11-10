@@ -236,9 +236,37 @@ test("CLI inventory signal is not equivalent to SQL Signer/Writer approval",asyn
       consistency:"COHERENT_NOT_ATTESTED" as const},
   };
   assert.equal(hasReviewableChart928MetadataFootprint(complete),true);
+  // 927 PIN runtime is independent of 928 CHART: no needless 927 install.
+  const pinAbsent={
+    ...complete,
+    historicalExactCatalog:{...complete.historicalExactCatalog,
+      schema927:"NOT_RUN_FOOTPRINT_INCOMPLETE" as const},
+    schema927:{...complete.schema927,status:"ABSENT" as const,
+      ledger:"NOT_RECORDED" as const,
+      consistency:"COHERENT_NOT_ATTESTED" as const},
+  };
+  assert.equal(hasReviewableChart928MetadataFootprint(pinAbsent),true);
+  // Historical 926 catalog is installed and exact, but its Ledger is missing.
+  // Reviewable metadata is not authorization to write a fabricated Ledger row.
+  const missing926Ledger={...pinAbsent,
+    schema926:{...pinAbsent.schema926,
+      ledger:"NOT_RECORDED" as const,
+      consistency:"BLOCKED_LEDGER_CATALOG_CONFLICT" as const}};
+  assert.equal(hasReviewableChart928MetadataFootprint(missing926Ledger),true);
+  assert.equal(missing926Ledger.mayInstall928,false);
+  assert.equal(missing926Ledger.chartCanBeEnabled,false);
   assert.equal(complete.mayInstall928,false);
   assert.equal(complete.chartCanBeEnabled,false);
   for(const bad of [
+    {...pinAbsent,schema927:{...pinAbsent.schema927,
+      ledger:"RECORDED_NOT_ATTESTED" as const}},
+    {...pinAbsent,schema927:{...pinAbsent.schema927,
+      status:"PARTIAL_OR_CONFLICT" as const,
+      consistency:"BLOCKED_PARTIAL_OR_INVISIBLE" as const}},
+    {...missing926Ledger,schema926:{...missing926Ledger.schema926,
+      status:"ABSENT" as const}},
+    {...missing926Ledger,schema926:{...missing926Ledger.schema926,
+      consistency:"COHERENT_NOT_ATTESTED" as const}},
     {...complete,schema926:{...complete.schema926,status:"ABSENT" as const}},
     {...complete,schema927:{...complete.schema927,ledger:"NOT_RECORDED" as const}},
     {...complete,schema926:{...complete.schema926,
