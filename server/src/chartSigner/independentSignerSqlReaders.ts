@@ -41,7 +41,11 @@ export function createIndependentSignerSqlReaders(pool:sql.ConnectionPool){
       actorId:number,dashboardId:number,profileId:number,sourceKey:string,
     ):Promise<boolean>=>{
       if(!isId(actorId)||!isId(dashboardId)||!isId(profileId)||
-         !sourceKeyPattern.test(sourceKey))return false;
+         !sourceKeyPattern.test(sourceKey)||
+         // PRIMARY is reserved as an exact, uppercase source identifier.
+         // A case-insensitive SQL collation must never alias "Primary" to it.
+         (sourceKey.toUpperCase()==="PRIMARY"&&sourceKey!=="PRIMARY"))
+        return false;
       try{
         const result=await pool.request()
           .input("actorId",sql.BigInt,actorId)
@@ -53,19 +57,38 @@ export function createIndependentSignerSqlReaders(pool:sql.ConnectionPool){
             FROM uqp.AppUser actor
             JOIN uqp.Dashboard d ON d.Id=@dashboardId
               AND d.IsActive=1 AND d.QueryMode=N'QUERY_ONLY'
+              AND d.QueryModeVersion>0 AND d.QuerySourceMaxRows IS NOT NULL
             JOIN uqp.DashboardDisplayProfile profile
               ON profile.Id=@profileId AND profile.DashboardId=d.Id
-            JOIN uqp.DashboardDataSource ds ON ds.DashboardId=d.Id
-              AND ds.SourceKey=@sourceKey AND ds.IsEnabled=1
-              AND ds.QueryDefinitionId IS NOT NULL
-            JOIN uqp.QueryDefinition q ON q.Id=ds.QueryDefinitionId
+            -- PRIMARY is owned by Dashboard.QueryDefinitionId, never by
+            -- DashboardDataSource. Secondary bindings must match case exactly,
+            -- be enabled and have their current QueryBindingRevision.
+            LEFT JOIN uqp.DashboardDataSource ds ON ds.DashboardId=d.Id
+              AND @sourceKey<>N'PRIMARY'
+              AND ds.SourceKey COLLATE Latin1_General_100_BIN2
+                = @sourceKey COLLATE Latin1_General_100_BIN2
+            JOIN uqp.QueryDefinition q ON q.Id=
+              CASE WHEN @sourceKey=N'PRIMARY' THEN d.QueryDefinitionId
+                   ELSE ds.QueryDefinitionId END
               AND q.IsActive=1 AND q.IsPublished=1 AND q.IsArchived=0
-              AND q.DatasetId=ds.DatasetId
             JOIN uqp.Dataset dataset ON dataset.Id=q.DatasetId
               AND dataset.IsActive=1 AND dataset.IsArchived=0
             JOIN uqp.DataSource source ON source.Id=dataset.DataSourceId
               AND source.IsActive=1
             WHERE actor.Id=@actorId AND actor.IsActive=1
+              AND (
+                @sourceKey=N'PRIMARY'
+                OR (ds.IsEnabled=1 AND ds.QueryDefinitionId IS NOT NULL
+                    AND ds.QueryBindingRevision>=1 AND ds.MaxRows IS NOT NULL
+                    AND ds.DatasetId=q.DatasetId)
+              )
+              AND NOT EXISTS (
+                -- A shadow PRIMARY row is ambiguous; the main Query-only
+                -- source contract reserves this name for Dashboard itself.
+                SELECT 1 FROM uqp.DashboardDataSource shadow
+                WHERE shadow.DashboardId=d.Id
+                  AND UPPER(shadow.SourceKey)=N'PRIMARY'
+              )
               AND NOT EXISTS(
                 SELECT 1 FROM uqp.DatasetParameter dp
                 JOIN uqp.Dataset lookup ON lookup.Id=dp.LookupDatasetId
