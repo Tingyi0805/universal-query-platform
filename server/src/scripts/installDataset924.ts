@@ -9,6 +9,22 @@ import { render924CatalogSql,render924InstallBatch } from "../modules/dataset/da
 export const ledger924="924_dataset_security_scope_binding.sql";
 export class Install924Error extends Error { constructor(readonly code:string){super(code);} }
 const fail=(s:string):never=>{throw new Install924Error(s);};
+/** Historical baseline for dedicated 924 installer, not a general
+ * migration runner. Reject new or unexpected post-921 SQL source files
+ * until independently reviewed. Merely recognizing 926/927 filenames
+ * does NOT grant permission to apply either script or Migration 928. */
+export function reviewed924SourceManifest(names:readonly string[]):string[]{
+  const inventory=names.filter(n=>/^\\d+_.*\\.sql$/i.test(n)).sort();
+  const baseline=inventory.filter(n=>Number(n.slice(0,3))<=921);
+  const later=inventory.filter(n=>Number(n.slice(0,3))>921);
+  if(baseline.length!==48||
+     baseline.at(-1)!=="921_datasource_native_parameter_versions.sql"||
+     JSON.stringify(later)!==JSON.stringify([
+       "926_dashboard_device_lifecycle.sql",
+       "927_workstation_pin_runtime.sql",
+     ]))fail("924_BASELINE_MANIFEST_UNREVIEWED");
+  return baseline;
+}
 export function assess924(catalog:string,recorded:boolean,baseExact:boolean,capabilities:boolean,immutable:boolean){
   if(!baseExact)return fail("924_BASELINE_923_NOT_EXACT");
   if(catalog==="REJECTED_UNKNOWN")return fail("924_FULL_CATALOG_VISIBILITY_REQUIRED");
@@ -41,9 +57,8 @@ export async function inspect924(request:()=>sql.Request){
       AND minor_id=0 AND grantee_principal_id=DATABASE_PRINCIPAL_ID(N'public') AND state=N'D' AND permission_name IN(N'UPDATE',N'DELETE')) AS Immutable
     `)).recordset[0];
   if(!info||info.Major!==15||info.Compat!==150||info.State!=="ONLINE"||!info.Ledger||info.Foundation!==1)fail("924_FULL_BASELINE_OR_ENGINE_REQUIRED");
-  const expected=await readdir(new URL("../../../database/migrations/",import.meta.url));
-  const files=expected.filter(n=>/^\d+_.*\.sql$/i.test(n)).sort();
-  if(files.length!==48||files.some(n=>Number(n.slice(0,3))>921))fail("924_BASELINE_MANIFEST_UNREVIEWED");
+  const files=reviewed924SourceManifest(
+    await readdir(new URL("../../../database/migrations/",import.meta.url)));
   const applied=(await request().query("SELECT FileName FROM uqp.SchemaMigration")).recordset.map(r=>String(r.FileName));
   if([...files,"923_dataset_metadata.sql"].some(n=>!applied.includes(n))||applied.some(n=>![...files,"923_dataset_metadata.sql",ledger924].includes(n)))fail("924_FULL_MIGRATION_MANIFEST_REQUIRED");
   const base=(await request().query(render923CatalogSql())).recordset[0]?.CatalogStatus;
