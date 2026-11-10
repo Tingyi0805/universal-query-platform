@@ -45,6 +45,12 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
    login:String(chartTarget.OriginalLogin),
  });
  assert.equal(chartReadiness.catalog925.status,"EXACT_MATCH");
+ assert.equal(chartReadiness.schema926.status,"ABSENT");
+ assert.equal(chartReadiness.schema927.status,"ABSENT");
+ assert.equal(chartReadiness.schema926.ledger,"NOT_RECORDED");
+ assert.equal(chartReadiness.schema927.ledger,"NOT_RECORDED");
+ assert.equal(chartReadiness.schema926.exactAttested,false);
+ assert.equal(chartReadiness.schema927.exactAttested,false);
  assert.equal(chartReadiness.mayInstall928,false);
  assert.equal(chartReadiness.chartCanBeEnabled,false);
  assert.equal(chartReadiness.assessment,"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED");

@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import sql from "mssql";
 import { workstationPinSchemaSql } from "../modules/auth/workstationPinSchema.js";
+import {chartHistoricalFootprintSql} from "./chart928HistoricalFootprint.js";
 import { createWorkstationPinState, pinAttemptBuckets } from "../modules/auth/workstationPinState.repository.js";
 
 const migrations = [
@@ -110,6 +111,10 @@ export async function verify927(
     stage = "first-install-catalog-and-existing-rows";
     await pool.request().batch(migration927);
     await pool.request().batch(workstationPinSchemaSql);
+    const footprint927=(await query(chartHistoricalFootprintSql)).recordset;
+    assert.equal(footprint927.find(v=>v.SchemaNumber==="927")?.Assessment,
+      "PRESENT_REQUIRES_EXACT_ATTESTATION");
+    console.log("CHART_927_READONLY_FOOTPRINT_PRESENT_NOT_APPROVED_PASS");
     const restored = (await query(`SELECT WorkstationCode,CredentialVersion,IsActive,PinLoginEnabled,PlatformCode,
       PurposeCode,RetiredAtUtc FROM uqp.SharedWorkstation WHERE Id=1`)).recordset[0];
     assert.deepEqual(restored, original);

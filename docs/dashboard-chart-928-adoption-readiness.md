@@ -115,3 +115,37 @@ Unit tests and browser HTTP-mocked tests prove the *native* UI's fail-closed,
 create-and-readback contract. They are not evidence that a hospital SQL Writer,
 Signer or authorized clinical Query was exercised.
 
+## 926/927 footprint + Ledger (read-only; **not** exact adoption)
+
+The unified `db:chart:preflight` report additionally reads **only
+system-catalog metadata and the two known migration filenames** from
+`uqp.SchemaMigration`:
+
+- **926**: DashboardDisplayDevice baseline, SuspendedAtUtc /
+  ReenrollmentRequired columns, three lifecycle CHECK names and the
+  lifecycle trigger's presence.
+- **927**: SharedWorkstation baseline, SwitchVersion column,
+  WorkstationPinAttemptBucket table and primary-key presence.
+- **Ledger**: independently indicates whether the exact 926 and 927
+  migration filenames were recorded. It does not inspect device token
+  hashes, PIN attempts, patient data, Workstation credentials or audit rows.
+
+Statuses are `ABSENT`, `PARTIAL_OR_CONFLICT`,
+`PRESENT_REQUIRES_EXACT_ATTESTATION`, or
+`BLOCKED_BASELINE_MISSING_OR_INVISIBLE`. Each result has
+`exactAttested=false` **even when** the ledger says
+`RECORDED_NOT_ATTESTED`. Missing/unreadable Ledger, malformed metadata
+or failed target identity checks block the entire command.
+
+The reviewed original 926 trigger and CHECK definition verifier, original
+927 exact catalog verifier, database migration provenance, and human release
+approval are separate prerequisites. The presence report does not execute
+either migration, certify target SQL, authorize the Signer/Writer, enable
+public playback or weaken the existing CHART hard-off gates.
+
+Disposable SQL Server 2019/2022 acceptance verifies the footprint query
+against created 926 and 927 structures. The full historical SQL Server
+2019 925 test verifies both footprints absent and unrecorded in its
+intentional pre-926/927 database. Neither case is a hospital-target
+attestation.
+

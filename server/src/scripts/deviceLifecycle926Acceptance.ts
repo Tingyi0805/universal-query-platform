@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {deviceLifecycleSchemaSql} from "../modules/dashboard/dashboardDeviceLifecycleSchema.js";
+import {chartHistoricalFootprintSql} from "./chart928HistoricalFootprint.js";
 import {deviceLifecycleBlocksPlayback} from "../modules/dashboard/dashboardDeviceLifecycle.js";
 let stage="target-guard";
 async function main(){
@@ -39,6 +40,10 @@ async function main(){
   const before=(await query("SELECT * FROM uqp.DashboardDisplayDevice ORDER BY Id")).recordset;
   const ddl=await readFile(new URL("../../../database/migrations/926_dashboard_device_lifecycle.sql",import.meta.url),"utf8");
   stage="fresh-926-and-catalog";await db.request().batch(ddl);await query(deviceLifecycleSchemaSql);
+  const footprint926=(await query(chartHistoricalFootprintSql)).recordset;
+  assert.equal(footprint926.find(v=>v.SchemaNumber==="926")?.Assessment,
+    "PRESENT_REQUIRES_EXACT_ATTESTATION");
+  console.log("CHART_926_READONLY_FOOTPRINT_PRESENT_NOT_APPROVED_PASS");
   const after=(await query("SELECT * FROM uqp.DashboardDisplayDevice ORDER BY Id")).recordset;
   assert.deepEqual(after.map(({SuspendedAtUtc,ReenrollmentRequired,...row})=>{assert.equal(SuspendedAtUtc,null);assert.equal(ReenrollmentRequired,null);return row;}),before);
   stage="repeat-926-no-state-change";await db.request().batch(ddl);assert.deepEqual((await query("SELECT * FROM uqp.DashboardDisplayDevice ORDER BY Id")).recordset,after);

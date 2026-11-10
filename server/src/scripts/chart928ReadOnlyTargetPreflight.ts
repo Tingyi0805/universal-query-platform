@@ -8,6 +8,10 @@ import {
   displayCatalogSql, displayDdlUrl, validateDisplayCatalog,
 } from "../modules/dataset/datasetDisplaySchema.js";
 import {getPlatformDbPool,closePlatformDbPool} from "../config/database.js";
+import {
+  chartHistoricalFootprintSql,chartHistoricalLedgerSql,
+  parseChartHistoricalFootprints,type ChartHistoricalFootprint,
+} from "./chart928HistoricalFootprint.js";
 
 export const CHART_928_MAY_INSTALL=false as const;
 export const chart928ReadonlySourceUrl=new URL(
@@ -34,6 +38,10 @@ export type Chart928ReadOnlyTargetEvidence=Readonly<{
   phase928:"ABSENT_NOT_AUTHORIZED"|"BLOCKED_PARTIAL_OR_CONFLICT"|
     "PRESENT_REQUIRES_EXACT_ATTESTATION";
   sidecarsPresent:number;
+  // Independent footprint and Ledger facts; not equivalent to exact
+  // 926/927 migration attestation or permission to install 928.
+  schema926:ChartHistoricalFootprint;
+  schema927:ChartHistoricalFootprint;
   mayInstall928:false;
   chartCanBeEnabled:false;
   assessment:"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED";
@@ -130,10 +138,19 @@ export async function inspectChart928ReadOnlyTarget(
      (Number(phase.Present)===0)!==(phase928==="ABSENT_NOT_AUTHORIZED")||
      (Number(phase.Present)===3)!==(phase928==="PRESENT_REQUIRES_EXACT_ATTESTATION"))
     throw Error("CHART_928_READONLY_REPORT_INVALID");
+  // These catalog-only queries never inspect patient/device/PIN data.
+  // SQL ledger rows are names only; recorded is NOT exact attestation.
+  // Missing Ledger/read permissions are fatal rather than guessed ABSENT.
+  const footprintInventory=await pool.request().query(chartHistoricalFootprintSql);
+  const footprintLedger=await pool.request().query(chartHistoricalLedgerSql);
+  const historical=parseChartHistoricalFootprints(
+    footprintInventory.recordset,footprintLedger.recordset,
+  );
   return Object.freeze({
     target:{...expected},sqlMajor:row.SqlMajor as 15|16,
     catalog925,phase928:phase928 as typeof values[number],
     sidecarsPresent:Number(phase.Present),
+    ...historical,
     mayInstall928:CHART_928_MAY_INSTALL,
     chartCanBeEnabled:false as const,
     assessment:"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED" as const,

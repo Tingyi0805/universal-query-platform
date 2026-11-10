@@ -9,6 +9,8 @@ import {
   examineChart925ExactCatalog,inspectChart928ReadOnlyTarget,
 } from "./chart928ReadOnlyTargetPreflight.js";
 import {displayCatalogSql,displayDdlUrl} from "../modules/dataset/datasetDisplaySchema.js";
+import {chartHistoricalFootprintSql,chartHistoricalLedgerSql}
+  from "./chart928HistoricalFootprint.js";
 
 const expected={server:"CI_SQL",database:"UQP_CH_123456789abc",login:"ci_reader"};
 const identity={ServerName:expected.server,DatabaseName:expected.database,
@@ -39,6 +41,11 @@ function fixture({
     if(text===chart928TargetIdentitySql)return {recordset:[id]};
     if(text===displayCatalogSql)return {recordsets:catalog};
     if(text.includes("00_RELEASE_GATE"))return {recordsets:report};
+    if(text===chartHistoricalFootprintSql)return {recordset:[
+      {SchemaNumber:"926",Assessment:"ABSENT"},
+      {SchemaNumber:"927",Assessment:"ABSENT"},
+    ]};
+    if(text===chartHistoricalLedgerSql)return {recordset:[]};
     throw Error("UNEXPECTED_SQL");
   }})} as unknown as sql.ConnectionPool;
   return {pool,requests};
@@ -92,11 +99,18 @@ test("925 absence and every 928 state remain independently NOT approved",async()
     assert.equal(result.catalog925.status,"ABSENT");
     assert.equal(result.phase928,phase);
     assert.equal(result.sidecarsPresent,present);
+    assert.equal(result.schema926.status,"ABSENT");
+    assert.equal(result.schema927.status,"ABSENT");
+    assert.equal(result.schema926.ledger,"NOT_RECORDED");
+    assert.equal(result.schema927.ledger,"NOT_RECORDED");
+    assert.equal(result.schema926.exactAttested,false);
+    assert.equal(result.schema927.exactAttested,false);
     assert.equal(result.mayInstall928,false);
     assert.equal(result.chartCanBeEnabled,false);
     assert.equal(result.assessment,"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED");
     assert.deepEqual(f.requests,
-      [chart928TargetIdentitySql,displayCatalogSql,source]);
+      [chart928TargetIdentitySql,displayCatalogSql,source,
+       chartHistoricalFootprintSql,chartHistoricalLedgerSql]);
   }
 });
 test("tampered 928 report cannot self-approve an installation",async()=>{
@@ -111,4 +125,13 @@ test("tampered 928 report cannot self-approve an installation",async()=>{
     await assert.rejects(inspectChart928ReadOnlyTarget(f.pool,expected),
       /CHART_928_READONLY_REPORT_INVALID/);
   }
+});
+
+test("926/927 ledger probe cannot claim exact adoption or turn on 928",async()=>{
+  const f=fixture();
+  const r=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  assert.equal(r.schema926.exactAttested,false);
+  assert.equal(r.schema927.exactAttested,false);
+  assert.equal(r.chartCanBeEnabled,false);
+  assert.equal(r.mayInstall928,false);
 });
