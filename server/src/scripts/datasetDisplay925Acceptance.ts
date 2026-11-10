@@ -10,6 +10,7 @@ import {readFile} from "node:fs/promises";
 import {env} from "../config/env.js";
 import {displayCatalogSql,displayDdlUrl,validateDisplayCatalog} from "../modules/dataset/datasetDisplaySchema.js";
 import {installDisplay925} from "./installDataset925.js";
+import {chart928TargetIdentitySql,inspectChart928ReadOnlyTarget} from "./chart928ReadOnlyTargetPreflight.js";
 import {createDatasetPublicDisplayRepository,displayRepositoryDefaults} from "../modules/dataset/datasetPublicDisplay.repository.js";
 import {createMaskTemplateRepository,maskTemplateInput,recordTemplateApplications} from "../modules/dataset/datasetMaskTemplate.repository.js";
 import {createRuntimeIdentityVerifier} from "../modules/queryDefinition/queryDelivery.js";
@@ -32,6 +33,25 @@ export async function testDatasetDisplay925(root:sql.ConnectionPool,app:sql.Conn
  await root.request().query("CREATE TABLE uqp.DatasetPublicDisplayPolicy(WrongShape int)");await assert.rejects(installDisplay925(root,true));await root.request().query("DROP TABLE uqp.DatasetPublicDisplayPolicy");
  console.log("DATASET_DISPLAY_925_STAGE_INSTALL");
  assert.equal(await installDisplay925(root,false),"ABSENT");assert.equal(await installDisplay925(root,true),"EXACT_MATCH");assert.equal(await installDisplay925(root,true),"EXACT_MATCH");
+ // Same reviewed 925 exact catalog validator + SELECT-only 928 inventory:
+ // this attests only disposable CI, never the real hospital target.
+ const beforePreflight=Number((await root.request().query(
+   "SELECT COUNT_BIG(*) AS Total FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')"
+ )).recordset[0]?.Total);
+ const chartTarget=(await root.request().query(chart928TargetIdentitySql)).recordset[0]!;
+ const chartReadiness=await inspectChart928ReadOnlyTarget(root,{
+   server:String(chartTarget.ServerName),
+   database:String(chartTarget.DatabaseName),
+   login:String(chartTarget.OriginalLogin),
+ });
+ assert.equal(chartReadiness.catalog925.status,"EXACT_MATCH");
+ assert.equal(chartReadiness.mayInstall928,false);
+ assert.equal(chartReadiness.chartCanBeEnabled,false);
+ assert.equal(chartReadiness.assessment,"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED");
+ assert.equal(Number((await root.request().query(
+   "SELECT COUNT_BIG(*) AS Total FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')"
+ )).recordset[0]?.Total),beforePreflight);
+ console.log("CHART_925_EXACT_READONLY_928_INDEPENDENTLY_BLOCKED_PASS");
  assert.equal((await root.request().query("SELECT COUNT(*) C FROM uqp.DatasetMaskTemplate")).recordset[0].C,8);
  assert.equal((await root.request().query("SELECT COUNT(*) C FROM uqp.DatasetPublicDisplayPolicy")).recordset[0].C,0);
  // Same-name altered metadata must fail; rollback restores the exact baseline.

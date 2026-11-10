@@ -44,3 +44,41 @@ No CI fixture, isolated database, or synthetic approval can replace the user's e
 - Test environment `C:\UQP` and existing Dashboard devices remain unchanged.
 
 **Consequence:** This PR closes the *catalog inventory/read-only preflight* gap, not the migration acceptance or availability of a production CHART feature. The original 925 exact-schema mismatch history makes a distinct validator and explicit approval mandatory.
+
+## Unified exact-925 + 928 metadata-only target inspection (Issue #89)
+
+A new **explicit, read-only** operator command reuses the existing reviewed
+`validateDisplayCatalog` exact 925 comparison and the unchanged
+`database/acceptance/chart-928-adoption-preflight-readonly.sql` report:
+
+```text
+cd server
+npm run db:chart:preflight
+```
+
+Before an authorized operator can use it, the existing platform DB connection
+must be configured, together with all three explicit target identity variables:
+`UQP_CHART_PREFLIGHT_EXPECTED_SERVER`,
+`UQP_CHART_PREFLIGHT_EXPECTED_DATABASE` and
+`UQP_CHART_PREFLIGHT_EXPECTED_LOGIN`. The values must match **@@SERVERNAME,
+DB_NAME(), ORIGINAL_LOGIN()** exactly. SQL Server 2019/2022 are recognized.
+No default target, inferred identity, apply flag, DDL, DML, 928 installation,
+login provisioning or migration-ledger write is supported.
+
+The result independently distinguishes `catalog925.status=EXACT_MATCH`,
+`ABSENT` or `BLOCKED_MISMATCH` with a controlled diagnostic, plus the
+928 sidecar state. `mayInstall928=false`,
+`chartCanBeEnabled=false`, and
+`assessment=BLOCKED_INDEPENDENT_APPROVAL_REQUIRED` are **immutable**
+regardless of 925 status or observed 928 objects. Missing catalog visibility
+blocks exact attestation. A non-exact 925 exits with status 2; target/report
+errors exit with status 1. A success exit only means that the checked-in 925
+catalog shape matched that particular observed target; it is *not* permission
+to proceed with 928.
+
+CI invokes this same inspection against disposable, correctly installed 925
+catalogs and verifies the `sys.objects` count is unchanged before/after.
+No output from CI or from the standalone checker substitutes for required
+human review of 925/926/927 evidence, 928 transaction source, signer and
+separate SQL identities, privacy review or authorized deployment.
+
