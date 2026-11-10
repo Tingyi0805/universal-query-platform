@@ -592,14 +592,14 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   const syntheticJwtSecret="chart-http-synthetic-"+randomBytes(24).toString("hex");
   env.JWT_SECRET=syntheticJwtSecret;
   let actor8Session={
-    isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY"],
+    isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
   };
   const app=express();
   app.use(express.json({limit:"12kb"}));
   app.use(createAuthenticateJwt(async(userId:number)=>{
     if(userId===8)return actor8Session;
     if(userId===77)return {
-      isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY"],
+      isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
     };
     return null;
   }));
@@ -671,7 +671,7 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     ])assert.equal((await send({...body,...forged})).status,403);
     actor8Session={...actor8Session,permissions:[]};
     assert.equal((await send(body)).status,403);
-    actor8Session={...actor8Session,permissions:["DESIGN_QUERY"],isActive:false};
+    actor8Session={...actor8Session,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],isActive:false};
     assert.equal((await send(body)).status,401);
     actor8Session={...actor8Session,isActive:true,tokenVersion:2};
     assert.equal((await send(body)).status,401);
