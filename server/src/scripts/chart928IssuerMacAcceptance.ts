@@ -664,6 +664,17 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     const invalidJwt=jwt.sign({sub:"8",tokenVersion:1},"wrong-test-key");
     assert.equal((await send(body,invalidJwt)).status,401);
     assert.equal((await send(body,createToken(8,2))).status,401);
+    // HTTP may still hold a valid JWT, but SQL's current RBAC wins.
+    // Missing EXECUTE_QUERY must not create a nonce or signed grant.
+    await db.request().query(
+      "DELETE FROM uqp.RolePermission WHERE RoleId=1 AND PermissionId=5");
+    try {
+      assert.equal((await send(body)).status,403);
+      assert.deepEqual(await countSigned(),beforeHttp);
+    } finally {
+      await db.request().query(
+        "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,5)");
+    }
     for(const forged of [
       {actorId:77},{ActorId:77},{tokenVersion:5},
       {grantId:randomUUID()},{issuerSid:"fake"},{secret:"fake"},
