@@ -5,6 +5,7 @@ async function setup(page: Page) {
     chartProjectionCalls: [] as {method:string;body:string|null;authorization:string|null}[],
     chartProjectionRevoked: false,
     chartCreateAllowed:false,chartCreateCalls:[] as unknown[],
+    chartCreateReject:false,
     profiles: [
       { id: 1, name: "橫向合成版型", isDefault: true, sortOrder: 0, canvasWidth: 1920, canvasHeight: 1080, config: { backgroundColor: "#abcdef", retained: true }, widgets: [widget,
         { ...widget, id: 2, widgetType: "FIELD", staticText: null, sourceKey: "NAME", y: 100, config: { dataSourceKey: "WARD", color: "#223344" } },
@@ -24,6 +25,12 @@ async function setup(page: Page) {
     if (path === "/api/dashboards/1/charts/v1" && request.method() === "POST") {
       const posted=request.postDataJSON() as Record<string,unknown>;
       state.chartCreateCalls.push(posted);
+      if(state.chartCreateReject){
+        await route.fulfill({status:503,json:{
+          error:{code:"CHART_TRUSTED_CREATE_REQUIRED"}
+        }});
+        return;
+      }
       if(!state.chartCreateAllowed){
         await route.fulfill({status:404,json:{error:{code:"CHART_NOT_AVAILABLE"}}});
         return;
@@ -403,4 +410,22 @@ test("a legacy layout PUT invalidates profile IDs until an explicit reload",asyn
   await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
   await expect(draft.getByRole("button",{name:"正式新增 CHART 至此版型"})).toBeDisabled();
   expect(state.chartCreateCalls).toHaveLength(0);
+});
+
+
+test("ambiguous native CREATE cannot issue another UUID before server reload",async({page})=>{
+  test.setTimeout(60_000);
+  const state=await setup(page);
+  state.chartCreateAllowed=true;
+  state.chartCreateReject=true;
+  await page.goto("/designer/dashboards/1/layout");
+  const draft=page.getByRole("region",{name:"圖表設計草稿"});
+  await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+  const create=draft.getByRole("button",{name:"正式新增 CHART 至此版型"});
+  await expect(create).toBeEnabled();
+  await create.click();
+  await expect(page.getByText(/正式 CHART 建立未獲確認/)).toBeVisible();
+  await expect(create).toBeDisabled();
+  expect(state.chartCreateCalls).toHaveLength(1);
+  expect(state.writes).toHaveLength(0);
 });
