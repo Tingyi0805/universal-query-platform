@@ -51,7 +51,7 @@ async function serverFixture(scenario: Scenario) {
   assert(address && typeof address!=="string");
   const root="http://127.0.0.1:"+address.port;
   const valid=jwt.sign({sub:"8",tokenVersion:3,username:"synthetic",
-    permissions:[],actorId:999},env.JWT_SECRET);
+    permissions:[],actorId:999},env.JWT_SECRET,{expiresIn:"1h"});
   const invalid=jwt.sign({sub:"8",tokenVersion:3}, "untrusted-key");
   const send=(path="/dashboards/7/charts/v1/88/projection",
     body:unknown=undefined,token:string=valid)=>
@@ -114,6 +114,39 @@ test("verified JWT actor is the only projection identity; response contains only
       permissions:["DESIGN_QUERY","EXECUTE_QUERY"]});
     assert.equal((await f.send()).status,401);
     assert.equal(f.calls,1);
+  }finally{await f.close();}
+});
+
+
+test("CHART projection rejects original tokens without expiry or expired mid-query",async()=>{
+  let expirySeconds=0;
+  const f=await serverFixture({approved:true,project:async()=>{
+    if(expirySeconds>0){
+      // The request entered with a valid JWT. Hold the trusted projector
+      // until after exp, to prove that the HTTP adapter rechecks it.
+      await new Promise<void>(resolve=>setTimeout(resolve,
+        Math.max(0,expirySeconds*1000-Date.now()+80)));
+    }
+    return config;
+  }});
+  try{
+    const withoutExpiry=jwt.sign({sub:"8",tokenVersion:3},env.JWT_SECRET);
+    const noExpiry=await f.send(undefined,undefined,withoutExpiry);
+    assert.equal(noExpiry.status,503);
+    assert.deepEqual(await noExpiry.json(),
+      {error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}});
+
+    expirySeconds=Math.floor(Date.now()/1000)+3;
+    const shortLived=jwt.sign({
+      sub:"8",tokenVersion:3,exp:expirySeconds,
+    },env.JWT_SECRET);
+    const expiredDuringWork=await f.send(undefined,undefined,shortLived);
+    assert.equal(expiredDuringWork.status,503);
+    const payload=await expiredDuringWork.text();
+    assert.deepEqual(JSON.parse(payload),
+      {error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}});
+    assert.equal(payload.includes("診間"),false);
+    assert.equal(f.calls,2);
   }finally{await f.close();}
 });
 
