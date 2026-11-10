@@ -31,6 +31,8 @@ test("2B-15D-13 runtime and both independent procedure approvals stay closed",()
 test("2B-15D-13 SQL delegated prototype remains disposable and unapproved",async()=>{
  const source=await loadDraft();
  assert.match(source,/NON-SCANNED DRAFT/);
+ assert.match(source,/p\.Code IN \(N''DESIGN_QUERY'',N''EXECUTE_QUERY''\)\s+GROUP BY u\.Id HAVING COUNT\(DISTINCT p\.Code\)=2/,
+   "SQL Writer must recheck both Query privileges");
  assert.match(source,/IF LEFT\(DB_NAME\(\),7\)<>N'UQP_CH_' OR LEN\(DB_NAME\(\)\)<>19/);
  assert.match(source,/CHART_DELEGATED_DISPOSABLE_ONLY/);
  assert.match(source,/CHART_DELEGATED_FIXTURE_REQUIRED/);
@@ -120,4 +122,12 @@ test("2B-15D-11 unsafe Issuer witness requires previously authorized Actor 77",a
  // No duplicate grant or role teardown may alter this already-established fixture.
  const witness=acceptance.slice(stage,label);
  assert.doesNotMatch(witness,/INSERT uqp\.UserRole\(UserId,RoleId\) VALUES\(77,1\)/);
+});
+
+test("2B-15D-13 both disposable grant endpoints require dual live Query privileges",async()=>{
+ const sqlText=await readFile(new URL(
+   "../../../database/drafts/928_chart_actor_delegation_disposable.sql.draft",
+   import.meta.url),"utf8");
+ const auth=/p\.Code IN \(N''DESIGN_QUERY'',N''EXECUTE_QUERY''\)\s+GROUP BY u\.Id HAVING COUNT\(DISTINCT p\.Code\)=2/g;
+ assert.equal([...sqlText.matchAll(auth)].length,2);
 });
