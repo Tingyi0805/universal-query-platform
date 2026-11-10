@@ -8,6 +8,7 @@ import {tmpdir} from "node:os";
 import path from "node:path";
 import {
   CHART_SIGNER_CLIENT_RELEASE_APPROVED,
+  CHART_SIGNER_HTTP_TIMEOUT_MS,
   createDormantChartSignerMtlsClient,
 } from "./dashboardChartSignerClient.js";
 import {planDormantChartCreate} from "./dashboardChartAtomicCreate.contract.js";
@@ -35,6 +36,7 @@ test("isolated signer transport pins CA, server certificate, mTLS and immutable 
   let count=0,lastBody:unknown=null,lastBearer:string|undefined;
   let replyStatus=200;
   let replyPayload:unknown=sample;
+  let trickleResponse=false;
   const server=createServer({
     key:serverCert.key,cert:serverCert.crt,ca:clientCert.crt,
     requestCert:true,rejectUnauthorized:true,
@@ -47,6 +49,14 @@ test("isolated signer transport pins CA, server certificate, mTLS and immutable 
     res.statusCode=replyStatus;
     res.setHeader("Content-Type","application/json; charset=utf-8");
     res.setHeader("Cache-Control","no-store, max-age=0");
+    if(trickleResponse){
+      // The peer stays responsive at the TCP layer without finishing JSON.
+      // A socket-idle timeout cannot stop this indefinite signer response.
+      res.write(" ");
+      const ticker=setInterval(()=>{if(!res.destroyed)res.write(" ");},500);
+      res.once("close",()=>clearInterval(ticker));
+      return;
+    }
     res.end(JSON.stringify(replyPayload));
   });
   t.after(()=>new Promise<void>(resolve=>server.close(()=>resolve())));
@@ -95,6 +105,18 @@ test("isolated signer transport pins CA, server certificate, mTLS and immutable 
   assert.equal(await issued(plan,"Bearer synthetic.token.here"),null);
   replyPayload={...sample,SqlMac:"x".repeat(13_000)};
   assert.equal(await issued(plan,"Bearer synthetic.token.here"),null);
+
+  // A server that trickles data must not keep an authorization request
+  // pending indefinitely; all phases share the same absolute deadline.
+  trickleResponse=true;
+  const started=Date.now();
+  assert.equal(await issued(plan,"Bearer synthetic.token.here"),null);
+  const elapsed=Date.now()-started;
+  assert.ok(elapsed>=CHART_SIGNER_HTTP_TIMEOUT_MS-1000,
+    "request must not terminate before the absolute signing deadline");
+  assert.ok(elapsed<CHART_SIGNER_HTTP_TIMEOUT_MS+5000,
+    "trickle response must be canceled by the absolute signing deadline");
+  trickleResponse=false;
 });
 
 test("signer client configuration rejects HTTP, URL-injected paths, missing pin and keys",()=>{
