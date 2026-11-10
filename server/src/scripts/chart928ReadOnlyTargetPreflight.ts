@@ -5,7 +5,7 @@ import {readFile} from "node:fs/promises";
 import {pathToFileURL} from "node:url";
 import type sql from "mssql";
 import {
-  displayCatalogSql, displayDdlUrl, validateDisplayCatalog,
+  displayCatalogSql, displayDdlUrl, displayTables, validateDisplayCatalog,
 } from "../modules/dataset/datasetDisplaySchema.js";
 import {getPlatformDbPool,closePlatformDbPool} from "../config/database.js";
 import {
@@ -35,10 +35,71 @@ export type Chart925ExactEvidence=Readonly<{
   status:"EXACT_MATCH"|"ABSENT"|"BLOCKED_MISMATCH";
   reason:string;
 }>;
+export type Chart925ConstraintInventory=Readonly<{
+  status:"BLOCKED_CATALOG_UNAVAILABLE"|"BLOCKED_DIFFERENT_NAMES"|
+    "NAMES_MATCH_NOT_EXACT_ATTESTED";
+  expectedCount:number;
+  observedCount:number|null;
+  missing:readonly string[];
+  unexpected:readonly string[];
+  truncated:boolean;
+}>;
+
+/** Name-level diagnostic ONLY, never a substitute for validateDisplayCatalog.
+ * It explains CHECK/DEFAULT count drift (e.g., a stale 925 catalog-count
+ * report) without ever looking at business rows or attempting schema repair.
+ * The reviewed, checked-in 925 DDL is the only expectation source.
+ */
+export function examineChart925ConstraintInventory(
+  sets:Record<string,unknown>[][],ddl:string,
+):Chart925ConstraintInventory{
+  const wanted=new Set<string>();
+  for(const table of displayTables){
+    const body=ddl.split(`CREATE TABLE uqp.${table} (`)[1]?.split("\n);")[0];
+    if(!body)throw Error("CHART_925_REVIEWED_SOURCE_INVALID");
+    for(const match of body.matchAll(/\bCONSTRAINT\s+([A-Za-z_][A-Za-z0-9_]*)\s+(CHECK|DEFAULT)\b/gi))
+      wanted.add(`${table}.${match[2]!.toUpperCase()}.${match[1]}`);
+  }
+  if(!Array.isArray(sets)||sets.length!==7||sets[6]?.[0]?.visible!==1||
+     !Array.isArray(sets[0])||!Array.isArray(sets[2])){
+    return {status:"BLOCKED_CATALOG_UNAVAILABLE",expectedCount:wanted.size,
+      observedCount:null,missing:[],unexpected:[],truncated:false};
+  }
+  const actual=new Set<string>();
+  for(const item of sets[2]!){
+    if(!item||typeof item!=="object"||
+       typeof item.table!=="string"||typeof item.name!=="string"||
+       (item.kind!=="CHECK"&&item.kind!=="DEFAULT")||
+       !displayTables.includes(item.table)||
+       !/^[A-Za-z_][A-Za-z0-9_]*$/.test(item.name)){
+      return {status:"BLOCKED_CATALOG_UNAVAILABLE",expectedCount:wanted.size,
+        observedCount:null,missing:[],unexpected:[],truncated:false};
+    }
+    const key=`${item.table}.${item.kind}.${item.name}`;
+    // Duplicate metadata records are not an exact catalog and must fail.
+    if(actual.has(key))return {
+      status:"BLOCKED_CATALOG_UNAVAILABLE",expectedCount:wanted.size,
+      observedCount:null,missing:[],unexpected:[],truncated:false,
+    };
+    actual.add(key);
+  }
+  const missing=[...wanted].filter(v=>!actual.has(v)).sort();
+  const unexpected=[...actual].filter(v=>!wanted.has(v)).sort();
+  const limit=64;
+  return {
+    status:sets[0]!.length===3&&missing.length===0&&
+      unexpected.length===0&&actual.size===wanted.size
+      ?"NAMES_MATCH_NOT_EXACT_ATTESTED":"BLOCKED_DIFFERENT_NAMES",
+    expectedCount:wanted.size,observedCount:actual.size,
+    missing:missing.slice(0,limit),unexpected:unexpected.slice(0,limit),
+    truncated:missing.length>limit||unexpected.length>limit,
+  };
+}
 export type Chart928ReadOnlyTargetEvidence=Readonly<{
   target:Chart928ExpectedTarget;
   sqlMajor:15|16;
   catalog925:Chart925ExactEvidence;
+  catalog925ConstraintInventory:Chart925ConstraintInventory;
   phase928:"ABSENT_NOT_AUTHORIZED"|"BLOCKED_PARTIAL_OR_CONFLICT"|
     "PRESENT_REQUIRES_EXACT_ATTESTATION";
   sidecarsPresent:number;
@@ -115,8 +176,10 @@ export async function inspectChart928ReadOnlyTarget(
     readFile(displayDdlUrl,"utf8"),readFile(chart928ReadonlySourceUrl,"utf8"),
   ]);
   const catalog=await pool.request().query(displayCatalogSql);
-  const catalog925=examineChart925ExactCatalog(
-    recordsetsOf(catalog.recordsets),ddl,
+  const catalogSets=recordsetsOf(catalog.recordsets);
+  const catalog925=examineChart925ExactCatalog(catalogSets,ddl);
+  const catalog925ConstraintInventory=examineChart925ConstraintInventory(
+    catalogSets,ddl,
   );
   const adoption=await pool.request().query(adoptionSql);
   const sections=recordsetsOf(adoption.recordsets);
@@ -158,7 +221,7 @@ export async function inspectChart928ReadOnlyTarget(
   );
   return Object.freeze({
     target:{...expected},sqlMajor:row.SqlMajor as 15|16,
-    catalog925,phase928:phase928 as typeof values[number],
+    catalog925,catalog925ConstraintInventory,phase928:phase928 as typeof values[number],
     sidecarsPresent:Number(phase.Present),
     ...historical,historicalExactCatalog,
     mayInstall928:CHART_928_MAY_INSTALL,

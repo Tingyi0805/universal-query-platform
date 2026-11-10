@@ -180,3 +180,34 @@ against created 926 and 927 structures. The full historical SQL Server
 intentional pre-926/927 database. Neither case is a hospital-target
 attestation.
 
+
+
+## 2026-11-10 — 925 CHECK/DEFAULT discrepancy visibility, no automatic repair
+
+The existing `npm run db:chart:preflight` now reports a separate
+`catalog925ConstraintInventory` diagnostic alongside the unchanged
+`catalog925.status` **exact-schema** validation. It parses the checked-in
+reviewed `925_dataset_display_policy.sql` source, not a hand-entered count,
+and compares only the names of SQL Server `CHECK` and `DEFAULT`
+constraints in the same three 925 tables. The reviewed source currently
+specifies **16 CHECK/DEFAULT constraints**. The report returns the expected
+and observed counts plus bounded `missing` / `unexpected` metadata names
+(up to 64 each). It never exposes clinical data, constraint values, stored
+procedure definitions, a SQL password, or editable SQL statements.
+
+This specifically makes prior `34/0/2/13` versus `34/16/2/13`
+catalog-count disagreements inspectable without rerunning an installer:
+the historical `0` count must **not** be reused as the expected current
+CHECK/DEFAULT count. We have NOT inspected the actual hospital database
+with this new diagnostic. If names appear equal, the status
+`NAMES_MATCH_NOT_EXACT_ATTESTED` explicitly does **not** mean that CHECK
+expressions, defaults, types, PK/FK/indexes, visibility, migrations or
+source provenance match. Only the existing independent
+`validateDisplayCatalog` and reviewed 926/927 validators decide the
+catalog baseline, and even an exact metadata match does **not** approve
+928, CHART activation or a production ZIP overwrite.
+
+Run only when an authorized DBA supplies the intended server/database/
+original login identities on an approved assessment workstation. Do not
+execute the 925 installer, `db:migrate`, an `adopt` command, any draft
+928 SQL, or manual drops/recreates in response to this diagnostic.

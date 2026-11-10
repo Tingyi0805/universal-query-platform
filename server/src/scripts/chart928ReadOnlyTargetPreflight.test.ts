@@ -6,7 +6,8 @@ import type sql from "mssql";
 import {
   CHART_928_MAY_INSTALL,chart928TargetIdentitySql,
   chart928ReadonlySourceUrl,validateChart928ReadOnlyTargetInvocation,
-  examineChart925ExactCatalog,inspectChart928ReadOnlyTarget,
+  examineChart925ExactCatalog,examineChart925ConstraintInventory,
+  inspectChart928ReadOnlyTarget,
   hasReviewableChart928MetadataFootprint,
 } from "./chart928ReadOnlyTargetPreflight.js";
 import {displayCatalogSql,displayDdlUrl} from "../modules/dataset/datasetDisplaySchema.js";
@@ -85,6 +86,64 @@ test("exact reviewed 925 catalog parser distinguishes absent, partial and invisi
   ],ddl).status,"BLOCKED_MISMATCH");
   assert.equal(examineChart925ExactCatalog([],ddl).status,"BLOCKED_MISMATCH");
 });
+test("925 checked-in source has 16 CHECK/DEFAULT definitions; read-only inventory locates differences",async()=>{
+  const ddl=await readFile(displayDdlUrl,"utf8");
+  const absent=examineChart925ConstraintInventory(catalogAbsent,ddl);
+  assert.equal(absent.expectedCount,16);
+  assert.equal(absent.observedCount,0);
+  assert.equal(absent.missing.length,16);
+  assert.equal(absent.status,"BLOCKED_DIFFERENT_NAMES");
+  assert.equal(absent.unexpected.length,0);
+  const tables=[
+    {name:"DatasetPublicDisplayPolicy"},
+    {name:"DatasetMaskTemplate"},
+    {name:"DatasetMaskTemplateUse"},
+  ];
+  const partial=[
+    tables,[],[
+      {table:"DatasetPublicDisplayPolicy",kind:"DEFAULT",
+        name:"DF_PublicDisplay_Confirmed"},
+      {table:"DatasetMaskTemplate",kind:"CHECK",name:"CK_FAKE_EXTRA"},
+    ],[],[],[],[{visible:1}],
+  ] as Record<string,unknown>[][];
+  const drift=examineChart925ConstraintInventory(partial,ddl);
+  assert.equal(drift.status,"BLOCKED_DIFFERENT_NAMES");
+  assert.equal(drift.observedCount,2);
+  assert.equal(drift.expectedCount,16);
+  assert(drift.missing.includes(
+    "DatasetPublicDisplayPolicy.DEFAULT.DF_PublicDisplay_Updated"));
+  assert(!drift.missing.includes(
+    "DatasetPublicDisplayPolicy.DEFAULT.DF_PublicDisplay_Confirmed"));
+  assert.deepEqual(drift.unexpected,[
+    "DatasetMaskTemplate.CHECK.CK_FAKE_EXTRA",
+  ]);
+  // Matching names alone still MUST NOT imply exact catalog compatibility:
+  // column types, CHECK expressions, foreign keys, indexes, defaults, etc
+  // are independently compared by the reviewed 925 validator.
+  const expectedConstraints=[
+    ...ddl.matchAll(/(?:\bCONSTRAINT\s+)([A-Za-z_][A-Za-z0-9_]*)\s+(CHECK|DEFAULT)\b/gi),
+  ];
+  const expectedRows:Record<string,unknown>[]=[];
+  for(const table of ["DatasetPublicDisplayPolicy",
+                      "DatasetMaskTemplate","DatasetMaskTemplateUse"]){
+    const source=ddl.split(`CREATE TABLE uqp.${table} (`)[1]?.split("\n);")[0];
+    assert(source);
+    for(const m of source.matchAll(/\bCONSTRAINT\s+([A-Za-z_][A-Za-z0-9_]*)\s+(CHECK|DEFAULT)\b/gi))
+      expectedRows.push({table,name:m[1],kind:m[2]!.toUpperCase()});
+  }
+  assert.equal(expectedConstraints.length,16);
+  const nameMatch=[tables,[],expectedRows,[],[],[],[{visible:1}]];
+  const namesOnly=examineChart925ConstraintInventory(nameMatch,ddl);
+  assert.equal(namesOnly.status,"NAMES_MATCH_NOT_EXACT_ATTESTED");
+  assert.equal(namesOnly.observedCount,16);
+  assert.equal(examineChart925ExactCatalog(nameMatch,ddl).status,
+    "BLOCKED_MISMATCH");
+  const invisible=[...nameMatch.slice(0,6),[{visible:0}]];
+  assert.equal(examineChart925ConstraintInventory(invisible,ddl).status,
+    "BLOCKED_CATALOG_UNAVAILABLE");
+  assert.equal(examineChart925ConstraintInventory([],ddl).observedCount,null);
+});
+
 test("wrong target blocks before either catalog SELECT",async()=>{
   for(const id of [
     {...identity,OriginalLogin:"other"},
