@@ -239,8 +239,10 @@ jobs:
         run: docker rm -f uqp-923-ephemeral >/dev/null 2>&1 || true
 
   sql-924-full-schema:
-    # All 48 real 001-921 migration sources + dedicated 923/924 installers. No user DB secrets.
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    # All historical 001-921 migration sources + dedicated 923/924/925 acceptance.
+    # PR #99 reuses this exact SQL Server 2019 full-schema path to attest 925;
+    # it is a disposable CI database, not user SQL or 928 deployment.
+    if: github.event_name == 'pull_request' && (github.event.pull_request.number == 66 || github.event.pull_request.number == 99)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
