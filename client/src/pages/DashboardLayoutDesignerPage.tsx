@@ -810,7 +810,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   async function saveLayout() {
-    if (saving) return;
+    if (saving || nativeChartCreateInFlight.current) return;
     if (loadedSealedChartPresent || hasSealedChartWidgets(profiles)) {
       setError("載入時曾存在受控 CHART；舊版儲存 API 不支援安全寫入，即使在草稿中刪除版型也不可覆寫。");
       return;
@@ -857,7 +857,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     <p>與版面設計共用版型草稿；儲存會保留並提交整份版型。</p>
     <label>時間顯示版型<select aria-label="時間顯示版型" value={activeProfileKey} onChange={e=>setActiveProfileKey(e.target.value)}>{profiles.map(p=><option key={p.clientKey} value={p.clientKey}>{p.name}</option>)}</select></label>
     <div className="dashboard-editor-form">{updateControls}</div>
-    <button type="button" disabled={saving||sourceVersion===undefined||unavailableReferences.length>0||chartSaveBlocked} onClick={()=>void saveLayout()}>儲存版面</button>
+    <button type="button" disabled={saving||nativeChartCreateBusy||sourceVersion===undefined||unavailableReferences.length>0||chartSaveBlocked} onClick={()=>void saveLayout()}>儲存版面</button>
     <button type="button" disabled={saving} onClick={()=>{if(window.confirm("重新載入會取代未儲存的版型草稿，確定繼續？"))void load();}}>重新載入版型與版本</button>
     {!active&&error&&<p role="alert">{error}</p>}{!active&&notice&&<p role="status">{notice}</p>}
   </section>,playbackTarget);
@@ -891,7 +891,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
             </button>
           )}
           <button type="button" disabled={saving} onClick={() => { if (window.confirm("重新載入會取代未儲存的版型草稿；請先另行保存。確定重新載入？")) void load(); }}>重新載入版型與版本</button>
-          <button className="primary-button" type="button" disabled={saving || sourceVersion === undefined || unavailableReferences.length > 0 || chartSaveBlocked} onClick={() => void saveLayout()}>
+          <button className="primary-button" type="button" disabled={saving || nativeChartCreateBusy || sourceVersion === undefined || unavailableReferences.length > 0 || chartSaveBlocked} onClick={() => void saveLayout()}>
             {saving ? "儲存中…" : "儲存版面"}
           </button>
         </div>
