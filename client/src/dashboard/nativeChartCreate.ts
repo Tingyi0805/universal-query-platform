@@ -73,3 +73,27 @@ export function hasCreatedSealedChartInLayout(
     widget.width===placement.width&&widget.height===placement.height);
   return found.length===1;
 }
+
+/** The author-only DB-backed readback must match the exact saved Widget
+ * Seal revision returned by SQL Writer, and all canonical chart settings.
+ * Layout-only identity/placement checks cannot prove this persisted seal.
+ * Reject unexpected server fields, patient rows or browser trust flags.
+ */
+export function confirmsNativeChartSavedReadback(
+  value:unknown,receipt:NativeChartCreateReceipt,
+  config:ChartDraft["config"],
+):boolean{
+  if(!record(value)||!record(value.config)||
+     Object.keys(value).sort().join("|")!=="config|sealRevision|widgetId"||
+     value.widgetId!==receipt.widgetId||
+     value.sealRevision!==receipt.sealRevision||
+     !/^[a-f0-9]{16}$/.test(receipt.sealRevision))return false;
+  const keys=[
+    "version","chartType","dataSourceKey","categoryColumn","valueColumn",
+    "valueMode","maxPoints","showLegend",
+  ] as const;
+  if(Object.keys(value.config).sort().join("|")!==[...keys].sort().join("|")||
+     Object.keys(config).sort().join("|")!==[...keys].sort().join("|"))
+    return false;
+  return keys.every(key=>Object.is(value.config[key],config[key]));
+}

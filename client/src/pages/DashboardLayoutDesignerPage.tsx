@@ -1,6 +1,6 @@
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
-  hasCreatedSealedChartInLayout} from "../dashboard/nativeChartCreate";
+  hasCreatedSealedChartInLayout,confirmsNativeChartSavedReadback} from "../dashboard/nativeChartCreate";
 import type {ChartDraft} from "../dashboard/chartDraft";
 import { mayRequestSealedChartProjection } from "../dashboard/nativeChartPlayback";
 import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
@@ -794,6 +794,15 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
         {method:"POST",body:JSON.stringify(request)},accessToken);
       const receipt=parseNativeChartCreateReceipt(value);
       if(!receipt)throw Error("CHART_CREATE_RECEIPT_INVALID");
+      // The public/layout API intentionally strips ConfigJson and seal
+      // evidence. A fresh designer-only sealed DB readback must independently
+      // match the exact Writer receipt/config before the layout check.
+      const sealReadback=await apiRequest<unknown>(
+        `/dashboards/${dashboardId}/charts/v1/${receipt.widgetId}/readback`,
+        {},accessToken);
+      if(!confirmsNativeChartSavedReadback(
+        sealReadback,receipt,request.config))
+        throw Error("CHART_SEAL_READBACK_NOT_CONFIRMED");
       const readback=await apiRequest<unknown>(
         `/dashboards/${dashboardId}/layout`,{},accessToken);
       if(!hasCreatedSealedChartInLayout(readback,profileId,

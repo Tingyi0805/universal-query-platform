@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {newChartDraft} from "./chartDraft.js";
 import {
   buildNativeChartCreateBody,parseNativeChartCreateReceipt,
-  hasCreatedSealedChartInLayout,
+  hasCreatedSealedChartInLayout,confirmsNativeChartSavedReadback,
 } from "./nativeChartCreate.js";
 const draft=newChartDraft();
 const requestId="00000000-0000-4000-8000-000000000111";
@@ -62,4 +62,22 @@ test("readback must contain the chart ID in the same persisted profile and place
     {...saved.profiles[0]!.widgets[0]!,x:90},
   ]}]},22,88,draft.placement),false);
   assert.equal(hasCreatedSealedChartInLayout({profiles:[]},22,88,draft.placement),false);
+});
+
+test("persisted CHART seal readback must match the SQL receipt and entire config",()=>{
+  const receipt={widgetId:88,sealRevision:"0011223344556677",
+    auditLogId:"9007199254740993"};
+  const saved={widgetId:88,sealRevision:receipt.sealRevision,config:{...draft.config}};
+  assert.equal(confirmsNativeChartSavedReadback(saved,receipt,draft.config),true);
+  for(const invalid of [
+    {...saved,widgetId:89},
+    {...saved,sealRevision:"ffffffffffffffff"},
+    {...saved,config:{...draft.config,categoryColumn:"WRONG_COLUMN"}},
+    {...saved,config:{...draft.config,rows:[{PATIENT_ID:"PRIVATE"}]}},
+    {...saved,config:{...draft.config,approved:true}},
+    {...saved,rows:[{PATIENT_ID:"PRIVATE"}]},
+    {...saved,sourceKey:"PRIMARY"},
+    {...saved,config:{}},null,[],
+  ])assert.equal(confirmsNativeChartSavedReadback(
+    invalid,receipt,draft.config),false);
 });

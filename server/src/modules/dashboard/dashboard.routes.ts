@@ -30,6 +30,10 @@ import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecutio
 // sealed Widget, DB 928, trusted aggregate and HTTP release are approved.
 import { CHART_CREATE_HTTP_RELEASE_APPROVED, createChartCreateRouter } from "./dashboardChartCreate.routes.js";
 import {
+  CHART_SAVED_READBACK_HTTP_RELEASE_APPROVED,
+  createChartSavedReadbackRouter,
+} from "./dashboardChartSavedReadback.routes.js";
+import {
   CHART_PROJECTION_HTTP_RELEASE_APPROVED,
   createChartProjectionRouter,
 } from "./dashboardChartProjection.routes.js";
@@ -368,6 +372,14 @@ dashboardRouter.use(createChartUserProjectionRouter({
 dashboardRouter.use(createChartCreateRouter({
   approved: () => CHART_CREATE_HTTP_RELEASE_APPROVED,
   create: async () => { throw Error("CHART_CREATE_NOT_RELEASED"); },
+}));
+// The dedicated author-only persisted Widget+Seal readback is separate from
+// public projection and requires a DB-verified original designer JWT.
+// Release stays independently compiled OFF.
+dashboardRouter.use(createChartSavedReadbackRouter({
+  approved: () => CHART_SAVED_READBACK_HTTP_RELEASE_APPROVED,
+  readSavedWidget: chartTrustReaders.readSavedWidget,
+  readSession: getTokenSessionState,
 }));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));
