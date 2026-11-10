@@ -29,11 +29,13 @@ async function setup(page: Page) {
         return;
       }
       const place=posted.placement as {x:number;y:number;width:number;height:number};
-      state.profiles[0]!.widgets.push({
+      // Test-only JSON fixture permits the extra persisted Widget fields;
+      // the production UI never trusts this object as a create receipt.
+      (state.profiles[0]!.widgets as unknown as Array<Record<string,unknown>>).push({
         ...widget,id:88,profileId:1,widgetType:"CHART",title:"受控圖表",
         sourceKey:"PRIMARY",staticText:null,
         ...place,config:{},sortOrder:40,
-      } as typeof state.profiles[0]["widgets"][number]);
+      });
       await route.fulfill({status:201,json:{
         widgetId:88,sealRevision:"0011223344556677",
         auditLogId:"9007199254740993",
