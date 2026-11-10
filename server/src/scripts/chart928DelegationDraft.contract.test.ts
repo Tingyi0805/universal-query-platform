@@ -46,6 +46,14 @@ test("2B-15D-13 SQL delegated prototype remains disposable and unapproved",async
  assert.doesNotMatch(executable,/\b(?:CREATE LOGIN|ALTER LOGIN|CREATE USER \[UQP_Chart_Real|USE \[UniversalQueryPlatform|SchemaMigration)\b/i);
 });
 
+test("signed Writer denies case-insensitive SQL SourceKey aliases before grant consume",async()=>{
+ const source=await loadDraft();
+ assert(source.includes("JSON_VALUE(@ConfigJson,N''$.dataSourceKey'') COLLATE Latin1_General_100_BIN2"));
+ assert(source.includes("d.SourceKey COLLATE Latin1_General_100_BIN2"));
+ assert(source.includes("= @SourceKey COLLATE Latin1_General_100_BIN2"));
+ assert(source.includes("UPPER(@SourceKey)=N''PRIMARY''"));
+});
+
 test("2B-15D-13 GrantId PK lock precedes DB-time check and complete scope",async()=>{
  const source=await loadDraft();
  const lock="SELECT 1 FROM uqp.ChartActorDelegationDisposable WITH(UPDLOCK,HOLDLOCK)";
@@ -63,7 +71,9 @@ test("2B-15D-13 GrantId PK lock precedes DB-time check and complete scope",async
    "d.GrantId=@GrantId","d.SecretSha256=HASHBYTES(",
    "d.ActorId=@ActorId","d.TokenVersion=@TokenVersion",
    "d.DashboardId=@DashboardId","d.ProfileId=@ProfileId",
-   "d.RequestId=@RequestId","d.SourceKey=@SourceKey",
+   "d.RequestId=@RequestId",
+   "d.SourceKey COLLATE Latin1_General_100_BIN2",
+   "= @SourceKey COLLATE Latin1_General_100_BIN2",
    "d.ConfigSha256=@digest","d.X=@X","d.Y=@Y",
    "d.Width=@Width","d.Height=@Height","d.IsRevoked=0",
    "d.ConsumedAtUtc IS NULL","d.IssuedAtUtc<=@consumeAt",

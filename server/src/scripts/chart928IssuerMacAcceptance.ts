@@ -383,7 +383,8 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   };
   const writeSigned=(s:ProofScope,grant:{GrantId:string;Secret:Buffer},
       changes:Readonly<{actor?:number;token?:number;config?:string;secret?:Buffer;
-        requestId?:string;profile?:number;dashboard?:number}>={})=>
+        requestId?:string;profile?:number;dashboard?:number;
+        source?:string}>={})=>
     db.request()
       .input("grant",sql.UniqueIdentifier,grant.GrantId)
       .input("secret",sql.VarBinary(sql.MAX),changes.secret??grant.Secret)
@@ -392,7 +393,7 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
       .input("dashboard",sql.BigInt,changes.dashboard??s.dashboard)
       .input("profile",sql.BigInt,changes.profile??s.profile)
       .input("request",sql.UniqueIdentifier,changes.requestId??s.requestId)
-      .input("source",sql.NVarChar(64),s.source)
+      .input("source",sql.NVarChar(64),changes.source??s.source)
       .input("config",sql.NVarChar(sql.MAX),changes.config??chartJson)
       .input("x",sql.Int,s.x).input("y",sql.Int,s.y)
       .input("width",sql.Int,s.width).input("height",sql.Int,s.height)
@@ -417,10 +418,14 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     {actor:77},{token:2},{dashboard:8},{profile:23},
     {config:JSON.stringify({...JSON.parse(chartJson),maxPoints:21})},
     {secret:Buffer.alloc(32,0x55)},{requestId:randomUUID()},
+    // A signed PRIMARY grant cannot be repurposed as a different source
+    // solely because the SQL Server database collation ignores case.
+    {source:"Primary"},{source:"primary"},{source:"PrImArY"},
   ]){
     await assert.rejects(writeSigned(signedChart,signedChartGrant,modifications),forbidden);
     assert.deepEqual(await writerCounts(),beforeWrite);
   }
+  console.log("CHART_SIGNED_WRITER_EXACT_CASE_SOURCE_SCOPE_DENY_PASS");
   // A valid signed grant is still denied if the Actor is revoked after issue
   // and before SQL Writer obtains its transaction-scoped locks.
   await db.request().query("UPDATE uqp.AppUser SET IsActive=0 WHERE Id=8");

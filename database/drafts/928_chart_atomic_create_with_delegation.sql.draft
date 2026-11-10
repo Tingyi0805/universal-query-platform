@@ -57,9 +57,16 @@ BEGIN
    OR @Width>7680 OR @Height>4320 OR DATALENGTH(@ConfigJson)>16384
    OR ISJSON(@ConfigJson)<>1
   THROW 51928,''CHART_DRAFT_INPUT_INVALID'',1;
- IF @SourceKey NOT LIKE N''[A-Za-z]%'' AND @SourceKey<>N''PRIMARY''
+ -- The signer reserves uppercase PRIMARY; never let a case-insensitive
+ -- SQL Server collation reinterpret another spelling as that identity.
+ IF LEN(@SourceKey) NOT BETWEEN 1 AND 64
+   OR @SourceKey COLLATE Latin1_General_100_BIN2 NOT LIKE N''[A-Za-z]%''
+   OR @SourceKey COLLATE Latin1_General_100_BIN2 LIKE N''%[^A-Za-z0-9_]%''
+   OR (UPPER(@SourceKey)=N''PRIMARY'' AND
+       @SourceKey COLLATE Latin1_General_100_BIN2<>N''PRIMARY'')
   THROW 51928,''CHART_DRAFT_SOURCE_INVALID'',1;
- IF JSON_VALUE(@ConfigJson,N''$.dataSourceKey'')<>@SourceKey
+ IF JSON_VALUE(@ConfigJson,N''$.dataSourceKey'') COLLATE Latin1_General_100_BIN2
+      <> @SourceKey COLLATE Latin1_General_100_BIN2
    OR JSON_VALUE(@ConfigJson,N''$.version'')<>N''1''
    OR JSON_VALUE(@ConfigJson,N''$.valueMode'')<>N''QUERY_RESULT''
    OR JSON_VALUE(@ConfigJson,N''$.chartType'') NOT IN (N''BAR'',N''LINE'',N''PIE'')
@@ -122,7 +129,9 @@ BEGIN
       AND d.SecretSha256=HASHBYTES(''SHA2_256'',@Secret)
       AND d.ActorId=@ActorId AND d.TokenVersion=@TokenVersion
       AND d.DashboardId=@DashboardId AND d.ProfileId=@ProfileId
-      AND d.RequestId=@RequestId AND d.SourceKey=@SourceKey
+      AND d.RequestId=@RequestId
+      AND d.SourceKey COLLATE Latin1_General_100_BIN2
+          = @SourceKey COLLATE Latin1_General_100_BIN2
       AND d.ConfigSha256=@digest
       AND d.X=@X AND d.Y=@Y AND d.Width=@Width AND d.Height=@Height
       AND d.IsRevoked=0 AND d.ConsumedAtUtc IS NULL
