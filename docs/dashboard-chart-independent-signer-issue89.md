@@ -23,3 +23,7 @@ No keys/certificates are committed to GitHub, and none are loaded from request J
 5. Wire the signer transport into an approved UQP internal caller after a security design review. Enable no feature gate merely from a passing synthetic CI run. Only then integrate native CHART edit/save/read/fullscreen playback and request separate IIS test-host acceptance.
 
 These files are a *working, separately testable core and mTLS transport*, not proof of a running independently secured signer or a production CHART release.
+
+## 2026-11-10 signer post-HSM revocation fence
+
+The independent signer now repeats its read-only **live AppUser/TokenVersion/role-permission and exact Dashboard/Profile/Query ACL checks after both Ed25519 and SQL HMAC signing calls**, before returning the proof to the mTLS caller. Revoke the hard release flag while signing and no proof is released; a blocked or expired post-sign check also returns null. This closes the signer-local time-of-check/time-of-use interval when an external HSM delays signing. Unit tests simulate account disable, TokenVersion rotation, role removal, Query access withdrawal, gate shutdown, an unavailable SQL reader and expiry during the final authorization read. This is **additional fail-closed defense**, not a durable SQL one-time grant or replacement for the SQL Issuer/Writer's independently reviewed same-transaction actor recheck. All production gates remain OFF.
