@@ -14,7 +14,7 @@ const fail=(s:string):never=>{throw new Install924Error(s);};
  * until independently reviewed. Merely recognizing 926/927 filenames
  * does NOT grant permission to apply either script or Migration 928. */
 export function reviewed924SourceManifest(names:readonly string[]):string[]{
-  const inventory=names.filter(n=>/^\\d+_.*\\.sql$/i.test(n)).sort();
+  const inventory=names.filter(n=>/^\d+_.*\.sql$/i.test(n)).sort();
   const baseline=inventory.filter(n=>Number(n.slice(0,3))<=921);
   const later=inventory.filter(n=>Number(n.slice(0,3))>921);
   if(baseline.length!==48||
