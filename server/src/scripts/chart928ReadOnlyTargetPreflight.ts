@@ -12,6 +12,10 @@ import {
   chartHistoricalFootprintSql,chartHistoricalLedgerSql,
   parseChartHistoricalFootprints,type ChartHistoricalFootprint,
 } from "./chart928HistoricalFootprint.js";
+import {
+  verifyChartHistoricalExactCatalog,
+  type ChartHistoricalExactCatalogEvidence,
+} from "./chart928HistoricalExactCatalog.js";
 
 export const CHART_928_MAY_INSTALL=false as const;
 export const chart928ReadonlySourceUrl=new URL(
@@ -42,6 +46,9 @@ export type Chart928ReadOnlyTargetEvidence=Readonly<{
   // 926/927 migration attestation or permission to install 928.
   schema926:ChartHistoricalFootprint;
   schema927:ChartHistoricalFootprint;
+  // Existing 926/927 metadata validators; no SQL installation or source-
+  // provenance approval is implied even by two exact catalog matches.
+  historicalExactCatalog:ChartHistoricalExactCatalogEvidence;
   mayInstall928:false;
   chartCanBeEnabled:false;
   assessment:"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED";
@@ -146,19 +153,23 @@ export async function inspectChart928ReadOnlyTarget(
   const historical=parseChartHistoricalFootprints(
     footprintInventory.recordset,footprintLedger.recordset,
   );
+  const historicalExactCatalog=await verifyChartHistoricalExactCatalog(
+    pool,historical,
+  );
   return Object.freeze({
     target:{...expected},sqlMajor:row.SqlMajor as 15|16,
     catalog925,phase928:phase928 as typeof values[number],
     sidecarsPresent:Number(phase.Present),
-    ...historical,
+    ...historical,historicalExactCatalog,
     mayInstall928:CHART_928_MAY_INSTALL,
     chartCanBeEnabled:false as const,
     assessment:"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED" as const,
   });
 }
 
-/** CLI exit 0 means only the *metadata footprint* can be reviewed next.
- * 926/927 exact definitions, independent Signer/Writer, privacy and change
+/** CLI exit 0 means the checked-in 925/926/927 catalog validators matched
+ * and the 928 sidecars remain absent. Migration source provenance, independent
+ * Signer/Writer, privacy and change
  * control still require separate authorization. Missing/contradictory
  * history must exit 2, never silently look like a complete preflight.
  */
@@ -166,6 +177,14 @@ export function hasReviewableChart928MetadataFootprint(
   result:Chart928ReadOnlyTargetEvidence,
 ):boolean{
   return result.catalog925.status==="EXACT_MATCH"&&
+    // This pre-adoption checker must block partial/present 928, even if
+    // 925-927 look healthy. A future approved 928 release needs its own
+    // independent exact-schema and provenance verifier.
+    result.phase928==="ABSENT_NOT_AUTHORIZED"&&
+    result.sidecarsPresent===0&&
+    result.historicalExactCatalog.schema926==="EXACT_REVIEWED_CATALOG_MATCH"&&
+    result.historicalExactCatalog.schema927==="EXACT_REVIEWED_CATALOG_MATCH"&&
+    result.historicalExactCatalog.approves928===false&&
     result.schema926.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
     result.schema927.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
     result.schema926.ledger==="RECORDED_NOT_ATTESTED"&&

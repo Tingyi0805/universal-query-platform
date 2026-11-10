@@ -4,7 +4,10 @@ import assert from "node:assert/strict";
 import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import {deviceLifecycleSchemaSql} from "../modules/dashboard/dashboardDeviceLifecycleSchema.js";
-import {chartHistoricalFootprintSql} from "./chart928HistoricalFootprint.js";
+import {chartHistoricalFootprintSql,parseChartHistoricalFootprints}
+  from "./chart928HistoricalFootprint.js";
+import {verifyChartHistoricalExactCatalog}
+  from "./chart928HistoricalExactCatalog.js";
 import {deviceLifecycleBlocksPlayback} from "../modules/dashboard/dashboardDeviceLifecycle.js";
 let stage="target-guard";
 async function main(){
@@ -44,6 +47,13 @@ async function main(){
   assert.equal(footprint926.find(v=>v.SchemaNumber==="926")?.Assessment,
     "PRESENT_REQUIRES_EXACT_ATTESTATION");
   console.log("CHART_926_READONLY_FOOTPRINT_PRESENT_NOT_APPROVED_PASS");
+  const exact926=await verifyChartHistoricalExactCatalog(
+    db!,parseChartHistoricalFootprints(footprint926,[]),
+  );
+  assert.equal(exact926.schema926,"EXACT_REVIEWED_CATALOG_MATCH");
+  assert.equal(exact926.schema927,"NOT_RUN_FOOTPRINT_INCOMPLETE");
+  assert.equal(exact926.approves928,false);
+  console.log("CHART_926_REVIEWED_EXACT_CATALOG_READONLY_PASS");
   const after=(await query("SELECT * FROM uqp.DashboardDisplayDevice ORDER BY Id")).recordset;
   assert.deepEqual(after.map(({SuspendedAtUtc,ReenrollmentRequired,...row})=>{assert.equal(SuspendedAtUtc,null);assert.equal(ReenrollmentRequired,null);return row;}),before);
   stage="repeat-926-no-state-change";await db.request().batch(ddl);assert.deepEqual((await query("SELECT * FROM uqp.DashboardDisplayDevice ORDER BY Id")).recordset,after);

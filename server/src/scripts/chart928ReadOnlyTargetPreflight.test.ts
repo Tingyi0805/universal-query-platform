@@ -12,6 +12,9 @@ import {
 import {displayCatalogSql,displayDdlUrl} from "../modules/dataset/datasetDisplaySchema.js";
 import {chartHistoricalFootprintSql,chartHistoricalLedgerSql}
   from "./chart928HistoricalFootprint.js";
+import {deviceLifecycleSchemaSql}
+  from "../modules/dashboard/dashboardDeviceLifecycleSchema.js";
+import {workstationPinSchemaSql} from "../modules/auth/workstationPinSchema.js";
 
 const expected={server:"CI_SQL",database:"UQP_CH_123456789abc",login:"ci_reader"};
 const identity={ServerName:expected.server,DatabaseName:expected.database,
@@ -31,10 +34,17 @@ const sections=(phase="ABSENT_NOT_AUTHORIZED",present=0,mayInstall=0):Record<str
 ];
 function fixture({
   id=identity,catalog=catalogAbsent,report=sections(),
+  footprint=[
+    {SchemaNumber:"926",Assessment:"ABSENT"},
+    {SchemaNumber:"927",Assessment:"ABSENT"},
+  ],ledger=[],failExact=[],
 }:{
   id?:Record<string,unknown>;
   catalog?:Record<string,unknown>[][];
   report?:Record<string,unknown>[][];
+  footprint?:Record<string,unknown>[];
+  ledger?:Record<string,unknown>[];
+  failExact?:string[];
 }={}){
   const requests:string[]=[];
   const pool={request:()=>({query:async(text:string)=>{
@@ -42,11 +52,12 @@ function fixture({
     if(text===chart928TargetIdentitySql)return {recordset:[id]};
     if(text===displayCatalogSql)return {recordsets:catalog};
     if(text.includes("00_RELEASE_GATE"))return {recordsets:report};
-    if(text===chartHistoricalFootprintSql)return {recordset:[
-      {SchemaNumber:"926",Assessment:"ABSENT"},
-      {SchemaNumber:"927",Assessment:"ABSENT"},
-    ]};
-    if(text===chartHistoricalLedgerSql)return {recordset:[]};
+    if(text===chartHistoricalFootprintSql)return {recordset:footprint};
+    if(text===chartHistoricalLedgerSql)return {recordset:ledger};
+    if(text===deviceLifecycleSchemaSql||text===workstationPinSchemaSql){
+      if(failExact.includes(text))throw Error("SYNTHETIC_CATALOG_MISMATCH");
+      return {recordset:[]};
+    }
     throw Error("UNEXPECTED_SQL");
   }})} as unknown as sql.ConnectionPool;
   return {pool,requests};
@@ -106,6 +117,10 @@ test("925 absence and every 928 state remain independently NOT approved",async()
     assert.equal(result.schema927.ledger,"NOT_RECORDED");
     assert.equal(result.schema926.exactAttested,false);
     assert.equal(result.schema927.exactAttested,false);
+    assert.equal(result.historicalExactCatalog.schema926,
+      "NOT_RUN_FOOTPRINT_INCOMPLETE");
+    assert.equal(result.historicalExactCatalog.schema927,
+      "NOT_RUN_FOOTPRINT_INCOMPLETE");
     assert.equal(result.schema926.consistency,"COHERENT_NOT_ATTESTED");
     assert.equal(result.schema927.consistency,"COHERENT_NOT_ATTESTED");
     assert.equal(hasReviewableChart928MetadataFootprint(result),false);
@@ -136,6 +151,7 @@ test("926/927 ledger probe cannot claim exact adoption or turn on 928",async()=>
   const r=await inspectChart928ReadOnlyTarget(f.pool,expected);
   assert.equal(r.schema926.exactAttested,false);
   assert.equal(r.schema927.exactAttested,false);
+  assert.equal(r.historicalExactCatalog.approves928,false);
   assert.equal(r.chartCanBeEnabled,false);
   assert.equal(r.mayInstall928,false);
 });
@@ -146,6 +162,11 @@ test("CLI inventory signal is not equivalent to SQL Signer/Writer approval",asyn
   const complete={
     ...result,
     catalog925:{status:"EXACT_MATCH" as const,reason:"EXACT_SOURCE_MATCH"},
+    historicalExactCatalog:{
+      schema926:"EXACT_REVIEWED_CATALOG_MATCH" as const,
+      schema927:"EXACT_REVIEWED_CATALOG_MATCH" as const,
+      approves928:false as const,
+    },
     schema926:{...result.schema926,
       status:"PRESENT_REQUIRES_EXACT_ATTESTATION" as const,
       ledger:"RECORDED_NOT_ATTESTED" as const,
@@ -166,5 +187,53 @@ test("CLI inventory signal is not equivalent to SQL Signer/Writer approval",asyn
     {...complete,schema927:{...complete.schema927,
       consistency:"BLOCKED_PARTIAL_OR_INVISIBLE" as const}},
     {...complete,catalog925:{status:"BLOCKED_MISMATCH" as const,reason:"CATALOG_MISMATCH"}},
+    {...complete,historicalExactCatalog:{...complete.historicalExactCatalog,
+      schema926:"BLOCKED_CATALOG_MISMATCH_OR_INVISIBLE" as const}},
+    {...complete,historicalExactCatalog:{...complete.historicalExactCatalog,
+      schema927:"NOT_RUN_FOOTPRINT_INCOMPLETE" as const}},
+    {...complete,phase928:"BLOCKED_PARTIAL_OR_CONFLICT" as const,sidecarsPresent:1},
+    {...complete,phase928:"PRESENT_REQUIRES_EXACT_ATTESTATION" as const,sidecarsPresent:3},
   ])assert.equal(hasReviewableChart928MetadataFootprint(bad),false);
+});
+
+test("actual reviewed 926/927 verifier SQL is invoked for installed footprints",async()=>{
+  const f=fixture({
+    footprint:[
+      {SchemaNumber:"926",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+      {SchemaNumber:"927",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+    ],
+    ledger:[
+      {FileName:"926_dashboard_device_lifecycle.sql"},
+      {FileName:"927_workstation_pin_runtime.sql"},
+    ],
+  });
+  const r=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  assert.equal(r.historicalExactCatalog.schema926,"EXACT_REVIEWED_CATALOG_MATCH");
+  assert.equal(r.historicalExactCatalog.schema927,"EXACT_REVIEWED_CATALOG_MATCH");
+  assert.equal(r.historicalExactCatalog.approves928,false);
+  assert.equal(r.schema926.exactAttested,false);
+  assert.equal(r.schema927.exactAttested,false);
+  assert.deepEqual(f.requests.slice(-2),[
+    deviceLifecycleSchemaSql,workstationPinSchemaSql,
+  ]);
+  assert.equal(hasReviewableChart928MetadataFootprint(r),false);
+});
+test("exact 927 metadata mismatch cannot accidentally promote 928",async()=>{
+  const f=fixture({
+    footprint:[
+      {SchemaNumber:"926",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+      {SchemaNumber:"927",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+    ],
+    ledger:[
+      {FileName:"926_dashboard_device_lifecycle.sql"},
+      {FileName:"927_workstation_pin_runtime.sql"},
+    ],
+    failExact:[workstationPinSchemaSql],
+  });
+  const r=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  assert.equal(r.historicalExactCatalog.schema926,"EXACT_REVIEWED_CATALOG_MATCH");
+  assert.equal(r.historicalExactCatalog.schema927,
+    "BLOCKED_CATALOG_MISMATCH_OR_INVISIBLE");
+  assert.equal(hasReviewableChart928MetadataFootprint(r),false);
+  assert.equal(r.mayInstall928,false);
 });

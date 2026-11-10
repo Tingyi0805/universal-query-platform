@@ -74,10 +74,10 @@ regardless of 925 status or observed 928 objects. Missing catalog visibility
 blocks exact attestation. A non-exact 925, missing/partial/invisible
 926 or 927 footprint, contradictory Ledger, or unrecorded 926/927 exits with
 status 2. Target/SQL/report errors exit with status 1. Exit 0 means **only**
-that the exact 925 catalog and the minimum 926/927 footprints plus their
-Ledger entries are coherent enough for further independent review;
-it does NOT attest the exact 926/927 definitions, identify approved Signer
-or Writer principals, or grant permission to proceed with 928.
+that the exact 925 and existing reviewed 926/927 catalog validators match,
+their observed Ledger entries are coherent, and 928 is absent;
+it does NOT attest independent migration-source provenance, identify
+approved Signer or Writer principals, or grant permission to proceed with 928.
 
 CI invokes this same inspection against disposable, correctly installed 925
 catalogs and verifies the `sys.objects` count is unchanged before/after.
@@ -151,11 +151,28 @@ malformed metadata or failed target identity checks block the entire
 command. Catalog/ledger conflicts or incomplete footprints make the CLI
 exit with status 2 even if the 925 exact validator itself succeeds.
 
-The reviewed original 926 trigger and CHECK definition verifier, original
-927 exact catalog verifier, database migration provenance, and human release
-approval are separate prerequisites. The presence report does not execute
-either migration, certify target SQL, authorize the Signer/Writer, enable
-public playback or weaken the existing CHART hard-off gates.
+The same unified preflight now **also invokes the existing reviewed 926
+and 927 catalog validators** when the corresponding footprint is present.
+The `historicalExactCatalog.schema926/schema927` values are
+`EXACT_REVIEWED_CATALOG_MATCH`,
+`NOT_RUN_FOOTPRINT_INCOMPLETE`, or
+`BLOCKED_CATALOG_MISMATCH_OR_INVISIBLE`. The 926 validator inspects the
+actual CHECK definitions, enabled/trusted flags and lifecycle trigger
+definition hash; the 927 validator checks detailed column/index/default/
+constraint metadata. The latter uses temporary in-session T-SQL table
+variables for expected metadata, with no application-table DML, persistent
+writes, credential access, or migration-ledger changes.
+
+A pre-adoption exit code 0 now requires **exact 925, reviewed 926 and
+927 catalog matches, coherent recorded Ledger, and ABSENT 928 sidecars**.
+All other valid but incomplete combinations return 2; database/identity/
+report errors return 1. Even exit 0 only establishes checked-in catalog
+compatibility, **not** independent target migration-source provenance,
+Signer/Writer identity approval, patient privacy review, backup signoff,
+928 installation authority or permission to enable CHART. The existing
+`exactAttested=false` on the two footprint records continues to mean
+that filename+presence alone never prove full migration provenance.
+Public playback and every CHART release hard gate remain OFF.
 
 Disposable SQL Server 2019/2022 acceptance verifies the footprint query
 against created 926 and 927 structures. The full historical SQL Server

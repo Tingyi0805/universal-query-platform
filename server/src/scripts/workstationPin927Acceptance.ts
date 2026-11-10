@@ -5,7 +5,10 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import sql from "mssql";
 import { workstationPinSchemaSql } from "../modules/auth/workstationPinSchema.js";
-import {chartHistoricalFootprintSql} from "./chart928HistoricalFootprint.js";
+import {chartHistoricalFootprintSql,parseChartHistoricalFootprints}
+  from "./chart928HistoricalFootprint.js";
+import {verifyChartHistoricalExactCatalog}
+  from "./chart928HistoricalExactCatalog.js";
 import { createWorkstationPinState, pinAttemptBuckets } from "../modules/auth/workstationPinState.repository.js";
 
 const migrations = [
@@ -115,6 +118,13 @@ export async function verify927(
     assert.equal(footprint927.find(v=>v.SchemaNumber==="927")?.Assessment,
       "PRESENT_REQUIRES_EXACT_ATTESTATION");
     console.log("CHART_927_READONLY_FOOTPRINT_PRESENT_NOT_APPROVED_PASS");
+    const exact927=await verifyChartHistoricalExactCatalog(
+      pool,parseChartHistoricalFootprints(footprint927,[]),
+    );
+    assert.equal(exact927.schema926,"NOT_RUN_FOOTPRINT_INCOMPLETE");
+    assert.equal(exact927.schema927,"EXACT_REVIEWED_CATALOG_MATCH");
+    assert.equal(exact927.approves928,false);
+    console.log("CHART_927_REVIEWED_EXACT_CATALOG_NO_APPLICATION_DML_PASS");
     const restored = (await query(`SELECT WorkstationCode,CredentialVersion,IsActive,PinLoginEnabled,PlatformCode,
       PurposeCode,RetiredAtUtc FROM uqp.SharedWorkstation WHERE Id=1`)).recordset[0];
     assert.deepEqual(restored, original);
