@@ -130,7 +130,11 @@ test("CHART projection rejects original tokens without expiry or expired mid-que
     return config;
   }});
   try{
-    const withoutExpiry=jwt.sign({sub:"8",tokenVersion:3},env.JWT_SECRET);
+    // The fixture installs this synthetic key before the test starts.
+    const signingKey=env.JWT_SECRET;
+    if (typeof signingKey!=="string" || signingKey.length===0)
+      throw Error("SYNTHETIC_CHART_JWT_TEST_KEY_REQUIRED");
+    const withoutExpiry=jwt.sign({sub:"8",tokenVersion:3},signingKey);
     const noExpiry=await f.send(undefined,undefined,withoutExpiry);
     assert.equal(noExpiry.status,503);
     assert.deepEqual(await noExpiry.json(),
@@ -139,7 +143,7 @@ test("CHART projection rejects original tokens without expiry or expired mid-que
     expirySeconds=Math.floor(Date.now()/1000)+3;
     const shortLived=jwt.sign({
       sub:"8",tokenVersion:3,exp:expirySeconds,
-    },env.JWT_SECRET);
+    },signingKey);
     const expiredDuringWork=await f.send(undefined,undefined,shortLived);
     assert.equal(expiredDuringWork.status,503);
     const payload=await expiredDuringWork.text();
