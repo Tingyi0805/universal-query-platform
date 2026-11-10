@@ -1824,3 +1824,8 @@ CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false；
 CHART_WRITER_APPROVED_PROCEDURE_SHA256=null；
 CHART_ISSUER_APPROVED_PROCEDURE_SHA256=null。
 PR #83 保持 Draft，不合併、不執行 928、不覆蓋 C:\UQP、不啟用 CHART。
+
+
+## 2026-11-10 — Final release-bound playback authorization fence
+
+The dormant trusted CHART coordinator now performs an additional **last-mile check after the existing Query revision fence** and before releasing a projection. For user/admin-preview it refuses a JWT `expiresAt` that elapsed during audited page delivery or review; for device playback it calls the separately supplied live device verifier again and rejects revoked/mismatched proof. It also re-reads the saved Widget/Seal after the Query fence to reject a concurrent revocation, reseal or config change. These rechecks complement, and never replace, the audited Query delivery, Query revision fence and independent public-count privacy approval. New synthetic unit tests cover expiration during page delivery, mid-request device grant revocation and a Widget seal changed after the Query fence. These are security-contract tests only: the CHART HTTP release flags remain `false`, no real public device playback is enabled and manual IIS acceptance is still required.

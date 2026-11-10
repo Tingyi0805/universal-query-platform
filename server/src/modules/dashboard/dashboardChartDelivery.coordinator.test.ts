@@ -77,6 +77,9 @@ type Scenario = {
   changeReview?: boolean;
   failedAudit?: boolean;
   changeWidget?: boolean;
+  changeWidgetAfterFence?: boolean;
+  revokeDeviceAfterPage?: boolean;
+  expireUserAfterPage?: boolean;
   context?: "device" | "admin-preview";
   validDeviceProof?: boolean;
   expiredUser?: boolean;
@@ -86,10 +89,16 @@ type Scenario = {
 };
 function fixture(options: Scenario = {}) {
   const isPublic = options.isPublic ?? Boolean(options.context);
+  let deviceProofCalls = 0;
   const actor: ExecutionSubject = options.context === "device"
     ? { ...viewer, context: "device", deviceId: 71,
       verifyDevice: options.validDeviceProof
-        ? async () => ({ deviceId: 71, userId: 8, tokenVersion: 1, fingerprint: "synthetic" })
+        ? async () => {
+            deviceProofCalls++;
+            if (options.revokeDeviceAfterPage && deviceProofCalls > 1)
+              throw Error("DEVICE_GRANT_REVOKED_SYNTHETIC");
+            return { deviceId: 71, userId: 8, tokenVersion: 1, fingerprint: "synthetic" };
+          }
         : undefined }
     : options.context === "admin-preview" ? { ...viewer, context: "admin-preview" }
     : isPublic ? { ...viewer, expiresAt: options.expiredUser
@@ -117,7 +126,8 @@ function fixture(options: Scenario = {}) {
       readWidget++;
       return options.denyWidget ? null : {
         dashboardId: id, id: widgetId, widgetType: "CHART",
-        revision: options.changeWidget && calls > 0
+        revision: (options.changeWidget && calls > 0) ||
+          (options.changeWidgetAfterFence && fenceReads > 1)
           ? "b".repeat(16) : "a".repeat(16), config,
       };
     },
@@ -132,6 +142,8 @@ function fixture(options: Scenario = {}) {
     },
     auditedPage: { page: async () => {
       calls++;
+      if (options.expireUserAfterPage && actor.expiresAt)
+        actor.expiresAt = Math.floor(Date.now() / 1000) - 1;
       if (options.failedAudit) throw new Error("PATIENT_AUDIT_UNAVAILABLE:SECRET");
       const provided = rows.map(row => ({
         ROOM: options.masked ? "○○○" : row.ROOM, TOTAL: row.TOTAL,
@@ -170,6 +182,7 @@ function fixture(options: Scenario = {}) {
     actor, invoke: (id = 7, wid = 88) =>
       createDormantChartCoordinator(deps)(id, wid, actor),
     counts: () => ({ readWidget, reads, calls, publicReads, fenceReads }),
+    deviceProofCalls: () => deviceProofCalls,
   };
 }
 async function refused(f: ReturnType<typeof fixture>) {
@@ -267,6 +280,30 @@ test("valid synthetic device proof still requires public review and existing aud
   });
   assert.equal(f.counts().publicReads, 2);
 });
+test("a public JWT that expires during audited page delivery cannot return chart data",async()=>{
+  const f=fixture({isPublic:true,expireUserAfterPage:true});
+  await refused(f);
+  assert.equal(f.counts().calls,1);
+  assert.equal(f.counts().publicReads,2);
+  assert.equal(f.counts().fenceReads,2);
+});
+
+test("a device revoked after first proof is rechecked after audited playback",async()=>{
+  const f=fixture({context:"device",validDeviceProof:true,revokeDeviceAfterPage:true});
+  await refused(f);
+  assert.equal(f.counts().calls,1);
+  assert.equal(f.deviceProofCalls(),2);
+  assert.equal(f.counts().fenceReads,2);
+});
+
+test("a Widget seal changed after the final Query fence cannot return stale points",async()=>{
+  const f=fixture({changeWidgetAfterFence:true});
+  await refused(f);
+  assert.equal(f.counts().calls,1);
+  assert.equal(f.counts().fenceReads,2);
+  assert.equal(f.counts().readWidget,3);
+});
+
 test("admin-preview is treated as public, never internal designer mode", async () => {
   const f = fixture({ context: "admin-preview", noReview: true });
   await refused(f);

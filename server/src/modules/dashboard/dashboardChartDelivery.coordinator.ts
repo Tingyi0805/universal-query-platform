@@ -185,7 +185,32 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
       });
       const result = await fenceOperation(dashboardId, config.dataSourceKey,
         initial.approval.queryId, initial.approval.datasetId, subject);
-      return result ?? deny();
+      if (!result) return deny();
+      // Existing Query delivery + the revision fence revalidate current
+      // permissions, but do not substitute for the HTTP token's absolute
+      // expiration or a device grant that can be revoked mid-request.
+      // Reject a result that outlives its authority while the audited page
+      // and independent public privacy review were being processed.
+      if ((context === "user" || context === "admin-preview") &&
+          (!Number.isSafeInteger(subject.expiresAt) ||
+            subject.expiresAt! * 1000 <= Date.now())) return deny();
+      if (context === "device") {
+        const finalProof = await subject.verifyDevice?.();
+        if (!finalProof || finalProof.deviceId !== subject.deviceId ||
+            finalProof.userId !== subject.userId ||
+            finalProof.tokenVersion !== subject.tokenVersion)
+          return deny();
+      }
+      // The Widget/Seal version is not a member of the Query revision fence.
+      // Re-read after its final check as well: a concurrent Widget revoke,
+      // reseal or config change must not return stale projected points.
+      const lastWidget = await deps.readSavedWidget(dashboardId, widgetId);
+      if (!lastWidget || lastWidget.widgetType !== "CHART" ||
+          lastWidget.dashboardId !== dashboardId || lastWidget.id !== widgetId ||
+          lastWidget.revision !== saved.revision ||
+          JSON.stringify(lastWidget.config) !== JSON.stringify(saved.config))
+        return deny();
+      return result;
     } catch {
       // No SQL, patient identifiers, credentials or internal error detail to
       // clients. Audit failure MUST NOT cause a fallback to unaudited data.
