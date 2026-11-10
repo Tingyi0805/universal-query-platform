@@ -92,10 +92,14 @@ async function main(){
  stage="chart-928-draft-disposable-sql";await (await import("./chart928DraftSqlAcceptance.js")).verifyChart928DraftSql(admin,config,machine);
   stage="disabled-check-not-repaired";
   await query("ALTER TABLE uqp.DashboardDisplayDevice NOCHECK CONSTRAINT CK_DashboardDevice_LifecycleTerminal");
+  assert.equal((await query(chartHistoricalFootprintSql)).recordset
+    .find(v=>v.SchemaNumber==="926")?.Assessment,"PARTIAL_OR_CONFLICT");
   await assert.rejects(query(deviceLifecycleSchemaSql));await assert.rejects(db.request().batch(ddl));
   assert.equal((await query("SELECT is_disabled FROM sys.check_constraints WHERE name='CK_DashboardDevice_LifecycleTerminal'")).recordset[0].is_disabled,true);
   await query("ALTER TABLE uqp.DashboardDisplayDevice WITH CHECK CHECK CONSTRAINT CK_DashboardDevice_LifecycleTerminal");
   stage="disabled-trigger-not-repaired";await query("DISABLE TRIGGER uqp.TR_DashboardDevice_Lifecycle ON uqp.DashboardDisplayDevice");
+  assert.equal((await query(chartHistoricalFootprintSql)).recordset
+    .find(v=>v.SchemaNumber==="926")?.Assessment,"PARTIAL_OR_CONFLICT");
   await assert.rejects(query(deviceLifecycleSchemaSql));await assert.rejects(db.request().batch(ddl));
   await query("ENABLE TRIGGER uqp.TR_DashboardDevice_Lifecycle ON uqp.DashboardDisplayDevice");await query(deviceLifecycleSchemaSql);
   stage="partial-and-wrong-schema-refused";

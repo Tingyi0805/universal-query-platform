@@ -71,10 +71,13 @@ The result independently distinguishes `catalog925.status=EXACT_MATCH`,
 `chartCanBeEnabled=false`, and
 `assessment=BLOCKED_INDEPENDENT_APPROVAL_REQUIRED` are **immutable**
 regardless of 925 status or observed 928 objects. Missing catalog visibility
-blocks exact attestation. A non-exact 925 exits with status 2; target/report
-errors exit with status 1. A success exit only means that the checked-in 925
-catalog shape matched that particular observed target; it is *not* permission
-to proceed with 928.
+blocks exact attestation. A non-exact 925, missing/partial/invisible
+926 or 927 footprint, contradictory Ledger, or unrecorded 926/927 exits with
+status 2. Target/SQL/report errors exit with status 1. Exit 0 means **only**
+that the exact 925 catalog and the minimum 926/927 footprints plus their
+Ledger entries are coherent enough for further independent review;
+it does NOT attest the exact 926/927 definitions, identify approved Signer
+or Writer principals, or grant permission to proceed with 928.
 
 CI invokes this same inspection against disposable, correctly installed 925
 catalogs and verifies the `sys.objects` count is unchanged before/after.
@@ -132,10 +135,21 @@ system-catalog metadata and the two known migration filenames** from
 
 Statuses are `ABSENT`, `PARTIAL_OR_CONFLICT`,
 `PRESENT_REQUIRES_EXACT_ATTESTATION`, or
-`BLOCKED_BASELINE_MISSING_OR_INVISIBLE`. Each result has
-`exactAttested=false` **even when** the ledger says
-`RECORDED_NOT_ATTESTED`. Missing/unreadable Ledger, malformed metadata
-or failed target identity checks block the entire command.
+`BLOCKED_BASELINE_MISSING_OR_INVISIBLE`. A "present" 926 footprint now
+requires the three named CHECK constraints to be enabled/trusted and the
+lifecycle trigger to be enabled with the expected UPDATE event. A "present"
+927 footprint requires a live primary-key index. Viewing baseline object
+definitions requires `VIEW DEFINITION`; invisible metadata cannot masquerade
+as an absent/healthy installation.
+
+Each result has `exactAttested=false` **even when** the ledger says
+`RECORDED_NOT_ATTESTED`. The additional `consistency` distinguishes
+`COHERENT_NOT_ATTESTED`, `BLOCKED_LEDGER_CATALOG_CONFLICT` (for
+example, ledger recorded but table absent, or table present without ledger)
+and `BLOCKED_PARTIAL_OR_INVISIBLE`. Missing/unreadable Ledger,
+malformed metadata or failed target identity checks block the entire
+command. Catalog/ledger conflicts or incomplete footprints make the CLI
+exit with status 2 even if the 925 exact validator itself succeeds.
 
 The reviewed original 926 trigger and CHECK definition verifier, original
 927 exact catalog verifier, database migration provenance, and human release

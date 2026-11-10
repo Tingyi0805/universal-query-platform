@@ -7,6 +7,7 @@ import {
   CHART_928_MAY_INSTALL,chart928TargetIdentitySql,
   chart928ReadonlySourceUrl,validateChart928ReadOnlyTargetInvocation,
   examineChart925ExactCatalog,inspectChart928ReadOnlyTarget,
+  hasReviewableChart928MetadataFootprint,
 } from "./chart928ReadOnlyTargetPreflight.js";
 import {displayCatalogSql,displayDdlUrl} from "../modules/dataset/datasetDisplaySchema.js";
 import {chartHistoricalFootprintSql,chartHistoricalLedgerSql}
@@ -105,6 +106,9 @@ test("925 absence and every 928 state remain independently NOT approved",async()
     assert.equal(result.schema927.ledger,"NOT_RECORDED");
     assert.equal(result.schema926.exactAttested,false);
     assert.equal(result.schema927.exactAttested,false);
+    assert.equal(result.schema926.consistency,"COHERENT_NOT_ATTESTED");
+    assert.equal(result.schema927.consistency,"COHERENT_NOT_ATTESTED");
+    assert.equal(hasReviewableChart928MetadataFootprint(result),false);
     assert.equal(result.mayInstall928,false);
     assert.equal(result.chartCanBeEnabled,false);
     assert.equal(result.assessment,"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED");
@@ -134,4 +138,33 @@ test("926/927 ledger probe cannot claim exact adoption or turn on 928",async()=>
   assert.equal(r.schema927.exactAttested,false);
   assert.equal(r.chartCanBeEnabled,false);
   assert.equal(r.mayInstall928,false);
+});
+
+test("CLI inventory signal is not equivalent to SQL Signer/Writer approval",async()=>{
+  const f=fixture();
+  const result=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  const complete={
+    ...result,
+    catalog925:{status:"EXACT_MATCH" as const,reason:"EXACT_SOURCE_MATCH"},
+    schema926:{...result.schema926,
+      status:"PRESENT_REQUIRES_EXACT_ATTESTATION" as const,
+      ledger:"RECORDED_NOT_ATTESTED" as const,
+      consistency:"COHERENT_NOT_ATTESTED" as const},
+    schema927:{...result.schema927,
+      status:"PRESENT_REQUIRES_EXACT_ATTESTATION" as const,
+      ledger:"RECORDED_NOT_ATTESTED" as const,
+      consistency:"COHERENT_NOT_ATTESTED" as const},
+  };
+  assert.equal(hasReviewableChart928MetadataFootprint(complete),true);
+  assert.equal(complete.mayInstall928,false);
+  assert.equal(complete.chartCanBeEnabled,false);
+  for(const bad of [
+    {...complete,schema926:{...complete.schema926,status:"ABSENT" as const}},
+    {...complete,schema927:{...complete.schema927,ledger:"NOT_RECORDED" as const}},
+    {...complete,schema926:{...complete.schema926,
+      consistency:"BLOCKED_LEDGER_CATALOG_CONFLICT" as const}},
+    {...complete,schema927:{...complete.schema927,
+      consistency:"BLOCKED_PARTIAL_OR_INVISIBLE" as const}},
+    {...complete,catalog925:{status:"BLOCKED_MISMATCH" as const,reason:"CATALOG_MISMATCH"}},
+  ])assert.equal(hasReviewableChart928MetadataFootprint(bad),false);
 });

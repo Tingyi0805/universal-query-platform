@@ -157,6 +157,27 @@ export async function inspectChart928ReadOnlyTarget(
   });
 }
 
+/** CLI exit 0 means only the *metadata footprint* can be reviewed next.
+ * 926/927 exact definitions, independent Signer/Writer, privacy and change
+ * control still require separate authorization. Missing/contradictory
+ * history must exit 2, never silently look like a complete preflight.
+ */
+export function hasReviewableChart928MetadataFootprint(
+  result:Chart928ReadOnlyTargetEvidence,
+):boolean{
+  return result.catalog925.status==="EXACT_MATCH"&&
+    result.schema926.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
+    result.schema927.status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
+    result.schema926.ledger==="RECORDED_NOT_ATTESTED"&&
+    result.schema927.ledger==="RECORDED_NOT_ATTESTED"&&
+    result.schema926.consistency==="COHERENT_NOT_ATTESTED"&&
+    result.schema927.consistency==="COHERENT_NOT_ATTESTED"&&
+    result.schema926.exactAttested===false&&
+    result.schema927.exactAttested===false&&
+    result.mayInstall928===false&&result.chartCanBeEnabled===false&&
+    result.assessment==="BLOCKED_INDEPENDENT_APPROVAL_REQUIRED";
+}
+
 async function main():Promise<void>{
   const expected:Chart928ExpectedTarget={
     server:process.env.UQP_CHART_PREFLIGHT_EXPECTED_SERVER??"",
@@ -169,7 +190,7 @@ async function main():Promise<void>{
   try{
     const result=await inspectChart928ReadOnlyTarget(pool,expected);
     console.log(JSON.stringify(result,null,2));
-    if(result.catalog925.status!=="EXACT_MATCH")process.exitCode=2;
+    if(!hasReviewableChart928MetadataFootprint(result))process.exitCode=2;
   }finally{await closePlatformDbPool();}
 }
 // No imports into the UQP service router; only an explicit local CLI command.

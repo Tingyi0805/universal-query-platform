@@ -7,10 +7,15 @@ export type ChartHistoricalSchemaStatus=
   "BLOCKED_BASELINE_MISSING_OR_INVISIBLE";
 export type ChartHistoricalLedgerStatus=
   "RECORDED_NOT_ATTESTED" | "NOT_RECORDED";
+export type ChartHistoricalConsistency=
+  "COHERENT_NOT_ATTESTED" |
+  "BLOCKED_LEDGER_CATALOG_CONFLICT" |
+  "BLOCKED_PARTIAL_OR_INVISIBLE";
 export type ChartHistoricalFootprint=Readonly<{
   schema:926|927;
   status:ChartHistoricalSchemaStatus;
   ledger:ChartHistoricalLedgerStatus;
+  consistency:ChartHistoricalConsistency;
   exactAttested:false;
 }>;
 
@@ -20,6 +25,7 @@ export const chartHistoricalFootprintSql=String.raw`
 SELECT N'926' AS SchemaNumber,
  CASE
   WHEN OBJECT_ID(N'uqp.DashboardDisplayDevice',N'U') IS NULL
+   OR COALESCE(HAS_PERMS_BY_NAME(N'uqp.DashboardDisplayDevice',N'OBJECT',N'VIEW DEFINITION'),0)<>1
     THEN N'BLOCKED_BASELINE_MISSING_OR_INVISIBLE'
   WHEN COL_LENGTH(N'uqp.DashboardDisplayDevice',N'SuspendedAtUtc') IS NULL
    AND COL_LENGTH(N'uqp.DashboardDisplayDevice',N'ReenrollmentRequired') IS NULL
@@ -31,15 +37,21 @@ SELECT N'926' AS SchemaNumber,
   WHEN COL_LENGTH(N'uqp.DashboardDisplayDevice',N'SuspendedAtUtc') IS NOT NULL
    AND COL_LENGTH(N'uqp.DashboardDisplayDevice',N'ReenrollmentRequired') IS NOT NULL
    AND (SELECT COUNT_BIG(*) FROM sys.check_constraints WHERE parent_object_id=OBJECT_ID(N'uqp.DashboardDisplayDevice',N'U')
-    AND name IN (N'CK_DashboardDevice_LifecycleTerminal',N'CK_DashboardDevice_LifecycleSuspended',N'CK_DashboardDevice_LifecycleEnrollment'))=3
-   AND EXISTS(SELECT 1 FROM sys.triggers WHERE parent_id=OBJECT_ID(N'uqp.DashboardDisplayDevice',N'U')
-    AND name=N'TR_DashboardDevice_Lifecycle')
+    AND name IN (N'CK_DashboardDevice_LifecycleTerminal',N'CK_DashboardDevice_LifecycleSuspended',N'CK_DashboardDevice_LifecycleEnrollment')
+    AND is_disabled=0 AND is_not_trusted=0 AND is_not_for_replication=0)=3
+   AND EXISTS(SELECT 1 FROM sys.triggers t WHERE t.parent_id=OBJECT_ID(N'uqp.DashboardDisplayDevice',N'U')
+    AND t.name=N'TR_DashboardDevice_Lifecycle'
+    AND t.is_disabled=0 AND t.is_instead_of_trigger=0 AND t.is_not_for_replication=0
+    AND (SELECT COUNT(*) FROM sys.trigger_events e WHERE e.object_id=t.object_id)=1
+    AND EXISTS(SELECT 1 FROM sys.trigger_events e WHERE e.object_id=t.object_id
+      AND e.type_desc=N'UPDATE'))
     THEN N'PRESENT_REQUIRES_EXACT_ATTESTATION'
   ELSE N'PARTIAL_OR_CONFLICT' END AS Assessment
 UNION ALL
 SELECT N'927' AS SchemaNumber,
  CASE
   WHEN OBJECT_ID(N'uqp.SharedWorkstation',N'U') IS NULL
+   OR COALESCE(HAS_PERMS_BY_NAME(N'uqp.SharedWorkstation',N'OBJECT',N'VIEW DEFINITION'),0)<>1
     THEN N'BLOCKED_BASELINE_MISSING_OR_INVISIBLE'
   WHEN COL_LENGTH(N'uqp.SharedWorkstation',N'SwitchVersion') IS NULL
    AND OBJECT_ID(N'uqp.WorkstationPinAttemptBucket',N'U') IS NULL
@@ -47,7 +59,8 @@ SELECT N'927' AS SchemaNumber,
   WHEN COL_LENGTH(N'uqp.SharedWorkstation',N'SwitchVersion') IS NOT NULL
    AND OBJECT_ID(N'uqp.WorkstationPinAttemptBucket',N'U') IS NOT NULL
    AND EXISTS(SELECT 1 FROM sys.indexes WHERE object_id=OBJECT_ID(N'uqp.WorkstationPinAttemptBucket',N'U')
-    AND name=N'PK_WorkstationPinAttemptBucket')
+    AND name=N'PK_WorkstationPinAttemptBucket'
+    AND is_disabled=0 AND is_unique=1 AND is_primary_key=1)
     THEN N'PRESENT_REQUIRES_EXACT_ATTESTATION'
   ELSE N'PARTIAL_OR_CONFLICT' END AS Assessment
 ORDER BY SchemaNumber;`;
@@ -93,12 +106,22 @@ export function parseChartHistoricalFootprints(
        recorded.has(file))throw Error("CHART_HISTORICAL_LEDGER_INVALID");
     recorded.add(file);
   }
-  const make=(schema:926|927):ChartHistoricalFootprint=>Object.freeze({
-    schema,status:known.get(schema)!,
-    ledger:recorded.has(schema===926?
+  const make=(schema:926|927):ChartHistoricalFootprint=>{
+    const status=known.get(schema)!;
+    const ledger:ChartHistoricalLedgerStatus=recorded.has(schema===926?
       "926_dashboard_device_lifecycle.sql":"927_workstation_pin_runtime.sql")
-      ?"RECORDED_NOT_ATTESTED" as const:"NOT_RECORDED" as const,
-    exactAttested:false as const,
-  });
+      ?"RECORDED_NOT_ATTESTED":"NOT_RECORDED";
+    const consistency:ChartHistoricalConsistency=
+      status==="PARTIAL_OR_CONFLICT"||
+      status==="BLOCKED_BASELINE_MISSING_OR_INVISIBLE"
+        ?"BLOCKED_PARTIAL_OR_INVISIBLE"
+        :(status==="ABSENT"&&ledger==="NOT_RECORDED")||
+         (status==="PRESENT_REQUIRES_EXACT_ATTESTATION"&&
+          ledger==="RECORDED_NOT_ATTESTED")
+          ?"COHERENT_NOT_ATTESTED":"BLOCKED_LEDGER_CATALOG_CONFLICT";
+    return Object.freeze({
+      schema,status,ledger,consistency,exactAttested:false as const,
+    });
+  };
   return Object.freeze({schema926:make(926),schema927:make(927)});
 }
