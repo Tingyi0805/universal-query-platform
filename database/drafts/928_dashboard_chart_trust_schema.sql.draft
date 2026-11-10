@@ -2,6 +2,10 @@
 -- DO NOT MOVE TO database/migrations, db:migrate or production installer
 -- without independent approval, 925 exact schema attestation and 2B-13 writer integration.
 -- Validates isolated SQL Server 2019/2022 only; this does NOT enable a CHART.
+-- Enforce the disposable boundary IN SQL before opening a transaction or DDL.
+-- This draft is never an authorized production migration.
+IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19
+ THROW 51928,'CHART_928_DISPOSABLE_ONLY',1;
 SET XACT_ABORT ON;
 DECLARE @ownsTransaction bit=CASE WHEN @@TRANCOUNT=0 THEN 1 ELSE 0 END;
 BEGIN TRY
