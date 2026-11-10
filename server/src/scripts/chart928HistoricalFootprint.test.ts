@@ -17,7 +17,10 @@ test("926/927 probe is static read-only metadata, never health or approval",()=>
  assert.match(chartHistoricalFootprintSql,/is_not_trusted=0/);
  assert.match(chartHistoricalFootprintSql,/is_disabled=0/);
  assert.match(chartHistoricalFootprintSql,/is_primary_key=1/);
- assert.doesNotMatch(sql,/\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|MERGE|EXEC|GRANT|DENY|TRUNCATE)\b/i);
+ // UPDATE is a harmless sys.trigger_events event-name literal here.
+ // Strip SQL string literals before scanning for executable write verbs.
+ const statementsOnly=sql.replace(/N?'(?:''|[^'])*'/g,"''");
+ assert.doesNotMatch(statementsOnly,/\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|MERGE|EXEC|GRANT|DENY|TRUNCATE)\b/i);
  assert.doesNotMatch(sql,/PATIENT|PINHASH|TOKENHASH|CHART_CAN_ENABLE|APPROVED/i);
 });
 test("provenance is *never* exact attestation even when both objects and ledger exist",()=>{
