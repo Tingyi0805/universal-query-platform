@@ -25,7 +25,7 @@ const pointSchema = z.object({
     .refine(n => Math.abs(n) <= 1_000_000_000_000 &&
       (!Number.isInteger(n) || Number.isSafeInteger(n))),
 }).strict();
-const projectionSchema = z.object({
+export const projectionSchema = z.object({
   chartType: z.enum(["BAR", "LINE", "PIE"]),
   showLegend: z.boolean(),
   points: z.array(pointSchema).max(50),

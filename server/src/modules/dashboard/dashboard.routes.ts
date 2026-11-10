@@ -16,6 +16,10 @@ import { createQueryModeRouter } from "./dashboardQueryMode.routes.js";
 import { createQueryModeService } from "./dashboardQueryMode.service.js";
 import { queryModeStore, readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
 import { createQueryDeviceRouter } from "./dashboardQueryDevice.routes.js";
+import {
+  CHART_DEVICE_PROJECTION_HTTP_RELEASE_APPROVED,
+  createChartDeviceProjectionRouter,
+} from "./dashboardChartDeviceProjection.routes.js";
 import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
 // Issue #89: production CHART projection adapter remains hard-disabled until
@@ -212,6 +216,23 @@ const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPla
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
   execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 
+// The existing SQL repositories and audited Query delivery are shared by
+// the two separate, permanently disabled designer and device coordinators.
+// Public-device authorization MUST use its own Token/IP and privacy gate.
+const chartTrustReaders = createDormantChartTrustReaders();
+const chartProjectionFor = (enabled:()=>boolean) => createDormantChartCoordinator({
+  enabled,
+  readSavedWidget: chartTrustReaders.readSavedWidget,
+  createFactsReader: createDormantSqlChartFactsReader,
+  auditedPage: queryExecution,
+  readFence: readChartRevisionFence,
+  readPublicReview: chartTrustReaders.readPublicReview,
+});
+const trustedChartProjection = chartProjectionFor(
+  () => CHART_PROJECTION_HTTP_RELEASE_APPROVED);
+const trustedDeviceChartProjection = chartProjectionFor(
+  () => CHART_DEVICE_PROJECTION_HTTP_RELEASE_APPROVED);
+
 const deviceEnrollment = createDeviceEnrollmentService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT && env.DASHBOARD_QUERY_DEVICE_PLAYBACK);
 export const dashboardRouter = Router();
 dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect, enroll: deviceEnrollment.enroll}));
@@ -312,22 +333,19 @@ dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, ch
   getDataset, getDatasetSensitivitySnapshot: getDashboardSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
   auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
+// Device CHART projection is a *separate* pre-JWT route: it never accepts a
+// designer's JWT as device authority. Its gate is hard OFF until reviewed.
+dashboardRouter.use(createChartDeviceProjectionRouter({
+  approved: () => CHART_DEVICE_PROJECTION_HTTP_RELEASE_APPROVED,
+  mode: readDashboardQueryMode,
+  checkDevice: checkDashboardDisplayDevice,
+  project: trustedDeviceChartProjection,
+}));
 dashboardRouter.use(authenticateJwt);
 dashboardRouter.use(createDrilldownRouter());
 dashboardRouter.use("/:id/query-sources/v1/layout", requirePermission("DESIGN_QUERY"), validateDrillLayout);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
-// Real server repositories and audited Query-only delivery are bound here.
-// Both release gates remain false: no CHART SQL reads, live data or DML occur.
-const chartTrustReaders = createDormantChartTrustReaders();
-const trustedChartProjection = createDormantChartCoordinator({
-  enabled: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
-  readSavedWidget: chartTrustReaders.readSavedWidget,
-  createFactsReader: createDormantSqlChartFactsReader,
-  auditedPage: queryExecution,
-  readFence: readChartRevisionFence,
-  readPublicReview: chartTrustReaders.readPublicReview,
-});
 dashboardRouter.use(createChartProjectionRouter({
   approved: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
   project: trustedChartProjection,
