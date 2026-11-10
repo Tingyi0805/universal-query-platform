@@ -88,12 +88,13 @@ export function confirmsNativeChartSavedReadback(
      value.widgetId!==receipt.widgetId||
      value.sealRevision!==receipt.sealRevision||
      !/^[a-f0-9]{16}$/.test(receipt.sealRevision))return false;
+  const storedConfig=value.config as Record<string,unknown>;
   const keys=[
     "version","chartType","dataSourceKey","categoryColumn","valueColumn",
     "valueMode","maxPoints","showLegend",
   ] as const;
-  if(Object.keys(value.config).sort().join("|")!==[...keys].sort().join("|")||
+  if(Object.keys(storedConfig).sort().join("|")!==[...keys].sort().join("|")||
      Object.keys(config).sort().join("|")!==[...keys].sort().join("|"))
     return false;
-  return keys.every(key=>Object.is(value.config[key],config[key]));
+  return keys.every(key=>Object.is(storedConfig[key],config[key]));
 }
