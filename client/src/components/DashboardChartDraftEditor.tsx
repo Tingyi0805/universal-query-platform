@@ -19,8 +19,14 @@ const previewFonts=[
  {label:"Arial",value:"Arial, sans-serif"},
  {label:"系統預設",value:"system-ui"},
 ];
-export function DashboardChartDraftEditor({canvasWidth,canvasHeight,sourceKeys}:{
+export function DashboardChartDraftEditor({
+ canvasWidth,canvasHeight,sourceKeys,onCreate,
+ nativeCreateAvailable=false,createBusy=false,createBlockedReason,
+}:{
  canvasWidth:number;canvasHeight:number;sourceKeys:readonly string[];
+ onCreate?:(draft:ChartDraft)=>Promise<void>;
+ nativeCreateAvailable?:boolean;createBusy?:boolean;
+ createBlockedReason?:string;
 }){
  const [expanded,setExpanded]=useState(false);
  const [draft,setDraft]=useState<ChartDraft>(newChartDraft);
@@ -42,7 +48,7 @@ export function DashboardChartDraftEditor({canvasWidth,canvasHeight,sourceKeys}:
      onClick={()=>setExpanded(v=>!v)}>＋ 圖表設計草稿（僅示意）</button>
    {expanded&&<div className="chart-draft-body">
      <p className="chart-draft-warning" role="status">
-       2B-14 隔離草稿：只使用合成資料。此處設定不會儲存、傳送 API、寫入 Widget 或出現在播放頁。
+       圖表預覽只使用合成資料，不會查詢患者資料。正式新增只會提交設定與位置，且必須由伺服器專用 CHART API 核准。
      </p>
      <label>圖表類型
        <select value={config.chartType} onChange={e=>configPatch({chartType:e.target.value as DraftChartType})}>
@@ -116,7 +122,17 @@ export function DashboardChartDraftEditor({canvasWidth,canvasHeight,sourceKeys}:
          ariaLabel={labels[config.chartType]+"，僅合成資料示意"} typography={typography}/>
      </div>
      {problems.length>0&&<p role="alert">{problems.join("；")}</p>}
-     <p className="chart-draft-notice">圖表存檔／真實資料預覽／全螢幕播放，仍須完成 2B-15 的後端授權與安全交付。此草稿不在「儲存版面」範圍內。</p>
+     <p className="chart-draft-notice">此草稿不在舊版「儲存版面」範圍內。真實資料、正式儲存與播放各自必須通過伺服器授權與隱私稽核。</p>
+     {onCreate && <>
+       <button type="button" className="chart-draft-reset"
+         disabled={!nativeCreateAvailable||createBusy||problems.length>0}
+         onClick={()=>{void onCreate(current);}}>
+         {createBusy?"新增圖表驗證中…":"正式新增 CHART 至此版型"}
+       </button>
+       {!nativeCreateAvailable && <p role="status" className="chart-draft-notice">
+         {createBlockedReason??"正式 CHART 建立服務尚未核准。可保留此處設定作為畫面示意，但不會寫入資料庫。"}
+       </p>}
+     </>}
      <button type="button" className="chart-draft-reset" onClick={()=>{setDraft(newChartDraft());setTypography(defaultTypography);}}>重設示意設定</button>
      <span className="chart-draft-hidden-gate" data-chart-persistence={String(chartDraftPersistenceEnabled)} />
    </div>}

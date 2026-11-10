@@ -1,4 +1,7 @@
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
+import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
+  hasCreatedSealedChartInLayout} from "../dashboard/nativeChartCreate";
+import type {ChartDraft} from "../dashboard/chartDraft";
 import { mayRequestSealedChartProjection } from "../dashboard/nativeChartPlayback";
 import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
 import { DashboardChartDraftEditor } from "../components/DashboardChartDraftEditor";
@@ -184,6 +187,24 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [loadedSealedChartPresent,setLoadedSealedChartPresent]=useState(false);
   const { accessToken, hasPermission } = useAuth();
   const [chartOnline, setChartOnline] = useState(() => navigator.onLine);
+  const [nativeChartCreateCapable,setNativeChartCreateCapable]=useState(false);
+  const [nativeChartCreateBusy,setNativeChartCreateBusy]=useState(false);
+  const nativeChartCreateInFlight=useRef(false);
+  const [layoutWriteRequiresReload,setLayoutWriteRequiresReload]=useState(false);
+  useEffect(()=>{
+    setNativeChartCreateCapable(false);
+    if(!active||embedded||!accessToken||
+      !Number.isSafeInteger(dashboardId)||dashboardId<=0)return;
+    let stopped=false;
+    void apiRequest<{canCreate:boolean}>(
+      `/dashboards/${dashboardId}/charts/v1/capabilities`,{},accessToken)
+      .then(value=>{
+        if(!stopped&&value!==null&&
+          Object.keys(value).sort().join("|")==="canCreate"&&
+          value.canCreate===true)setNativeChartCreateCapable(true);
+      }).catch(()=>{if(!stopped)setNativeChartCreateCapable(false);});
+    return ()=>{stopped=true;};
+  },[active,embedded,accessToken,dashboardId]);
   useEffect(() => {
     const update = () => setChartOnline(navigator.onLine);
     window.addEventListener("online", update);
@@ -197,6 +218,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [drillPending,setDrillPending]=useState(false);
   const [rootQueryId,setRootQueryId]=useState(0);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
+  const profilesLatestRef=useRef(profiles);
+  profilesLatestRef.current=profiles;
   const [activeProfileKey, setActiveProfileKey] = useState("");
   const [selectedWidgetKey, setSelectedWidgetKey] = useState("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -296,6 +319,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       const loadedProfiles = layoutResult.profiles.map(withClientKeys);
       setLoadedSealedChartPresent(hasSealedChartWidgets(loadedProfiles));
       setSavedProfiles(JSON.stringify(loadedProfiles));setProfiles(loadedProfiles);
+      setLayoutWriteRequiresReload(false);
       setActiveProfileKey(loadedProfiles.find(profile => profile.isDefault)?.clientKey ?? loadedProfiles[0]?.clientKey ?? "");
       if (configuration) {
         setRootQueryId(configuration.primary.queryDefinitionId ?? 0);
@@ -717,10 +741,73 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   const chartSaveBlocked = loadedSealedChartPresent || hasSealedChartWidgets(profiles);
+  const nativeChartCreateAllowed=nativeChartCreateCapable &&
+    !nativeChartCreateBusy && !saving && active && !embedded &&
+    Boolean(activeProfile?.id && Number.isSafeInteger(activeProfile.id)) &&
+    sourceVersion!==undefined && !layoutWriteRequiresReload &&
+    savedProfiles!==null && JSON.stringify(profiles)===savedProfiles &&
+    hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY");
+  const chartCreateBlockedReason=!nativeChartCreateCapable
+    ?"正式 CHART 建立服務尚未核准，現有草稿僅用於合成資料示意。"
+    :layoutWriteRequiresReload
+      ?"此版型最近曾以舊版方式儲存；請重新載入，以取得最新的 Profile ID。"
+      :savedProfiles===null||JSON.stringify(profiles)!==savedProfiles
+        ?"版型有尚未儲存的修改；請先儲存，再重新載入版型。"
+        :"必須具備設計與執行權限、有效來源版本以及已儲存的版型，才能新增受控 CHART.";
   const unavailableReferences = [...new Set(profiles.flatMap(profile => profile.widgets
     .filter(widget => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
     .map(widget => String(widget.config.dataSourceKey ?? "PRIMARY")))
     .filter(key => key !== "PRIMARY" && !supplementalSources.some(source => source.sourceKey === key && source.isEnabled && source.queryDefinitionId !== null)))];
+
+  async function createNativeChart(draft:ChartDraft):Promise<void>{
+    if(nativeChartCreateInFlight.current||!activeProfile)return;
+    if(!nativeChartCreateAllowed){
+      setError(chartCreateBlockedReason);return;
+    }
+    const profileId=activeProfile.id??0;
+    const request=buildNativeChartCreateBody(draft,{
+      dashboardId,profileId,
+      canvasWidth:activeProfile.canvasWidth,canvasHeight:activeProfile.canvasHeight,
+      allowedSources:["PRIMARY",...supplementalSources.filter(s=>
+        s.isEnabled&&s.queryDefinitionId!==null).map(s=>s.sourceKey)],
+      canCreate:nativeChartCreateCapable,
+      hasDesignPermission:hasPermission("DESIGN_QUERY"),
+      hasExecutePermission:hasPermission("EXECUTE_QUERY"),
+      hasSourceVersion:sourceVersion!==undefined,
+      layoutUnmodified:savedProfiles!==null&&JSON.stringify(profiles)===savedProfiles,
+      profileIdsCurrent:!layoutWriteRequiresReload,
+    },crypto.randomUUID());
+    if(!request){setError("圖表設定、來源或版型狀態不符合正式新增條件。");return;}
+    nativeChartCreateInFlight.current=true;
+    setNativeChartCreateBusy(true);setError("");setNotice("");
+    const sequence=loadSequence.current;
+    try{
+      const value=await apiRequest<unknown>(
+        `/dashboards/${dashboardId}/charts/v1`,
+        {method:"POST",body:JSON.stringify(request)},accessToken);
+      const receipt=parseNativeChartCreateReceipt(value);
+      if(!receipt)throw Error("CHART_CREATE_RECEIPT_INVALID");
+      const readback=await apiRequest<unknown>(
+        `/dashboards/${dashboardId}/layout`,{},accessToken);
+      if(!hasCreatedSealedChartInLayout(readback,profileId,
+        receipt.widgetId,request.placement))
+        throw Error("CHART_READBACK_NOT_CONFIRMED");
+      if(sequence!==loadSequence.current||
+        JSON.stringify(profilesLatestRef.current)!==savedProfiles){
+        setError("圖表建立的伺服器版型已確認，但設計狀態在傳送期間變更；請先保存其他草稿，再手動重新載入。");
+        return;
+      }
+      await load();
+      setNotice("已確認伺服器儲存 CHART，並重新載入版型。現有舊版儲存 API 不可覆寫受控圖表。");
+    }catch{
+      // Unknown POST outcome must never be auto-retried; a sealed Chart
+      // may already have committed with the same requestId in SQL.
+      setError("正式 CHART 建立未獲確認或服務尚未開放。請先重新載入版型查核，不要直接重複提交。");
+    }finally{
+      nativeChartCreateInFlight.current=false;
+      setNativeChartCreateBusy(false);
+    }
+  }
 
   async function saveLayout() {
     if (saving) return;
@@ -750,7 +837,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       const result = await apiRequest<{ version: string }>(`/dashboards/${dashboardId}/query-sources/v1/layout`, { method: "PUT", body: JSON.stringify({ ...payload, expectedVersion: sourceVersion }) }, accessToken);
       if (sequence !== loadSequence.current) return;
       if (!/^[a-f0-9]{64}$/.test(result.version)) throw new Error("RESPONSE_INVALID");
-      setSavedProfiles(JSON.stringify(profiles));setSourceVersion(result.version); setNotice("Dashboard 版面已儲存。");
+      setSavedProfiles(JSON.stringify(profiles));setSourceVersion(result.version);
+      // Legacy PUT recreates profiles: locally retained IDs are now stale.
+      setLayoutWriteRequiresReload(true);
+      setNotice("Dashboard 版面已儲存。");
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "layout" } }));
     } catch (e) {
       setSourceVersion(undefined); setError(managementError(e));
@@ -934,6 +1024,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
             canvasWidth={activeProfile.canvasWidth}
             canvasHeight={activeProfile.canvasHeight}
             sourceKeys={supplementalSources.filter(s=>s.isEnabled&&s.queryDefinitionId!==null).map(s=>s.sourceKey)}
+            onCreate={createNativeChart}
+            nativeCreateAvailable={nativeChartCreateAllowed}
+            createBusy={nativeChartCreateBusy}
+            createBlockedReason={chartCreateBlockedReason}
           />}
         </aside>
 

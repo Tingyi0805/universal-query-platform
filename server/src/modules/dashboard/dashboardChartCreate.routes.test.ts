@@ -74,8 +74,10 @@ async function fixture(
     fetch(root+path,{method:"POST",headers:{
       Authorization:"Bearer "+token,"Content-Type":"application/json",
     },body:JSON.stringify(payload)});
+  const capabilities = (token=valid,path="/7/charts/v1/capabilities")=>
+    fetch(root+path,{headers:{Authorization:"Bearer "+token}});
   return {
-    send, valid, invalid, plans, forwardedHeaders,
+    send, capabilities, valid, invalid, plans, forwardedHeaders,
     session: (next:Session)=>{session=next;},
     close: async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));env.JWT_SECRET=previous;},
   };
@@ -91,6 +93,27 @@ test("CHART create route remains hard-OFF with zero SQL/Writer invocations",asyn
       assert.equal(result.headers.get("cache-control"),"no-store, max-age=0");
       assert.deepEqual(await result.json(),{error:{code:"CHART_NOT_AVAILABLE"}});
     }
+    assert.equal(f.plans.length,0);
+    const available=await f.capabilities();
+    assert.equal(available.status,200);
+    assert.equal(available.headers.get("cache-control"),"no-store, max-age=0");
+    assert.deepEqual(await available.json(),{canCreate:false});
+    assert.equal(f.plans.length,0);
+  }finally{await f.close();}
+});
+
+test("CHART UI capability is advisory, JWT-bound and never invokes SQL",async()=>{
+  const f=await fixture(true);
+  try{
+    assert.deepEqual(await (await f.capabilities()).json(),{canCreate:true});
+    f.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
+    assert.deepEqual(await (await f.capabilities()).json(),{canCreate:false});
+    f.session({isActive:true,tokenVersion:3,permissions:["EXECUTE_QUERY"]});
+    assert.deepEqual(await (await f.capabilities()).json(),{canCreate:false});
+    assert.equal((await f.capabilities(f.invalid)).status,401);
+    f.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]});
+    assert.equal((await f.capabilities(f.valid,"/0/charts/v1/capabilities")).status,400);
+    assert.equal((await f.capabilities(f.valid,"/7/charts/v1/capabilities?approved=true")).status,400);
     assert.equal(f.plans.length,0);
   }finally{await f.close();}
 });

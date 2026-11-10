@@ -33,6 +33,20 @@ export type ChartCreateRouterDependencies = Readonly<{
 
 export function createChartCreateRouter(deps: ChartCreateRouterDependencies) {
   const router = Router();
+  // Read-only UI discovery; NEVER an authorization for the subsequent POST.
+  // In production the immutable create gate stays OFF and this endpoint
+  // always returns canCreate=false without entering SQL Writer or Signer.
+  router.get("/:id/charts/v1/capabilities", (req,res) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    const id=positiveId.safeParse(req.params.id);
+    if(!id.success || Object.keys(req.query).length!==0) {
+      res.status(400).json({error:{code:"VALIDATION_ERROR"}});
+      return;
+    }
+    res.json({canCreate: deps.approved()===true &&
+      readVerifiedChartExecuteActor(req)!==null});
+  });
   router.post("/:id/charts/v1",
     (req, res, next) => {
       res.setHeader("Cache-Control", "no-store, max-age=0");

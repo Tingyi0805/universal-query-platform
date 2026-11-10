@@ -82,3 +82,36 @@ No output from CI or from the standalone checker substitutes for required
 human review of 925/926/927 evidence, 928 transaction source, signer and
 separate SQL identities, privacy review or authorized deployment.
 
+## Native Dashboard CHART CREATE UX (Issue #89, draft)
+
+The original Layout Designer now asks the authenticated server route
+`GET /api/dashboards/:id/charts/v1/capabilities` whether the dedicated CHART
+CREATE capability is available. Its release flag remains **hard OFF**:
+`canCreate=false` is an informational response, not an approval or SQL
+preflight, and the same server independently enforces the POST release gate.
+
+The existing chart draft editor uses only synthetic preview points. If the
+future independently approved server explicitly returns `canCreate=true`,
+a signed-in designer may submit only `profileId`, a fresh
+`requestId`, validated CHART config and geometry through
+`POST /api/dashboards/:id/charts/v1`. The browser never supplies ActorId,
+grants, private signing keys, SQL text, raw Query rows or privacy approval.
+
+Creation is denied in the UI unless the original layout is unchanged, the
+profile ID was reloaded from the server, the source/version remains valid,
+and both DESIGN_QUERY and EXECUTE_QUERY are present. A legacy layout PUT
+recreates profile identities; after that write, the CHART create button
+remains disabled until an explicit reload.
+
+A successful HTTP 201 alone does not end the operation: the designer checks
+the strict WidgetId/SealRevision/AuditLogId receipt, reads the server layout
+again, verifies the created CHART ID/profile/placement and only then reloads.
+Uncertain or failed responses are not automatically retried to avoid duplicate
+SQL-owned seals. The legacy delete-and-recreate layout API continues blocking
+a Dashboard containing saved CHART. No CHART field update/delete/move, public
+device playback, SQL 928 installation or release approval is implied.
+
+Unit tests and browser HTTP-mocked tests prove the *native* UI's fail-closed,
+create-and-readback contract. They are not evidence that a hospital SQL Writer,
+Signer or authorized clinical Query was exercised.
+
