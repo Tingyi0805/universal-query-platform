@@ -7,6 +7,7 @@ import {
  mayRequestSealedDeviceChartProjection,sealedDeviceChartProjectionPath,
  sealedDeviceChartProjectionHeaders,
  mayRequestSealedUserChartProjection,sealedUserChartProjectionPath,
+ chartProjectionReleaseUnavailable,
  type NativeChartPlaybackContext,
 } from "./nativeChartPlayback";
 
@@ -118,4 +119,14 @@ test("ordinary signed-in QUERY_ONLY user CHART has an isolated, compiled-OFF pat
     {accessTokenPresent:false},{canViewQuery:false},
     {canExecuteQuery:false},{widgetType:"TABLE"},{widgetId:0},
   ])assert.equal(mayRequestSealedUserChartProjection({...session,...patch}),false);
+});
+
+test("server disabled CHART release is terminal but temporary delivery failures are retryable",()=>{
+  assert.equal(chartProjectionReleaseUnavailable(
+    Object.assign(new Error("not available"),{code:"CHART_NOT_AVAILABLE"})),true);
+  for(const error of [
+    Object.assign(new Error("temporary"),{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}),
+    Object.assign(new Error("timeout"),{code:"NETWORK_TIMEOUT"}),
+    new Error("CHART_NOT_AVAILABLE"),null,undefined,{},123,
+  ])assert.equal(chartProjectionReleaseUnavailable(error),false);
 });

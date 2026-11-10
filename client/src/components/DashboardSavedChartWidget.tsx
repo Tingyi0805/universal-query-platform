@@ -8,6 +8,7 @@ import {
   sealedChartProjectionPath,sealedDeviceChartProjectionPath,
   sealedDeviceChartProjectionHeaders,sealedUserChartProjectionPath,
   CHART_USER_PLAYBACK_RELEASE_APPROVED,
+  chartProjectionReleaseUnavailable,
 } from "../dashboard/nativeChartPlayback";
 import {DashboardChartProjection} from "./DashboardChartProjection";
 import "./DashboardSavedChartWidget.css";
@@ -29,6 +30,12 @@ type Props=Readonly<{
   expectedDeviceId?:number|null;
 }>;
 
+type DisabledIdentity=Readonly<{
+  dashboardId:number;widgetId:number;
+  mode:"device"|"user"|"designer";accessToken:string|null;
+  expectedDeviceId:number|null;
+}>;
+
 type Loaded=Readonly<{
   dashboardId:number;widgetId:number;accessToken:string;
   refreshKey:string;authorizationGeneration:number;recheckEpoch:number;
@@ -48,6 +55,10 @@ export function DashboardSavedChartWidget({
   deviceMode=false,userPlayback=false,deviceToken=null,expectedDeviceId=null,
 }:Props){
   const [loaded,setLoaded]=useState<Loaded|null>(null);
+  // A 404 CHART_NOT_AVAILABLE is a release decision, not a transient
+  // 503. Stop repeatedly polling the same disabled endpoint until the
+  // selected actor/device or saved Widget identity actually changes.
+  const [unavailable,setUnavailable]=useState<DisabledIdentity|null>(null);
   const [recheckEpoch,setRecheckEpoch]=useState(0);
   const authorizedPreviously=useRef(false);
   const authorizationGeneration=useRef(0);
@@ -60,7 +71,14 @@ export function DashboardSavedChartWidget({
     ? sealedDeviceChartProjectionHeaders(deviceToken,expectedDeviceId)
     : null;
   const selectedToken=deviceMode?deviceToken:accessToken;
-  const eligible=authorized&&Boolean(refreshKey)&&Boolean(path)&&
+  const mode=deviceMode?"device":userPlayback?"user":"designer";
+  const releaseUnavailable=unavailable!==null&&unavailable.dashboardId===dashboardId&&
+    unavailable.widgetId===widgetId&&
+    unavailable.mode===mode&&
+    unavailable.accessToken===selectedToken&&
+    unavailable.expectedDeviceId===(expectedDeviceId??null);
+  const eligible=authorized&&!releaseUnavailable&&
+    Boolean(refreshKey)&&Boolean(path)&&
     !(deviceMode&&userPlayback)&&
     (deviceMode
       ? CHART_DEVICE_PLAYBACK_RELEASE_APPROVED && deviceHeaders!==null
@@ -110,7 +128,16 @@ export function DashboardSavedChartWidget({
         setLoaded({dashboardId,widgetId,accessToken:selectedToken,refreshKey,
           deviceMode,userPlayback,expectedDeviceId:expectedDeviceId??null,
           authorizationGeneration:generation,recheckEpoch,projection,failed:projection===null});
-      }).catch(()=>{
+      }).catch(error=>{
+        if(currentRequest&&!controller.signal.aborted&&
+           authorizedPreviously.current&&generation===authorizationGeneration.current&&
+           chartProjectionReleaseUnavailable(error)){
+          setUnavailable({
+            dashboardId,widgetId,mode,accessToken:selectedToken,
+            expectedDeviceId:expectedDeviceId??null,
+          });
+          return;
+        }
         if(currentRequest&&!controller.signal.aborted&&
            authorizedPreviously.current&&generation===authorizationGeneration.current)
           setLoaded({dashboardId,widgetId,accessToken:selectedToken,refreshKey,
@@ -119,7 +146,7 @@ export function DashboardSavedChartWidget({
       });
     return ()=>{currentRequest=false;controller.abort();};
   },[eligible,dashboardId,widgetId,selectedToken,refreshKey,recheckEpoch,
-    deviceMode,userPlayback,expectedDeviceId,path,accessToken]);
+    deviceMode,userPlayback,expectedDeviceId,path,accessToken,mode]);
 
   if(!eligible)return <div className="dashboard-saved-chart-denied" role="status">
     圖表尚未獲准在此播放模式顯示

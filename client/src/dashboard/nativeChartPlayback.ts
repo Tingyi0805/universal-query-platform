@@ -120,3 +120,12 @@ export function mayRequestSealedUserChartProjection(
     context.canExecuteQuery&&
     sealedUserChartProjectionPath(context.dashboardId,context.widgetId)!==null;
 }
+
+/** A feature release 404 is terminal for the current playback identity.
+ * Do not poll the disabled endpoint every 30 seconds. Other failures,
+ * including transient 503/timeout, keep the normal revalidation policy.
+ */
+export function chartProjectionReleaseUnavailable(error:unknown):boolean{
+  return typeof error==="object"&&error!==null&&
+    (error as {code?:unknown}).code==="CHART_NOT_AVAILABLE";
+}
