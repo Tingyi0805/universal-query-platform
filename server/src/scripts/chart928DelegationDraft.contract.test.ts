@@ -54,6 +54,28 @@ test("signed Writer denies case-insensitive SQL SourceKey aliases before grant c
  assert(source.includes("UPPER(@SourceKey)=N''PRIMARY''"));
 });
 
+test("signed Writer rechecks live Query ACL and source in its own transaction before grant use",async()=>{
+ const source=await loadDraft();
+ const tx=source.indexOf("BEGIN TRANSACTION;");
+ const query=source.indexOf("CHART_DRAFT_QUERY_SCOPE_REVOKED");
+ const lock=source.indexOf("SELECT 1 FROM uqp.ChartActorDelegationDisposable WITH(UPDLOCK,HOLDLOCK)");
+ assert(tx>=0 && query>tx && lock>query,
+   "Query policy check must run inside Writer transaction, before consuming grant");
+ for(const clause of [
+   "d.QueryMode=N''QUERY_ONLY''","d.QueryModeVersion>0",
+   "d.QuerySourceMaxRows IS NOT NULL",
+   "q.IsPublished=1","q.IsActive=1","q.IsArchived=0",
+   "dt.IsActive=1","dt.IsArchived=0","src.IsActive=1",
+   "bs.SourceKey COLLATE Latin1_General_100_BIN2",
+   "NOT EXISTS(\n       SELECT 1 FROM uqp.DashboardDataSource shadow",
+   "uqp.DatasetParameter dp WITH(HOLDLOCK)",
+   "uqp.RoleQueryAccess ra WITH(HOLDLOCK)",
+   "uqp.UserQueryAccess ua WITH(HOLDLOCK)",
+   "ua.CanView=1","ua.CanExecute=1",
+   "ra.CanView=1","ra.CanExecute=1",
+ ])assert(source.includes(clause),"Missing same-transaction Query authorization: "+clause);
+});
+
 test("2B-15D-13 GrantId PK lock precedes DB-time check and complete scope",async()=>{
  const source=await loadDraft();
  const lock="SELECT 1 FROM uqp.ChartActorDelegationDisposable WITH(UPDLOCK,HOLDLOCK)";

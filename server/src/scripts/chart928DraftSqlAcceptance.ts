@@ -59,9 +59,14 @@ export async function verifyChart928DraftSql(
    "CREATE TABLE uqp.Permission(Id BIGINT NOT NULL PRIMARY KEY,Code NVARCHAR(100) NOT NULL); " +
    "CREATE TABLE uqp.UserRole(UserId BIGINT NOT NULL,RoleId BIGINT NOT NULL); " +
    "CREATE TABLE uqp.RolePermission(RoleId BIGINT NOT NULL,PermissionId BIGINT NOT NULL); " +
-   "CREATE TABLE uqp.QueryDefinition(Id BIGINT NOT NULL PRIMARY KEY); " +
-   "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY); " +
-   "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY); " +
+   "CREATE TABLE uqp.DataSource(Id BIGINT NOT NULL PRIMARY KEY,IsActive BIT NOT NULL DEFAULT(1)); " +
+   "CREATE TABLE uqp.QueryDefinition(Id BIGINT NOT NULL PRIMARY KEY,DatasetId BIGINT NOT NULL DEFAULT(10),IsActive BIT NOT NULL DEFAULT(1),IsPublished BIT NOT NULL DEFAULT(1),IsArchived BIT NOT NULL DEFAULT(0)); " +
+   "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY,DataSourceId BIGINT NOT NULL DEFAULT(11),IsActive BIT NOT NULL DEFAULT(1),IsArchived BIT NOT NULL DEFAULT(0)); " +
+   "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY,QueryDefinitionId BIGINT NOT NULL DEFAULT(9),IsActive BIT NOT NULL DEFAULT(1),QueryMode NVARCHAR(30) NOT NULL DEFAULT(N'QUERY_ONLY'),QueryModeVersion INT NOT NULL DEFAULT(1),QuerySourceMaxRows INT NULL DEFAULT(3000)); " +
+   "CREATE TABLE uqp.DashboardDataSource(DashboardId BIGINT NOT NULL,SourceKey NVARCHAR(64) NOT NULL,DatasetId BIGINT NOT NULL,QueryDefinitionId BIGINT NULL,IsEnabled BIT NOT NULL,QueryBindingRevision INT NULL,MaxRows INT NULL); " +
+   "CREATE TABLE uqp.UserQueryAccess(UserId BIGINT NOT NULL,QueryDefinitionId BIGINT NOT NULL,CanView BIT NOT NULL,CanExecute BIT NOT NULL); " +
+   "CREATE TABLE uqp.RoleQueryAccess(RoleId BIGINT NOT NULL,QueryDefinitionId BIGINT NOT NULL,CanView BIT NOT NULL,CanExecute BIT NOT NULL); " +
+   "CREATE TABLE uqp.DatasetParameter(DatasetId BIGINT NOT NULL,LookupDatasetId BIGINT NULL); " +
    "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " DashboardId BIGINT NOT NULL," +
    " CONSTRAINT FK_DashboardDisplayProfile_Dashboard FOREIGN KEY(DashboardId)" +
@@ -92,7 +97,8 @@ export async function verifyChart928DraftSql(
   await q("SET IDENTITY_INSERT uqp.AppUser ON; " +
    "INSERT uqp.AppUser(Id) VALUES(8),(77); " +
    "SET IDENTITY_INSERT uqp.AppUser OFF; " +
-   "INSERT uqp.QueryDefinition(Id) VALUES(9); INSERT uqp.Dataset(Id) VALUES(10); " +
+   "INSERT uqp.DataSource(Id) VALUES(11); INSERT uqp.Dataset(Id) VALUES(10); " +
+   "INSERT uqp.QueryDefinition(Id) VALUES(9); " +
    "INSERT uqp.Dashboard(Id) VALUES(7); " +
    "SET IDENTITY_INSERT uqp.DashboardDisplayProfile ON; " +
    "INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7); " +
@@ -113,7 +119,8 @@ export async function verifyChart928DraftSql(
   await q("INSERT uqp.Role(Id,IsActive) VALUES(1,1);" +
     "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY'),(5,N'EXECUTE_QUERY');" +
     "INSERT uqp.UserRole(UserId,RoleId) VALUES(8,1);" +
-    "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4),(1,5);");
+    "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4),(1,5);" +
+     "INSERT uqp.RoleQueryAccess(RoleId,QueryDefinitionId,CanView,CanExecute) VALUES(1,9,1,1);");
   stage="IDENTITY_SCHEMA_PARITY";
   const identity=(await q(
     "SELECT COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),N'Id','IsIdentity') AS WidgetIdentity, " +

@@ -435,6 +435,49 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     await db.request().query("UPDATE uqp.AppUser SET IsActive=1 WHERE Id=8");
   }
   assert.deepEqual(await writerCounts(),beforeWrite);
+  // A valid SIGNED grant and active global roles must not permit creation
+  // after Query-specific ACL, publication, active source or QueryMode changes.
+  // These denials occur inside the same Writer transaction, before it
+  // consumes the grant or produces Ledger/Audit/Widget/Seal records.
+  const deniedAfterSigning=async(change:string,restore:string)=>{
+    await db.request().query(change);
+    try{
+      await assert.rejects(writeSigned(signedChart,signedChartGrant),forbidden);
+      assert.deepEqual(await writerCounts(),beforeWrite);
+    }finally{
+      await db.request().query(restore);
+    }
+  };
+  await deniedAfterSigning(
+    "UPDATE uqp.RoleQueryAccess SET CanExecute=0 WHERE RoleId=1 AND QueryDefinitionId=9",
+    "UPDATE uqp.RoleQueryAccess SET CanExecute=1 WHERE RoleId=1 AND QueryDefinitionId=9");
+  await deniedAfterSigning(
+    "UPDATE uqp.RoleQueryAccess SET CanView=0 WHERE RoleId=1 AND QueryDefinitionId=9",
+    "UPDATE uqp.RoleQueryAccess SET CanView=1 WHERE RoleId=1 AND QueryDefinitionId=9");
+  await deniedAfterSigning(
+    "UPDATE uqp.QueryDefinition SET IsPublished=0 WHERE Id=9",
+    "UPDATE uqp.QueryDefinition SET IsPublished=1 WHERE Id=9");
+  await deniedAfterSigning(
+    "UPDATE uqp.Dataset SET IsActive=0 WHERE Id=10",
+    "UPDATE uqp.Dataset SET IsActive=1 WHERE Id=10");
+  await deniedAfterSigning(
+    "UPDATE uqp.DataSource SET IsActive=0 WHERE Id=11",
+    "UPDATE uqp.DataSource SET IsActive=1 WHERE Id=11");
+  await deniedAfterSigning(
+    "UPDATE uqp.Dashboard SET QueryMode=N'QUERY_ONLY_DISABLED' WHERE Id=7",
+    "UPDATE uqp.Dashboard SET QueryMode=N'QUERY_ONLY' WHERE Id=7");
+  await deniedAfterSigning(
+    "INSERT uqp.DashboardDataSource(DashboardId,SourceKey,DatasetId,"+
+    "QueryDefinitionId,IsEnabled,QueryBindingRevision,MaxRows)"+
+    " VALUES(7,N'Primary',10,9,1,1,3000)",
+    "DELETE FROM uqp.DashboardDataSource WHERE DashboardId=7");
+  await deniedAfterSigning(
+    "INSERT uqp.Dataset(Id,IsArchived) VALUES(12,1);"+
+    "INSERT uqp.DatasetParameter(DatasetId,LookupDatasetId) VALUES(10,12)",
+    "DELETE FROM uqp.DatasetParameter WHERE DatasetId=10;"+
+    "DELETE FROM uqp.Dataset WHERE Id=12");
+  assert.deepEqual(await writerCounts(),beforeWrite);
+  console.log("CHART_SIGNED_WRITER_SAME_TX_QUERY_ACL_BINDING_REVOKE_PASS");
   const committed=await writeSigned(signedChart,signedChartGrant);
   const output=committed.recordset[0];
   const widgetId=Number(output?.WidgetId),auditId=Number(output?.AuditLogId);

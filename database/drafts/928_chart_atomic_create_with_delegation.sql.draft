@@ -106,6 +106,67 @@ BEGIN
      AND p.Code IN (N''DESIGN_QUERY'',N''EXECUTE_QUERY'')
     GROUP BY u.Id HAVING COUNT(DISTINCT p.Code)=2
   ) THROW 51928,''CHART_DRAFT_AUTH_DENIED'',1;
+  -- Query-specific authority is revocable AFTER signing. A valid MAC,
+  -- global DESIGN/EXECUTE roles and a signed grant do not grant Query ACL.
+  -- Recheck exact live binding, published Query and current view/execute
+  -- grants in this SAME SERIALIZABLE transaction before consuming the
+  -- one-time grant or creating any Widget/Audit/Ledger row.
+  IF NOT EXISTS(
+   SELECT 1 FROM uqp.Dashboard d WITH(UPDLOCK,HOLDLOCK)
+   LEFT JOIN uqp.DashboardDataSource bs WITH(UPDLOCK,HOLDLOCK)
+     ON bs.DashboardId=d.Id AND @SourceKey<>N''PRIMARY''
+     AND bs.SourceKey COLLATE Latin1_General_100_BIN2
+       = @SourceKey COLLATE Latin1_General_100_BIN2
+     AND DATALENGTH(bs.SourceKey)=DATALENGTH(@SourceKey)
+   JOIN uqp.QueryDefinition q WITH(HOLDLOCK) ON q.Id=
+     CASE WHEN @SourceKey=N''PRIMARY'' THEN d.QueryDefinitionId
+       ELSE bs.QueryDefinitionId END
+     AND q.IsPublished=1 AND q.IsActive=1 AND q.IsArchived=0
+   JOIN uqp.Dataset dt WITH(HOLDLOCK) ON dt.Id=q.DatasetId
+     AND dt.IsActive=1 AND dt.IsArchived=0
+   JOIN uqp.DataSource src WITH(HOLDLOCK) ON src.Id=dt.DataSourceId
+     AND src.IsActive=1
+   WHERE d.Id=@DashboardId AND d.IsActive=1
+     AND d.QueryMode=N''QUERY_ONLY'' AND d.QueryModeVersion>0
+     AND d.QuerySourceMaxRows IS NOT NULL
+     AND (@SourceKey=N''PRIMARY''
+       OR (bs.IsEnabled=1 AND bs.QueryDefinitionId IS NOT NULL
+         AND bs.QueryBindingRevision>=1 AND bs.MaxRows IS NOT NULL
+         AND bs.DatasetId=q.DatasetId))
+     AND NOT EXISTS(
+       SELECT 1 FROM uqp.DashboardDataSource shadow WITH(HOLDLOCK)
+       WHERE shadow.DashboardId=d.Id
+         AND UPPER(shadow.SourceKey)=N''PRIMARY'')
+     AND NOT EXISTS(
+       SELECT 1 FROM uqp.DatasetParameter dp WITH(HOLDLOCK)
+       JOIN uqp.Dataset lookup WITH(HOLDLOCK)
+         ON lookup.Id=dp.LookupDatasetId
+       WHERE dp.DatasetId=dt.Id AND lookup.IsArchived=1)
+     AND (
+       EXISTS(SELECT 1 FROM uqp.UserQueryAccess ua WITH(HOLDLOCK)
+         WHERE ua.UserId=@ActorId AND ua.QueryDefinitionId=q.Id
+           AND ua.CanView=1)
+       OR EXISTS(SELECT 1 FROM uqp.UserRole ur WITH(HOLDLOCK)
+         JOIN uqp.Role role WITH(HOLDLOCK)
+           ON role.Id=ur.RoleId AND role.IsActive=1
+         JOIN uqp.RoleQueryAccess ra WITH(HOLDLOCK)
+           ON ra.RoleId=role.Id
+         WHERE ur.UserId=@ActorId AND ra.QueryDefinitionId=q.Id
+           AND ra.CanView=1)
+     )
+     AND (
+       EXISTS(SELECT 1 FROM uqp.UserQueryAccess ua WITH(HOLDLOCK)
+         WHERE ua.UserId=@ActorId AND ua.QueryDefinitionId=q.Id
+           AND ua.CanExecute=1)
+       OR EXISTS(SELECT 1 FROM uqp.UserRole ur WITH(HOLDLOCK)
+         JOIN uqp.Role role WITH(HOLDLOCK)
+           ON role.Id=ur.RoleId AND role.IsActive=1
+         JOIN uqp.RoleQueryAccess ra WITH(HOLDLOCK)
+           ON ra.RoleId=role.Id
+         WHERE ur.UserId=@ActorId AND ra.QueryDefinitionId=q.Id
+           AND ra.CanExecute=1)
+     )
+  ) THROW 51928,''CHART_DRAFT_QUERY_SCOPE_REVOKED'',1;
   -- Lock the real issuer-owned grant by its primary key in the SAME
   -- SERIALIZABLE transaction as Ledger/Audit/Widget/Seal creation.
   -- IMPORTANT: synthetic issuer @ActorId is NOT verified HTTP identity.
