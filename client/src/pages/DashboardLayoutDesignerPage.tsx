@@ -191,6 +191,9 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [nativeChartCreateBusy,setNativeChartCreateBusy]=useState(false);
   const nativeChartCreateInFlight=useRef(false);
   const [layoutWriteRequiresReload,setLayoutWriteRequiresReload]=useState(false);
+  // After an ambiguous POST, prohibit a second request with a fresh UUID
+  // until the operator explicitly reloads server-authoritative Widget state.
+  const [chartCreateMustReload,setChartCreateMustReload]=useState(false);
   useEffect(()=>{
     setNativeChartCreateCapable(false);
     if(!active||embedded||!accessToken||
@@ -320,6 +323,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       setLoadedSealedChartPresent(hasSealedChartWidgets(loadedProfiles));
       setSavedProfiles(JSON.stringify(loadedProfiles));setProfiles(loadedProfiles);
       setLayoutWriteRequiresReload(false);
+      setChartCreateMustReload(false);
       setActiveProfileKey(loadedProfiles.find(profile => profile.isDefault)?.clientKey ?? loadedProfiles[0]?.clientKey ?? "");
       if (configuration) {
         setRootQueryId(configuration.primary.queryDefinitionId ?? 0);
@@ -742,12 +746,15 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
   const chartSaveBlocked = loadedSealedChartPresent || hasSealedChartWidgets(profiles);
   const nativeChartCreateAllowed=nativeChartCreateCapable &&
+    !chartCreateMustReload &&
     !nativeChartCreateBusy && !saving && active && !embedded &&
     Boolean(activeProfile?.id && Number.isSafeInteger(activeProfile.id)) &&
     sourceVersion!==undefined && !layoutWriteRequiresReload &&
     savedProfiles!==null && JSON.stringify(profiles)===savedProfiles &&
     hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY");
-  const chartCreateBlockedReason=!nativeChartCreateCapable
+  const chartCreateBlockedReason=chartCreateMustReload
+    ?"上一筆 CHART 建立結果未確認；請先重新載入版型核對，避免重複建立。"
+    :!nativeChartCreateCapable
     ?"正式 CHART 建立服務尚未核准，現有草稿僅用於合成資料示意。"
     :layoutWriteRequiresReload
       ?"此版型最近曾以舊版方式儲存；請重新載入，以取得最新的 Profile ID。"
@@ -794,6 +801,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
         throw Error("CHART_READBACK_NOT_CONFIRMED");
       if(sequence!==loadSequence.current||
         JSON.stringify(profilesLatestRef.current)!==savedProfiles){
+        setChartCreateMustReload(true);
         setError("圖表建立的伺服器版型已確認，但設計狀態在傳送期間變更；請先保存其他草稿，再手動重新載入。");
         return;
       }
@@ -802,6 +810,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     }catch{
       // Unknown POST outcome must never be auto-retried; a sealed Chart
       // may already have committed with the same requestId in SQL.
+      setChartCreateMustReload(true);
       setError("正式 CHART 建立未獲確認或服務尚未開放。請先重新載入版型查核，不要直接重複提交。");
     }finally{
       nativeChartCreateInFlight.current=false;
