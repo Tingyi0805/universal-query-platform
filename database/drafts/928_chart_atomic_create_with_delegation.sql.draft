@@ -96,7 +96,8 @@ BEGIN
    JOIN uqp.RolePermission rp WITH(HOLDLOCK) ON rp.RoleId=r.Id
    JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
    WHERE u.Id=@ActorId AND u.IsActive=1 AND u.TokenVersion=@TokenVersion
-     AND p.Code=N''DESIGN_QUERY''
+     AND p.Code IN (N''DESIGN_QUERY'',N''EXECUTE_QUERY'')
+    GROUP BY u.Id HAVING COUNT(DISTINCT p.Code)=2
   ) THROW 51928,''CHART_DRAFT_AUTH_DENIED'',1;
   -- Lock the real issuer-owned grant by its primary key in the SAME
   -- SERIALIZABLE transaction as Ledger/Audit/Widget/Seal creation.
