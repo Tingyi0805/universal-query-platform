@@ -70,6 +70,10 @@ Computed 欄位的實際 nullability 仍需 Catalog 確認。
 | UNKNOWN | 163 |
 | TOTAL | 1060 |
 
+## 2026-11-10 CHART target read-only SSMS evidence source
+
+新增 `database/acceptance/chart-925-927-928-ssms-readonly-evidence.sql`，僅供有權限的 DBA 在明確確認 SQL Server／資料庫／原始登入身分後，以 SSMS 收集 925 約束名稱差異、926／927 安裝跡象與 Ledger、928 Sidecar 狀態；所有 CHART 啟用及 928 安裝指標均固定為禁止。此檔**沒有 CREATE TABLE、沒有新物件宣告或 Migration**，因此原有 TABLE／COLUMN／CONSTRAINT／INDEX／TRIGGER／SEQUENCE 分類與計數維持不變。此盤點不代表院內正式環境已完成精確 925／926／927 Catalog 驗證或 CHART 上線採認。
+
 ## 來源與範圍界線
 
 已核對 58 份 tracked SQL、49 份 Migration、runner、獨立 923/924/925 installer、Runtime Repository、queryCompiler／adapter、app 路由、測試 Fixture 及 CI。
@@ -1901,6 +1905,7 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | Path | SHA-256 |
 |---|---|---|
 | SOURCE | database/acceptance/catalog-probe.sql | 7667ce492379c20fd67b76bcab4dae118d29044bfe051a69b5fd1536e372e5d4 |
+| SOURCE | database/acceptance/chart-925-927-928-ssms-readonly-evidence.sql | c4468c63fd465d1e687a3660a5be9c61d8530da774ba12ff16adf3ce55feab4f |
 | SOURCE | database/acceptance/chart-928-adoption-preflight-readonly.sql | 7f3dc7db2238226a76273f7c1b402aae185faeab4b6bd6f91eb3cc044c1a7aff |
 | SOURCE | database/acceptance/production-migration-ledger-readonly.sql | 92972a41de342855d7946f529175de2eb47075ecbb5ce5d9732c4e2a81537626 |
 | SOURCE | database/acceptance/production-schema-readonly-inventory.sql | 935254cec51251772acad9ed08b9a85f96cfc96c0e3d72f5ac41862b8dd62bf8 |
