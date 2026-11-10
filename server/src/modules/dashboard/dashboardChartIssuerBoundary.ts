@@ -1,5 +1,5 @@
 // 2B-15D-8: DORMANT read-only attestation for an independently provisioned
-// Chart Actor-delegation ISSUER SQL login. No connection config, secrets,
+// Chart Actor-delegation SIGNED ISSUER SQL login. No connection config, secrets,
 // route, GRANT, issuer procedure, runtime activation or production DML.
 import type sql from "mssql";
 
@@ -12,10 +12,10 @@ export const chartIssuerIdentitySql=[
  "SELECT DB_NAME() AS DbName,CONVERT(nvarchar(256),@@SERVERNAME) AS ServerName,",
  "CONVERT(varchar(256),SUSER_SID(ORIGINAL_LOGIN()),2) AS OriginalSid,",
  "USER_NAME() AS EffectiveUser,",
- "OBJECT_ID(N'uqp.usp_ChartDelegationIssue',N'P') AS IssuerProcedureId,",
+ "OBJECT_ID(N'uqp.usp_ChartDelegationIssueSigned',N'P') AS IssuerProcedureId,",
  "LOWER(CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),",
  "(SELECT m.definition FROM sys.sql_modules m",
- "WHERE m.object_id=OBJECT_ID(N'uqp.usp_ChartDelegationIssue',N'P')))),2)) AS IssuerProcedureSha256,",
+ "WHERE m.object_id=OBJECT_ID(N'uqp.usp_ChartDelegationIssueSigned',N'P')))),2)) AS IssuerProcedureSha256,",
  "IS_SRVROLEMEMBER(N'sysadmin') AS Sysadmin,",
  "HAS_PERMS_BY_NAME(NULL,NULL,N'CONTROL SERVER') AS ServerControl,",
  "HAS_PERMS_BY_NAME(NULL,NULL,N'IMPERSONATE ANY LOGIN') AS ServerImpersonateAny,",
@@ -35,8 +35,8 @@ export const chartIssuerIdentitySql=[
  "HAS_PERMS_BY_NAME(N'uqp',N'SCHEMA',N'CONTROL') AS SchemaControl,",
  "HAS_PERMS_BY_NAME(N'uqp',N'SCHEMA',N'ALTER') AS SchemaAlter,",
  "HAS_PERMS_BY_NAME(N'UQP_Chart_Issuer',N'USER',N'IMPERSONATE') AS ImpersonateIssuer,",
- "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue',N'OBJECT',N'EXECUTE') AS IssueExecute,",
- "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue',N'OBJECT',N'ALTER') AS IssueAlter,",
+ "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssueSigned',N'OBJECT',N'EXECUTE') AS IssueExecute,",
+ "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssueSigned',N'OBJECT',N'ALTER') AS IssueAlter,",
  "HAS_PERMS_BY_NAME(N'uqp.usp_DashboardChartCreate',N'OBJECT',N'EXECUTE') AS CreateExecute,",
  "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationConsume',N'OBJECT',N'EXECUTE') AS ConsumeExecute,",
  "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegation',N'OBJECT',N'SELECT') AS GrantSelect,",

@@ -33,6 +33,12 @@ test("2B-15D-8 three distinct SQL ORIGINAL_LOGIN identities are required",()=>{
  assert.match(chartIssuerIdentitySql,/ORIGINAL_LOGIN\(\)/);
  assert.match(chartIssuerIdentitySql,/SUSER_SID/);
  assert.match(chartIssuerIdentitySql,/sys\.sql_modules/);
+ // Procedure identity, digest and EXECUTE/ALTER rights are checked only
+ // for the independently reviewed signed Issuer. Never attest an unsigned
+ // legacy Issuer under the same approved hash or privilege decision.
+ assert.equal((chartIssuerIdentitySql.match(/uqp\.usp_ChartDelegationIssueSigned/g)??[]).length,4);
+ assert.doesNotMatch(chartIssuerIdentitySql,/uqp\.usp_ChartDelegationIssue'/);
+
  assert.match(chartIssuerIdentitySql,/HASHBYTES\('SHA2_256'/);
  assert.match(chartIssuerIdentitySql,/HAS_PERMS_BY_NAME/);
  assert.match(chartIssuerIdentitySql,/^SELECT\s/);

@@ -107,6 +107,14 @@ function fixture(){
   };
 }
 
+test("future SQL create is pinned to the reviewed Signed Issuer ABI, not legacy issue",()=>{
+  assert.match(chartIssuerGrantSql,/EXEC uqp\.usp_ChartDelegationIssueSigned\s/);
+  assert.doesNotMatch(chartIssuerGrantSql,/EXEC uqp\.usp_ChartDelegationIssue\s/);
+  assert.match(chartIssuerGrantSql,/@Signature=@signature/);
+  assert.match(chartIssuerGrantSql,/@Nonce=@nonce/);
+  assert.match(chartIssuerGrantSql,/@ExpiresAtUtc=@expires/);
+});
+
 test("SQL Issuer/Writer remains hard-disabled with zero DB or Signer calls",async()=>{
   const f=fixture();
   assert.equal(CHART_SQL_ATOMIC_CREATE_RELEASE_APPROVED,false);

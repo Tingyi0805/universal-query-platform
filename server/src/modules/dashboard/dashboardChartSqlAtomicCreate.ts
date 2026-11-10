@@ -1,7 +1,7 @@
 // Issue #89: SQL Issuer -> Writer atomic-create transport.
 // Not an installer or production SQL executor. NO pools/credentials are made
 // here. Only independently provisioned SQL logins may run the future,
-// reviewed, pinned production procedures (NEVER the disposable prototypes).
+// reviewed, pinned production SIGNED procedures (NEVER the disposable prototypes).
 // This module is NOT registered in the runtime Dashboard router.
 import sql from "mssql";
 import {
@@ -29,7 +29,7 @@ import {CHART_SIGNER_CLIENT_RELEASE_APPROVED} from "./dashboardChartSignerClient
 export const CHART_SQL_ATOMIC_CREATE_RELEASE_APPROVED=false as const;
 export const chartIssuerGrantSql=[
   "DECLARE @grant UNIQUEIDENTIFIER,@secret VARBINARY(32);",
-  "EXEC uqp.usp_ChartDelegationIssue",
+  "EXEC uqp.usp_ChartDelegationIssueSigned",
   "@ActorId=@actor,@TokenVersion=@token,@DashboardId=@dashboard,",
   "@ProfileId=@profile,@RequestId=@requestId,@SourceKey=@source,",
   "@ConfigSha256=@digest,@X=@x,@Y=@y,@Width=@width,@Height=@height,",
