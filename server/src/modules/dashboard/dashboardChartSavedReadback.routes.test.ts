@@ -29,7 +29,7 @@ async function fixture(approved=false,
       reads++;
       return read?read(id,widget):{
         id:88,dashboardId:7,widgetType:"CHART",
-        revision:"0011223344556677",config,
+        revision:"0011223344556677",sealedByUserId:8,config,
       };
     },
     readSession:async()=>{checks++;return session;},
@@ -79,6 +79,22 @@ test("test-only designer reads only the validated saved CHART seal and configura
       assert.equal((await f.get(path)).status,400);
     }
   }finally{await f.close();}
+});
+
+test("readback forbids cross-author and missing SQL seal creator identity",async()=>{
+  for(const sealedByUserId of [99,undefined,0]){
+    const f=await fixture(true,async()=>({
+      id:88,dashboardId:7,widgetType:"CHART",
+      revision:"0011223344556677",sealedByUserId,config,
+    }));
+    try{
+      const r=await f.get();
+      assert.equal(r.status,503);
+      assert.deepEqual(await r.json(),
+        {error:{code:"CHART_SAVED_READBACK_REQUIRED"}});
+      assert.equal(f.reads,1);
+    }finally{await f.close();}
+  }
 });
 
 test("missing designer/execute privileges, revoked token and no-exp JWT are refused",async()=>{

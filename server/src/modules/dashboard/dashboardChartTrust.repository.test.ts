@@ -53,6 +53,7 @@ test("only a sealed, bound, versioned CHART row is readable", () => {
   assert(valid);
   assert.deepEqual(valid.config, config);
   assert.equal(valid.revision, "0000000000000001");
+  assert.equal(valid.sealedByUserId, 77);
   for (const delta of [
     { DashboardId: 77 }, { Id: 777 }, { WidgetType: "TABLE" },
     { SourceKey: "OTHER" }, { SealActive: false }, { SealedBy: 0 },

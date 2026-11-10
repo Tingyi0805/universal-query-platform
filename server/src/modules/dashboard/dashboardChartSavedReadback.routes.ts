@@ -44,6 +44,9 @@ export function createChartSavedReadbackRouter(deps:ChartSavedReadbackDependenci
       const saved=await deps.readSavedWidget(dashboardId.data,widgetId.data);
       if(!saved||saved.widgetType!=="CHART"||
          saved.id!==widgetId.data||saved.dashboardId!==dashboardId.data||
+         // This author-only endpoint must not disclose another designer\'s
+         // sealed Query column names merely on global DESIGN/EXECUTE grants.
+         saved.sealedByUserId!==actor.userId||
          !/^[a-f0-9]{16}$/.test(saved.revision))throw Error("NOT_ATTESTED");
       const parsed=chartWidgetConfigSchema.safeParse(saved.config);
       if(!parsed.success)throw Error("NOT_ATTESTED");

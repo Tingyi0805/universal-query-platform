@@ -29,6 +29,9 @@ export type TrustedSavedChartWidget = Readonly<{
   widgetType: "CHART";
   // Server-owned ROWVERSION. A future trusted layout repository must supply it.
   revision: string;
+  // SQL-sealed creator identity; mandatory for author-only metadata readback.
+  // Optional for existing projection fixtures, never optional in readback approval.
+  sealedByUserId?: number;
   config: unknown;
 }>;
 
