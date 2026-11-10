@@ -34,7 +34,7 @@ export async function verifyChart928DraftSql(
  const script=await readFile(sqlPath,"utf8");
  // The 928 base schema is still a disposable draft. Unlike the release
  // installer, it MUST refuse non-UQP_CH_ targets before any schema DDL.
- assert.match(script,/IF LEFT\\(DB_NAME\\(\\),7\\)<>N'UQP_CH_' OR LEN\\(DB_NAME\\(\\)\\)<>19\\s+THROW 51928,'CHART_928_DISPOSABLE_ONLY',1;/);
+ assert(script.includes("IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19\n THROW 51928,'CHART_928_DISPOSABLE_ONLY',1;"));
  const readinessScript=await readFile(readinessPath,"utf8");
  // This tool must remain a SELECT-only catalog report, not a migration.
  assert(!/^\s*(?:CREATE|ALTER|DROP|MERGE|INSERT|UPDATE|DELETE|TRUNCATE|EXEC(?:UTE)?|GRANT|REVOKE|DENY)\b/im.test(readinessScript));
