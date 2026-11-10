@@ -6,6 +6,8 @@ async function setup(page: Page) {
     chartProjectionRevoked: false,
     chartCreateAllowed:false,chartCreateCalls:[] as unknown[],
     chartCreateReject:false,
+    chartSavedConfig:null as Record<string,unknown>|null,
+    chartReadbackCalls:[] as {method:string;authorization:string|null}[],
     profiles: [
       { id: 1, name: "橫向合成版型", isDefault: true, sortOrder: 0, canvasWidth: 1920, canvasHeight: 1080, config: { backgroundColor: "#abcdef", retained: true }, widgets: [widget,
         { ...widget, id: 2, widgetType: "FIELD", staticText: null, sourceKey: "NAME", y: 100, config: { dataSourceKey: "WARD", color: "#223344" } },
@@ -35,6 +37,8 @@ async function setup(page: Page) {
         await route.fulfill({status:404,json:{error:{code:"CHART_NOT_AVAILABLE"}}});
         return;
       }
+      // Emulate SQL-owned persistence, not a claim in the 201 response.
+      state.chartSavedConfig=structuredClone(posted.config as Record<string,unknown>);
       const place=posted.placement as {x:number;y:number;width:number;height:number};
       // Test-only JSON fixture permits the extra persisted Widget fields;
       // the production UI never trusts this object as a create receipt.
@@ -47,6 +51,15 @@ async function setup(page: Page) {
         widgetId:88,sealRevision:"0011223344556677",
         auditLogId:"9007199254740993",
       }});
+      return;
+    }
+    if (path === "/api/dashboards/1/charts/v1/88/readback") {
+      state.chartReadbackCalls.push({method:request.method(),authorization:request.headers()["authorization"]??null});
+      if(request.method()!=="GET"||!state.chartSavedConfig){
+        await route.fulfill({status:404,json:{error:{code:"CHART_NOT_AVAILABLE"}}});return;
+      }
+      await route.fulfill({json:{widgetId:88,sealRevision:"0011223344556677",
+        config:structuredClone(state.chartSavedConfig)}});
       return;
     }
     if (path === "/api/dashboards/1/charts/v1/88/projection") {
@@ -385,6 +398,7 @@ test("authorized test-only native CREATE verifies exact server readback and keep
   await create.click();
   await expect(page.getByText(/已確認伺服器儲存 CHART/)).toBeVisible();
   expect(state.chartCreateCalls).toHaveLength(1);
+  expect(state.chartReadbackCalls).toEqual([{method:"GET",authorization:"Bearer synthetic"}]);
   const sent=state.chartCreateCalls[0] as Record<string,unknown>;
   expect(Object.keys(sent).sort()).toEqual(["config","placement","profileId","requestId"]);
   expect(sent.profileId).toBe(1);
