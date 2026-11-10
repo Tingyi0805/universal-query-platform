@@ -81,8 +81,17 @@ async function main(){
     await root.request().batch("CREATE SCHEMA uqp");
     await root.request().batch("CREATE TABLE uqp.SchemaMigration(FileName NVARCHAR(255) NOT NULL PRIMARY KEY,AppliedAtUtc DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME())");
     const folder=new URL("../../../database/migrations/",import.meta.url);
-    const files=(await readdir(folder)).filter(n=>/^\d+_.*\.sql$/i.test(n)).sort();
-    check(files.length===48&&files.at(-1)==="921_datasource_native_parameter_versions.sql","FULL_SOURCE_MANIFEST");
+    // Rebuild only the historical 001-921 baseline before reviewed
+    // 923/924/925 installers. 926/927 have separate isolated CI suites.
+    // Explicitly pin post-baseline migration names: any unknown/new 928
+    // migration must block this test rather than silently be included.
+    const inventory=(await readdir(folder)).filter(n=>/^\d+_.*\.sql$/i.test(n)).sort();
+    const files=inventory.filter(n=>Number(n.slice(0,3))<=921);
+    const later=inventory.filter(n=>Number(n.slice(0,3))>921);
+    check(files.length===48&&files.at(-1)==="921_datasource_native_parameter_versions.sql"&&
+      JSON.stringify(later)===JSON.stringify([
+        "926_dashboard_device_lifecycle.sql","927_workstation_pin_runtime.sql"
+      ]),"FULL_SOURCE_MANIFEST");
     for(const file of files){
       stage="MIGRATION_"+file.slice(0,3);const tx=new sql.Transaction(root);let aborted=false;tx.on("rollback",()=>{aborted=true;});await tx.begin();
       try{
