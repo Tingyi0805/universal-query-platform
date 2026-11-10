@@ -211,3 +211,51 @@ Run only when an authorized DBA supplies the intended server/database/
 original login identities on an approved assessment workstation. Do not
 execute the 925 installer, `db:migrate`, an `adopt` command, any draft
 928 SQL, or manual drops/recreates in response to this diagnostic.
+
+
+## 2026-11-10 — Standalone SSMS one-pass target evidence (no UQP ZIP update)
+
+For an authorized DBA who can use SQL Server Management Studio but **cannot
+replace the existing live/test C:\UQP application**, the new standalone
+`database/acceptance/chart-925-927-928-ssms-readonly-evidence.sql`
+collects a **narrow, metadata-only** set of target evidence. It is not the
+existing Node CLI, not a substitute for its **exact** 925/926/927 review,
+and has no dependency on npm, the SQL Writer or a CHART gate.
+
+1. In SSMS, first connect with the intended **read-only catalog/ledger**
+   account, choose the target UQP DB explicitly in the query dropdown, and
+   independently obtain `SELECT @@SERVERNAME AS ServerName, DB_NAME() AS
+   DatabaseName, ORIGINAL_LOGIN() AS OriginalLogin;` (identity only).
+2. Open the checked-in SQL script and replace **all three** placeholders
+   `__FILL_SERVER__`, `__FILL_DATABASE__`,
+   `__FILL_ORIGINAL_LOGIN__` with those exact values. Do not paste
+   passwords, tokens, connection strings or patient data into SQL or chat.
+3. Execute the single script in that same selected database/account.
+   It verifies pinned server/database/original login, SQL 2019/2022,
+   `uqp.SchemaMigration` existence and database metadata visibility
+   **before** returning any inventory. A mismatch stops with an error;
+   never modify the migration or create missing objects to make it pass.
+4. Review only its seven small result sets:
+   `00_PINNED_IDENTITY`,
+   `01_925_CONSTRAINT_NAMES`,
+   `02_925_CATALOG_COUNTS_NOT_ATTESTATION`,
+   `03_926_FOOTPRINT_NOT_EXACT`,
+   `04_927_FOOTPRINT_NOT_EXACT`,
+   `05_928_SIDECARS_NOT_APPROVED`,
+   and `06_FINAL_RELEASE`.
+   The name list explicitly distinguishes `MISSING`, `UNEXPECTED`,
+   `BLOCKED_FLAGS` from `NAME_PRESENT_NOT_EXACT_ATTESTED`.
+   Share statuses/counts first; redact server, original login and internal
+   infrastructure identifiers in any externally shared report.
+5. Use the existing, independently reviewed exact validators to confirm
+   925/926/927 only **after** the metadata triage. An 925 name count of 16
+   alone is never enough to claim `EXACT_MATCH`. All 928
+   `MayInstall928` and `ChartCanBeEnabled` fields are statically FALSE;
+   no migration, credential grant, live CHART playback or production rollout
+   is authorized by running the script.
+
+The checked-in static regression test independently checks that all **16**
+925-source 925 CHECK/DEFAULT expectation names stay aligned with the
+reviewed 925 DDL and that the operator's SQL contains no persistent DDL/DML
+or dynamic execution. Disposable CI does **not** assert results from the
+actual hospital database; the DBA's selected target is authoritative.
