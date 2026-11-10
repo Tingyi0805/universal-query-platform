@@ -72,8 +72,13 @@ export function createDormantChartSignerMtlsClient(
     if(body.length>MAX_REQUEST_BYTES)return null;
     return new Promise<unknown|null>(resolve=>{
       let finished=false;
+      let activeRequest:ReturnType<typeof httpsRequest>|null=null;
+      let absoluteDeadline:NodeJS.Timeout|null=null;
       const finish=(value:unknown|null)=>{
-        if(finished)return;finished=true;resolve(value);
+        if(finished)return;
+        finished=true;
+        if(absoluteDeadline)clearTimeout(absoluteDeadline);
+        resolve(value);
       };
       try{
         const request=httpsRequest({
@@ -125,6 +130,14 @@ export function createDormantChartSignerMtlsClient(
             }catch{finish(null);}
           });
         });
+        activeRequest=request;
+        // Socket inactivity timeout alone can be prolonged forever by
+        // a peer that trickles bytes. Cover DNS, TLS, body and response with
+        // one absolute deadline; never retain an in-flight signing request.
+        absoluteDeadline=setTimeout(()=>{
+          activeRequest?.destroy();
+          finish(null);
+        },CHART_SIGNER_HTTP_TIMEOUT_MS);
         request.setTimeout(CHART_SIGNER_HTTP_TIMEOUT_MS,()=>request.destroy());
         request.on("error",()=>finish(null));
         request.end(body);
