@@ -88,3 +88,35 @@ export function mayRequestSealedDeviceChartProjection(
     sealedDeviceChartProjectionHeaders(
       context.deviceToken,context.expectedDeviceId)!==null;
 }
+
+export type NativeUserChartContext=Readonly<{
+  widgetType:string;dashboardId:number;widgetId:number;
+  userRoute:boolean;deviceMode:boolean;queryPreview:boolean;
+  userMode:"QUERY_ONLY"|"LEGACY"|null;userSessionCurrent:boolean;
+  previewAuthorized:boolean;online:boolean;hasDataWarning:boolean;
+  accessTokenPresent:boolean;canViewQuery:boolean;canExecuteQuery:boolean;
+}>;
+
+/** Only a separately authorized signed-in Query user may ever call this
+ * transport. It is distinct from the designer JWT route: no DESIGN_QUERY
+ * permission, no device Token and no client-provided Query rows/claims.
+ */
+export function sealedUserChartProjectionPath(
+  dashboardId:number,widgetId:number,
+):string|null{
+  if(!Number.isSafeInteger(dashboardId)||dashboardId<=0||
+     !Number.isSafeInteger(widgetId)||widgetId<=0)return null;
+  return `/dashboards/${dashboardId}/playback/v1/charts/${widgetId}/projection`;
+}
+export function mayRequestSealedUserChartProjection(
+  context:NativeUserChartContext,
+):boolean{
+  return CHART_USER_PLAYBACK_RELEASE_APPROVED &&
+    context.widgetType==="CHART" &&
+    context.userRoute && !context.deviceMode && !context.queryPreview &&
+    context.userMode==="QUERY_ONLY"&&context.userSessionCurrent&&
+    context.previewAuthorized&&context.online&&!context.hasDataWarning&&
+    context.accessTokenPresent&&context.canViewQuery&&
+    context.canExecuteQuery&&
+    sealedUserChartProjectionPath(context.dashboardId,context.widgetId)!==null;
+}

@@ -17,7 +17,8 @@ declare global {
 // CHART routes use this proof only after the independently reviewed HTTP gate.
 const verifiedActors = new WeakMap<Request,Readonly<{
   userId:number;tokenVersion:number;designQueryAllowed:boolean;
-  executeQueryAllowed:boolean; originalBearerHeader:string;
+  viewQueryAllowed:boolean;executeQueryAllowed:boolean;
+  expiresAt:number|null;originalBearerHeader:string;
 }>>();
 export function readVerifiedJwtActor(req: Request):Readonly<{userId:number;tokenVersion:number}>|null {
   const actor=verifiedActors.get(req);
@@ -45,6 +46,31 @@ export function readVerifiedChartExecuteActor(req: Request):Readonly<{
      !/^Bearer [A-Za-z0-9_.-]+$/.test(proof.originalBearerHeader))return null;
   return {
     userId:actor.userId,tokenVersion:actor.tokenVersion,
+    originalBearerHeader:proof.originalBearerHeader,
+  };
+}
+
+/** Public user playback proof, independent of DESIGN_QUERY. Issued only by
+ * jwt.verify + live DB session authentication; later mutable req.authUser or
+ * request headers cannot upgrade privileges or change the original JWT.
+ */
+export function readVerifiedChartPlaybackActor(req:Request):Readonly<{
+  userId:number;tokenVersion:number;expiresAt:number;
+  originalBearerHeader:string;
+}>|null{
+  const proof=verifiedActors.get(req);
+  if(!proof?.viewQueryAllowed||!proof.executeQueryAllowed||
+     !Number.isSafeInteger(proof.expiresAt)||
+     proof.expiresAt! * 1000<=Date.now()||
+     req.authUser?.id!==proof.userId||
+     !Array.isArray(req.authUser.permissions)||
+     !req.authUser.permissions.includes("VIEW_QUERY")||
+     !req.authUser.permissions.includes("EXECUTE_QUERY")||
+     !/^Bearer [A-Za-z0-9_.-]+$/.test(proof.originalBearerHeader))
+    return null;
+  return {
+    userId:proof.userId,tokenVersion:proof.tokenVersion,
+    expiresAt:proof.expiresAt!,
     originalBearerHeader:proof.originalBearerHeader,
   };
 }
@@ -99,7 +125,10 @@ export function createAuthenticateJwt(getSession = getTokenSessionState): Reques
       verifiedActors.set(req,Object.freeze({
         userId,tokenVersion,
         designQueryAllowed:session.permissions.includes("DESIGN_QUERY"),
+        viewQueryAllowed:session.permissions.includes("VIEW_QUERY"),
         executeQueryAllowed:session.permissions.includes("EXECUTE_QUERY"),
+        expiresAt:Number.isSafeInteger(payload.exp)&&payload.exp!>0
+          ?payload.exp!:null,
         originalBearerHeader:header,
       }));
       next();

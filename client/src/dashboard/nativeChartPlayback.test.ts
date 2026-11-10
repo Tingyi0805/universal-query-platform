@@ -6,6 +6,7 @@ import {
  mayRequestSealedChartProjection,sealedChartProjectionPath,
  mayRequestSealedDeviceChartProjection,sealedDeviceChartProjectionPath,
  sealedDeviceChartProjectionHeaders,
+ mayRequestSealedUserChartProjection,sealedUserChartProjectionPath,
  type NativeChartPlaybackContext,
 } from "./nativeChartPlayback";
 
@@ -90,4 +91,31 @@ test("device CHART stays closed in actual client even with fully valid Token/IP/
   ]){
     assert.equal(mayRequestSealedDeviceChartProjection({...scenario,...patch}),false);
   }
+});
+
+test("ordinary signed-in QUERY_ONLY user CHART has an isolated, compiled-OFF path",()=>{
+  const session={
+    widgetType:"CHART",dashboardId:7,widgetId:88,
+    userRoute:true,deviceMode:false,queryPreview:false,
+    userMode:"QUERY_ONLY" as const,userSessionCurrent:true,
+    previewAuthorized:true,online:true,hasDataWarning:false,
+    accessTokenPresent:true,canViewQuery:true,canExecuteQuery:true,
+  };
+  assert.equal(CHART_USER_PLAYBACK_RELEASE_APPROVED,false);
+  assert.equal(mayRequestSealedUserChartProjection(session),false);
+  assert.equal(sealedUserChartProjectionPath(7,88),
+    "/dashboards/7/playback/v1/charts/88/projection");
+  assert.notEqual(sealedUserChartProjectionPath(7,88),
+    sealedChartProjectionPath(7,88));
+  assert.notEqual(sealedUserChartProjectionPath(7,88),
+    sealedDeviceChartProjectionPath(7,88));
+  for(const [dashboard,widget] of [[0,88],[7,-1],[NaN,7],[7,Infinity]])
+    assert.equal(sealedUserChartProjectionPath(dashboard,widget),null);
+  for(const patch of [
+    {userRoute:false},{deviceMode:true},{queryPreview:true},
+    {userMode:"LEGACY" as const},{userSessionCurrent:false},
+    {previewAuthorized:false},{online:false},{hasDataWarning:true},
+    {accessTokenPresent:false},{canViewQuery:false},
+    {canExecuteQuery:false},{widgetType:"TABLE"},{widgetId:0},
+  ])assert.equal(mayRequestSealedUserChartProjection({...session,...patch}),false);
 });

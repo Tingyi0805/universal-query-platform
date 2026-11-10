@@ -2,6 +2,10 @@ import { createDrilldownRouter, validateDrillLayout } from "./dashboardDrilldown
 import { createDeviceEnrollmentService } from "./dashboardDeviceEnrollment.service.js";
 import { createKioskRouter } from "./dashboardKiosk.routes.js";
 import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
+import {
+  CHART_USER_PROJECTION_HTTP_RELEASE_APPROVED,
+  createChartUserProjectionRouter,
+} from "./dashboardChartUserProjection.routes.js";
 import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
 import { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
 import { deviceManagementStore } from "./dashboardDeviceManagement.repository.js";
@@ -232,6 +236,8 @@ const trustedChartProjection = chartProjectionFor(
   () => CHART_PROJECTION_HTTP_RELEASE_APPROVED);
 const trustedDeviceChartProjection = chartProjectionFor(
   () => CHART_DEVICE_PROJECTION_HTTP_RELEASE_APPROVED);
+const trustedUserChartProjection = chartProjectionFor(
+  () => CHART_USER_PROJECTION_HTTP_RELEASE_APPROVED);
 
 const deviceEnrollment = createDeviceEnrollmentService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT && env.DASHBOARD_QUERY_DEVICE_PLAYBACK);
 export const dashboardRouter = Router();
@@ -349,6 +355,13 @@ dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
 dashboardRouter.use(createChartProjectionRouter({
   approved: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
   project: trustedChartProjection,
+}));
+// Public user CHART playback is a distinct, VIEW_QUERY/EXECUTE_QUERY-only
+// route. The user release gate remains compiled OFF, separate from designer.
+dashboardRouter.use(createChartUserProjectionRouter({
+  approved: () => CHART_USER_PROJECTION_HTTP_RELEASE_APPROVED,
+  readSession: getTokenSessionState,
+  project: trustedUserChartProjection,
 }));
 // Deliberately inert: no signer, issuer, SQL writer, or migration 928 is
 // provisioned in the application. The injected handler MUST fail closed.

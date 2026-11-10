@@ -6,7 +6,8 @@ import {
 import {
   CHART_DEVICE_PLAYBACK_RELEASE_APPROVED,
   sealedChartProjectionPath,sealedDeviceChartProjectionPath,
-  sealedDeviceChartProjectionHeaders,
+  sealedDeviceChartProjectionHeaders,sealedUserChartProjectionPath,
+  CHART_USER_PLAYBACK_RELEASE_APPROVED,
 } from "../dashboard/nativeChartPlayback";
 import {DashboardChartProjection} from "./DashboardChartProjection";
 import "./DashboardSavedChartWidget.css";
@@ -23,6 +24,7 @@ type Props=Readonly<{
   // Only the actual public-device mode can pass a Device Token. It is NEVER
   // reinterpreted as a Bearer JWT; cookie-only kiosk remains denied.
   deviceMode?:boolean;
+  userPlayback?:boolean;
   deviceToken?:string|null;
   expectedDeviceId?:number|null;
 }>;
@@ -30,7 +32,7 @@ type Props=Readonly<{
 type Loaded=Readonly<{
   dashboardId:number;widgetId:number;accessToken:string;
   refreshKey:string;authorizationGeneration:number;recheckEpoch:number;
-  deviceMode:boolean;expectedDeviceId:number|null;
+  deviceMode:boolean;userPlayback:boolean;expectedDeviceId:number|null;
   projection:ChartProjection|null;failed:boolean;
 }>;
 
@@ -43,7 +45,7 @@ type Loaded=Readonly<{
  */
 export function DashboardSavedChartWidget({
   dashboardId,widgetId,accessToken,authorized,refreshKey,
-  deviceMode=false,deviceToken=null,expectedDeviceId=null,
+  deviceMode=false,userPlayback=false,deviceToken=null,expectedDeviceId=null,
 }:Props){
   const [loaded,setLoaded]=useState<Loaded|null>(null);
   const [recheckEpoch,setRecheckEpoch]=useState(0);
@@ -51,15 +53,20 @@ export function DashboardSavedChartWidget({
   const authorizationGeneration=useRef(0);
   const path=deviceMode
     ? sealedDeviceChartProjectionPath(dashboardId,widgetId)
-    : sealedChartProjectionPath(dashboardId,widgetId);
+    : userPlayback
+      ? sealedUserChartProjectionPath(dashboardId,widgetId)
+      : sealedChartProjectionPath(dashboardId,widgetId);
   const deviceHeaders=deviceMode
     ? sealedDeviceChartProjectionHeaders(deviceToken,expectedDeviceId)
     : null;
   const selectedToken=deviceMode?deviceToken:accessToken;
   const eligible=authorized&&Boolean(refreshKey)&&Boolean(path)&&
+    !(deviceMode&&userPlayback)&&
     (deviceMode
       ? CHART_DEVICE_PLAYBACK_RELEASE_APPROVED && deviceHeaders!==null
-      : Boolean(accessToken));
+      : userPlayback
+        ? CHART_USER_PLAYBACK_RELEASE_APPROVED && Boolean(accessToken)
+        : Boolean(accessToken));
   // Invalidate any earlier projection on the FIRST denied render, not only
   // in a delayed effect. A later re-authorization of the same token/key must
   // never resurrect the previous view while a new request is in flight.
@@ -73,13 +80,13 @@ export function DashboardSavedChartWidget({
     if(!eligible)return;
     const timer=setInterval(()=>setRecheckEpoch(n=>n+1),CHART_PROJECTION_RECHECK_MS);
     return ()=>clearInterval(timer);
-  },[eligible,dashboardId,widgetId,selectedToken,refreshKey,deviceMode,expectedDeviceId]);
+  },[eligible,dashboardId,widgetId,selectedToken,refreshKey,deviceMode,userPlayback,expectedDeviceId]);
   const current=eligible&&authorizedPreviously.current&&
     loaded?.authorizationGeneration===authorizationGeneration.current&&
     loaded?.recheckEpoch===recheckEpoch&&
     loaded?.dashboardId===dashboardId&&
     loaded?.widgetId===widgetId&&loaded?.accessToken===selectedToken&&
-    loaded?.deviceMode===deviceMode&&
+    loaded?.deviceMode===deviceMode&&loaded?.userPlayback===userPlayback&&
     loaded?.expectedDeviceId===(expectedDeviceId??null)&&
     loaded?.refreshKey===refreshKey ? loaded : null;
 
@@ -101,18 +108,18 @@ export function DashboardSavedChartWidget({
            !authorizedPreviously.current||generation!==authorizationGeneration.current)return;
         const projection=parseChartProjection(response);
         setLoaded({dashboardId,widgetId,accessToken:selectedToken,refreshKey,
-          deviceMode,expectedDeviceId:expectedDeviceId??null,
+          deviceMode,userPlayback,expectedDeviceId:expectedDeviceId??null,
           authorizationGeneration:generation,recheckEpoch,projection,failed:projection===null});
       }).catch(()=>{
         if(currentRequest&&!controller.signal.aborted&&
            authorizedPreviously.current&&generation===authorizationGeneration.current)
           setLoaded({dashboardId,widgetId,accessToken:selectedToken,refreshKey,
-            deviceMode,expectedDeviceId:expectedDeviceId??null,
+            deviceMode,userPlayback,expectedDeviceId:expectedDeviceId??null,
             authorizationGeneration:generation,recheckEpoch,projection:null,failed:true});
       });
     return ()=>{currentRequest=false;controller.abort();};
   },[eligible,dashboardId,widgetId,selectedToken,refreshKey,recheckEpoch,
-    deviceMode,expectedDeviceId,path,accessToken]);
+    deviceMode,userPlayback,expectedDeviceId,path,accessToken]);
 
   if(!eligible)return <div className="dashboard-saved-chart-denied" role="status">
     圖表尚未獲准在此播放模式顯示

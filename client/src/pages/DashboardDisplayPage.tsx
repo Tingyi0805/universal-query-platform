@@ -2,6 +2,7 @@ import { DashboardDrilldownHost } from "../components/DashboardDrilldownHost";
 import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
 import {
   mayRequestSealedChartProjection,mayRequestSealedDeviceChartProjection,
+  mayRequestSealedUserChartProjection,
 } from "../dashboard/nativeChartPlayback";
 import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
 import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
@@ -911,21 +912,32 @@ export function DashboardDisplayPage() {
             deviceToken:cookieSession?null:deviceToken,
             expectedDeviceId,
           })
-        : mayRequestSealedChartProjection({
-            widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
-            queryPreview,deviceMode,userRoute,previewAuthorized,online,
-            hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
-            accessTokenPresent:Boolean(accessToken),
-            canDesignQuery:hasPermission("DESIGN_QUERY"),
-            canExecuteQuery:hasPermission("EXECUTE_QUERY"),
-          });
+        : userRoute
+          ? mayRequestSealedUserChartProjection({
+              widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+              userRoute,deviceMode,queryPreview,userMode,
+              userSessionCurrent:Boolean(accessToken)&&userSession===accessToken,
+              previewAuthorized,online,
+              hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+              accessTokenPresent:Boolean(accessToken),
+              canViewQuery:hasPermission("VIEW_QUERY"),
+              canExecuteQuery:hasPermission("EXECUTE_QUERY"),
+            })
+          : mayRequestSealedChartProjection({
+              widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+              queryPreview,deviceMode,userRoute,previewAuthorized,online,
+              hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+              accessTokenPresent:Boolean(accessToken),
+              canDesignQuery:hasPermission("DESIGN_QUERY"),
+              canExecuteQuery:hasPermission("EXECUTE_QUERY"),
+            });
       const refreshKey=preview
         ? `${snapshotReloadKey}:${preview.snapshotId??preview.deliveredAtUtc??""}`
         : "";
       return <DashboardSavedChartWidget
         dashboardId={dashboardId} widgetId={widget.id}
         authorized={authorized} accessToken={deviceMode?null:accessToken}
-        deviceMode={deviceMode}
+        deviceMode={deviceMode} userPlayback={userRoute}
         deviceToken={deviceMode&&!cookieSession?deviceToken:null}
         expectedDeviceId={deviceMode?expectedDeviceId:null}
         refreshKey={refreshKey}/>;
