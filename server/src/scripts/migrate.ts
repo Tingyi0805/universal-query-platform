@@ -6,6 +6,7 @@ import { getPlatformDbPool, closePlatformDbPool } from "../config/database.js";
 import { logger } from "../config/logger.js";
 import { deviceLifecycleSchemaSql } from "../modules/dashboard/dashboardDeviceLifecycleSchema.js";
 import { workstationPinSchemaSql } from "../modules/auth/workstationPinSchema.js";
+import { rejectUnapprovedChart928Migration } from "./chart928MigrationGate.js";
 
 const migrationsDir = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -121,6 +122,11 @@ async function main() {
   const command = args[0] ?? "apply";
   if (command === "apply-range" && (args.length !== 3 || args[1] !== "916" || args[2] !== "919"))
     throw new Error("MIGRATION_RANGE_NOT_APPROVED");
+  // Reject unapproved 928 files before a connection or bootstrap DDL.
+  const files = (await readdir(migrationsDir))
+    .filter((file) => /^\d+_.*\.sql$/i.test(file))
+    .sort((a, b) => a.localeCompare(b));
+  rejectUnapprovedChart928Migration(files, command);
   const pool = await getPlatformDbPool();
   if (!pool) throw new Error("Platform SQL Server is not configured.");
 
@@ -139,9 +145,6 @@ async function main() {
     END
   `);
 
-  const files = (await readdir(migrationsDir))
-    .filter((file) => /^\d+_.*\.sql$/i.test(file))
-    .sort((a, b) => a.localeCompare(b));
 
   const appliedResult = await pool.request().query(
     "SELECT FileName FROM uqp.SchemaMigration",
