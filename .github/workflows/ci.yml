@@ -149,7 +149,9 @@ jobs:
         run: node ../tools/measure-browser-build.mjs
 
   client:
-    runs-on: ubuntu-latest
+    # Pin a runner with preinstalled Chromium; apt DNS failures on ubuntu-latest
+    # must not prevent the required browser regressions from running.
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: client
@@ -171,8 +173,16 @@ jobs:
         run: node ../tools/measure-browser-build.mjs
       - name: Install synthetic kiosk API test dependencies (no database/native drivers)
         run: npm ci --prefix ../server --ignore-scripts
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - name: Verify Ubuntu runner's preinstalled Chromium (no APT/network install)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -x /usr/bin/chromium || { echo 'CHART_CI_CHROMIUM_UNAVAILABLE' >&2; exit 1; }
+          /usr/bin/chromium --version
+      - name: Run required Playwright browser regressions on system Chromium
+        env:
+          CHROMIUM_PATH: /usr/bin/chromium
+        run: npm run test:e2e
       - name: Upload PR88 Client build (TEST ONLY, NOT production deployment)
         if: github.event_name == 'pull_request' && github.event.pull_request.number == 88
         uses: actions/upload-artifact@v4
