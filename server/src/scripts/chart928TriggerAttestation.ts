@@ -49,6 +49,42 @@ export function parseChart928TriggerDefinitions(draft:string):Chart928TriggerDef
   return results;
 }
 
+/** Source-bound *disposable* state comparison only. The second SQL draft
+ * ALTERs the frozen CHART trigger to admit a same-transaction Permit.
+ * This must NEVER choose or authorize a production schema, login or writer.
+ * Frozen and permit states require different exact module definitions.
+ */
+export function parseChart928DisposablePermitTriggerDefinitions(
+  frozenDraft:string,permitDraft:string,
+):Chart928TriggerDefinition[] {
+  const frozen=parseChart928TriggerDefinitions(frozenDraft);
+  if(typeof permitDraft!=="string"||
+     !permitDraft.includes("NON-SCANNED DRAFT")||
+     !permitDraft.includes("CHART_DRAFT_DISPOSABLE_ONLY"))
+    throw new Chart928CatalogError("CHART_928_PERMIT_SOURCE_NOT_DISPOSABLE");
+  const matcher=/EXEC\(N'(ALTER TRIGGER uqp\.(TR_[A-Za-z0-9_]+) ON uqp\.([A-Za-z0-9_]+)\s+AFTER INSERT,UPDATE,DELETE AS[\s\S]*?\nEND)'\);/g;
+  const matches=[...permitDraft.matchAll(matcher)];
+  if(matches.length!==1||
+     (permitDraft.match(/\bALTER TRIGGER\b/g)||[]).length!==1||
+     matches[0]?.[2]!=="TR_DashboardWidget_ChartFreeze"||
+     matches[0]?.[3]!=="DashboardWidget")
+    throw new Chart928CatalogError("CHART_928_PERMIT_TRIGGER_SOURCE_CONFLICT");
+  const definition=matches[0]?.[1]?.replace(/''/g,"'");
+  if(!definition||
+     !definition.includes("FROM uqp.DashboardChartCreatePermit p WITH(HOLDLOCK)")||
+     !definition.includes("p.SessionId=@@SPID AND p.TransactionId=CURRENT_TRANSACTION_ID()")||
+     !definition.includes("p.ProfileId=i.ProfileId AND p.SourceKey=i.SourceKey")||
+     !definition.includes("p.ConfigJson COLLATE Latin1_General_100_BIN2")||
+     !definition.includes("FROM deleted WHERE WidgetType=N'CHART'")||
+     !definition.includes("CHART_928_WIDGET_FROZEN"))
+    throw new Chart928CatalogError("CHART_928_PERMIT_TRIGGER_FENCE_MISSING");
+  const before=frozen.find(x=>x.name==="TR_DashboardWidget_ChartFreeze");
+  if(!before||hash(before.definition)===hash(definition))
+    throw new Chart928CatalogError("CHART_928_PERMIT_TRIGGER_NOT_DISTINCT");
+  return frozen.map(x=>x.name==="TR_DashboardWidget_ChartFreeze"
+    ?{...x,definition}:x);
+}
+
 export function attestChart928TriggerRows(
   rows:readonly Chart928CatalogRow[],
   expected:readonly Chart928TriggerDefinition[],
