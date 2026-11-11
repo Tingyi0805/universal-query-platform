@@ -807,8 +807,8 @@ jobs:
             if($LASTEXITCODE){throw 'CHART_PR99_EXTRACTED_ZIP_INVALID'}
             $file=Join-Path $temp 'payload/client/dist/index.html'
             [IO.File]::AppendAllText($file,'tamper')
-            node tools/verify-pr99-chart-test.mjs $temp 2>$null
-            if($LASTEXITCODE -eq 0){throw 'CHART_PR99_TAMPER_NOT_REJECTED'}
+            node tools/test-pr99-chart-tamper.mjs $temp
+            if($LASTEXITCODE){throw 'CHART_PR99_TAMPER_TEST_FAILED'}
           } finally {
             if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Recurse -Force}
           }
