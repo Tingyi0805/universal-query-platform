@@ -66,10 +66,9 @@ export function DashboardChartDraftEditor({
      <label>數值欄位（已由 Query 彙總）
        <input maxLength={128} value={config.valueColumn} onChange={e=>configPatch({valueColumn:e.target.value})}/>
      </label>
-     <label>最大資料點數（1–50）
-       <input type="number" min={1} max={50} step={1} value={config.maxPoints}
-         onChange={e=>configPatch({maxPoints:Number(e.target.value)})}/>
-     </label>
+     <ChartPlacementNumberInput label="最大資料點數（1–50）"
+       value={config.maxPoints} min={1}
+       onCommit={value=>{if(value>=1&&value<=50)configPatch({maxPoints:value});}}/>
      <label className="chart-draft-check">
        <input type="checkbox" checked={config.showLegend} onChange={e=>configPatch({showLegend:e.target.checked})}/>
        顯示圖例
