@@ -7,6 +7,8 @@ import {randomBytes,createHash} from "node:crypto";
 import sql from "mssql";
 import {
   attestChart928TriggerCatalog,Chart928CatalogError,
+  parseChart928DisposablePermitTriggerDefinitions,
+  attestChart928TriggerCatalogDefinitions,
 } from "./chart928TriggerAttestation.js";
 import {
   chartWriterIdentitySql,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
@@ -426,6 +428,13 @@ export async function verifyChart928DraftSql(
   stage="ATOMIC_CREATE_DRAFT_INSTALL";
   const atom=await readFile(new URL("../../../database/drafts/928_chart_atomic_create_prototype.sql.draft",import.meta.url),"utf8");
   await db.request().batch(atom);
+  stage="ATOMIC_CREATE_TRIGGER_STATE_EXACT";
+  const permitTriggerDefinitions=parseChart928DisposablePermitTriggerDefinitions(script,atom);
+  await attestChart928TriggerCatalogDefinitions(db,permitTriggerDefinitions);
+  await assert.rejects(attestChart928TriggerCatalog(db,script),
+    (error:unknown)=>error instanceof Chart928CatalogError &&
+      error.code==="CHART_928_CATALOG_TRIGGER_DEFINITION");
+  console.log("CHART_928_FROZEN_PERMIT_EXACT_STATES_PASS");
   // Read-only real engine proof. The future approved proc does not yet
   // exist: its digest must be NULL. The isolated draft proc has a real
   // NVARCHAR definition whose SHA256 matches SQL Server's UTF-16 bytes.
