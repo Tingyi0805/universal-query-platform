@@ -172,6 +172,13 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Trust only this checkout for Git metadata reads inside Playwright container
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
       - name: Measure tracked source and Client build bytes
         run: node ../tools/measure-browser-build.mjs
       - name: Install synthetic kiosk API test dependencies (no database/native drivers)
