@@ -35,6 +35,18 @@ export async function verifyChart928DraftSql(
  // The 928 base schema is still a disposable draft. Unlike the release
  // installer, it MUST refuse non-UQP_CH_ targets before any schema DDL.
  assert(script.includes("IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19\n OR SUBSTRING(DB_NAME(),8,12) COLLATE Latin1_General_100_BIN2 LIKE N'%[^0-9a-f]%'\n THROW 51928,'CHART_928_DISPOSABLE_ONLY',1;"));
+ // Execute the actual draft against master in the already isolated SQL CI container.
+ // It must THROW before any DDL, transaction or application-table access.
+ await assert.rejects(
+  admin.request().batch(script),
+  (error:unknown)=>{
+   const value=error as {number?:number;message?:string};
+   return value?.number===51928 &&
+    String(value.message).includes("CHART_928_DISPOSABLE_ONLY");
+  },
+  "CHART_928_DRAFT_MUST_REJECT_MASTER",
+ );
+ console.log("CHART_928_DRAFT_NON_DISPOSABLE_TARGET_DENIED_PASS");
  const readinessScript=await readFile(readinessPath,"utf8");
  // This tool must remain a SELECT-only catalog report, not a migration.
  assert(!/^\s*(?:CREATE|ALTER|DROP|MERGE|INSERT|UPDATE|DELETE|TRUNCATE|EXEC(?:UTE)?|GRANT|REVOKE|DENY)\b/im.test(readinessScript));
