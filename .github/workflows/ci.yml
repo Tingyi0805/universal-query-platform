@@ -149,9 +149,12 @@ jobs:
         run: node ../tools/measure-browser-build.mjs
 
   client:
-    # Pin a runner with preinstalled Chromium; apt DNS failures on ubuntu-latest
-    # must not prevent the required browser regressions from running.
     runs-on: ubuntu-24.04
+    # Use the exact Playwright 1.64.1 browser and Ubuntu system dependencies
+    # from the official test image; do not substitute system Chromium 156 or
+    # download APT font packages during CI. This is test-only isolation.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
     defaults:
       run:
         working-directory: client
@@ -173,15 +176,12 @@ jobs:
         run: node ../tools/measure-browser-build.mjs
       - name: Install synthetic kiosk API test dependencies (no database/native drivers)
         run: npm ci --prefix ../server --ignore-scripts
-      - name: Verify Ubuntu runner's preinstalled Chromium (no APT/network install)
+      - name: Verify pinned Playwright browser from official container
         shell: bash
         run: |
           set -euo pipefail
-          test -x /usr/bin/chromium || { echo 'CHART_CI_CHROMIUM_UNAVAILABLE' >&2; exit 1; }
-          /usr/bin/chromium --version
-      - name: Run required Playwright browser regressions on system Chromium
-        env:
-          CHROMIUM_PATH: /usr/bin/chromium
+          node -e "const p=require('playwright');const fs=require('fs');if(require('playwright/package.json').version!=='1.64.1'||!fs.existsSync(p.chromium.executablePath()))process.exit(1);console.log('CHART_CI_PINNED_BROWSER='+p.chromium.executablePath())"
+      - name: Run full Playwright browser regressions with matching browser
         run: npm run test:e2e
       - name: Upload PR88 Client build (TEST ONLY, NOT production deployment)
         if: github.event_name == 'pull_request' && github.event.pull_request.number == 88
