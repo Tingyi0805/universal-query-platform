@@ -1968,7 +1968,7 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | database/acceptance/production-device-lifecycle-926-installed-data-readonly.sql | 66e61f3ec190e12d1369b3ae6848e73250b8eecbe855ddcf9b957c81da17d74f |
 | SOURCE | database/acceptance/production-workstation-pin-readonly.sql | b24733deaa2f7a0f39d2187156b25a4dac457be2b93985a93515c6bc1590d160 |
 | SOURCE | database/drafts/workstation_pin_runtime.forward.sql | 3b201b41d2a65450b2205ddf54454186d11f81e72e93aca8eb117e7f1c2dcd10 |
-| SOURCE | server/src/scripts/migrate.ts | 37dcd02a1acb5e7b37ac30dd82ca1195198ef793576c78a25d10ddc379633405 |
+| SOURCE | server/src/scripts/migrate.ts | 221773ff28d70dbffbb8ebd16e21557028ed92d5e6ca151b4d0a56da532fcfd5 |
 
 | SOURCE | database/migrations/927_workstation_pin_runtime.sql | ed321356d52469a9b578ed3b340d6d4c5bbee583b13a6172ae479806dc6b1743 |
 
