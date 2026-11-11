@@ -169,7 +169,14 @@ BEGIN
    OR i.QueryRevision<>d.QueryRevision OR i.DatasetRevision<>d.DatasetRevision
    OR i.PolicyRevision<>d.PolicyRevision OR i.RequestedByUserId<>d.RequestedByUserId
    OR i.RequestedAtUtc<>d.RequestedAtUtc
-   OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
+   -- Revocation cannot rewrite the original approved privacy decision.
+   OR (d.Status=''APPROVED'' AND (
+      i.MinimumCellCount<>d.MinimumCellCount
+      OR i.CategoryPrivacyReviewed<>d.CategoryPrivacyReviewed
+      OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
+      OR i.ReviewerUserId<>d.ReviewerUserId
+      OR i.ReviewedAtUtc<>d.ReviewedAtUtc))
+   OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED''
        OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
  )
   THROW 51928,''CHART_928_REVIEW_IMMUTABLE'',1;
