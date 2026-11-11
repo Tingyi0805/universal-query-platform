@@ -69,7 +69,12 @@ export function parseChart928DisposablePermitTriggerDefinitions(
      matches[0]?.[2]!=="TR_DashboardWidget_ChartFreeze"||
      matches[0]?.[3]!=="DashboardWidget")
     throw new Chart928CatalogError("CHART_928_PERMIT_TRIGGER_SOURCE_CONFLICT");
-  const definition=matches[0]?.[1]?.replace(/''/g,"'");
+  // SQL Server persists ALTER TRIGGER modules with a CREATE TRIGGER
+  // header in sys.sql_modules.definition. Convert ONLY that fixed leading
+  // verb; do not normalize the body, whitespace, identifiers or security
+  // predicates. The exact-body digest comparison remains fail-closed.
+  const definition=matches[0]?.[1]?.replace(/''/g,"'")
+    .replace(/^ALTER TRIGGER /,"CREATE TRIGGER ");
   if(!definition||
      !definition.includes("FROM uqp.DashboardChartCreatePermit p WITH(HOLDLOCK)")||
      !definition.includes("p.SessionId=@@SPID AND p.TransactionId=CURRENT_TRANSACTION_ID()")||
