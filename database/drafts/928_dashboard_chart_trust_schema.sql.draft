@@ -247,6 +247,17 @@ END');
       parent_object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest')
       AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>1
   THROW 51928,'CHART_928_FOREIGN_KEY_INVALID',1;
+ -- A rerun must not adopt disabled, untrusted, or missing CHART CHECKs.
+ -- Object and column counts alone cannot prove the enforced schema.
+ IF (SELECT COUNT(*) FROM sys.check_constraints c
+     WHERE c.is_disabled=0 AND c.is_not_trusted=0 AND c.is_not_for_replication=0
+       AND ((c.parent_object_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal')
+             AND c.name=N'CK_ChartSeal_Digest')
+         OR (c.parent_object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest')
+             AND c.name=N'CK_ChartTrustRequest_Action')
+         OR (c.parent_object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+             AND c.name IN(N'CK_ChartReview_State',N'CK_ChartReview_Scope'))))<>4
+  THROW 51928,'CHART_928_CHECK_CONSTRAINTS_INVALID',1;
  IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE
     object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
     AND name=N'UX_ChartReview_Active' AND is_unique=1 AND has_filter=1
