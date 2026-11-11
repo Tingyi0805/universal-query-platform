@@ -270,6 +270,12 @@ export async function verifyChart928DraftSql(
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='REQUESTED' WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
     "Status='REVOKED',QueryId=99,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
+  // Revocation may shorten validity and record a new audit receipt, but must
+  // never rewrite the identity or minimum-cell threshold of the approval.
+  await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',MinimumCellCount=6,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
+  await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',ReviewerUserId=8,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await q("UPDATE uqp.DashboardChartPrivacyReview SET " +
     "Status='REVOKED',ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED' WHERE Id=1");
