@@ -5,6 +5,7 @@
 -- Enforce the disposable boundary IN SQL before opening a transaction or DDL.
 -- This draft is never an authorized production migration.
 IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19
+ OR SUBSTRING(DB_NAME(),8,12) COLLATE Latin1_General_100_BIN2 LIKE N'%[^0-9a-f]%'
  THROW 51928,'CHART_928_DISPOSABLE_ONLY',1;
 SET XACT_ABORT ON;
 DECLARE @ownsTransaction bit=CASE WHEN @@TRANCOUNT=0 THEN 1 ELSE 0 END;
