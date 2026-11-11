@@ -226,6 +226,17 @@ test("2B-14 chart draft is editable but cannot enter saved layout, Query API or 
   await draftHeight.pressSequentially("200");
   await draftHeight.press("Tab");
   await expect(draftHeight).toHaveValue("200");
+  // Max-points uses the same complete-entry behavior as placement numbers.
+  const maxPoints=draft.getByLabel("最大資料點數（1–50）");
+  await maxPoints.click();
+  await maxPoints.press("ControlOrMeta+A");
+  await maxPoints.pressSequentially("25");
+  await expect(maxPoints).toHaveValue("25");
+  await maxPoints.press("Enter");
+  await expect(maxPoints).toHaveValue("25");
+  await maxPoints.fill("99");
+  await maxPoints.press("Tab");
+  await expect(maxPoints).toHaveValue("25");
   await expect(draft.getByRole("img",{name:/圓餅圖，僅合成資料示意/})).toBeVisible();
   await expect(draft.getByText("區域 A · 8")).toBeVisible();
   expect(state.writes).toHaveLength(0);
