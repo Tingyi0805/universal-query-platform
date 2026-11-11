@@ -360,6 +360,101 @@ END');
     OR (object_id=OBJECT_ID(N'uqp.TR_ChartTrustRequest_AuditReceipt',N'TR') AND
      parent_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest') AND is_disabled=0))<>7
   THROW 51928,'CHART_928_TRIGGERS_REQUIRED',1;
+ -- Fail closed on trigger BODY drift, including an enabled same-name replacement.
+ -- The expected definitions are literal copies of the CREATE text above, not
+ -- hashes learned from an already installed/possibly tampered database.
+ DECLARE @expectedTriggerSql TABLE(TriggerName sysname PRIMARY KEY, Definition nvarchar(max) NOT NULL);
+ INSERT INTO @expectedTriggerSql(TriggerName,Definition) VALUES
+  (N'TR_DashboardWidget_ChartFreeze',N'CREATE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget AFTER INSERT,UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ -- CHART type is registered for future migration, never enabled by 928.
+ IF EXISTS(SELECT 1 FROM inserted WHERE WidgetType=N''CHART'')
+ OR EXISTS(SELECT 1 FROM deleted WHERE WidgetType=N''CHART'')
+ OR EXISTS(SELECT 1 FROM inserted i JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=i.Id)
+ OR EXISTS(SELECT 1 FROM deleted d JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=d.Id)
+  THROW 51928,''CHART_928_WIDGET_FROZEN'',1;
+END'),
+  (N'TR_ChartSeal_DeleteBlock',N'CREATE TRIGGER uqp.TR_ChartSeal_DeleteBlock ON uqp.DashboardChartWidgetSeal AFTER DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM deleted)
+  THROW 51928,''CHART_928_SEAL_DELETE_BLOCKED'',1;
+END'),
+  (N'TR_ChartReview_Transition',N'CREATE TRIGGER uqp.TR_ChartReview_Transition ON uqp.DashboardChartPrivacyReview AFTER UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(
+  SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.Id=d.Id
+  WHERE i.Id IS NULL OR i.DashboardId<>d.DashboardId OR i.QueryId<>d.QueryId
+   OR i.DatasetId<>d.DatasetId OR i.SourceKey<>d.SourceKey
+   OR i.CategoryColumn<>d.CategoryColumn OR i.ValueColumn<>d.ValueColumn
+   OR i.QueryRevision<>d.QueryRevision OR i.DatasetRevision<>d.DatasetRevision
+   OR i.PolicyRevision<>d.PolicyRevision OR i.RequestedByUserId<>d.RequestedByUserId
+   OR i.RequestedAtUtc<>d.RequestedAtUtc
+   -- Revocation cannot rewrite the original approved privacy decision.
+   OR (d.Status=''APPROVED'' AND (
+      i.MinimumCellCount<>d.MinimumCellCount
+      OR i.CategoryPrivacyReviewed<>d.CategoryPrivacyReviewed
+      OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
+      OR i.ReviewerUserId<>d.ReviewerUserId
+      OR i.ReviewedAtUtc<>d.ReviewedAtUtc))
+   OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
+       OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
+ )
+  THROW 51928,''CHART_928_REVIEW_IMMUTABLE'',1;
+END'),
+  (N'TR_ChartTrustRequest_Immutable',N'CREATE TRIGGER uqp.TR_ChartTrustRequest_Immutable ON uqp.DashboardChartTrustRequest AFTER UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(
+  SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.RequestId=d.RequestId
+  WHERE i.RequestId IS NULL OR i.Action<>d.Action OR i.ActorId<>d.ActorId
+   OR d.AuditLogId IS NOT NULL OR i.AuditLogId IS NULL
+ )
+  THROW 51928,''CHART_928_LEDGER_IMMUTABLE'',1;
+END'),
+  (N'TR_ChartSeal_AuditReceipt',N'CREATE TRIGGER uqp.TR_ChartSeal_AuditReceipt ON uqp.DashboardChartWidgetSeal AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.UserId=i.SealedBy
+     AND a.EventType=N''CHART_SEAL_WIDGET'' AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_SEAL_AUDIT_REQUIRED'',1;
+END'),
+  (N'TR_ChartReview_AuditReceipt',N'CREATE TRIGGER uqp.TR_ChartReview_AuditReceipt ON uqp.DashboardChartPrivacyReview AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.Status=N''SUCCESS'' AND a.IsImportant=1
+     AND a.EventType=CASE i.Status
+       WHEN ''REQUESTED'' THEN N''CHART_REQUEST_REVIEW''
+       WHEN ''APPROVED'' THEN N''CHART_APPROVE_REVIEW''
+       WHEN ''REVOKED'' THEN N''CHART_REVOKE_REVIEW'' ELSE N''INVALID'' END
+     AND a.UserId=CASE WHEN i.Status=''REQUESTED'' THEN i.RequestedByUserId
+       ELSE i.ReviewerUserId END))
+  THROW 51928,''CHART_928_REVIEW_AUDIT_REQUIRED'',1;
+END'),
+  (N'TR_ChartTrustRequest_AuditReceipt',N'CREATE TRIGGER uqp.TR_ChartTrustRequest_AuditReceipt ON uqp.DashboardChartTrustRequest AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE i.AuditLogId IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+     WHERE a.Id=i.AuditLogId AND a.UserId=i.ActorId AND a.EventType=N''CHART_''+i.Action
+       AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_REQUEST_AUDIT_REQUIRED'',1;
+END');
+ IF EXISTS (
+  SELECT 1 FROM @expectedTriggerSql e
+  LEFT JOIN sys.triggers t ON t.object_id=OBJECT_ID(N'uqp.'+e.TriggerName,N'TR')
+  LEFT JOIN sys.sql_modules m ON m.object_id=t.object_id
+  WHERE t.object_id IS NULL OR t.is_disabled<>0 OR m.definition IS NULL
+   OR HASHBYTES('SHA2_256',CONVERT(varbinary(max),m.definition))
+    <> HASHBYTES('SHA2_256',CONVERT(varbinary(max),e.Definition))
+ )
+  THROW 51928,'CHART_928_TRIGGER_DEFINITION_MISMATCH',1;
  IF @ownsTransaction=1 COMMIT TRANSACTION;
 END TRY
 BEGIN CATCH
