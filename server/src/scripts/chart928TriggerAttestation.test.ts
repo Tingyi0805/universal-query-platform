@@ -9,7 +9,8 @@ import {
 } from "./chart928WriterBaseSchema.js";
 
 import {
-  parseChart928TriggerDefinitions,attestChart928TriggerRows,
+  parseChart928TriggerDefinitions,parseChart928DisposablePermitTriggerDefinitions,
+  attestChart928TriggerRows,
   CHART_928_TRIGGER_TABLES,Chart928CatalogError,
 } from "./chart928TriggerAttestation.js";
 
@@ -61,6 +62,46 @@ test("2B-15C disabled, instead-of, wrong schema, hidden DDL and missing trigger 
   }
   rejected(()=>attestChart928TriggerRows(makeRows().slice(1),expected),
     "CHART_928_CATALOG_TRIGGER_COUNT");
+});
+
+test("928 frozen vs synthetic Permit Writer states are distinct and source-bound",()=>{
+  const writerDraft=readFileSync(
+    new URL("../../../database/drafts/928_chart_atomic_create_prototype.sql.draft",import.meta.url),
+    "utf8",
+  );
+  const permitExpected=parseChart928DisposablePermitTriggerDefinitions(draft,writerDraft);
+  assert.equal(permitExpected.length,7);
+  const permitRows=permitExpected.map(item=>({
+    TriggerName:item.name,SchemaName:"uqp",ParentSchema:"uqp",
+    ParentTable:item.table,IsDisabled:false,IsInsteadOf:false,
+    Definition:item.definition,
+  }));
+  assert.doesNotThrow(()=>attestChart928TriggerRows(permitRows,permitExpected));
+  // Neither catalog state may be mislabelled as the other, even though
+  // the trigger name, parent table and enabled flags are identical.
+  rejected(()=>attestChart928TriggerRows(makeRows(),permitExpected),
+    "CHART_928_CATALOG_TRIGGER_DEFINITION");
+  rejected(()=>attestChart928TriggerRows(permitRows,expected),
+    "CHART_928_CATALOG_TRIGGER_DEFINITION");
+  const broken=permitRows.map(row=>({...row}));
+  broken[0]!.Definition=broken[0]!.Definition.replace(
+    "p.TransactionId=CURRENT_TRANSACTION_ID()",
+    "p.TransactionId<>CURRENT_TRANSACTION_ID()");
+  rejected(()=>attestChart928TriggerRows(broken,permitExpected),
+    "CHART_928_CATALOG_TRIGGER_DEFINITION");
+  rejected(()=>parseChart928DisposablePermitTriggerDefinitions(draft,
+    writerDraft.replace("p.TransactionId=CURRENT_TRANSACTION_ID()",
+      "p.TransactionId<>CURRENT_TRANSACTION_ID()")),
+    "CHART_928_PERMIT_TRIGGER_FENCE_MISSING");
+  rejected(()=>parseChart928DisposablePermitTriggerDefinitions(draft,
+    writerDraft.replace("NON-SCANNED DRAFT","unreviewed production SQL")),
+    "CHART_928_PERMIT_SOURCE_NOT_DISPOSABLE");
+  rejected(()=>parseChart928DisposablePermitTriggerDefinitions(draft,
+    writerDraft.replace("ALTER TRIGGER uqp.TR_DashboardWidget_ChartFreeze",
+      "ALTER TRIGGER uqp.TR_UnreviewedChart")),
+    "CHART_928_PERMIT_TRIGGER_SOURCE_CONFLICT");
+  // Even a permit-body test PASS is not a release gate or a production
+  // actor binding; no migration or SQL execution is added by this test.
 });
 
 test("2B-15C base Widget/Audit/Actor schema parity matches migration-owned columns",()=>{
