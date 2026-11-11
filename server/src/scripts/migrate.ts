@@ -132,7 +132,17 @@ async function main() {
 
   if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool);
 
-  if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch(`
+  // STATUS is observational. Never create uqp schema or the migration ledger
+  // on a new/incorrect target merely to inspect migration state.
+  if (command === "status") {
+    const ledger = await pool.request().query(
+      "SELECT OBJECT_ID(N'uqp.SchemaMigration',N'U') AS LedgerId",
+    );
+    if (typeof ledger.recordset?.[0]?.LedgerId !== "number")
+      throw new Error("MIGRATION_STATUS_LEDGER_MISSING_READ_ONLY");
+  }
+
+  if (command !== "status" && command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch(`
     IF NOT EXISTS (SELECT 1 FROM sys.schemas WHERE name = 'uqp')
       EXEC('CREATE SCHEMA uqp');
 
