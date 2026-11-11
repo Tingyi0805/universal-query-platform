@@ -389,6 +389,17 @@ export async function verifyChart928DraftSql(
   await assert.rejects(db.request().batch(script), (err:unknown)=>err instanceof Error);
   await q("ENABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget");
   await attestChart928TriggerCatalog(db,script);
+  stage="DISABLED_CHART_CHECK_REJECT";
+  await q("ALTER TABLE uqp.DashboardChartPrivacyReview NOCHECK CONSTRAINT CK_ChartReview_Scope");
+  await assert.rejects(db.request().batch(script),
+    (error:unknown)=>{
+      const sqlError=error as {number?:number;message?:string};
+      return sqlError?.number===51928 &&
+        String(sqlError.message).includes("CHART_928_CHECK_CONSTRAINTS_INVALID");
+    });
+  await q("ALTER TABLE uqp.DashboardChartPrivacyReview WITH CHECK CHECK CONSTRAINT CK_ChartReview_Scope");
+  await db.request().batch(script);
+  console.log("CHART_928_DISABLED_CHECK_RERUN_REJECT_PASS");
   stage="FINAL";
   await check();
   await attestChartWriterBaseSqlCatalog(db);
