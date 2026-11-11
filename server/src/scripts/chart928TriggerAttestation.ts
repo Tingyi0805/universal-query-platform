@@ -113,7 +113,16 @@ export function attestChart928TriggerRows(
 export async function attestChart928TriggerCatalog(
   connection:sql.ConnectionPool|sql.Transaction,draft:string,
 ):Promise<void> {
-  const expected=parseChart928TriggerDefinitions(draft);
+  await attestChart928TriggerCatalogDefinitions(connection,parseChart928TriggerDefinitions(draft));
+}
+
+/** Compare an explicitly selected disposable schema state; never infer
+ * approval from the catalog and never auto-select the more permissive state.
+ */
+export async function attestChart928TriggerCatalogDefinitions(
+  connection:sql.ConnectionPool|sql.Transaction,
+  expected:readonly Chart928TriggerDefinition[],
+):Promise<void> {
   const request=connection instanceof sql.Transaction
     ? new sql.Request(connection) : new sql.Request(connection);
   const rows=(await request.query(
