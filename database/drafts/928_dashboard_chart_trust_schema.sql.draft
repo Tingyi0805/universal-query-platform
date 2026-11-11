@@ -235,49 +235,50 @@ END');
  -- Exact 928 column contract: reject renamed/retyped/reordered, nullable,
  -- length, scale and identity drift (counts alone are not sufficient).
  DECLARE @expectedColumns TABLE(
-  TableName sysname NOT NULL, ColumnName sysname NOT NULL,
+  TableName sysname NOT NULL, ColumnName sysname NOT NULL, ColumnId int NOT NULL,
   TypeName sysname NOT NULL, MaxLength smallint NULL,
   Scale tinyint NOT NULL, IsNullable bit NOT NULL, IsIdentity bit NOT NULL,
   PRIMARY KEY(TableName,ColumnName));
- INSERT INTO @expectedColumns(TableName,ColumnName,TypeName,MaxLength,Scale,IsNullable,IsIdentity)
+ INSERT INTO @expectedColumns(TableName,ColumnName,ColumnId,TypeName,MaxLength,Scale,IsNullable,IsIdentity)
  VALUES
-   (N'DashboardChartWidgetSeal',N'WidgetId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartWidgetSeal',N'ConfigDigest',N'char',64,0,0,0),
-   (N'DashboardChartWidgetSeal',N'IsActive',N'bit',NULL,0,0,0),
-   (N'DashboardChartWidgetSeal',N'SealedBy',N'bigint',NULL,0,0,0),
-   (N'DashboardChartWidgetSeal',N'AuditLogId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartWidgetSeal',N'SealRowVersion',N'timestamp',NULL,0,0,0),
-   (N'DashboardChartWidgetSeal',N'CreatedAtUtc',N'datetime2',NULL,3,0,0),
-   (N'DashboardChartTrustRequest',N'RequestId',N'uniqueidentifier',NULL,0,0,0),
-   (N'DashboardChartTrustRequest',N'Action',N'nvarchar',80,0,0,0),
-   (N'DashboardChartTrustRequest',N'ActorId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartTrustRequest',N'AuditLogId',N'bigint',NULL,0,1,0),
-   (N'DashboardChartPrivacyReview',N'Id',N'bigint',NULL,0,0,1),
-   (N'DashboardChartPrivacyReview',N'DashboardId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'QueryId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'DatasetId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'SourceKey',N'nvarchar',128,0,0,0),
-   (N'DashboardChartPrivacyReview',N'CategoryColumn',N'nvarchar',256,0,0,0),
-   (N'DashboardChartPrivacyReview',N'ValueColumn',N'nvarchar',256,0,0,0),
-   (N'DashboardChartPrivacyReview',N'QueryRevision',N'binary',8,0,0,0),
-   (N'DashboardChartPrivacyReview',N'DatasetRevision',N'binary',8,0,0,0),
-   (N'DashboardChartPrivacyReview',N'PolicyRevision',N'char',64,0,0,0),
-   (N'DashboardChartPrivacyReview',N'Status',N'varchar',20,0,0,0),
-   (N'DashboardChartPrivacyReview',N'MinimumCellCount',N'int',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'CategoryPrivacyReviewed',N'bit',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'DifferencingRiskReviewed',N'bit',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'RequestedByUserId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'RequestedAtUtc',N'datetime2',NULL,3,0,0),
-   (N'DashboardChartPrivacyReview',N'ReviewerUserId',N'bigint',NULL,0,1,0),
-   (N'DashboardChartPrivacyReview',N'ReviewedAtUtc',N'datetime2',NULL,3,1,0),
-   (N'DashboardChartPrivacyReview',N'ValidUntilUtc',N'datetime2',NULL,3,1,0),
-   (N'DashboardChartPrivacyReview',N'AuditLogId',N'bigint',NULL,0,0,0),
-   (N'DashboardChartPrivacyReview',N'ReviewRowVersion',N'timestamp',NULL,0,0,0);
+   (N'DashboardChartWidgetSeal',N'WidgetId',1,N'bigint',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'ConfigDigest',2,N'char',64,0,0,0),
+   (N'DashboardChartWidgetSeal',N'IsActive',3,N'bit',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'SealedBy',4,N'bigint',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'AuditLogId',5,N'bigint',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'SealRowVersion',6,N'timestamp',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'CreatedAtUtc',7,N'datetime2',NULL,3,0,0),
+   (N'DashboardChartTrustRequest',N'RequestId',1,N'uniqueidentifier',NULL,0,0,0),
+   (N'DashboardChartTrustRequest',N'Action',2,N'nvarchar',80,0,0,0),
+   (N'DashboardChartTrustRequest',N'ActorId',3,N'bigint',NULL,0,0,0),
+   (N'DashboardChartTrustRequest',N'AuditLogId',4,N'bigint',NULL,0,1,0),
+   (N'DashboardChartPrivacyReview',N'Id',1,N'bigint',NULL,0,0,1),
+   (N'DashboardChartPrivacyReview',N'DashboardId',2,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'QueryId',3,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'DatasetId',4,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'SourceKey',5,N'nvarchar',128,0,0,0),
+   (N'DashboardChartPrivacyReview',N'CategoryColumn',6,N'nvarchar',256,0,0,0),
+   (N'DashboardChartPrivacyReview',N'ValueColumn',7,N'nvarchar',256,0,0,0),
+   (N'DashboardChartPrivacyReview',N'QueryRevision',8,N'binary',8,0,0,0),
+   (N'DashboardChartPrivacyReview',N'DatasetRevision',9,N'binary',8,0,0,0),
+   (N'DashboardChartPrivacyReview',N'PolicyRevision',10,N'char',64,0,0,0),
+   (N'DashboardChartPrivacyReview',N'Status',11,N'varchar',20,0,0,0),
+   (N'DashboardChartPrivacyReview',N'MinimumCellCount',12,N'int',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'CategoryPrivacyReviewed',13,N'bit',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'DifferencingRiskReviewed',14,N'bit',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'RequestedByUserId',15,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'RequestedAtUtc',16,N'datetime2',NULL,3,0,0),
+   (N'DashboardChartPrivacyReview',N'ReviewerUserId',17,N'bigint',NULL,0,1,0),
+   (N'DashboardChartPrivacyReview',N'ReviewedAtUtc',18,N'datetime2',NULL,3,1,0),
+   (N'DashboardChartPrivacyReview',N'ValidUntilUtc',19,N'datetime2',NULL,3,1,0),
+   (N'DashboardChartPrivacyReview',N'AuditLogId',20,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'ReviewRowVersion',21,N'timestamp',NULL,0,0,0);
+ -- Compare both directions; column ID is part of the sealed schema contract.
  IF EXISTS (
-  SELECT e.TableName,e.ColumnName,e.TypeName,e.MaxLength,e.Scale,e.IsNullable,e.IsIdentity
+  SELECT e.TableName,e.ColumnName,e.ColumnId,e.TypeName,e.MaxLength,e.Scale,e.IsNullable,e.IsIdentity
   FROM @expectedColumns e
   EXCEPT
-  SELECT OBJECT_NAME(c.object_id),c.name,t.name,
+  SELECT OBJECT_NAME(c.object_id),c.name,c.column_id,t.name,
     CASE WHEN t.name IN(N'char',N'varchar',N'nchar',N'nvarchar',N'binary',N'varbinary')
       THEN c.max_length ELSE NULL END,
     CASE WHEN t.name IN(N'datetime2',N'datetimeoffset',N'time',N'decimal',N'numeric')
@@ -289,7 +290,7 @@ END');
    OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
    OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))
  ) OR EXISTS (
-  SELECT OBJECT_NAME(c.object_id),c.name,t.name,
+  SELECT OBJECT_NAME(c.object_id),c.name,c.column_id,t.name,
     CASE WHEN t.name IN(N'char',N'varchar',N'nchar',N'nvarchar',N'binary',N'varbinary')
       THEN c.max_length ELSE NULL END,
     CASE WHEN t.name IN(N'datetime2',N'datetimeoffset',N'time',N'decimal',N'numeric')
@@ -301,7 +302,7 @@ END');
    OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
    OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))
   EXCEPT
-  SELECT e.TableName,e.ColumnName,e.TypeName,e.MaxLength,e.Scale,e.IsNullable,e.IsIdentity
+  SELECT e.TableName,e.ColumnName,e.ColumnId,e.TypeName,e.MaxLength,e.Scale,e.IsNullable,e.IsIdentity
   FROM @expectedColumns e
  )
   THROW 51928,'CHART_928_EXACT_COLUMN_CONTRACT_MISMATCH',1;
