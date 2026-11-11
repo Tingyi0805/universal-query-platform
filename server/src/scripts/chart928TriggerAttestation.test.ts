@@ -71,12 +71,24 @@ test("928 frozen vs synthetic Permit Writer states are distinct and source-bound
   );
   const permitExpected=parseChart928DisposablePermitTriggerDefinitions(draft,writerDraft);
   assert.equal(permitExpected.length,7);
+  const permitDefinition=permitExpected.find(x=>x.name==="TR_DashboardWidget_ChartFreeze")!.definition;
+  assert.match(permitDefinition,/^CREATE TRIGGER uqp\.TR_DashboardWidget_ChartFreeze\b/);
+  assert.doesNotMatch(permitDefinition,/^ALTER TRIGGER\b/);
   const permitRows=permitExpected.map(item=>({
     TriggerName:item.name,SchemaName:"uqp",ParentSchema:"uqp",
     ParentTable:item.table,IsDisabled:false,IsInsteadOf:false,
     Definition:item.definition,
   }));
   assert.doesNotThrow(()=>attestChart928TriggerRows(permitRows,permitExpected));
+  // SQL Server stores the ALTER-ed module as CREATE. Do not broaden this
+  // into accepting raw ALTER definitions or a different module body.
+  const rawAlter=permitRows.map(row=>({...row}));
+  const frozenIndex=rawAlter.findIndex(x=>x.TriggerName==="TR_DashboardWidget_ChartFreeze");
+  assert(frozenIndex>=0);
+  rawAlter[frozenIndex]!.Definition=rawAlter[frozenIndex]!.Definition.replace(
+    /^CREATE TRIGGER /,"ALTER TRIGGER ");
+  rejected(()=>attestChart928TriggerRows(rawAlter,permitExpected),
+    "CHART_928_CATALOG_TRIGGER_DEFINITION");
   // Neither catalog state may be mislabelled as the other, even though
   // the trigger name, parent table and enabled flags are identical.
   rejected(()=>attestChart928TriggerRows(makeRows(),permitExpected),
