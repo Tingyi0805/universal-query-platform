@@ -44,3 +44,33 @@ Only after Gates 2 and 3 are independently approved: stage an authorized ZIP out
 - **User action now:** none. Existing Stage 18 acceptance and previously observed 925/926 evidence are preserved; no repeat manual inventory is requested merely to document these gates.
 
 The next material completion is an **independently reviewed production 928 migration plus approved signer/Writer trust boundary**, not another disposable-only feature or invented stage.
+
+
+## Independent DBA / security review handoff (2026-11-11; evidence, not approval)
+
+This section is a review handoff under the **existing Gates 2 and 3**, not an additional delivery phase. Source baseline is Draft PR #99 commit \`a74ca5aa4ab7d73057212e037b6975603376c6d4\`, with isolated CI #1482 SUCCESS. It is not evidence of production schema attestation or of a signed release decision. Keep all decisions below **PENDING** unless recorded by independent authorized reviewers.
+
+| Decision owner | Minimum acceptance evidence | Current review decision |
+| --- | --- | --- |
+| DBA — 928 source | Independently reviewed, versioned **production** SQL; exact columns (including order/types/length/nullability), defaults, keys, FK targets, CHECKs, filtered-index expressions, trigger definitions/events and preexisting DashboardWidget behavior; approved exact source SHA-256 | **PENDING**; \`database/drafts/928_dashboard_chart_trust_schema.sql.draft\` is disposable-only, not an installer |
+| DBA — target and recovery | Target server/database/login identity; exact 925 match, coherent 926 catalog/ledger reconciliation, 927 absence/presence classified without treating it as a mandatory CHART prerequisite; 928 absence/state; approved backup/restore test, outage/change window, transaction/lock/ledger integration and failure recovery | **PENDING**; isolated CI cannot attest the hospital target |
+| Security — Signer / Issuer / Writer | Independently operated signer identity and key custody, mTLS/cert rotation, separate SQL principals and grants, approved DB-owned actor binding, scoped one-time authorization/replay protection, exact approved writer procedure digest and auditable receipt matching | **PENDING**; \`CHART_WRITER_APPROVED_PROCEDURE_SHA256\` remains \`null\` |
+| Privacy / clinical data owner | Approved grouped-query source and disclosure scope, small-cell and differencing controls, audit retention, independent user versus device Token/IP/revocation and public-screen release decision | **PENDING**; designer preview is not public-display approval |
+| Deployment/change owner | Gate 2 and 3 approvals recorded first; isolated Windows/IIS end-to-end evidence; preserve deployment \`.env\`; rollback owner and explicit operator deployment authorization | **PENDING**; no \`C:\UQP\` overlay permitted |
+
+### Review-specific technical observations (not signatures)
+
+- The disposable 928 draft now includes an explicit 32-column bidirectional metadata comparison (including column ID and digest collation) and exact-body SHA-256 comparison for its seven installed triggers. These checks are **prototype validation**, not a substitute for independent production source review.
+- Existing metadata observations/count checks do not by themselves prove every default, key, CHECK, index or FK *definition*. Independent review must confirm actual catalog semantics and the approved migration runner's write/rollback behavior; neither CI nor this handoff marks them accepted.
+- The draft's \`TR_DashboardWidget_ChartFreeze\` intentionally rejects CHART DML. It must not be removed or bypassed merely to make playback work; an approved release must establish the separate authorized Writer transaction and actor-binding contract.
+- The repository's generic migration runner has a protective 928 inventory gate. A future reviewed 928 installer requires an independently approved release-path change; do not put a \`928_*.sql\` file in the scanned migrations directory as a shortcut.
+
+### Independent approval record (complete outside this draft PR)
+
+- Approved production 928 source path / SHA-256 / reviewer / date / change authorization: **NOT RECORDED**
+- Verified hospital target identity / 925–928 evidence / backup and recovery owner: **NOT RECORDED**
+- Approved Writer procedure identity / SHA-256 / SQL principal / signer cert custody: **NOT RECORDED**
+- Privacy + device/public playback reviewer / scope / expiry: **NOT RECORDED**
+- Release decision and authorized Windows/IIS change record: **NOT RECORDED**
+
+**Current decision remains BLOCKED.** Do not merge, install 928, create a schema ledger entry, change CHART hard release switches, use clinical patient data or overwrite \`C:\UQP\` based on this handoff.
