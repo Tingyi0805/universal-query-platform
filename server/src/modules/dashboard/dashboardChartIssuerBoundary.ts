@@ -54,6 +54,13 @@ export class ChartIssuerBoundaryError extends Error {
 }
 const fail=(code:string):never=>{throw new ChartIssuerBoundaryError(code);};
 const nonempty=(x:unknown):x is string=>typeof x==="string"&&x.length>0;
+const validSid=(value:unknown):value is string=>
+ typeof value==="string"&&/^(?:[0-9A-F]{2}){1,85}$/.test(value);
+const reviewedSids=(value:ChartApprovedOriginalSids|null):
+ value is ChartApprovedOriginalSids=>
+ !!value&&validSid(value.platform)&&validSid(value.issuer)&&
+ validSid(value.writer)&&
+ new Set([value.platform,value.issuer,value.writer]).size===3;
 const privileged=[
  "Sysadmin","ServerControl","ServerImpersonateAny","ServerAlterLogins",
  "ServerAlterRoles","ServerSelectAllUserData",
@@ -77,6 +84,10 @@ export function attestChartIssuerSqlPrincipals(
 ):void {
  if(typeof expectedDigest!=="string"||!/^[a-f0-9]{64}$/.test(expectedDigest))
    return fail("CHART_ISSUER_RELEASE_NOT_APPROVED");
+ // The pure attestor is a callable trust boundary too; synthetic test hashes
+ // do not make omitted or malformed independent ORIGINAL_LOGIN SIDs acceptable.
+ if(!reviewedSids(expectedSids))
+   return fail("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
  const roles=[platform,issuer,writer];
  for(const row of roles)
    if(!row||!nonempty(row.DbName)||!nonempty(row.ServerName)||
@@ -88,9 +99,9 @@ export function attestChartIssuerSqlPrincipals(
    return fail("CHART_ISSUER_TARGET_MISMATCH");
  if(new Set(roles.map(row=>row.OriginalSid)).size!==3)
    return fail("CHART_ISSUER_LOGINS_NOT_ISOLATED");
- if(expectedSids && (platform.OriginalSid!==expectedSids.platform||
+ if(platform.OriginalSid!==expectedSids.platform||
     issuer.OriginalSid!==expectedSids.issuer||
-    writer.OriginalSid!==expectedSids.writer))
+    writer.OriginalSid!==expectedSids.writer)
    return fail("CHART_ISSUER_LOGIN_SID_NOT_APPROVED");
  if(typeof issuer.IssuerProcedureId!=="number"||
     !Number.isSafeInteger(issuer.IssuerProcedureId)||
@@ -129,11 +140,7 @@ export async function attestChartIssuerSqlPools(
    return fail("CHART_ISSUER_RELEASE_NOT_APPROVED");
  // A direct pool attestor is also a production-facing entrypoint. Synthetic
  // reviewed hashes alone must never authorize unpinned SQL login identities.
- const validSid=(value:unknown)=>typeof value==="string"&&
-   /^(?:[0-9A-F]{2}){1,85}$/.test(value);
- if(!validSid(expectedSids?.platform)||!validSid(expectedSids?.issuer)||
-    !validSid(expectedSids?.writer)||
-    new Set([expectedSids!.platform,expectedSids!.issuer,expectedSids!.writer]).size!==3)
+ if(!reviewedSids(expectedSids))
    return fail("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
  if(!platform||!issuer||!writer||
     platform===issuer||platform===writer||issuer===writer)
