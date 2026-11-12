@@ -38,6 +38,8 @@ test("SSMS evidence refuses unspecified/wrong target and never installs 925/928"
   assert.doesNotMatch(executable,
     /\b(?:INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|EXEC(?:UTE)?|USE)\b/i);
   assert(script.includes("UQP_CHART_EXPECTED_TARGET_IDENTITY_REQUIRED"));
+  for(const field of ["@ExpectedServer","@ExpectedDatabase","@ExpectedOriginalLogin"])
+    assert(executable.includes(`${field} IS NULL`),`Missing NULL denial for ${field}`);
   assert(script.includes("UQP_CHART_TARGET_IDENTITY_MISMATCH"));
   // SQL Server pads even BIN2 equality; identity must be byte-exact and
   // must not silently pass an UNKNOWN SQL IF predicate on a NULL server name.
