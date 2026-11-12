@@ -26,7 +26,7 @@ const platform=()=>({...base});
 const issuer=()=>({...base,OriginalSid:"BB",EffectiveUser:"issuer",IssueExecute:1});
 const writer=()=>({...base,OriginalSid:"CC",EffectiveUser:"writer",CreateExecute:1});
 const check=(p:Record<string,unknown>,i:Record<string,unknown>,w:Record<string,unknown>)=>
- attestChartIssuerSqlPrincipals(p,i,w,digest);
+ attestChartIssuerSqlPrincipals(p,i,w,digest,approvedSids);
 const rejects=(code:string,action:()=>unknown)=>
  assert.throws(action,(e:unknown)=>e instanceof ChartIssuerBoundaryError&&e.code===code);
 
@@ -45,6 +45,18 @@ test("2B-15D-8 three distinct SQL ORIGINAL_LOGIN identities are required",()=>{
  assert.match(chartIssuerIdentitySql,/^SELECT\s/);
  assert.doesNotMatch(chartIssuerIdentitySql,/\b(?:INSERT INTO|UPDATE uqp\.|DELETE FROM|GRANT EXECUTE)\b/i);
  assert.equal(CHART_ISSUER_APPROVED_PROCEDURE_SHA256,null);
+ // The callable pure predicate must also require independently approved pins.
+ rejects("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest));
+ rejects("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest,
+     {...approvedSids,issuer:"AA"}));
+ rejects("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest,
+     {...approvedSids,writer:"cc"}));
+ rejects("CHART_ISSUER_LOGIN_SID_NOT_APPROVED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest,
+     {...approvedSids,writer:"DD"}));
  assert.doesNotThrow(()=>check(platform(),issuer(),writer()));
  for(const oldSid of ["AA","CC"])
   rejects("CHART_ISSUER_LOGINS_NOT_ISOLATED",()=>
