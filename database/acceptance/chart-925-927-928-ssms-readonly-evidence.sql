@@ -19,7 +19,9 @@ DECLARE @ExpectedServer nvarchar(256)=N'__FILL_SERVER__';
 DECLARE @ExpectedDatabase nvarchar(256)=N'__FILL_DATABASE__';
 DECLARE @ExpectedOriginalLogin nvarchar(256)=N'__FILL_ORIGINAL_LOGIN__';
 
-IF @ExpectedServer LIKE N'__FILL%' OR @ExpectedDatabase LIKE N'__FILL%'
+IF @ExpectedServer IS NULL OR @ExpectedDatabase IS NULL
+   OR @ExpectedOriginalLogin IS NULL
+   OR @ExpectedServer LIKE N'__FILL%' OR @ExpectedDatabase LIKE N'__FILL%'
    OR @ExpectedOriginalLogin LIKE N'__FILL%' OR
    LEN(@ExpectedServer)=0 OR LEN(@ExpectedDatabase)=0 OR
    LEN(@ExpectedOriginalLogin)=0
