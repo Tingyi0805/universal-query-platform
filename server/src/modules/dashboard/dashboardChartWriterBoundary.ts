@@ -115,6 +115,13 @@ export async function attestChartWriterSqlPools(
 ):Promise<void> {
  if(typeof expectedSha256!=="string"||!/^[a-f0-9]{64}$/.test(expectedSha256))
    return block("CHART_WRITER_RELEASE_NOT_APPROVED");
+ // Require independent, exact ORIGINAL_LOGIN SID pins even if this lower-level
+ // SQL attestor is called outside the combined preflight factory.
+ const validSid=(value:unknown)=>typeof value==="string"&&
+   /^(?:[0-9A-F]{2}){1,85}$/.test(value);
+ if(!validSid(expectedSids?.platform)||!validSid(expectedSids?.writer)||
+    expectedSids!.platform===expectedSids!.writer)
+   return block("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED");
  if(!platform||!writer||platform===writer)
    return block("CHART_WRITER_POOL_NOT_ISOLATED");
  try{
