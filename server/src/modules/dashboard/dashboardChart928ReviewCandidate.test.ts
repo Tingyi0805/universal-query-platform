@@ -56,5 +56,7 @@ test("928 review source verifies eight exact FK references and filtered-index ke
     "(4,N'SourceKey')","(5,N'CategoryColumn')","(6,N'ValueColumn')"])
     assert.ok(sql.includes(tuple),tuple);
   assert.match(sql,/ic\.is_descending_key=0/);
+  // A seventh descending key is filtered out above: count all keys explicitly.
+  assert.match(sql,/AND i\.name=N'UX_ChartReview_Active' AND ic\.key_ordinal>0\)<>6/);
   assert.match(sql,/CHART_928_EXACT_INDEX_KEY_MISMATCH/);
 });
