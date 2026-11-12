@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type sql from "mssql";
+import {readFile} from "node:fs/promises";
 import {
   CHART_SQL_ATOMIC_CREATE_RELEASE_APPROVED,
   chartIssuerGrantSql,chartWriterCreateSql,createDormantSqlChartAtomicCreate,
@@ -113,6 +114,23 @@ test("future SQL create is pinned to the reviewed Signed Issuer ABI, not legacy 
   assert.match(chartIssuerGrantSql,/@Signature=@signature/);
   assert.match(chartIssuerGrantSql,/@Nonce=@nonce/);
   assert.match(chartIssuerGrantSql,/@ExpiresAtUtc=@expires/);
+});
+
+test("disposable SQL Writer binds source key byte-exactly to Signer and Issuer grant",async()=>{
+  // SQL Server pads trailing spaces for '=' even under BIN2 collation.
+  // Both the active Query binding and one-time grant must reject that alias.
+  // Only the disposable fixture is tested, NOT a production migration.
+  const url=new URL(
+    "../../../../database/drafts/928_chart_atomic_create_with_delegation.sql.draft",
+    import.meta.url,
+  );
+  const source=await readFile(url,"utf8");
+  assert.match(source,
+    /DATALENGTH\(CONVERT\(nvarchar\(max\),bs\.SourceKey\)\)\s*=\s*DATALENGTH\(@SourceKey\)/);
+  assert.match(source,
+    /d\.SourceKey COLLATE Latin1_General_100_BIN2\s*= @SourceKey COLLATE Latin1_General_100_BIN2\s*(?:--[^\n]*\n\s*)*AND DATALENGTH\(d\.SourceKey\)=DATALENGTH\(@SourceKey\)/);
+  assert.match(source,/CHART_DELEGATED_DISPOSABLE_ONLY/);
+  assert.doesNotMatch(source,/CREATE PROCEDURE uqp\.usp_DashboardChartCreate\b/);
 });
 
 test("SQL Issuer/Writer remains hard-disabled with zero DB or Signer calls",async()=>{
