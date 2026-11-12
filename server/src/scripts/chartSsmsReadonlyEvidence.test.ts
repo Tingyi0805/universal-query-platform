@@ -39,6 +39,12 @@ test("SSMS evidence refuses unspecified/wrong target and never installs 925/928"
     /\b(?:INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|EXEC(?:UTE)?|USE)\b/i);
   assert(script.includes("UQP_CHART_EXPECTED_TARGET_IDENTITY_REQUIRED"));
   assert(script.includes("UQP_CHART_TARGET_IDENTITY_MISMATCH"));
+  // SQL Server pads even BIN2 equality; identity must be byte-exact and
+  // must not silently pass an UNKNOWN SQL IF predicate on a NULL server name.
+  assert.match(executable,/IF @@SERVERNAME IS NULL OR DB_NAME\(\) IS NULL OR ORIGINAL_LOGIN\(\) IS NULL/);
+  assert.match(executable,/DATALENGTH\(CONVERT\(nvarchar\(256\),@@SERVERNAME\)\)\s*<>\s*DATALENGTH\(@ExpectedServer\)/);
+  assert.match(executable,/DATALENGTH\(DB_NAME\(\)\)\s*<>\s*DATALENGTH\(@ExpectedDatabase\)/);
+  assert.match(executable,/DATALENGTH\(ORIGINAL_LOGIN\(\)\)\s*<>\s*DATALENGTH\(@ExpectedOriginalLogin\)/);
   assert(script.includes("UQP_CHART_REVIEW_METADATA_VISIBILITY_REQUIRED"));
   assert(script.indexOf("UQP_CHART_TARGET_IDENTITY_MISMATCH")<
     script.indexOf("N'00_PINNED_IDENTITY'"));
