@@ -23,6 +23,11 @@ import {
 import {
   CHART_ISSUER_APPROVED_PROCEDURE_SHA256,attestChartIssuerSqlPools,
 } from "./dashboardChartIssuerBoundary.js";
+import {
+  CHART_SQL_APPROVED_PLATFORM_SID,
+  CHART_SQL_APPROVED_ISSUER_SID,
+  CHART_SQL_APPROVED_WRITER_SID,
+} from "./dashboardChartSqlPrincipalPreflight.js";
 
 /** All values are copied from the *server-derived* authenticated create plan.
  * RequestId is client-supplied for idempotency, never as proof of identity.
@@ -88,7 +93,10 @@ export async function prepareDormantChartIssuerHandoff(
     !CHART_ATOMIC_CREATE_RUNTIME_ENABLED||
     !CHART_WRITER_DB_ACTOR_BINDING_APPROVED||
     !CHART_WRITER_APPROVED_PROCEDURE_SHA256||
-    !CHART_ISSUER_APPROVED_PROCEDURE_SHA256)return null;
+    !CHART_ISSUER_APPROVED_PROCEDURE_SHA256||
+    !CHART_SQL_APPROVED_PLATFORM_SID||
+    !CHART_SQL_APPROVED_ISSUER_SID||
+    !CHART_SQL_APPROVED_WRITER_SID)return null;
  const plan=planVerifiedChartCreateRequest(req,dashboardId,rawBody);
  if(!plan)return null;
  // Require BOTH the pinned Ed25519 receipt and SQL HMAC for the same
@@ -107,7 +115,14 @@ export async function prepareDormantChartIssuerHandoff(
       live.tokenVersion!==intent.TokenVersion||
       !live.permissions.includes("DESIGN_QUERY")||
       !live.permissions.includes("EXECUTE_QUERY"))return null;
-   await attestChartIssuerSqlPools(platformPool,issuerPool,writerPool);
+   // This dormant handoff must not bypass independently reviewed login
+   // identities by calling the old unpinned Issuer preflight overload.
+   await attestChartIssuerSqlPools(
+     platformPool,issuerPool,writerPool,
+     CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
+     {platform:CHART_SQL_APPROVED_PLATFORM_SID,
+      issuer:CHART_SQL_APPROVED_ISSUER_SID,
+      writer:CHART_SQL_APPROVED_WRITER_SID});
    // Not a SQL grant. Caller must invoke the approved DB Issuer with this
    // exact scope; unapproved runtime and production keys still block here.
    return {intent,proof};
