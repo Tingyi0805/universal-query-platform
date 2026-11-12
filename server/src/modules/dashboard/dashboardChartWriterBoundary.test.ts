@@ -28,12 +28,24 @@ const writer=()=>({...base,OriginalSid:"B2",EffectiveUser:"writer",CreateExecute
 const rejects=(code:string,fn:()=>unknown)=>assert.throws(fn,
  (e:unknown)=>e instanceof ChartWriterBoundaryError&&e.code===code);
 const attest=(p:Record<string,unknown>,w:Record<string,unknown>)=>
-  attestChartWriterSqlPrincipals(p,w,EXPECTED_SHA);
+  attestChartWriterSqlPrincipals(p,w,EXPECTED_SHA,approvedSids);
 
 test("2B-15C independent OriginalLogin SID, not EXECUTE AS USER, is required",()=>{
  assert.match(chartWriterIdentitySql,/ORIGINAL_LOGIN\(\)/);
  assert.match(chartWriterIdentitySql,/SUSER_SID/);
  assert.doesNotMatch(chartWriterIdentitySql,/\b(?:GRANT|CREATE LOGIN|ALTER ROLE|INSERT INTO)\b/i);
+ // Pure predicate cannot be called without independent original-login pins.
+ rejects("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA));
+ rejects("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA,
+     {...approvedSids,platform:"B2"}));
+ rejects("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA,
+     {...approvedSids,writer:"b2"}));
+ rejects("CHART_WRITER_LOGIN_SID_NOT_APPROVED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA,
+     {...approvedSids,writer:"C3"}));
  assert.doesNotThrow(()=>attest(platform(),writer()));
  rejects("CHART_WRITER_LOGIN_NOT_ISOLATED",()=>attest(
    platform(),{...writer(),OriginalSid:"A1"}));
