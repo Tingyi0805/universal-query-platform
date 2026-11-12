@@ -10,6 +10,7 @@ import {attestChartWriterSqlPrincipals,attestChartWriterSqlPools,
  chartWriterIdentitySql,ChartWriterBoundaryError} from "./dashboardChartWriterBoundary.js";
 
 const EXPECTED_SHA="f".repeat(64);
+const approvedSids={platform:"A1",writer:"B2"};
 const base={
  DbName:"UQP_TEST",ServerName:"SQL_TEST",OriginalSid:"A1",EffectiveUser:"platform",
  ProcedureId:101,ProcedureSha256:EXPECTED_SHA,
@@ -91,13 +92,24 @@ test("2B-15C independently supplied SQL pools; no connection creation",async()=>
    return {recordset:row===null?[]:[row]};
  }})}) as unknown as sql.ConnectionPool;
  const p=pool(platform()),w=pool(writer());
- await assert.doesNotReject(attestChartWriterSqlPools(p,w,EXPECTED_SHA));
- await assert.rejects(attestChartWriterSqlPools(p,p,EXPECTED_SHA),(e:unknown)=>
+ // No direct SQL inspection without two independently reviewed login SIDs.
+ await assert.rejects(attestChartWriterSqlPools(p,w,EXPECTED_SHA),(e:unknown)=>
+   e instanceof ChartWriterBoundaryError&&
+   e.code==="CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED");
+ for(const invalid of [
+   {...approvedSids,writer:"A1"},
+   {...approvedSids,writer:"b2"},
+   {...approvedSids,platform:""},
+ ])await assert.rejects(attestChartWriterSqlPools(p,w,EXPECTED_SHA,invalid),(e:unknown)=>
+   e instanceof ChartWriterBoundaryError&&
+   e.code==="CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED");
+ await assert.doesNotReject(attestChartWriterSqlPools(p,w,EXPECTED_SHA,approvedSids));
+ await assert.rejects(attestChartWriterSqlPools(p,p,EXPECTED_SHA,approvedSids),(e:unknown)=>
    e instanceof ChartWriterBoundaryError&&e.code==="CHART_WRITER_POOL_NOT_ISOLATED");
- await assert.rejects(attestChartWriterSqlPools(pool(null),w,EXPECTED_SHA),(e:unknown)=>
+ await assert.rejects(attestChartWriterSqlPools(pool(null),w,EXPECTED_SHA,approvedSids),(e:unknown)=>
    e instanceof ChartWriterBoundaryError&&e.code==="CHART_WRITER_IDENTITY_UNAVAILABLE");
  await assert.rejects(attestChartWriterSqlPools(
-   {request:()=>{throw Error("DB_FAIL")}} as unknown as sql.ConnectionPool,w,EXPECTED_SHA),
+   {request:()=>{throw Error("DB_FAIL")}} as unknown as sql.ConnectionPool,w,EXPECTED_SHA,approvedSids),
    (e:unknown)=>e instanceof ChartWriterBoundaryError&&e.code==="CHART_WRITER_IDENTITY_UNAVAILABLE");
 });
 
