@@ -24,12 +24,22 @@ IF @ExpectedServer LIKE N'__FILL%' OR @ExpectedDatabase LIKE N'__FILL%'
    LEN(@ExpectedServer)=0 OR LEN(@ExpectedDatabase)=0 OR
    LEN(@ExpectedOriginalLogin)=0
   THROW 51980,'UQP_CHART_EXPECTED_TARGET_IDENTITY_REQUIRED',1;
+-- NULL identity is never proof of the selected target. SQL Server pads
+-- VARCHAR/NVARCHAR for '=' and '<>' even under BIN2; compare actual byte
+-- lengths as well, so 'UQP ' cannot impersonate an expected 'UQP'.
+IF @@SERVERNAME IS NULL OR DB_NAME() IS NULL OR ORIGINAL_LOGIN() IS NULL
+  THROW 51981,'UQP_CHART_TARGET_IDENTITY_MISMATCH',1;
 IF CONVERT(nvarchar(256),@@SERVERNAME) COLLATE Latin1_General_100_BIN2
      <> @ExpectedServer COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(CONVERT(nvarchar(256),@@SERVERNAME))
+     <> DATALENGTH(@ExpectedServer)
    OR DB_NAME() COLLATE Latin1_General_100_BIN2
      <> @ExpectedDatabase COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(DB_NAME()) <> DATALENGTH(@ExpectedDatabase)
    OR ORIGINAL_LOGIN() COLLATE Latin1_General_100_BIN2
      <> @ExpectedOriginalLogin COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(ORIGINAL_LOGIN())
+     <> DATALENGTH(@ExpectedOriginalLogin)
   THROW 51981,'UQP_CHART_TARGET_IDENTITY_MISMATCH',1;
 IF CONVERT(int,SERVERPROPERTY(N'ProductMajorVersion')) NOT IN (15,16)
   THROW 51982,'UQP_CHART_SQL_VERSION_UNSUPPORTED',1;
