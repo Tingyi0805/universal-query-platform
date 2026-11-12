@@ -37,9 +37,9 @@ test("draft privacy approval immutability uses BIN2 AND exact string lengths",as
       "DATALENGTH\\(i\\."+field+"\\)<>DATALENGTH\\(d\\."+field+"\\)",
     ));
   }
-  // Revocation may change status and record a new audit receipt, but must
-  // not rewrite the expiry of an already-approved privacy decision.
-  assert.match(body,/d\.Status=''APPROVED''[\s\S]*?i\.ValidUntilUtc<>d\.ValidUntilUtc/);
+  // Revocation can shorten validity; it may not extend the prior
+  // approved expiry, including when the state changes to REVOKED.
+  assert.match(body,/d\.Status=''APPROVED''[\s\S]*?i\.ValidUntilUtc>d\.ValidUntilUtc/);
   assert.match(body,/CHART_928_REVIEW_IMMUTABLE/);
 });
 
