@@ -164,8 +164,17 @@ BEGIN
  IF EXISTS(
   SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.Id=d.Id
   WHERE i.Id IS NULL OR i.DashboardId<>d.DashboardId OR i.QueryId<>d.QueryId
-   OR i.DatasetId<>d.DatasetId OR i.SourceKey<>d.SourceKey
-   OR i.CategoryColumn<>d.CategoryColumn OR i.ValueColumn<>d.ValueColumn
+   OR i.DatasetId<>d.DatasetId
+   -- BIN2 equality still ignores trailing spaces: compare lengths as well.
+   OR i.SourceKey COLLATE Latin1_General_100_BIN2
+        <> d.SourceKey COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.SourceKey)<>DATALENGTH(d.SourceKey)
+   OR i.CategoryColumn COLLATE Latin1_General_100_BIN2
+        <> d.CategoryColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.CategoryColumn)<>DATALENGTH(d.CategoryColumn)
+   OR i.ValueColumn COLLATE Latin1_General_100_BIN2
+        <> d.ValueColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.ValueColumn)<>DATALENGTH(d.ValueColumn)
    OR i.QueryRevision<>d.QueryRevision OR i.DatasetRevision<>d.DatasetRevision
    OR i.PolicyRevision<>d.PolicyRevision OR i.RequestedByUserId<>d.RequestedByUserId
    OR i.RequestedAtUtc<>d.RequestedAtUtc
@@ -175,7 +184,9 @@ BEGIN
       OR i.CategoryPrivacyReviewed<>d.CategoryPrivacyReviewed
       OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
       OR i.ReviewerUserId<>d.ReviewerUserId
-      OR i.ReviewedAtUtc<>d.ReviewedAtUtc))
+      OR i.ReviewedAtUtc<>d.ReviewedAtUtc
+      -- Approval expiry is part of the original decision, not revocation.
+      OR i.ValidUntilUtc<>d.ValidUntilUtc))
    OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
        OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
  )
@@ -186,7 +197,11 @@ BEGIN
  SET NOCOUNT ON;
  IF EXISTS(
   SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.RequestId=d.RequestId
-  WHERE i.RequestId IS NULL OR i.Action<>d.Action OR i.ActorId<>d.ActorId
+  WHERE i.RequestId IS NULL
+   OR i.Action COLLATE Latin1_General_100_BIN2
+        <> d.Action COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.Action)<>DATALENGTH(d.Action)
+   OR i.ActorId<>d.ActorId
    OR d.AuditLogId IS NOT NULL OR i.AuditLogId IS NULL
  )
   THROW 51928,''CHART_928_LEDGER_IMMUTABLE'',1;
@@ -387,8 +402,17 @@ BEGIN
  IF EXISTS(
   SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.Id=d.Id
   WHERE i.Id IS NULL OR i.DashboardId<>d.DashboardId OR i.QueryId<>d.QueryId
-   OR i.DatasetId<>d.DatasetId OR i.SourceKey<>d.SourceKey
-   OR i.CategoryColumn<>d.CategoryColumn OR i.ValueColumn<>d.ValueColumn
+   OR i.DatasetId<>d.DatasetId
+   -- BIN2 equality still ignores trailing spaces: compare lengths as well.
+   OR i.SourceKey COLLATE Latin1_General_100_BIN2
+        <> d.SourceKey COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.SourceKey)<>DATALENGTH(d.SourceKey)
+   OR i.CategoryColumn COLLATE Latin1_General_100_BIN2
+        <> d.CategoryColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.CategoryColumn)<>DATALENGTH(d.CategoryColumn)
+   OR i.ValueColumn COLLATE Latin1_General_100_BIN2
+        <> d.ValueColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.ValueColumn)<>DATALENGTH(d.ValueColumn)
    OR i.QueryRevision<>d.QueryRevision OR i.DatasetRevision<>d.DatasetRevision
    OR i.PolicyRevision<>d.PolicyRevision OR i.RequestedByUserId<>d.RequestedByUserId
    OR i.RequestedAtUtc<>d.RequestedAtUtc
@@ -398,7 +422,9 @@ BEGIN
       OR i.CategoryPrivacyReviewed<>d.CategoryPrivacyReviewed
       OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
       OR i.ReviewerUserId<>d.ReviewerUserId
-      OR i.ReviewedAtUtc<>d.ReviewedAtUtc))
+      OR i.ReviewedAtUtc<>d.ReviewedAtUtc
+      -- Approval expiry is part of the original decision, not revocation.
+      OR i.ValidUntilUtc<>d.ValidUntilUtc))
    OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
        OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
  )
@@ -409,7 +435,11 @@ BEGIN
  SET NOCOUNT ON;
  IF EXISTS(
   SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.RequestId=d.RequestId
-  WHERE i.RequestId IS NULL OR i.Action<>d.Action OR i.ActorId<>d.ActorId
+  WHERE i.RequestId IS NULL
+   OR i.Action COLLATE Latin1_General_100_BIN2
+        <> d.Action COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.Action)<>DATALENGTH(d.Action)
+   OR i.ActorId<>d.ActorId
    OR d.AuditLogId IS NOT NULL OR i.AuditLogId IS NULL
  )
   THROW 51928,''CHART_928_LEDGER_IMMUTABLE'',1;
