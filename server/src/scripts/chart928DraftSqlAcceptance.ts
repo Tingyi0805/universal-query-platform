@@ -272,8 +272,15 @@ export async function verifyChart928DraftSql(
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='REQUESTED' WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
     "Status='REVOKED',QueryId=99,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
-  // Revocation may shorten validity and record a new audit receipt, but must
-  // never rewrite the identity or minimum-cell threshold of the approval.
+  // Revocation may shorten validity and record a new audit receipt, but
+  // must never extend approved expiry, alter exact scope or change reviewers.
+  await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',ValidUntilUtc=DATEADD(day,1,ValidUntilUtc),AuditLogId=4 WHERE Id=1");
+  for(const mutation of [
+    "SourceKey=N'PRIMARY '","SourceKey=N'primary'",
+    "CategoryColumn=N'ROOM '","ValueColumn=N'TOTAL '",
+  ])await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',"+mutation+",ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
     "Status='REVOKED',MinimumCellCount=6,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
@@ -286,6 +293,11 @@ export async function verifyChart928DraftSql(
   const reqid="'00000000-0000-4000-8000-000000000111'";
   await q("INSERT uqp.DashboardChartTrustRequest(RequestId,Action,ActorId) " +
     "VALUES("+reqid+",N'SEAL_WIDGET',8)");
+  // Before receipt finalization, SQL padded/case-insensitive '=' must not
+  // permit rewriting an immutable ledger Action under a forged spelling.
+  for(const action of ["N'SEAL_WIDGET '","N'seal_widget'"])
+    await rejects("UPDATE uqp.DashboardChartTrustRequest SET Action="+action+
+      ",AuditLogId=1 WHERE RequestId="+reqid);
   await q("UPDATE uqp.DashboardChartTrustRequest SET AuditLogId=1 WHERE RequestId="+reqid);
   await rejects("UPDATE uqp.DashboardChartTrustRequest SET AuditLogId=1 WHERE RequestId="+reqid);
   await rejects("DELETE FROM uqp.DashboardChartTrustRequest WHERE RequestId="+reqid);
