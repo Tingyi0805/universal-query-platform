@@ -9,6 +9,7 @@ import {
 } from "./dashboardChartIssuerBoundary.js";
 
 const digest="a".repeat(64);
+const approvedSids={platform:"AA",issuer:"BB",writer:"CC"};
 const base={
  DbName:"UQP_TEST",ServerName:"CI_SQL",OriginalSid:"AA",EffectiveUser:"platform",
  IssuerProcedureId:123,IssuerProcedureSha256:digest,
@@ -120,17 +121,29 @@ test("2B-15D-8 pools are independent; unapproved release never executes SQL",asy
  await assert.rejects(attestChartIssuerSqlPools(p,i,w),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_RELEASE_NOT_APPROVED");
  assert.equal(queries,0);
- await assert.doesNotReject(attestChartIssuerSqlPools(p,i,w,digest));
+ // A valid reviewed hash is insufficient when independent login SIDs are absent.
+ await assert.rejects(attestChartIssuerSqlPools(p,i,w,digest),(e:unknown)=>
+   e instanceof ChartIssuerBoundaryError&&
+   e.code==="CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
+ for(const invalid of [
+   {...approvedSids,platform:"AA",issuer:"AA"},
+   {...approvedSids,writer:"cc"},
+   {...approvedSids,platform:""},
+ ])await assert.rejects(attestChartIssuerSqlPools(p,i,w,digest,invalid),(e:unknown)=>
+   e instanceof ChartIssuerBoundaryError&&
+   e.code==="CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
+ assert.equal(queries,0);
+ await assert.doesNotReject(attestChartIssuerSqlPools(p,i,w,digest,approvedSids));
  assert.equal(queries,3);
- await assert.rejects(attestChartIssuerSqlPools(p,p,w,digest),(e:unknown)=>
+ await assert.rejects(attestChartIssuerSqlPools(p,p,w,digest,approvedSids),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_POOL_NOT_ISOLATED");
- await assert.rejects(attestChartIssuerSqlPools(p,i,i,digest),(e:unknown)=>
+ await assert.rejects(attestChartIssuerSqlPools(p,i,i,digest,approvedSids),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_POOL_NOT_ISOLATED");
  assert.equal(queries,3);
- await assert.rejects(attestChartIssuerSqlPools(p,pool(null),w,digest),(e:unknown)=>
+ await assert.rejects(attestChartIssuerSqlPools(p,pool(null),w,digest,approvedSids),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_IDENTITY_UNAVAILABLE");
  await assert.rejects(attestChartIssuerSqlPools(
-  {request:()=>{throw Error("DATABASE_UNAVAILABLE");}} as unknown as sql.ConnectionPool,i,w,digest),
+  {request:()=>{throw Error("DATABASE_UNAVAILABLE");}} as unknown as sql.ConnectionPool,i,w,digest,approvedSids),
   (e:unknown)=>e instanceof ChartIssuerBoundaryError&&
     e.code==="CHART_ISSUER_IDENTITY_UNAVAILABLE");
 });
