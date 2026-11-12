@@ -185,8 +185,8 @@ BEGIN
       OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
       OR i.ReviewerUserId<>d.ReviewerUserId
       OR i.ReviewedAtUtc<>d.ReviewedAtUtc
-      -- Approval expiry is part of the original decision, not revocation.
-      OR i.ValidUntilUtc<>d.ValidUntilUtc))
+      -- Revocation may shorten approval validity but NEVER extend it.
+      OR i.ValidUntilUtc>d.ValidUntilUtc))
    OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
        OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
  )
@@ -423,8 +423,8 @@ BEGIN
       OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
       OR i.ReviewerUserId<>d.ReviewerUserId
       OR i.ReviewedAtUtc<>d.ReviewedAtUtc
-      -- Approval expiry is part of the original decision, not revocation.
-      OR i.ValidUntilUtc<>d.ValidUntilUtc))
+      -- Revocation may shorten approval validity but NEVER extend it.
+      OR i.ValidUntilUtc>d.ValidUntilUtc))
    OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
        OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
  )
