@@ -57,6 +57,12 @@ export class ChartWriterBoundaryError extends Error {
 }
 const block=(code:string):never=>{throw new ChartWriterBoundaryError(code);};
 const str=(v:unknown):v is string=>typeof v==="string"&&v.length>0;
+const validSid=(value:unknown):value is string=>
+ typeof value==="string"&&/^(?:[0-9A-F]{2}){1,85}$/.test(value);
+const reviewedSids=(value:ChartWriterApprovedOriginalSids|null):
+ value is ChartWriterApprovedOriginalSids=>
+ !!value&&validSid(value.platform)&&validSid(value.writer)&&
+ value.platform!==value.writer;
 const forbidden=[
  "Sysadmin","ServerControl","ServerImpersonateAny","ServerAlterLogins",
  "ServerAlterRoles","ServerSelectAllUserData",
@@ -78,6 +84,9 @@ export function attestChartWriterSqlPrincipals(
 ):void {
  if(typeof expectedSha256!=="string"||!/^[a-f0-9]{64}$/.test(expectedSha256))
    return block("CHART_WRITER_RELEASE_NOT_APPROVED");
+ // No pure attestation success on caller-omitted SID pins.
+ if(!reviewedSids(expectedSids))
+   return block("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED");
  if(!platform||!writer||!str(platform.DbName)||!str(writer.DbName)||
    !str(platform.ServerName)||!str(writer.ServerName)||
    !str(platform.OriginalSid)||!str(writer.OriginalSid)||
@@ -87,8 +96,8 @@ export function attestChartWriterSqlPrincipals(
     return block("CHART_WRITER_TARGET_MISMATCH");
  if(platform.OriginalSid===writer.OriginalSid)
     return block("CHART_WRITER_LOGIN_NOT_ISOLATED");
- if(expectedSids && (platform.OriginalSid!==expectedSids.platform||
-    writer.OriginalSid!==expectedSids.writer))
+ if(platform.OriginalSid!==expectedSids.platform||
+    writer.OriginalSid!==expectedSids.writer)
     return block("CHART_WRITER_LOGIN_SID_NOT_APPROVED");
  if(typeof platform.ProcedureId!=="number"||platform.ProcedureId<=0||
    platform.ProcedureId!==writer.ProcedureId)
@@ -117,10 +126,7 @@ export async function attestChartWriterSqlPools(
    return block("CHART_WRITER_RELEASE_NOT_APPROVED");
  // Require independent, exact ORIGINAL_LOGIN SID pins even if this lower-level
  // SQL attestor is called outside the combined preflight factory.
- const validSid=(value:unknown)=>typeof value==="string"&&
-   /^(?:[0-9A-F]{2}){1,85}$/.test(value);
- if(!validSid(expectedSids?.platform)||!validSid(expectedSids?.writer)||
-    expectedSids!.platform===expectedSids!.writer)
+ if(!reviewedSids(expectedSids))
    return block("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED");
  if(!platform||!writer||platform===writer)
    return block("CHART_WRITER_POOL_NOT_ISOLATED");
