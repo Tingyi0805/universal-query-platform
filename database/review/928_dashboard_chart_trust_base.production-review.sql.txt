@@ -343,38 +343,121 @@ END');
     OR c.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview') AND c.name=N'PolicyRevision')
    AND c.collation_name<>N'Latin1_General_100_BIN2')
   THROW 51928,'CHART_928_DIGEST_COLLATION_MISMATCH',1;
- IF NOT EXISTS (SELECT 1 FROM sys.check_constraints WHERE
-    parent_object_id=OBJECT_ID(N'uqp.DashboardWidget') AND name=N'CK_DashboardWidget_Type'
-    AND is_disabled=0 AND is_not_trusted=0 AND is_not_for_replication=0
-    AND definition LIKE N'%CHART%')
-  THROW 51928,'CHART_928_WIDGET_TYPE_CONSTRAINT_INVALID',1;
- IF (SELECT COUNT(*) FROM sys.foreign_keys
-    WHERE parent_object_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal')
-      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>2
-    OR (SELECT COUNT(*) FROM sys.foreign_keys WHERE
-      parent_object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
-      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>5
-    OR (SELECT COUNT(*) FROM sys.foreign_keys WHERE
-      parent_object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest')
-      AND is_disabled=0 AND is_not_trusted=0 AND delete_referential_action=0)<>1
-  THROW 51928,'CHART_928_FOREIGN_KEY_INVALID',1;
- -- A rerun must not adopt disabled, untrusted, or missing CHART CHECKs.
- -- Object and column counts alone cannot prove the enforced schema.
- IF (SELECT COUNT(*) FROM sys.check_constraints c
-     WHERE c.is_disabled=0 AND c.is_not_trusted=0 AND c.is_not_for_replication=0
-       AND ((c.parent_object_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal')
-             AND c.name=N'CK_ChartSeal_Digest')
-         OR (c.parent_object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest')
-             AND c.name=N'CK_ChartTrustRequest_Action')
-         OR (c.parent_object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
-             AND c.name IN(N'CK_ChartReview_State',N'CK_ChartReview_Scope'))))<>4
-  THROW 51928,'CHART_928_CHECK_CONSTRAINTS_INVALID',1;
- IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE
-    object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
-    AND name=N'UX_ChartReview_Active' AND is_unique=1 AND has_filter=1
-    AND is_disabled=0 AND filter_definition LIKE N'%REQUESTED%'
-    AND filter_definition LIKE N'%APPROVED%')
-  THROW 51928,'CHART_928_ACTIVE_UNIQUE_INDEX_INVALID',1;
+ -- Gate 2 exact-witness contract: the original source and SQL Server's
+ -- catalog-normalized CHECK expressions must be attested independently.
+ -- Never derive these SHA-256 pins from the hospital target being examined.
+ -- NULL deliberately rejects promotion even if the leading approval guard
+ -- were removed. DBA must review and pin exact SQL 2019/2022 witnesses.
+ DECLARE @approvedChecks TABLE(
+   TableName sysname NOT NULL,
+   ConstraintName sysname NOT NULL,
+   ApprovedDefinitionSha256 varbinary(32) NULL,
+   PRIMARY KEY(TableName,ConstraintName));
+ INSERT INTO @approvedChecks(TableName,ConstraintName,ApprovedDefinitionSha256)
+ VALUES
+   (N'DashboardWidget',N'CK_DashboardWidget_Type',NULL),
+   (N'DashboardChartWidgetSeal',N'CK_ChartSeal_Digest',NULL),
+   (N'DashboardChartTrustRequest',N'CK_ChartTrustRequest_Action',NULL),
+   (N'DashboardChartPrivacyReview',N'CK_ChartReview_State',NULL),
+   (N'DashboardChartPrivacyReview',N'CK_ChartReview_Scope',NULL);
+ IF EXISTS(SELECT 1 FROM @approvedChecks WHERE ApprovedDefinitionSha256 IS NULL)
+   THROW 51928,'CHART_928_CHECK_SOURCE_WITNESSES_NOT_APPROVED',1;
+ IF EXISTS(
+   SELECT 1 FROM @approvedChecks e
+   LEFT JOIN sys.check_constraints c ON
+     c.parent_object_id=OBJECT_ID(N'uqp.'+e.TableName) AND c.name=e.ConstraintName
+   WHERE c.object_id IS NULL OR c.definition IS NULL
+      OR c.is_disabled<>0 OR c.is_not_trusted<>0 OR c.is_not_for_replication<>0
+      OR c.parent_column_id<>0 OR c.is_system_named<>0
+      OR HASHBYTES('SHA2_256',CONVERT(varbinary(max),c.definition))
+          <>e.ApprovedDefinitionSha256
+ ) OR (SELECT COUNT(*) FROM sys.check_constraints c WHERE c.parent_object_id IN(
+       OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+       OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+       OBJECT_ID(N'uqp.DashboardChartPrivacyReview')))<>4
+   THROW 51928,'CHART_928_EXACT_CHECK_DEFINITION_MISMATCH',1;
+
+ -- Compare every single-column FK's name, child, parent, referenced column
+ -- and trust/action flags in BOTH directions. Counts alone are insufficient.
+ DECLARE @expectedFk TABLE(
+   FkName sysname NOT NULL, ChildTable sysname NOT NULL,
+   ChildColumn sysname NOT NULL, ParentTable sysname NOT NULL,
+   ParentColumn sysname NOT NULL, PRIMARY KEY(FkName));
+ INSERT INTO @expectedFk(FkName,ChildTable,ChildColumn,ParentTable,ParentColumn)
+ VALUES
+ (N'FK_ChartSeal_Widget',N'DashboardChartWidgetSeal',N'WidgetId',N'DashboardWidget',N'Id'),
+ (N'FK_ChartSeal_User',N'DashboardChartWidgetSeal',N'SealedBy',N'AppUser',N'Id'),
+ (N'FK_ChartRequest_Actor',N'DashboardChartTrustRequest',N'ActorId',N'AppUser',N'Id'),
+ (N'FK_ChartReview_Dashboard',N'DashboardChartPrivacyReview',N'DashboardId',N'Dashboard',N'Id'),
+ (N'FK_ChartReview_Query',N'DashboardChartPrivacyReview',N'QueryId',N'QueryDefinition',N'Id'),
+ (N'FK_ChartReview_Dataset',N'DashboardChartPrivacyReview',N'DatasetId',N'Dataset',N'Id'),
+ (N'FK_ChartReview_Requester',N'DashboardChartPrivacyReview',N'RequestedByUserId',N'AppUser',N'Id'),
+ (N'FK_ChartReview_Reviewer',N'DashboardChartPrivacyReview',N'ReviewerUserId',N'AppUser',N'Id');
+ DECLARE @actualFk TABLE(
+   FkName sysname,ChildTable sysname,ChildColumn sysname,
+   ParentTable sysname,ParentColumn sysname);
+ INSERT INTO @actualFk(FkName,ChildTable,ChildColumn,ParentTable,ParentColumn)
+ SELECT fk.name,OBJECT_NAME(fk.parent_object_id),c.name,
+        OBJECT_NAME(fk.referenced_object_id),r.name
+ FROM sys.foreign_keys fk
+ JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id=fk.object_id
+ JOIN sys.columns c ON c.object_id=fk.parent_object_id
+    AND c.column_id=fkc.parent_column_id
+ JOIN sys.columns r ON r.object_id=fk.referenced_object_id
+    AND r.column_id=fkc.referenced_column_id
+ WHERE fk.parent_object_id IN(
+       OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+       OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+       OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))
+   AND fk.is_disabled=0 AND fk.is_not_trusted=0 AND fk.is_not_for_replication=0
+   AND fk.delete_referential_action=0 AND fk.update_referential_action=0
+   AND fkc.constraint_column_id=1
+   AND (SELECT COUNT(*) FROM sys.foreign_key_columns x
+        WHERE x.constraint_object_id=fk.object_id)=1;
+ IF (SELECT COUNT(*) FROM sys.foreign_keys fk WHERE fk.parent_object_id IN(
+       OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+       OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+       OBJECT_ID(N'uqp.DashboardChartPrivacyReview')))<>8
+    OR EXISTS(SELECT * FROM @expectedFk EXCEPT SELECT * FROM @actualFk)
+    OR EXISTS(SELECT * FROM @actualFk EXCEPT SELECT * FROM @expectedFk)
+   THROW 51928,'CHART_928_EXACT_FOREIGN_KEY_MISMATCH',1;
+
+ -- The unique filtered index must match the exact six ascending key columns
+ -- without included columns. Its catalog-normalized filter requires a
+ -- separate independently approved SHA-256 witness (not a substring LIKE).
+ DECLARE @approvedActiveFilterSha256 varbinary(32)=NULL;
+ IF @approvedActiveFilterSha256 IS NULL
+   THROW 51928,'CHART_928_FILTER_SOURCE_WITNESS_NOT_APPROVED',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.indexes i
+   WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+     AND i.name=N'UX_ChartReview_Active'
+     AND i.is_unique=1 AND i.has_filter=1 AND i.is_disabled=0
+     AND i.is_hypothetical=0 AND i.type=2
+     AND i.is_primary_key=0 AND i.is_unique_constraint=0
+     AND i.ignore_dup_key=0 AND i.filter_definition IS NOT NULL
+     AND HASHBYTES('SHA2_256',CONVERT(varbinary(max),i.filter_definition))
+          =@approvedActiveFilterSha256)
+   THROW 51928,'CHART_928_EXACT_FILTER_DEFINITION_MISMATCH',1;
+ DECLARE @expectedIndexKeys TABLE(KeyOrdinal tinyint PRIMARY KEY,ColumnName sysname);
+ INSERT INTO @expectedIndexKeys(KeyOrdinal,ColumnName) VALUES
+ (1,N'DashboardId'),(2,N'QueryId'),(3,N'DatasetId'),(4,N'SourceKey'),
+ (5,N'CategoryColumn'),(6,N'ValueColumn');
+ DECLARE @actualIndexKeys TABLE(KeyOrdinal tinyint,ColumnName sysname);
+ INSERT INTO @actualIndexKeys(KeyOrdinal,ColumnName)
+ SELECT CONVERT(tinyint,ic.key_ordinal),c.name
+ FROM sys.indexes i
+ JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+ JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+ WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+   AND i.name=N'UX_ChartReview_Active'
+   AND ic.is_included_column=0 AND ic.key_ordinal>0 AND ic.is_descending_key=0;
+ IF EXISTS(SELECT * FROM @expectedIndexKeys EXCEPT SELECT * FROM @actualIndexKeys)
+    OR EXISTS(SELECT * FROM @actualIndexKeys EXCEPT SELECT * FROM @expectedIndexKeys)
+    OR EXISTS(SELECT 1 FROM sys.indexes i
+       JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+       WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+       AND i.name=N'UX_ChartReview_Active' AND ic.is_included_column=1)
+   THROW 51928,'CHART_928_EXACT_INDEX_KEY_MISMATCH',1;
  IF (SELECT COUNT(*) FROM sys.triggers WHERE
     (object_id=OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') AND
      parent_id=OBJECT_ID(N'uqp.DashboardWidget') AND is_disabled=0)
