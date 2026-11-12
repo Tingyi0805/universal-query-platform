@@ -48,6 +48,8 @@ test("928 review source verifies eight exact FK references and filtered-index ke
     "N'FK_ChartReview_Reviewer',N'DashboardChartPrivacyReview',N'ReviewerUserId',N'AppUser',N'Id'",
   ])assert.ok(sql.includes(tuple),tuple);
   assert.match(sql,/CHART_928_EXACT_FOREIGN_KEY_MISMATCH/);
+  // Same table name in a different schema must not satisfy the FK contract.
+  assert.match(sql,/OBJECT_SCHEMA_NAME\(fk\.referenced_object_id\)=N'uqp'/);
   assert.match(sql,/fk\.is_disabled=0 AND fk\.is_not_trusted=0/);
   assert.match(sql,/fk\.delete_referential_action=0 AND fk\.update_referential_action=0/);
   assert.match(sql,/SELECT \* FROM @expectedFk EXCEPT SELECT \* FROM @actualFk/);
