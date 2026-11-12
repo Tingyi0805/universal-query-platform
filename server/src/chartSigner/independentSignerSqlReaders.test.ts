@@ -114,6 +114,9 @@ test("Signer SQL cannot substitute a secondary source for PRIMARY even under cas
   const sqlText=f.calls[0]!.statement;
   assert.match(sqlText,/LEFT JOIN uqp\.DashboardDataSource ds/);
   assert.match(sqlText,/ds\.SourceKey COLLATE Latin1_General_100_BIN2/);
+  // BIN2 string equality still ignores SQL Server's trailing-space padding;
+  // require equal byte length after normalizing stored VARCHAR/NVARCHAR.
+  assert.match(sqlText,/DATALENGTH\(CONVERT\(nvarchar\(max\),ds\.SourceKey\)\)\s*=\s*DATALENGTH\(@sourceKey\)/);
   assert.match(sqlText,/shadow\.DashboardId=d\.Id/);
   assert.match(sqlText,/shadow\.SourceKey\)=N'PRIMARY'/);
   assert.match(sqlText,/d\.QueryDefinitionId/);
