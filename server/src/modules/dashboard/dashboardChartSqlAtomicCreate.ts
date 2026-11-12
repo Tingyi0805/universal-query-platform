@@ -12,6 +12,9 @@ import type {VerifiedSqlChartIssuerProof} from
 import {parseChartCreateSqlReceipt} from "./dashboardChartCreateReceipt.js";
 import {
   createDormantChartSqlPrincipalPreflight,
+  CHART_SQL_APPROVED_PLATFORM_SID,
+  CHART_SQL_APPROVED_ISSUER_SID,
+  CHART_SQL_APPROVED_WRITER_SID,
   type ReviewedChartSqlProcedures,
 } from "./dashboardChartSqlPrincipalPreflight.js";
 import {
@@ -234,6 +237,9 @@ export function createReleaseDisabledChartSqlAtomicCreate(
     reviewed:{
       issuerSha256:CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
       writerSha256:CHART_WRITER_APPROVED_PROCEDURE_SHA256,
+      platformSid:CHART_SQL_APPROVED_PLATFORM_SID,
+      issuerSid:CHART_SQL_APPROVED_ISSUER_SID,
+      writerSid:CHART_SQL_APPROVED_WRITER_SID,
     },
   });
 }
