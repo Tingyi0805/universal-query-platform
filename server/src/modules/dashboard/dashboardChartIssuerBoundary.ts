@@ -46,6 +46,9 @@ export const chartIssuerIdentitySql=[
 ].join(" ");
 
 export type ChartIssuerIdentityRow=Readonly<Record<string,unknown>>;
+export type ChartApprovedOriginalSids=Readonly<{
+ platform:string;issuer:string;writer:string;
+}>;
 export class ChartIssuerBoundaryError extends Error {
  constructor(readonly code:string){super(code);this.name="ChartIssuerBoundaryError";}
 }
@@ -70,6 +73,7 @@ export function attestChartIssuerSqlPrincipals(
  platform:ChartIssuerIdentityRow,issuer:ChartIssuerIdentityRow,
  writer:ChartIssuerIdentityRow,
  expectedDigest:string|null=CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
+ expectedSids:ChartApprovedOriginalSids|null=null,
 ):void {
  if(typeof expectedDigest!=="string"||!/^[a-f0-9]{64}$/.test(expectedDigest))
    return fail("CHART_ISSUER_RELEASE_NOT_APPROVED");
@@ -84,6 +88,10 @@ export function attestChartIssuerSqlPrincipals(
    return fail("CHART_ISSUER_TARGET_MISMATCH");
  if(new Set(roles.map(row=>row.OriginalSid)).size!==3)
    return fail("CHART_ISSUER_LOGINS_NOT_ISOLATED");
+ if(expectedSids && (platform.OriginalSid!==expectedSids.platform||
+    issuer.OriginalSid!==expectedSids.issuer||
+    writer.OriginalSid!==expectedSids.writer))
+   return fail("CHART_ISSUER_LOGIN_SID_NOT_APPROVED");
  if(typeof issuer.IssuerProcedureId!=="number"||
     !Number.isSafeInteger(issuer.IssuerProcedureId)||
     issuer.IssuerProcedureId<=0)
@@ -115,6 +123,7 @@ export function attestChartIssuerSqlPrincipals(
 export async function attestChartIssuerSqlPools(
  platform:sql.ConnectionPool,issuer:sql.ConnectionPool,writer:sql.ConnectionPool,
  expectedDigest:string|null=CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
+ expectedSids:ChartApprovedOriginalSids|null=null,
 ):Promise<void> {
  if(typeof expectedDigest!=="string"||!/^[a-f0-9]{64}$/.test(expectedDigest))
    return fail("CHART_ISSUER_RELEASE_NOT_APPROVED");
@@ -131,7 +140,7 @@ export async function attestChartIssuerSqlPools(
      return fail("CHART_ISSUER_IDENTITY_UNAVAILABLE");
    attestChartIssuerSqlPrincipals(
      results[0]!.recordset[0]!,results[1]!.recordset[0]!,
-     results[2]!.recordset[0]!,expectedDigest);
+     results[2]!.recordset[0]!,expectedDigest,expectedSids);
  }catch(e){
    if(e instanceof ChartIssuerBoundaryError)throw e;
    return fail("CHART_ISSUER_IDENTITY_UNAVAILABLE");
