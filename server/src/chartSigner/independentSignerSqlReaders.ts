@@ -67,6 +67,12 @@ export function createIndependentSignerSqlReaders(pool:sql.ConnectionPool){
               AND @sourceKey<>N'PRIMARY'
               AND ds.SourceKey COLLATE Latin1_General_100_BIN2
                 = @sourceKey COLLATE Latin1_General_100_BIN2
+              -- SQL Server pads strings for equality even with BIN2.
+              -- Reject a stored source such as 'WARD ' for signed 'WARD'.
+              -- Normalize the stored type to NVARCHAR before counting bytes,
+              -- since the request parameter is NVARCHAR(64).
+              AND DATALENGTH(CONVERT(nvarchar(max),ds.SourceKey))
+                = DATALENGTH(@sourceKey)
             JOIN uqp.QueryDefinition q ON q.Id=
               CASE WHEN @sourceKey=N'PRIMARY' THEN d.QueryDefinitionId
                    ELSE ds.QueryDefinitionId END
