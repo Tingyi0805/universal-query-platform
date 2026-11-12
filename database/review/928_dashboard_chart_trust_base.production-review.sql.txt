@@ -451,8 +451,14 @@ END');
  WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
    AND i.name=N'UX_ChartReview_Active'
    AND ic.is_included_column=0 AND ic.key_ordinal>0 AND ic.is_descending_key=0;
+ -- Do not silently omit an extra descending index key from @actualIndexKeys.
+ -- Compare all physical key positions before checking the ascending key set.
  IF EXISTS(SELECT * FROM @expectedIndexKeys EXCEPT SELECT * FROM @actualIndexKeys)
     OR EXISTS(SELECT * FROM @actualIndexKeys EXCEPT SELECT * FROM @expectedIndexKeys)
+    OR (SELECT COUNT(*) FROM sys.indexes i
+        JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+        WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+          AND i.name=N'UX_ChartReview_Active' AND ic.key_ordinal>0)<>6
     OR EXISTS(SELECT 1 FROM sys.indexes i
        JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
        WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
