@@ -117,7 +117,9 @@ BEGIN
      ON bs.DashboardId=d.Id AND @SourceKey<>N''PRIMARY''
      AND bs.SourceKey COLLATE Latin1_General_100_BIN2
        = @SourceKey COLLATE Latin1_General_100_BIN2
-     AND DATALENGTH(bs.SourceKey)=DATALENGTH(@SourceKey)
+     -- Match the signer: SQL equality pads strings even under BIN2.
+     -- Normalize stored VARCHAR/NVARCHAR before exact-length comparison.
+     AND DATALENGTH(CONVERT(nvarchar(max),bs.SourceKey))=DATALENGTH(@SourceKey)
    JOIN uqp.QueryDefinition q WITH(HOLDLOCK) ON q.Id=
      CASE WHEN @SourceKey=N''PRIMARY'' THEN d.QueryDefinitionId
        ELSE bs.QueryDefinitionId END
@@ -193,6 +195,9 @@ BEGIN
       AND d.RequestId=@RequestId
       AND d.SourceKey COLLATE Latin1_General_100_BIN2
           = @SourceKey COLLATE Latin1_General_100_BIN2
+      -- Bind the actual Issuer grant source byte-for-byte; BIN2 = alone
+      -- still equates trailing-space-padded NVARCHAR values in SQL Server.
+      AND DATALENGTH(d.SourceKey)=DATALENGTH(@SourceKey)
       AND d.ConfigSha256=@digest
       AND d.X=@X AND d.Y=@Y AND d.Width=@Width AND d.Height=@Height
       AND d.IsRevoked=0 AND d.ConsumedAtUtc IS NULL
