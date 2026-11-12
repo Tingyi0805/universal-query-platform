@@ -409,6 +409,9 @@ END');
        OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
        OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
        OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))
+   -- OBJECT_NAME alone is not enough: dbo.AppUser and uqp.AppUser
+   -- would compare equal by table name while targeting different objects.
+   AND OBJECT_SCHEMA_NAME(fk.referenced_object_id)=N'uqp'
    AND fk.is_disabled=0 AND fk.is_not_trusted=0 AND fk.is_not_for_replication=0
    AND fk.delete_referential_action=0 AND fk.update_referential_action=0
    AND fkc.constraint_column_id=1
