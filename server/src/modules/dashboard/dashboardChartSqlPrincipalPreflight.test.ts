@@ -61,7 +61,10 @@ function fixture(){
   const pools={platform:pool("platform"),issuer:pool("issuer"),writer:pool("writer")};
   return {rows,pools,get queries(){return queries;}};
 }
-const digests={issuerSha256:issuerDigest,writerSha256:writerDigest};
+const digests={
+  issuerSha256:issuerDigest,writerSha256:writerDigest,
+  platformSid:"AA",issuerSid:"BB",writerSid:"CC",
+};
 
 test("production default refuses before ANY SQL metadata query",async()=>{
   const f=fixture();
@@ -74,6 +77,10 @@ test("production default refuses before ANY SQL metadata query",async()=>{
     {...digests,issuerSha256:null},
     {...digests,writerSha256:null},
     {...digests,writerSha256:"browser"},
+    {...digests,platformSid:null},
+    {...digests,issuerSid:""},
+    {...digests,writerSid:"cc"},
+    {...digests,writerSid:"DD",issuerSid:"DD"},
   ]){
     await assert.rejects(createDormantChartSqlPrincipalPreflight(
       f.pools,invalid,()=>true));
@@ -95,6 +102,21 @@ test("only three distinct, pinned SQL identities with both procedure hashes pass
       invalid,digests,()=>true));
   }
   assert.equal(f.queries,5,"duplicate SQL pools must reject without touching DB");
+});
+
+test("approved login SIDs must match each read-only attestation, not merely differ",async()=>{
+  const f=fixture(),check=createDormantChartSqlPrincipalPreflight(
+    f.pools,digests,()=>true);
+  f.rows.issuerIssuer!.OriginalSid="DD";
+  await assert.rejects(check(),/CHART_ISSUER_LOGIN_SID_NOT_APPROVED/);
+  f.rows.issuerIssuer!.OriginalSid="BB";
+  f.rows.writerWriter!.OriginalSid="DD";
+  await assert.rejects(check(),/CHART_WRITER_LOGIN_SID_NOT_APPROVED/);
+  f.rows.writerWriter!.OriginalSid="CC";
+  f.rows.platformWriter!.OriginalSid="DD";
+  await assert.rejects(check(),/CHART_WRITER_LOGIN_SID_NOT_APPROVED/);
+  f.rows.platformWriter!.OriginalSid="AA";
+  await assert.doesNotReject(check());
 });
 
 test("cross-attestation rejects Writer db_datareader and drifted SQL procedure",async()=>{
