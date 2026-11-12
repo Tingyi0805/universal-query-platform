@@ -127,6 +127,14 @@ export async function attestChartIssuerSqlPools(
 ):Promise<void> {
  if(typeof expectedDigest!=="string"||!/^[a-f0-9]{64}$/.test(expectedDigest))
    return fail("CHART_ISSUER_RELEASE_NOT_APPROVED");
+ // A direct pool attestor is also a production-facing entrypoint. Synthetic
+ // reviewed hashes alone must never authorize unpinned SQL login identities.
+ const validSid=(value:unknown)=>typeof value==="string"&&
+   /^(?:[0-9A-F]{2}){1,85}$/.test(value);
+ if(!validSid(expectedSids?.platform)||!validSid(expectedSids?.issuer)||
+    !validSid(expectedSids?.writer)||
+    new Set([expectedSids!.platform,expectedSids!.issuer,expectedSids!.writer]).size!==3)
+   return fail("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
  if(!platform||!issuer||!writer||
     platform===issuer||platform===writer||issuer===writer)
    return fail("CHART_ISSUER_POOL_NOT_ISOLATED");
