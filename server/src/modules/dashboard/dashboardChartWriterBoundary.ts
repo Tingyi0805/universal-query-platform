@@ -51,6 +51,7 @@ export const CHART_WRITER_APPROVED_PROCEDURE_SHA256: string|null=null;
 // This must not be sourced from user input, env, JWT claims or SESSION_CONTEXT.
 export const CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false as const;
 export type ChartIdentityRow = Readonly<Record<string,unknown>>;
+export type ChartWriterApprovedOriginalSids=Readonly<{platform:string;writer:string}>;
 export class ChartWriterBoundaryError extends Error {
   constructor(readonly code:string){super(code);this.name="ChartWriterBoundaryError";}
 }
@@ -73,6 +74,7 @@ const writerForbidden=["WidgetInsert","WidgetUpdate","WidgetDelete"] as const;
 export function attestChartWriterSqlPrincipals(
  platform:ChartIdentityRow,writer:ChartIdentityRow,
  expectedSha256:string|null=CHART_WRITER_APPROVED_PROCEDURE_SHA256,
+ expectedSids:ChartWriterApprovedOriginalSids|null=null,
 ):void {
  if(typeof expectedSha256!=="string"||!/^[a-f0-9]{64}$/.test(expectedSha256))
    return block("CHART_WRITER_RELEASE_NOT_APPROVED");
@@ -85,6 +87,9 @@ export function attestChartWriterSqlPrincipals(
     return block("CHART_WRITER_TARGET_MISMATCH");
  if(platform.OriginalSid===writer.OriginalSid)
     return block("CHART_WRITER_LOGIN_NOT_ISOLATED");
+ if(expectedSids && (platform.OriginalSid!==expectedSids.platform||
+    writer.OriginalSid!==expectedSids.writer))
+    return block("CHART_WRITER_LOGIN_SID_NOT_APPROVED");
  if(typeof platform.ProcedureId!=="number"||platform.ProcedureId<=0||
    platform.ProcedureId!==writer.ProcedureId)
     return block("CHART_WRITER_PROCEDURE_NOT_ATTESTED");
@@ -106,6 +111,7 @@ export function attestChartWriterSqlPrincipals(
 export async function attestChartWriterSqlPools(
  platform:sql.ConnectionPool,writer:sql.ConnectionPool,
  expectedSha256:string|null=CHART_WRITER_APPROVED_PROCEDURE_SHA256,
+ expectedSids:ChartWriterApprovedOriginalSids|null=null,
 ):Promise<void> {
  if(typeof expectedSha256!=="string"||!/^[a-f0-9]{64}$/.test(expectedSha256))
    return block("CHART_WRITER_RELEASE_NOT_APPROVED");
@@ -118,7 +124,7 @@ export async function attestChartWriterSqlPools(
    ]);
    if(a.recordset?.length!==1||b.recordset?.length!==1)
       return block("CHART_WRITER_IDENTITY_UNAVAILABLE");
-   attestChartWriterSqlPrincipals(a.recordset[0],b.recordset[0],expectedSha256);
+   attestChartWriterSqlPrincipals(a.recordset[0],b.recordset[0],expectedSha256,expectedSids);
  }catch(e){
    if(e instanceof ChartWriterBoundaryError)throw e;
    return block("CHART_WRITER_IDENTITY_UNAVAILABLE");
