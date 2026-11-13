@@ -10,6 +10,8 @@ import jwt from "jsonwebtoken";
 import {env} from "../config/env.js";
 import {createAuthenticateJwt} from "../modules/auth/auth.middleware.js";
 import {createChartCreateRouter} from "../modules/dashboard/dashboardChartCreate.routes.js";
+import {createChartSavedReadbackRouter} from "../modules/dashboard/dashboardChartSavedReadback.routes.js";
+import {createDormantChartTrustReaders} from "../modules/dashboard/dashboardChartTrust.repository.js";
 import {chartLocalJwtWriterCreateSql} from "../modules/dashboard/dashboardChartLocalJwtSqlCreate.js";
 import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
@@ -346,10 +348,11 @@ export async function verifyChartOptionAWriterSql(
   const httpServer=createServer(app);
   try{
    app.use(express.json({limit:"4kb"}));
-   app.use(createAuthenticateJwt(async()=>({
+   const readSession=async()=>({
     isActive:true,tokenVersion:1,
     permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
-   })));
+   });
+   app.use(createAuthenticateJwt(readSession));
    app.use(createChartCreateRouter({
     approved:()=>true, // isolated dependency injection, not release flag
     create:async plan=>(await writer!.request()
@@ -365,6 +368,13 @@ export async function verifyChartOptionAWriterSql(
      .input("width",sql.Int,plan.placement.width)
      .input("height",sql.Int,plan.placement.height)
      .query(chartLocalJwtWriterCreateSql)).recordset[0],
+   }));
+   // Same author-only readback route and audited SQL repository used by
+   // Dashboard runtime; dependency injection is confined to disposable CI.
+   app.use(createChartSavedReadbackRouter({
+    approved:()=>true,
+    readSavedWidget:createDormantChartTrustReaders(async()=>db!).readSavedWidget,
+    readSession,
    }));
    await new Promise<void>(resolve=>httpServer.listen(0,"127.0.0.1",resolve));
    const addr=httpServer.address();
@@ -426,6 +436,27 @@ export async function verifyChartOptionAWriterSql(
 
    stage="HTTP_PERSISTENCE_AUDIT_STATUS";
    assert.equal(row.Status,"SUCCESS");
+   // Round-trip over the real author-only HTTP readback endpoint, backed by
+   // the real seal, audit and config DB join (not a mocked readback receipt).
+   stage="HTTP_SAVED_CHART_TRUSTED_READBACK";
+   const readbackEndpoint=endpoint+"/"+String(saved.widgetId)+"/readback";
+   const readback=await fetch(readbackEndpoint,{
+    headers:{Authorization:"Bearer "+bearer},
+   });
+   assert.equal(readback.status,200);
+   assert.deepEqual(await readback.json(),{
+    widgetId:saved.widgetId,sealRevision:saved.sealRevision,
+    config:configJson.data,
+   });
+   const anotherAuthor=jwt.sign({sub:"77",tokenVersion:1},env.JWT_SECRET!,
+    {expiresIn:"5m"});
+   const crossAuthor=await fetch(readbackEndpoint,{
+    headers:{Authorization:"Bearer "+anotherAuthor},
+   });
+   assert.equal(crossAuthor.status,503);
+   assert.deepEqual(await crossAuthor.json(),{
+    error:{code:"CHART_SAVED_READBACK_REQUIRED"},
+   });
    const replay=await send(body);
    assert.equal(replay.status,503);
    await expectCounts(3);
