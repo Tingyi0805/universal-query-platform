@@ -393,7 +393,7 @@ export async function verifyChartOptionAWriterSql(
     .query("SELECT w.Id AS WidgetId,w.ProfileId,w.WidgetType,w.SourceKey,"+
      "w.ConfigJson,w.X,w.Y,w.Width,w.Height,s.ConfigDigest,"+
      "s.IsActive,s.SealedBy,s.AuditLogId,"+
-     "LOWER(CONVERT(varchar(16),s.SealRowVersion,2)) AS SealRevision,"+
+     "s.SealRowVersion,"+
      "a.EventType,a.Status FROM uqp.DashboardWidget w "+
      "JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=w.Id "+
      "JOIN uqp.AuditLog a ON a.Id=s.AuditLogId "+
@@ -417,17 +417,13 @@ export async function verifyChartOptionAWriterSql(
    assert.equal(String(row.WidgetId),String(saved.widgetId));
    assert.equal(String(row.AuditLogId),saved.auditLogId);
    stage="HTTP_PERSISTENCE_RECEIPT_SEAL_REVISION";
-   // The disposable database has no clinical data. Report only formatting
-   // characteristics, not identifiers or stored values.
-   if(row.SealRevision!==saved.sealRevision)console.error(
-    "CHART_A_SEAL_REVISION_SHAPE:"+
-    [typeof row.SealRevision,typeof saved.sealRevision,
-     String(row.SealRevision).length,String(saved.sealRevision).length,
-     String(row.SealRevision).toLowerCase()===
-      String(saved.sealRevision).toLowerCase(),
-     /^[0-9a-f]{16}$/.test(String(row.SealRevision)),
-     /^[0-9a-f]{16}$/.test(String(saved.sealRevision))].join(":"));
-   assert.equal(row.SealRevision,saved.sealRevision);
+   // Read rowversion as the raw SQL binary(8), exactly as the application's
+   // trusted saved-widget repository does. TDS returns an 8-byte Buffer;
+   // VARCHAR conversion can return raw bytes rather than 16 hex characters.
+   assert(Buffer.isBuffer(row.SealRowVersion));
+   assert.equal(row.SealRowVersion.length,8);
+   assert.equal(row.SealRowVersion.toString("hex"),saved.sealRevision);
+
    stage="HTTP_PERSISTENCE_AUDIT_STATUS";
    assert.equal(row.Status,"SUCCESS");
    const replay=await send(body);
