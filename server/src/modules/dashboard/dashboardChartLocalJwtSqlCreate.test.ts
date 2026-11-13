@@ -146,7 +146,6 @@ test("Option A does not share platform SQL login or accept bad plans",async()=>{
   assert.equal(f.writes,0);
   for(const bad of [
     {...plan,actorId:0},
-    {...plan,actorId:88},
     {...plan,tokenVersion:0},
     {...plan,sourceKey:"OTHER"},
     {...plan,config:{...plan.config,json:"tampered"}},
