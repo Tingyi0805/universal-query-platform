@@ -398,19 +398,27 @@ export async function verifyChartOptionAWriterSql(
      "JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=w.Id "+
      "JOIN uqp.AuditLog a ON a.Id=s.AuditLogId "+
      "WHERE w.Id=@widgetId")).recordset;
+   stage="HTTP_PERSISTENCE_JOIN_ROW_COUNT";
    assert.equal(persisted.length,1);
    const row=persisted[0]!;
+   stage="HTTP_PERSISTENCE_WIDGET_IDENTITY";
    assert.equal(row.ProfileId,22);
    assert.equal(row.WidgetType,"CHART");
    assert.equal(row.SourceKey,"PRIMARY");
+   stage="HTTP_PERSISTENCE_CANONICAL_CONFIG";
    assert.equal(row.ConfigJson,configJson.json);
    assert.deepEqual([row.X,row.Y,row.Width,row.Height],[80,80,600,360]);
+   stage="HTTP_PERSISTENCE_SEAL_DIGEST";
    assert.equal(row.ConfigDigest,configJson.sha256);
+   stage="HTTP_PERSISTENCE_SEAL_ACTIVE";
    assert.equal(row.IsActive,true);
    assert.equal(row.SealedBy,8);
+   stage="HTTP_PERSISTENCE_RECEIPT_IDS";
    assert.equal(String(row.WidgetId),String(saved.widgetId));
    assert.equal(String(row.AuditLogId),saved.auditLogId);
+   stage="HTTP_PERSISTENCE_RECEIPT_SEAL_REVISION";
    assert.equal(row.SealRevision,saved.sealRevision);
+   stage="HTTP_PERSISTENCE_AUDIT_STATUS";
    assert.equal(row.Status,"SUCCESS");
    const replay=await send(body);
    assert.equal(replay.status,503);
