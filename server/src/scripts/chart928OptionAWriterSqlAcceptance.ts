@@ -151,6 +151,8 @@ export async function verifyChartOptionAWriterSql(
     Number(typed[0]?.WidgetTypeColumnId));
    checks=(await new sql.Request(probe).query(
     "SELECT OBJECT_NAME(parent_object_id) AS TableName,name AS ConstraintName,"+
+    "parent_column_id AS ParentColumnId,is_disabled AS Disabled,"+
+    "is_not_trusted AS NotTrusted,is_system_named AS SystemNamed,"+
     "CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),definition)),2) AS Hash "+
     "FROM sys.check_constraints WHERE name IN ("+
     "N'CK_DashboardWidget_Type',N'CK_ChartSeal_Digest',"+
@@ -172,6 +174,13 @@ export async function verifyChartOptionAWriterSql(
    await probe.rollback();
   }
   assert.equal(checks.length,5);
+  // One disposable-only structural inventory for all five witnesses.
+  // No clinical rows, connection settings, passwords or source SQL logged.
+  console.log("CHART_A_FIVE_CHECK_SCOPE_WITNESS:"+
+   checks.map(c=>String(c.TableName)+"."+String(c.ConstraintName)+
+    ":col="+String(c.ParentColumnId)+":disabled="+String(c.Disabled)+
+    ":notTrusted="+String(c.NotTrusted)+":systemNamed="+String(c.SystemNamed))
+    .sort().join("|"));
   assert.match(filterHash,/^[0-9a-f]{64}$/i);
   assert.match(frozenHash,/^[0-9a-f]{64}$/i);
   assert.equal((await q("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') AS ObjectId")).recordset[0]?.ObjectId,null);
