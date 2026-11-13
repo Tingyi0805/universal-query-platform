@@ -2,6 +2,12 @@
 
 **Status: BLOCKED / NOT AN INSTALLER.** This record freezes the existing four delivery gates, and adds no phase. It does not approve hospital SQL access, schema changes, chart release, PR merge, or `C:\UQP` deployment.
 
+## Selected architecture (2026-11-13, Option A — supersedes prior Signer/Issuer requirement)
+
+The project owner has selected **Option A: existing UQP LOCAL JWT + a dedicated least-privilege SQL Writer**. This *architecture choice* is accepted, but Gates 2/3 production readiness is still PENDING. There is no requirement to deploy an independent IdP, mTLS Signer, SQL Issuer or HMAC service for Option A. Historic Signer/Issuer references **below are preserved as evidence of discarded prototypes, not current release prerequisites**. The accepted trust assumption is that UQP is the original authenticated HTTP authority; a compromised UQP process/JWT secret is outside the independent-identity protection scope of Option A. Browser actor spoofing is blocked by verified JWT/session-derived server plans. See [Gate 3 Option A binding decision](chart-928-gate3-actor-binding-review-decision.md).
+
+Implementation: `dashboardChartLocalJwtSqlCreate.ts` is wired through the existing Dashboard CREATE route and will call only a verified, SHA/SID-pinned `uqp.usp_DashboardChartCreate` via a dedicated SQL login, **after Gate 2/3 formal approval**. Its production gates are OFF; SQL source for that approved procedure and frozen-to-permit conversion is NOT YET INSTALLED or SIGNED. Existing public/device projection remains independently OFF.
+
 ## Accepted isolated evidence (not hospital-target attestation)
 
 - PR #99 retains Stage 18 accepted manual designer UAT. Do not repeat it for SQL-only changes.
@@ -20,18 +26,19 @@
 
 **Gate 2 decision: NOT APPROVED.** No checked-in approved 928 production SQL, installer manifest entry, or target-specific migration approval exists here.
 
-## Gate 3 — Signer / Issuer / Writer and privacy decisions
+## Gate 3 — selected LOCAL JWT / dedicated SQL Writer / privacy decisions
 
-- `CHART_WRITER_APPROVED_PROCEDURE_SHA256` is intentionally `null`; the required DB-owned, non-forgeable actor binding and independently approved procedure are not provided by a disposable SQL prototype.
-- Signer key custody, independent TLS identity and SQL grants must be reviewed and operated separately from ordinary UQP.
-- Public/device chart projection requires its own Token/IP/revocation and grouped-query small-cell/differencing/disclosure policy; authenticated designer preview is not kiosk authorization.
-- Hardcoded create/projection/public-playback release gates remain OFF.
+- The existing verified JWT + live SQL session is the accepted **application** ActorId authority (not an independent identity provider); the dedicated SQL Writer must re-check current permissions and TokenVersion **within its own SERIALIZABLE Widget/Seal/Audit transaction**. A fully compromised UQP app server remains an explicitly accepted design risk, not something SQL attestation can solve.
+- `CHART_WRITER_APPROVED_PROCEDURE_SHA256=null` and all platform/Writer original SID pins remain unapproved. Signer/Issuer signed grants are **not** Option A dependencies; the synthetic old source remains dormant.
+- Dedicated least-privilege SQL Writer `EXECUTE` only, target identity and exact procedure/trigger source pins, transactional anti-replay and precise current Query ACL are mandatory; no direct table writes or shared credentials.
+- Public/device chart projection requires separate Token/IP/revocation and grouped-query small-cell/differencing/disclosure authorization; authenticated designer preview is not kiosk approval.
+- Hardcoded create/Writer/projection/public-playback release gates remain OFF.
 
 **Gate 3 decision: NOT APPROVED.** Never enable an HTTP/SQL release constant on the basis of CI alone.
 
 ## Gate 4 — Windows / IIS controlled test acceptance
 
-Only after Gates 2 and 3 are independently approved: stage an authorized ZIP outside the live `C:\UQP` overwrite path, preserve deployment-specific `.env`, validate Node 24 / ABI 137, IIS ARR `/api/status`, relevant SQL procedure identities, read-only/live authorization proof, and synthetic end-to-end CHART create/reload/display with revocation and no patient disclosure. Obtain an explicit operator change decision before replacing live files.
+Only after Gates 2 and 3 have their required authorized technical approval recorded: stage an authorized ZIP outside the live `C:\UQP` overwrite path, preserve deployment-specific `.env`, validate Node 24 / ABI 137, IIS ARR `/api/status`, relevant SQL procedure identities, read-only/live authorization proof, and synthetic end-to-end CHART create/reload/display with revocation and no patient disclosure. Obtain an explicit operator change decision before replacing live files.
 
 **Gate 4 decision: NOT STARTED.**
 
@@ -39,11 +46,11 @@ Only after Gates 2 and 3 are independently approved: stage an authorized ZIP out
 
 - **Merge PR #99:** blocked.
 - **Install 928 in hospital SQL / ledger entry:** blocked.
-- **Enable CHART runtime flags or deploy independent signer/writer:** blocked.
+- **Enable CHART runtime flags or activate the dedicated SQL Writer:** blocked.
 - **Overwrite `C:\UQP`:** blocked.
 - **User action now:** none. Existing Stage 18 acceptance and previously observed 925/926 evidence are preserved; no repeat manual inventory is requested merely to document these gates.
 
-The next material completion is an **independently reviewed production 928 migration plus approved signer/Writer trust boundary**, not another disposable-only feature or invented stage.
+The next material completion is a **reviewed production 928 migration plus the Option A dedicated Writer's approved SQL procedure/Trigger transition**, not another Signer/Issuer prototype or invented stage.
 
 
 ## Freeze-to-Writer compatibility decision (source review; NOT APPROVED)
@@ -54,13 +61,13 @@ The source currently contains **two different trigger contracts**, and this diff
 2. **Synthetic atomic-create contract** — \`database/drafts/928_chart_atomic_create_prototype.sql.draft\` creates \`uqp.DashboardChartCreatePermit\` and **alters the same trigger** to admit only one new CHART row when the SessionId, SQL TransactionId, ProfileId, SourceKey and ConfigJson match the short-lived permit. The isolated Writer procedure creates and deletes the permit inside its own transaction, with Widget, Seal, Request Ledger and Audit. This trigger differs from the frozen 928 digest. The prototype may not be applied to UQP production or promoted as-is.
 3. **Synthetic issuer / delegation contract** — \`database/drafts/928_chart_actor_delegation_disposable.sql.draft\`, \`928_chart_signed_issuer_atomic_disposable.sql.draft\` and \`928_chart_atomic_create_with_delegation.sql.draft\` exercise scoped grant issuance/consumption in disposable databases only. A passed test with \`EXECUTE AS USER\`, an owner context or an isolated signing key does **not** prove the request's \`ActorId\` is the authenticated HTTP caller in a hospital deployment.
 
-**Required Gate 2/3 decision:** independent reviewers must approve one explicit **versioned** schema transition from frozen-only to permit-protected Writer (including the permit table, final trigger definition/hash, DML permissions and module execution context). Base-frozen attestation and authorized-Writer attestation must have **separate, exact expected definitions**; neither should silently accept the other's trigger. The production upgrade must be transactional, preserve existing layouts and audit history, and fail closed if any expected source/catalog/ledger state differs. No implied automatic migration or trigger disablement.
+**Required Gate 2/3 decision:** designated hospital technical approver(s) must record approval of one explicit **versioned** schema transition from frozen-only to permit-protected Writer (including the permit table, final trigger definition/hash, DML permissions and module execution context). Base-frozen attestation and authorized-Writer attestation must have **separate, exact expected definitions**; neither should silently accept the other's trigger. The production upgrade must be transactional, preserve existing layouts and audit history, and fail closed if any expected source/catalog/ledger state differs. No implied automatic migration or trigger disablement.
 
-**Required DB-owned caller binding:** possession of a scoped issuer grant and correct \`@ActorId\` fields must not be the sole proof that the signed-in clinician initiated the request. The independent signer and DB Issuer must verify the original authenticated, live caller identity and prohibit a Writer/operator from minting or changing ActorId; the Writer must re-check TokenVersion, both Query permissions, source/version and request replay while holding transaction locks. Protect key custody, least-privilege principal separation, grant revocation, immutable receipts, grouping/small-cell privacy and device/public projection authorization. Reviewers must evaluate the impersonation threat where **two different actors both have the required permissions**.
+**Option A actor trust boundary:** the original actor is derived *only* from the current UQP request's verified LOCAL JWT and live session, never browser `ActorId` or mutable request headers. SQL Writer receives this server-derived ActorId and **must re-check** TokenVersion, both Query permissions, source/version and RequestId replay with transaction locks. A compromised UQP app can still impersonate an actor under this chosen trust model; do not claim DB-owned independent HTTP identity verification. Protect separate SQL credentials, exact procedure and SID pins, immutable receipts, grouping/small-cell privacy and public-device projection authorization. Test that two fully authorized users A/B cannot exchange identities through the normal HTTP request body.
 
-**Acceptance evidence required before authorizing real create:** isolated SQL Server 2019/2022 and HTTP tests must explicitly show (a) frozen state denies CHART DML, (b) altered/disabled/mis-matched trigger or permit schema is rejected, (c) ordinary and dedicated SQL logins cannot directly insert Permit, Widget or Seal, (d) an unauthorized or forged actor/grant, replay, expired/deleted/revoked token, wrong source/revision, concurrent consume and late audit/seal failure all reject with no partial committed effects, and (e) only a separately approved, correctly bound SQL Writer can create, reload and return the audited chart receipt. Existing synthetic CI is supporting evidence, not production authorization.
+**Acceptance evidence required before authorizing real create:** isolated SQL Server 2019/2022 and HTTP tests must explicitly show (a) frozen state denies CHART DML, (b) altered/disabled/mis-matched trigger or permit schema is rejected, (c) ordinary and dedicated SQL logins cannot directly insert Permit, Widget or Seal, (d) an unauthorized actor/HTTP body forgery, RequestId replay, expired/deleted/revoked token, wrong source/revision, concurrent create and late audit/seal failure all reject with no partial committed effects, and (e) only the approved two-login LOCAL-JWT-bound SQL Writer can create, reload and return the audited chart receipt. Existing synthetic CI is supporting evidence, not production authorization.
 
-**Resolution state: PENDING independent DBA/security review and reviewed SQL source.** The source constants \`CHART_WRITER_APPROVED_PROCEDURE_SHA256=null\` and \`CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false\` remain unchanged; do not promote the disposable ALTER TRIGGER, enable release switches, create a 928 migration ledger entry, merge PR #99 or overwrite \`C:\UQP\`.
+**Resolution state: PENDING hospital DBA/security technical acceptance and approved SQL source.** The source constants `CHART_WRITER_APPROVED_PROCEDURE_SHA256=null`, `CHART_LOCAL_JWT_WRITER_RELEASE_APPROVED=false` and historical `CHART_WRITER_DB_ACTOR_BINDING_APPROVED=false` remain unchanged; do not promote the disposable ALTER TRIGGER, enable release switches, create a 928 migration ledger entry, merge PR #99 or overwrite \`C:\UQP\`.
 
 ## Independent DBA / security review handoff (2026-11-11; evidence, not approval)
 
@@ -70,7 +77,7 @@ This section is a review handoff under the **existing Gates 2 and 3**, not an ad
 | --- | --- | --- |
 | DBA — 928 source | Independently reviewed, versioned **production** SQL; exact columns (including order/types/length/nullability), defaults, keys, FK targets, CHECKs, filtered-index expressions, trigger definitions/events and preexisting DashboardWidget behavior; approved exact source SHA-256 | **PENDING**; \`database/drafts/928_dashboard_chart_trust_schema.sql.draft\` is disposable-only, not an installer |
 | DBA — target and recovery | Target server/database/login identity; exact 925 match, coherent 926 catalog/ledger reconciliation, 927 absence/presence classified without treating it as a mandatory CHART prerequisite; 928 absence/state; approved backup/restore test, outage/change window, transaction/lock/ledger integration and failure recovery | **PENDING**; isolated CI cannot attest the hospital target |
-| Security — Signer / Issuer / Writer | Independently operated signer identity and key custody, mTLS/cert rotation, separate SQL principals and grants, approved DB-owned actor binding, scoped one-time authorization/replay protection, exact approved writer procedure digest and auditable receipt matching | **PENDING**; \`CHART_WRITER_APPROVED_PROCEDURE_SHA256\` remains \`null\` |
+| Security — Option A LOCAL JWT / SQL Writer | Record the accepted UQP-as-identity-authority risk, immutable verified JWT actor, two distinct platform/Writer SQL principals/SIDs, exact vetted Writer procedure SHA, no direct Widget/Permit/Seal DML, same-transaction revocation/replay checks and auditable receipt | **PENDING production acceptance**; Option A architecture is selected but Writer SHA/SID remain `null` |
 | Privacy / clinical data owner | Approved grouped-query source and disclosure scope, small-cell and differencing controls, audit retention, independent user versus device Token/IP/revocation and public-screen release decision | **PENDING**; designer preview is not public-display approval |
 | Deployment/change owner | Gate 2 and 3 approvals recorded first; isolated Windows/IIS end-to-end evidence; preserve deployment \`.env\`; rollback owner and explicit operator deployment authorization | **PENDING**; no \`C:\UQP\` overlay permitted |
 
