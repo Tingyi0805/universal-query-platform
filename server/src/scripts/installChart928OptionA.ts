@@ -96,7 +96,10 @@ export async function installChart928OptionA(
    "@Resource=N'UQP:928:ChartTrustRelease',"+
    "@LockMode=N'Exclusive',@LockOwner=N'Transaction',@LockTimeout=5000; "+
    "SELECT @lock AS LockResult")).recordset;
-  if(locked.length!==1||Number(locked[0]?.LockResult)<0)
+  // sp_getapplock succeeds only for non-negative integer return codes.
+  // Missing/null/malformed results must not pass as an acquired lock.
+  const lockResult=locked.length===1?locked[0]?.LockResult:undefined;
+  if(typeof lockResult!=="number"||!Number.isInteger(lockResult)||lockResult<0)
    throw Error("CHART_A_MIGRATION_LOCK_DENIED");
 
   // This exact SELECT-only preflight runs ON the migration transaction.
