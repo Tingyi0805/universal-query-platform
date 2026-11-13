@@ -2,6 +2,25 @@
 
 **Status: BLOCKED / NOT AN INSTALLER.** This record freezes the existing four delivery gates, and adds no phase. It does not approve hospital SQL access, schema changes, chart release, PR merge, or `C:\UQP` deployment.
 
+## Project owner scope decisions — 2026-11-13 (direction only, NOT formal release approval)
+
+The project owner has explicitly made **three implementation-scope decisions** for the existing four gates:
+
+| Decision | Agreed direction | What is **not** approved |
+| --- | --- | --- |
+| Gate 2 / installation target | **Request an authorized installation in the actual hospital production SQL database** after DBA review, exact target attestation, verified backup/recovery and approved change window; do not make a separate isolated test installation the sole release target. | No permission to connect to/write to hospital SQL, execute migration 928, fix/adopt ledger, or bypass approved production SQL source hashes. |
+| Gate 3 / architecture | **Accept Option A in principle**: current UQP LOCAL JWT as HTTP identity authority plus a distinct least-privilege SQL Writer, subject to security review and production SQL rights/source/SID attestation. | Not final risk sign-off, Writer privilege provisioning, SQL release enablement or independent authorization to impersonate a user. |
+| Initial data exposure | **Restrict initial CHART acceptance to authenticated administrators in a controlled test**. Keep public-screen, kiosk, device-token and general user CHART playback **OFF**. | No approval for any public-device projection, clinical/patient data disclosure, small-cell/differencing policy or production exposure merely from a designer test. |
+
+**Interpretation:** The selected database installation destination is the existing hospital production target, **but installation remains BLOCKED** pending separate DBA/security and hospital change-management authorization. Read-only, explicitly authorized target preflight and approved backup/restore evidence must precede any DDL. A separate safer test can support technical acceptance but must not silently substitute for the selected target or authorize production execution.
+
+**Exact next gate decisions** (no new phase):
+1. Gate 2: authorized DBA/change owner records the precise target SQL server/database/original login, 925 exact catalog, disposition of the prior 926 catalog-versus-ledger divergence, optional clean absence of 927, 928 absent/exact state, reviewed executable frozen-base and permit-Writer SQL SHA-256/trigger module identities, transaction/rollback/backup evidence and signed change window.
+2. Gate 3: authorized security/DBA reviewer approves separate platform/Writer SQL SID pins, reviewed `uqp.usp_DashboardChartCreate` SHA, EXECUTE-only/no-direct-DML SQL grants, JWT-derived immutable actor and same-transaction revocation/replay checks, and records the accepted Option A residual risk. Initial access must be administrator-only; data owner authorization is required for any real clinical/patient-related data. Public/device projection remains out of scope and OFF.
+3. Gate 4: only after Gates 2/3 formal approvals, perform one controlled Windows/IIS integration UAT and obtain explicit operator authorization before any `C:\UQP` ZIP overlay.
+
+**Record status:** Owner direction **RECORDED**; DBA approval **PENDING**, security/SQL Writer approval **PENDING**, clinical-data scope approval **PENDING where applicable**, actual hospital target evidence **NOT RECORDED**, production deployment **BLOCKED**. This does not change compile-time release gates, PR Draft status, or the historical Stage 18 acceptance.
+
 ## Selected architecture (2026-11-13, Option A — supersedes prior Signer/Issuer requirement)
 
 The project owner has selected **Option A: existing UQP LOCAL JWT + a dedicated least-privilege SQL Writer**. This *architecture choice* is accepted, but Gates 2/3 production readiness is still PENDING. There is no requirement to deploy an independent IdP, mTLS Signer, SQL Issuer or HMAC service for Option A. Historic Signer/Issuer references **below are preserved as evidence of discarded prototypes, not current release prerequisites**. The accepted trust assumption is that UQP is the original authenticated HTTP authority; a compromised UQP process/JWT secret is outside the independent-identity protection scope of Option A. Browser actor spoofing is blocked by verified JWT/session-derived server plans. See [Gate 3 Option A binding decision](chart-928-gate3-actor-binding-review-decision.md).
