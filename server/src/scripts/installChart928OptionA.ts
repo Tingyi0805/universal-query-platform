@@ -143,6 +143,19 @@ export async function installChart928OptionA(
    observed[0]?.TriggerDisabled!==false&&observed[0]?.TriggerDisabled!==0)
    throw Error("CHART_A_INSTALLED_MODULES_NOT_EXACT");
 
+  // Every 928 protection trigger must remain enabled, not only the Writer gate.
+  const protection=(await request().query(
+   "SELECT COUNT_BIG(*) AS EnabledCount FROM sys.triggers "+
+   "WHERE is_disabled=0 AND name IN ("+
+   "N'TR_DashboardWidget_ChartFreeze',N'TR_ChartSeal_DeleteBlock',"+
+   "N'TR_ChartReview_Transition',N'TR_ChartTrustRequest_Immutable',"+
+   "N'TR_ChartSeal_AuditReceipt',N'TR_ChartReview_AuditReceipt',"+
+   "N'TR_ChartTrustRequest_AuditReceipt') "+
+   "AND schema_id=SCHEMA_ID(N'uqp')"
+  )).recordset;
+  if(protection.length!==1||Number(protection[0]?.EnabledCount)!==7)
+   throw Error("CHART_A_928_PROTECTION_TRIGGERS_NOT_ENABLED");
+
   await request().input("file",sql.NVarChar(255),ledgerName)
    .query("INSERT INTO uqp.SchemaMigration(FileName) VALUES(@file)");
   await tx.commit();
