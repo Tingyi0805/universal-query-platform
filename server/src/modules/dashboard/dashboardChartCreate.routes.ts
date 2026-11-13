@@ -1,6 +1,6 @@
 // Issue #89: native CHART CREATE HTTP boundary. This only defines the
-// transport contract; the production SQL Issuer, Writer and 928 adoption are
-// NOT approved or wired. A disabled request must never touch a database.
+// transport contract; Option A's LOCAL JWT Writer is wired but its
+// production release remains hard-disabled. A disabled request never touches SQL.
 import { Router } from "express";
 import { z } from "zod";
 import {parseChartCreateSqlReceipt} from "./dashboardChartCreateReceipt.js";
@@ -11,8 +11,8 @@ import {
 import type { DormantChartCreatePlan } from "./dashboardChartAtomicCreate.contract.js";
 
 // Never sourced from .env, a browser parameter, request headers or a JWT.
-// No release is possible until independent Signer + Issuer + Writer + 928
-// and public privacy controls are separately approved.
+// Option A uses the verified local JWT actor, not a separate Signer/Issuer.
+// The production 928/Writer and public privacy release gates remain OFF.
 export const CHART_CREATE_HTTP_RELEASE_APPROVED = false as const;
 
 const positiveId = z.string().regex(/^[1-9][0-9]{0,14}$/)
@@ -20,15 +20,10 @@ const positiveId = z.string().regex(/^[1-9][0-9]{0,14}$/)
   .refine(value => Number.isSafeInteger(value) && value > 0);
 export type ChartCreateRouterDependencies = Readonly<{
   approved: () => boolean;
-  // This dependency MUST in the future execute only the independently
-  // approved, SQL-owned, SERIALIZABLE grant-consumption + Widget/Seal/Audit
-  // stored procedure, after independent Signer/Issuer preflight. The
-  // production application currently injects a function that always throws.
-  // A future independently authenticated mTLS signer MUST reverify this
-  // exact original JWT. Never use req.headers or a browser-provided actor.
-  // Return exactly one independently approved SQL Writer record. Its
-  // Digest and SealRevision are checked before the HTTP response.
-  create: (plan: DormantChartCreatePlan, originalBearerHeader:string) => Promise<unknown>;
+  // Option A receives only the server-derived canonical plan, not the
+  // original Bearer credential. The SQL procedure must revalidate live RBAC,
+  // token version and replay atomically with Widget/Seal/Audit.
+  create: (plan: DormantChartCreatePlan) => Promise<unknown>;
 }>;
 
 export function createChartCreateRouter(deps: ChartCreateRouterDependencies) {
@@ -78,7 +73,7 @@ export function createChartCreateRouter(deps: ChartCreateRouterDependencies) {
       }
       try {
         const receipt = parseChartCreateSqlReceipt(
-          await deps.create(plan,actor.originalBearerHeader),plan);
+          await deps.create(plan),plan);
         if (!receipt) throw Error("CHART_CREATE_RECEIPT_INVALID");
         // No ConfigJson, actor, SQL text, signatures, patient data, keys,
         // grant or internal approval claims are ever returned over HTTP.
