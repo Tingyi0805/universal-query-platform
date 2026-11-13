@@ -34,9 +34,17 @@ export async function verifyChartOptionAWriterSql(
  for(const s of [first,frozenPin,writerPin])assert.equal(source.split(s).length,2);
  await assert.rejects(admin.request().batch(source),(e:unknown)=>
   Number((e as {number?:number}).number)===51928);
- let db:sql.ConnectionPool|undefined,created=false,stage="CREATE_DATABASE";
+ let db:sql.ConnectionPool|undefined,writer:sql.ConnectionPool|undefined;
+ let created=false,loginCreated=false,stage="CREATE_DATABASE";
  const name="UQP_CH_"+randomBytes(6).toString("hex");
+ // These credentials are ephemeral random CI-only and never logged.
+ const writerName="UQP_CHW_"+randomBytes(6).toString("hex");
+ const writerPassword="D1!"+randomBytes(20).toString("hex")+"q";
  try{
+  stage="CREATE_TEST_WRITER_LOGIN";
+  await admin.request().query("CREATE LOGIN ["+writerName+
+    "] WITH PASSWORD='"+writerPassword+"', CHECK_POLICY=OFF");
+  loginCreated=true;
   await admin.request().query("CREATE DATABASE ["+name+"]");created=true;
   db=await new sql.ConnectionPool({...config,database:name,pool:{max:3,min:0}}).connect();
   const q=(s:string)=>db!.request().query(s);
@@ -113,13 +121,16 @@ export async function verifyChartOptionAWriterSql(
      "INSERT uqp.RoleQueryAccess(RoleId,QueryDefinitionId,CanView,CanExecute) VALUES(1,9,1,1);");
 
   stage="FROZEN_928_BASE";await db.request().batch(base);
+  // One distinct SQL login (not sysadmin/db_owner) is the only intended
+  // executor; the platform/admin login is never the Writer in this test.
+  await q("CREATE USER [UQP_Chart_A_WriterTest] FOR LOGIN ["+writerName+"]");
   stage="UNMODIFIED_REVIEW_SQL_ALWAYS_DENIED";
   await assert.rejects(db.request().batch(source),(e:unknown)=>
    Number((e as {number?:number}).number)===51928);
   stage="READ_LOCAL_DISPOSABLE_HASH_AND_SID";
   const anchors=(await q("SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',"+
     "CONVERT(varbinary(max),m.definition)),2) AS FrozenHash,"+
-    "CONVERT(varchar(170),SUSER_SID(ORIGINAL_LOGIN()),2) AS OriginalSid "+
+    "CONVERT(varchar(170),SUSER_SID(N'"+writerName+"'),2) AS OriginalSid "+
     "FROM sys.sql_modules m WHERE m.object_id="+
     "OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR')")).recordset;
   assert.equal(anchors.length,1);
@@ -143,11 +154,27 @@ export async function verifyChartOptionAWriterSql(
   const objs=(await q("SELECT OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P') AS P,"+
    "OBJECT_ID(N'uqp.DashboardChartCreatePermit',N'U') AS T")).recordset[0];
   assert(Number(objs?.P)>0);assert(Number(objs?.T)>0);
+  stage="GRANT_TEST_ONLY_EXECUTE";
+  await q("GRANT EXECUTE ON OBJECT::uqp.usp_DashboardChartCreate "+
+    "TO [UQP_Chart_A_WriterTest]");
+  writer=await new sql.ConnectionPool({...config,database:name,
+    user:writerName,password:writerPassword,
+    pool:{min:0,max:2}}).connect();
+  const actual=(await writer.request().query(
+    "SELECT CONVERT(varchar(170),SUSER_SID(ORIGINAL_LOGIN()),2) AS Sid,"+
+    "IS_MEMBER(N'db_owner') AS Owner,"+
+    "HAS_PERMS_BY_NAME(N'uqp.DashboardWidget',N'OBJECT',N'INSERT') AS DirectInsert,"+
+    "HAS_PERMS_BY_NAME(N'uqp.usp_DashboardChartCreate',N'OBJECT',N'EXECUTE') AS CanExec"
+  )).recordset[0];
+  assert.equal(String(actual?.Sid).toLowerCase(),sid.toLowerCase());
+  assert.equal(actual?.Owner,0);
+  assert.equal(actual?.DirectInsert,0);
+  assert.equal(actual?.CanExec,1);
   const configJson=canonicalChartConfig({version:1,chartType:"BAR",
    dataSourceKey:"PRIMARY",categoryColumn:"ROOM",valueColumn:"TOTAL",
    valueMode:"QUERY_RESULT",maxPoints:20,showLegend:true});
   assert(configJson);
-  const exec=async(n:number,actor=8,token=1)=>db!.request()
+  const exec=async(n:number,actor=8,token=1)=>writer!.request()
    .input("dashboard",sql.BigInt,7).input("profile",sql.BigInt,22)
    .input("actor",sql.BigInt,actor).input("token",sql.Int,token)
    .input("request",sql.UniqueIdentifier,requestId(n))
@@ -161,7 +188,7 @@ export async function verifyChartOptionAWriterSql(
     "@SourceKey=@source,@ConfigJson=@config,@X=@x,@Y=@y,"+
     "@Width=@width,@Height=@height");
   const denied=(fn:()=>Promise<unknown>)=>assert.rejects(fn(),
-   (e:unknown)=>[51928,2601,2627].includes(Number((e as {number?:number}).number)));
+   (e:unknown)=>[229,51928,2601,2627].includes(Number((e as {number?:number}).number)));
   const counts=async()=> (await q("SELECT "+
    "(SELECT COUNT_BIG(*) FROM uqp.DashboardWidget WHERE WidgetType=N'CHART') AS Widgets,"+
    "(SELECT COUNT_BIG(*) FROM uqp.DashboardChartWidgetSeal) AS Seals,"+
@@ -171,8 +198,8 @@ export async function verifyChartOptionAWriterSql(
    [Number((await counts()).Widgets),Number((await counts()).Seals),
     Number((await counts()).Requests),Number((await counts()).Permits)],
    [w,w,w,0]);
-  stage="DIRECT_INSERT_DENIED";
-  await denied(()=>q("INSERT uqp.DashboardWidget(ProfileId,WidgetType,SourceKey,"+
+  stage="DEDICATED_WRITER_DIRECT_INSERT_DENIED";
+  await denied(()=>writer!.request().query("INSERT uqp.DashboardWidget(ProfileId,WidgetType,SourceKey,"+
    "X,Y,Width,Height,ConfigJson) VALUES(22,N'CHART',N'PRIMARY',"+
    "0,0,600,360,N'{}')"));
   stage="CREATE_ATOMIC_SUCCESS";
@@ -209,8 +236,13 @@ export async function verifyChartOptionAWriterSql(
    String(e?.lineNumber??"NA")+":"+String(e?.code??"NA"));
   throw Error("CHART_A_REAL_SQL_DISPOSABLE_ACCEPTANCE_FAILED");
  }finally{
+  await writer?.close().catch(()=>undefined);
   await db?.close().catch(()=>undefined);
-  if(created)await admin.request().query("ALTER DATABASE ["+name+
-    "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ["+name+"]");
+  try{
+    if(created)await admin.request().query("ALTER DATABASE ["+name+
+      "] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE ["+name+"]");
+  }finally{
+    if(loginCreated)await admin.request().query("DROP LOGIN ["+writerName+"]");
+  }
  }
 }
