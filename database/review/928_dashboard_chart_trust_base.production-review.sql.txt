@@ -368,7 +368,13 @@ END');
      c.parent_object_id=OBJECT_ID(N'uqp.'+e.TableName) AND c.name=e.ConstraintName
    WHERE c.object_id IS NULL OR c.definition IS NULL
       OR c.is_disabled<>0 OR c.is_not_trusted<>0 OR c.is_not_for_replication<>0
-      OR c.parent_column_id<>0 OR c.is_system_named<>0
+      OR c.parent_column_id<>CASE
+           WHEN e.TableName=N'DashboardWidget'
+            AND e.ConstraintName=N'CK_DashboardWidget_Type'
+           THEN ISNULL(COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),
+                  N'WidgetType',N'ColumnId'),-1)
+           ELSE 0 END
+      OR c.is_system_named<>0
       OR HASHBYTES('SHA2_256',CONVERT(varbinary(max),c.definition))
           <>e.ApprovedDefinitionSha256
  ) OR (SELECT COUNT(*) FROM sys.check_constraints c WHERE c.parent_object_id IN(
