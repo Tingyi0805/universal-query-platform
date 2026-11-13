@@ -373,6 +373,14 @@ END');
             AND e.ConstraintName=N'CK_DashboardWidget_Type'
            THEN ISNULL(COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),
                   N'WidgetType',N'ColumnId'),-1)
+           WHEN e.TableName=N'DashboardChartWidgetSeal'
+            AND e.ConstraintName=N'CK_ChartSeal_Digest'
+           THEN ISNULL(COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+                  N'ConfigDigest',N'ColumnId'),-1)
+           WHEN e.TableName=N'DashboardChartTrustRequest'
+            AND e.ConstraintName=N'CK_ChartTrustRequest_Action'
+           THEN ISNULL(COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+                  N'Action',N'ColumnId'),-1)
            ELSE 0 END
       OR c.is_system_named<>0
       OR HASHBYTES('SHA2_256',CONVERT(varbinary(max),c.definition))
