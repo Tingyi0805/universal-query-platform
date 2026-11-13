@@ -402,7 +402,7 @@ export async function verifyChartOptionAWriterSql(
    assert.equal(persisted.length,1);
    const row=persisted[0]!;
    stage="HTTP_PERSISTENCE_WIDGET_IDENTITY";
-   assert.equal(row.ProfileId,22);
+   assert.equal(String(row.ProfileId),"22");
    assert.equal(row.WidgetType,"CHART");
    assert.equal(row.SourceKey,"PRIMARY");
    stage="HTTP_PERSISTENCE_CANONICAL_CONFIG";
@@ -412,7 +412,7 @@ export async function verifyChartOptionAWriterSql(
    assert.equal(row.ConfigDigest,configJson.sha256);
    stage="HTTP_PERSISTENCE_SEAL_ACTIVE";
    assert.equal(row.IsActive,true);
-   assert.equal(row.SealedBy,8);
+   assert.equal(String(row.SealedBy),"8");
    stage="HTTP_PERSISTENCE_RECEIPT_IDS";
    assert.equal(String(row.WidgetId),String(saved.widgetId));
    assert.equal(String(row.AuditLogId),saved.auditLogId);
