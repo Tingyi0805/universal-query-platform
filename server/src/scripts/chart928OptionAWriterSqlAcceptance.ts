@@ -11,6 +11,7 @@ import {attestChartWriterBaseSqlCatalog} from "./chart928WriterBaseSchema.js";
 import {canonicalChartConfig} from "../modules/dashboard/dashboardChartAtomicCreate.contract.js";
 const candidate=new URL("../../../database/review/928_chart_local_jwt_writer.production-review.sql.txt",import.meta.url);
 const frozen=new URL("../../../database/drafts/928_dashboard_chart_trust_schema.sql.draft",import.meta.url);
+const reviewedFrozen=new URL("../../../database/review/928_dashboard_chart_trust_base.production-review.sql.txt",import.meta.url);
 const replaceOnce=(s:string,a:string,b:string)=>{
  assert.equal(s.split(a).length,2,"CHART_A_REVIEW_SOURCE_DRIFT");return s.replace(a,b);
 };
@@ -28,6 +29,11 @@ export async function verifyChartOptionAWriterSql(
  assert.equal(target?.Db,"master");assert.equal(target?.Machine,machine);
  const source=await readFile(candidate,"utf8");
  const base=await readFile(frozen,"utf8");
+ const reviewedBase=await readFile(reviewedFrozen,"utf8");
+ const frozenReviewGuard="THROW 51928,'CHART_928_PRODUCTION_REVIEW_NOT_APPROVED',1;";
+ const filterWitness="DECLARE @approvedActiveFilterSha256 varbinary(32)=NULL;";
+ assert.equal(reviewedBase.split(frozenReviewGuard).length,2);
+ assert.equal(reviewedBase.split(filterWitness).length,2);
  const first="THROW 51928,'CHART_A_WRITER_PRODUCTION_REVIEW_NOT_APPROVED',1;";
  const frozenPin="DECLARE @approvedFrozenTriggerDefinitionSha256 VARBINARY(32)=NULL;";
  const writerPin="DECLARE @approvedWriterOriginalSid VARBINARY(85)=NULL;";
@@ -120,36 +126,93 @@ export async function verifyChartOptionAWriterSql(
     "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4),(1,5);" +
      "INSERT uqp.RoleQueryAccess(RoleId,QueryDefinitionId,CanView,CanExecute) VALUES(1,9,1,1);");
 
-  stage="FROZEN_928_BASE";await db.request().batch(base);
-  // One distinct SQL login (not sysadmin/db_owner) is the only intended
-  // executor; the platform/admin login is never the Writer in this test.
-  await q("CREATE USER [UQP_Chart_A_WriterTest] FOR LOGIN ["+writerName+"]");
-  stage="UNMODIFIED_REVIEW_SQL_ALWAYS_DENIED";
+  // Use the previously accepted disposable 928 draft ONLY as a disposable
+  // witness factory. Roll it back, then install BOTH actual reviewed SQL
+  // sources in ONE transaction rather than mixing base draft and new Writer.
+  stage="FROZEN_928_WITNESSES_FROM_ROLLBACK_ONLY";
+  const probe=new sql.Transaction(db);
+  await probe.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  let checks:Record<string,unknown>[]=[];
+  let filterHash="",frozenHash="";
+  try{
+   await new sql.Request(probe).batch(base);
+   checks=(await new sql.Request(probe).query(
+    "SELECT OBJECT_NAME(parent_object_id) AS TableName,name AS ConstraintName,"+
+    "CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),definition)),2) AS Hash "+
+    "FROM sys.check_constraints WHERE name IN ("+
+    "N'CK_DashboardWidget_Type',N'CK_ChartSeal_Digest',"+
+    "N'CK_ChartTrustRequest_Action',N'CK_ChartReview_State',N'CK_ChartReview_Scope')"
+   )).recordset;
+   const witnesses=(await new sql.Request(probe).query(
+    "SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),"+
+    "(SELECT filter_definition FROM sys.indexes WHERE object_id="+
+    "OBJECT_ID(N'uqp.DashboardChartPrivacyReview') "+
+    "AND name=N'UX_ChartReview_Active'))),2) AS FilterHash,"+
+    "CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),"+
+    "(SELECT definition FROM sys.sql_modules WHERE object_id="+
+    "OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR')))),2) AS FrozenHash"
+   )).recordset;
+   assert.equal(witnesses.length,1);
+   filterHash=String(witnesses[0]?.FilterHash);
+   frozenHash=String(witnesses[0]?.FrozenHash);
+  }finally{
+   await probe.rollback();
+  }
+  assert.equal(checks.length,5);
+  assert.match(filterHash,/^[0-9a-f]{64}$/i);
+  assert.match(frozenHash,/^[0-9a-f]{64}$/i);
+  assert.equal((await q("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') AS ObjectId")).recordset[0]?.ObjectId,null);
+  stage="ORIGINAL_REVIEW_SOURCES_MUST_BLOCK";
   await assert.rejects(db.request().batch(source),(e:unknown)=>
    Number((e as {number?:number}).number)===51928);
-  stage="READ_LOCAL_DISPOSABLE_HASH_AND_SID";
-  const anchors=(await q("SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',"+
-    "CONVERT(varbinary(max),m.definition)),2) AS FrozenHash,"+
-    "CONVERT(varchar(170),SUSER_SID(N'"+writerName+"'),2) AS OriginalSid "+
-    "FROM sys.sql_modules m WHERE m.object_id="+
-    "OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR')")).recordset;
-  assert.equal(anchors.length,1);
-  const hash=String(anchors[0]?.FrozenHash),sid=String(anchors[0]?.OriginalSid);
-  assert.match(hash,/^[0-9a-f]{64}$/i);
+  await assert.rejects(db.request().batch(reviewedBase),(e:unknown)=>
+   Number((e as {number?:number}).number)===51928);
+  await q("CREATE USER [UQP_Chart_A_WriterTest] FOR LOGIN ["+writerName+"]");
+  // Pins are calculated ONLY from this short-lived synthetic CI DB.
+  // Neither source file is changed, and no synthetic pin is published as
+  // an authorized or reusable hospital production value.
+  const sidRow=(await q("SELECT CONVERT(varchar(170),SUSER_SID(N'"+
+    writerName+"'),2) AS Sid")).recordset[0];
+  const sid=String(sidRow?.Sid);
   assert.match(sid,/^(?:[0-9a-f]{2}){1,85}$/i);
+  let testBase=replaceOnce(reviewedBase,frozenReviewGuard,
+   "IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19 "+
+   "OR SUBSTRING(DB_NAME(),8,12) COLLATE Latin1_General_100_BIN2 "+
+   "LIKE N'%[^0-9a-f]%' THROW 51928,'CHART_928_DISPOSABLE_ONLY',1;");
+  const expectedChecks=[
+   ["DashboardWidget","CK_DashboardWidget_Type"],
+   ["DashboardChartWidgetSeal","CK_ChartSeal_Digest"],
+   ["DashboardChartTrustRequest","CK_ChartTrustRequest_Action"],
+   ["DashboardChartPrivacyReview","CK_ChartReview_State"],
+   ["DashboardChartPrivacyReview","CK_ChartReview_Scope"],
+  ];
+  for(const [table,constraint] of expectedChecks){
+   const hits=checks.filter(x=>x.TableName===table&&x.ConstraintName===constraint);
+   assert.equal(hits.length,1,"CHART_A_CATALOG_WITNESS_NOT_UNIQUE");
+   const hash=String(hits[0]?.Hash);
+   assert.match(hash,/^[0-9a-f]{64}$/i);
+   testBase=replaceOnce(testBase,
+    "(N'"+table+"',N'"+constraint+"',NULL)",
+    "(N'"+table+"',N'"+constraint+"',0x"+hash+")");
+  }
+  testBase=replaceOnce(testBase,filterWitness,
+   "DECLARE @approvedActiveFilterSha256 varbinary(32)=0x"+filterHash+";");
   let testSql=replaceOnce(source,first,
    "IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19 "+
    "OR SUBSTRING(DB_NAME(),8,12) COLLATE Latin1_General_100_BIN2 "+
    "LIKE N'%[^0-9a-f]%' THROW 51928,'CHART_A_DISPOSABLE_ONLY',1;");
   testSql=replaceOnce(testSql,frozenPin,
-   "DECLARE @approvedFrozenTriggerDefinitionSha256 VARBINARY(32)=0x"+hash+";");
+   "DECLARE @approvedFrozenTriggerDefinitionSha256 VARBINARY(32)=0x"+frozenHash+";");
   testSql=replaceOnce(testSql,writerPin,
    "DECLARE @approvedWriterOriginalSid VARBINARY(85)=0x"+sid+";");
-  stage="DISPOSABLE_WRITER_INSTALL";
+  stage="ATOMIC_REVIEWED_BASE_AND_WRITER_INSTALL";
   const tx=new sql.Transaction(db);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
-  try{await new sql.Request(tx).batch(testSql);await tx.commit();}
-  catch(e){await tx.rollback().catch(()=>undefined);throw e;}
+  try{
+   await new sql.Request(tx).batch(testBase);
+   await new sql.Request(tx).batch(testSql);
+   await tx.commit();
+  }catch(e){await tx.rollback().catch(()=>undefined);throw e;}
   stage="WRITER_INSTALLED";
   const objs=(await q("SELECT OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P') AS P,"+
    "OBJECT_ID(N'uqp.DashboardChartCreatePermit',N'U') AS T")).recordset[0];
