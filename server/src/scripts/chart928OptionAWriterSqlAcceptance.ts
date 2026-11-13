@@ -202,6 +202,22 @@ export async function verifyChartOptionAWriterSql(
   await denied(()=>writer!.request().query("INSERT uqp.DashboardWidget(ProfileId,WidgetType,SourceKey,"+
    "X,Y,Width,Height,ConfigJson) VALUES(22,N'CHART',N'PRIMARY',"+
    "0,0,600,360,N'{}')"));
+  stage="DEDICATED_WRITER_DIRECT_PERMIT_SEAL_LEDGER_DML_DENIED";
+  // Explicit SQL permission rejection for each security-sensitive table.
+  // Widget denial alone cannot prove Permit/Seal/Audit ledger isolation.
+  await denied(()=>writer!.request().query(
+   "INSERT uqp.DashboardChartCreatePermit "+
+   "(SessionId,TransactionId,ProfileId,SourceKey,ConfigJson) VALUES "+
+   "(@@SPID,CURRENT_TRANSACTION_ID(),22,N'PRIMARY',N'{}')"));
+  await denied(()=>writer!.request().query(
+   "INSERT uqp.DashboardChartWidgetSeal "+
+   "(WidgetId,ConfigDigest,IsActive,SealedBy,AuditLogId) VALUES "+
+   "(88,REPLICATE('a',64),1,8,1)"));
+  await denied(()=>writer!.request().query(
+   "INSERT uqp.DashboardChartTrustRequest(RequestId,Action,ActorId) "+
+   "VALUES(NEWID(),N'SEAL_WIDGET',8)"));
+  await denied(()=>writer!.request().query(
+   "UPDATE uqp.DashboardWidget SET Title=N'FORGED' WHERE Id=88"));
   stage="CREATE_ATOMIC_SUCCESS";
   const firstResult=(await exec(1)).recordset;assert.equal(firstResult.length,1);
   assert.deepEqual(Object.keys(firstResult[0]).sort(),
