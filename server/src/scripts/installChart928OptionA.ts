@@ -128,12 +128,19 @@ export async function installChart928OptionA(
    "LOWER(CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),"+
    "(SELECT definition FROM sys.sql_modules WHERE object_id="+
    "OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P')))),2)) AS WriterHash,"+
-   "OBJECT_ID(N'uqp.DashboardChartCreatePermit',N'U') AS PermitId"
+   "OBJECT_ID(N'uqp.DashboardChartCreatePermit',N'U') AS PermitId,"+
+   "OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') AS SealId,"+
+   "OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') AS TrustRequestId,"+
+   "(SELECT is_disabled FROM sys.triggers WHERE object_id="+
+   "OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR')) AS TriggerDisabled"
   )).recordset;
   if(observed.length!==1||
    observed[0]?.TriggerHash!==approval.finalTriggerModuleSha256||
    observed[0]?.WriterHash!==approval.finalWriterModuleSha256||
-   !(Number(observed[0]?.PermitId)>0))
+   !(Number(observed[0]?.PermitId)>0)||
+   !(Number(observed[0]?.SealId)>0)||
+   !(Number(observed[0]?.TrustRequestId)>0)||
+   observed[0]?.TriggerDisabled!==false&&observed[0]?.TriggerDisabled!==0)
    throw Error("CHART_A_INSTALLED_MODULES_NOT_EXACT");
 
   await request().input("file",sql.NVarChar(255),ledgerName)
