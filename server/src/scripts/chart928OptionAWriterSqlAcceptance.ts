@@ -11,6 +11,10 @@ import {env} from "../config/env.js";
 import {createAuthenticateJwt} from "../modules/auth/auth.middleware.js";
 import {createChartCreateRouter} from "../modules/dashboard/dashboardChartCreate.routes.js";
 import {createChartSavedReadbackRouter} from "../modules/dashboard/dashboardChartSavedReadback.routes.js";
+import {createChartProjectionRouter} from "../modules/dashboard/dashboardChartProjection.routes.js";
+import {createDormantChartCoordinator} from "../modules/dashboard/dashboardChartDelivery.coordinator.js";
+import {createDashboardPageSnapshot} from "../modules/dashboard/dashboardPageSnapshot.js";
+import type {ServerChartFacts} from "../modules/dashboard/dashboardChartApproval.policy.js";
 import {createDormantChartTrustReaders} from "../modules/dashboard/dashboardChartTrust.repository.js";
 import {readDashboardLayoutFromPool} from "../modules/dashboard/dashboardLayout.repository.js";
 import {chartLocalJwtWriterCreateSql} from "../modules/dashboard/dashboardChartLocalJwtSqlCreate.js";
@@ -376,10 +380,73 @@ export async function verifyChartOptionAWriterSql(
    }));
    // Same author-only readback route and audited SQL repository used by
    // Dashboard runtime; dependency injection is confined to disposable CI.
+   const savedChartReader=createDormantChartTrustReaders(async()=>db!).readSavedWidget;
    app.use(createChartSavedReadbackRouter({
-    approved:()=>true,
-    readSavedWidget:createDormantChartTrustReaders(async()=>db!).readSavedWidget,
-    readSession,
+    approved:()=>true,readSavedWidget:savedChartReader,readSession,
+   }));
+   // The saved Widget and SQL Seal are REAL. Query facts, audited page and
+   // aggregate proof remain synthetic test-only witnesses; this is NOT proof
+   // of live Query execution, public privacy review or production playback.
+   const chartFacts:ServerChartFacts={
+    dashboardId:7,sourceKey:"PRIMARY",
+    source:{queryId:9,bindingRevision:1,enabled:true,managed:true,
+     referenced:true,activeDashboard:false,mode:"QUERY_ONLY_DISABLED"},
+    actor:{userId:8,tokenVersion:1,active:true,
+     permissions:["EXECUTE_QUERY","DESIGN_QUERY","VIEW_QUERY"],
+     canView:true,canExecute:true},
+    query:{id:9,datasetId:10,active:true,published:true,archived:false},
+    dataset:{id:10,active:true,archived:false},
+    revisions:{dashboardApproval:"b".repeat(64),access:"c".repeat(64),
+     query:"d".repeat(16),dataset:"e".repeat(16)},
+    sensitivity:{version:2,columns:[
+     {columnName:"ROOM",sensitivityType:"OTHER",deviceMaskMode:"NONE"},
+     {columnName:"TOTAL",sensitivityType:"OTHER",deviceMaskMode:"NONE"},
+     {columnName:"PATIENT_ID",sensitivityType:"PATIENT_ID",deviceMaskMode:"FULL"},
+    ]},
+    publicDisplay:null,
+    reportColumns:[
+     {columnName:"ROOM",dataType:"nvarchar(20)",displayLabel:"Room",
+      displayOrder:1,isVisible:true,width:null,displayFormat:null,
+      alignment:"LEFT",groupOrder:1,aggregateType:"NONE"},
+     {columnName:"TOTAL",dataType:"bigint",displayLabel:"Total",
+      displayOrder:2,isVisible:true,width:null,displayFormat:null,
+      alignment:"RIGHT",groupOrder:null,aggregateType:"COUNT"},
+    ],
+    verifiedAggregate:{verified:true,queryId:9,datasetId:10,
+     queryRevision:"d".repeat(16),datasetRevision:"e".repeat(16),
+     categoryColumn:"ROOM",valueColumn:"TOTAL",evidenceVersion:"f".repeat(64)},
+   };
+   const chartProjection=createDormantChartCoordinator({
+    enabled:()=>true,
+    readSavedWidget:savedChartReader,
+    createFactsReader:()=>async()=>chartFacts,
+    auditedPage:{page:async(id,key,actor,input)=>{
+     assert.equal(id,7);assert.equal(key,"PRIMARY");assert.equal(input.page,1);
+     const rows=[
+      {ROOM:"OR-01",TOTAL:7,PATIENT_ID:"PRIVATE_SYNTHETIC_ONLY"},
+      {ROOM:"OR-02",TOTAL:9,PATIENT_ID:"PRIVATE_SYNTHETIC_ONLY"},
+     ];
+     const snapshot=createDashboardPageSnapshot({
+      deviceId:-actor.userId,dashboardId:id,queryId:9,datasetId:10,
+      sourceKey:key,executionContext:"designer",sourceScope:"ci-disposable",
+      modeVersion:"QUERY_ONLY_PREVIEW_V1",sensitivityVersion:2,
+      truncated:false,
+      columns:[{name:"ROOM"},{name:"TOTAL"},{name:"PATIENT_ID"}],
+      rows,
+     });
+     return {sourceKey:key,modeVersion:"QUERY_ONLY_PREVIEW_V1",
+      query:{id:9},page:1,totalPages:1,totalRows:rows.length,
+      snapshotId:snapshot.id,
+      snapshotExpiresAt:snapshot.createdAt+snapshot.ttlMs,
+      result:{columns:[{name:"ROOM"},{name:"TOTAL"}],
+       rows:rows.map(row=>({ROOM:row.ROOM,TOTAL:row.TOTAL}))}};
+    }},
+    readFence:async()=>({dashboardId:7,sourceKey:"PRIMARY",queryId:9,
+     datasetId:10,userId:8,tokenVersion:1,version:"a".repeat(64)}),
+    readPublicReview:async()=>null,
+   });
+   app.use(createChartProjectionRouter({
+    approved:()=>true,project:chartProjection,
    }));
    await new Promise<void>(resolve=>httpServer.listen(0,"127.0.0.1",resolve));
    const addr=httpServer.address();
@@ -478,6 +545,25 @@ export async function verifyChartOptionAWriterSql(
     [80,80,600,360]);
    assert.deepEqual(chart.config,{});
    assert.equal(JSON.stringify(layout).includes(configJson.json),false);
+   // Full read-only HTTP projection using the persisted SQL Widget/Seal,
+   // but synthetic (non-clinical) audited Query rows only.
+   stage="HTTP_PERSISTED_CHART_DESIGNER_PROJECTION";
+   const projectionEndpoint=endpoint+"/"+String(saved.widgetId)+"/projection";
+   const projection=await fetch(projectionEndpoint,{
+    method:"POST",headers:{Authorization:"Bearer "+bearer},
+   });
+   assert.equal(projection.status,200);
+   const points=await projection.json();
+   assert.deepEqual(points,{
+    chartType:"BAR",showLegend:true,
+    points:[{label:"OR-01",value:7},{label:"OR-02",value:9}],
+   });
+   assert.equal(JSON.stringify(points).includes("PRIVATE_SYNTHETIC_ONLY"),false);
+   const deniedProjection=await fetch(projectionEndpoint+"?actorId=77",{
+    method:"POST",headers:{Authorization:"Bearer "+bearer},
+   });
+   assert.equal(deniedProjection.status,400);
+   console.log("CHART_A_DISPOSABLE_SAVED_WIDGET_SYNTHETIC_QUERY_PROJECTION_PASS");
    const replay=await send(body);
    assert.equal(replay.status,503);
    await expectCounts(3);
