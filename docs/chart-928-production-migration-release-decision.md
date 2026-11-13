@@ -31,6 +31,19 @@ Gate 3 must review and document the actual existing UQP SQL principal, its effec
 
 The four existing gates are unchanged. Gate 2 SQL source review and Gate 3 shared-principal compatibility remain pending; no new account, test phase, deployment, or repeat of prior 926/Stage 18 acceptance is requested.
 
+## Project owner update — 2026-11-14: administrator review and playback authorization
+
+The project owner confirms: no separate SQL login or additional isolation architecture is required for CHART. Reuse the existing UQP authentication, SQL connection and `uqp.AuditLog`. The functional security boundary requested is **administrator review followed by explicit authorization of the exact CHART version before playback**.
+
+Required behavior within the existing four gates:
+- New CHARTs are not playable by default. An authenticated administrator reviews the intended query/data source, masking and display scope, then explicitly approves playback of that exact configuration/version; persist reviewer, timestamp, configuration identity, decision and audit receipt.
+- Any edit affecting chart content, data source, query, masking, or displayed scope invalidates the prior authorization. Reapproval is mandatory before the modified version is playable. Playback refresh, rotation or reopening an unchanged approved version does not require reapproval.
+- Enforce approval at the server-side playback/data-delivery boundary, not merely by hiding a client button. Failed or revoked authorization must not return CHART data. Preserve existing audit, transaction, replay and revocation checks.
+- Do not create a new Writer SQL login, external Signer/Issuer or new isolation service. Do not claim that AuditLog itself grants authorization or that a shared high-privilege SQL principal offers EXECUTE-only isolation. Existing basic DB security, access control and protective triggers remain in force.
+- For the initial controlled acceptance, only authenticated administrators may test CHART playback. Public-screen/kiosk/device-token/general-user playback remains OFF until separately authorized under the existing gates. No real clinical/patient-data exposure without the applicable data-owner approval.
+
+This is an owner functional/architecture decision, **not** an approval to execute 928 SQL, enable currently compiled-OFF production gates, merge, or deploy. Existing dedicated-SID-pinned SQL review source and Writer bridge still require adaptation and verification before Gate 3 can be considered implemented. No Stage 18 or 926 retesting is requested.
+
 ## Selected architecture (2026-11-13, Option A — supersedes prior Signer/Issuer requirement)
 
 The project owner has selected **Option A: existing UQP LOCAL JWT + a dedicated least-privilege SQL Writer**. This *architecture choice* is accepted, but Gates 2/3 production readiness is still PENDING. There is no requirement to deploy an independent IdP, mTLS Signer, SQL Issuer or HMAC service for Option A. Historic Signer/Issuer references **below are preserved as evidence of discarded prototypes, not current release prerequisites**. The accepted trust assumption is that UQP is the original authenticated HTTP authority; a compromised UQP process/JWT secret is outside the independent-identity protection scope of Option A. Browser actor spoofing is blocked by verified JWT/session-derived server plans. See [Gate 3 Option A binding decision](chart-928-gate3-actor-binding-review-decision.md).
