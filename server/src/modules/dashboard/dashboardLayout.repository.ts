@@ -75,7 +75,14 @@ export function mapDashboardWidgetForDisplay(row: any) {
 
 export async function getDashboardLayout(dashboardId: number, includeInteractive = false) {
   const pool = await requirePool();
+  return readDashboardLayoutFromPool(pool, dashboardId, includeInteractive);
+}
 
+/** The same layout mapping used by normal UQP, with an explicit existing SQL
+ * pool for isolated integration verification. No write or release switch. */
+export async function readDashboardLayoutFromPool(
+  pool: sql.ConnectionPool, dashboardId: number, includeInteractive = false,
+) {
   const profileResult = await pool.request()
     .input("dashboardId", sql.BigInt, dashboardId)
     .query(`
