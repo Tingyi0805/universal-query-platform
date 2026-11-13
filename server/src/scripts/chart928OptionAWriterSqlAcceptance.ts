@@ -197,6 +197,34 @@ export async function verifyChartOptionAWriterSql(
   }
   testBase=replaceOnce(testBase,filterWitness,
    "DECLARE @approvedActiveFilterSha256 varbinary(32)=0x"+filterHash+";");
+  // Test-only exact metadata diagnostics, inserted immediately before the
+  // original stringent constraint attestation. Never relax its fail-closed
+  // predicate; distinct error codes reveal which isolated witness differs.
+  const metadataAnchor=" IF EXISTS(\n   SELECT 1 FROM @approvedChecks e";
+  let checksDiagnostic="";
+  for(let i=0;i<expectedChecks.length;i++){
+   const [table,constraint]=expectedChecks[i]!;
+   checksDiagnostic+=
+    " IF EXISTS(SELECT 1 FROM @approvedChecks e "+
+    "LEFT JOIN sys.check_constraints c ON "+
+    "c.parent_object_id=OBJECT_ID(N'uqp.'+e.TableName) "+
+    "AND c.name=e.ConstraintName "+
+    "WHERE e.TableName=N'"+table+"' AND e.ConstraintName=N'"+constraint+"' "+
+    "AND (c.object_id IS NULL OR c.definition IS NULL "+
+    "OR c.is_disabled<>0 OR c.is_not_trusted<>0 "+
+    "OR c.is_not_for_replication<>0 OR c.parent_column_id<>0 "+
+    "OR c.is_system_named<>0 OR HASHBYTES('SHA2_256',"+
+    "CONVERT(varbinary(max),c.definition))<>e.ApprovedDefinitionSha256)) "+
+    "THROW 51928,'CHART_A_DIAG_CHECK_"+(i+1)+"',1;\n";
+  }
+  checksDiagnostic+=
+    " IF (SELECT COUNT(*) FROM sys.check_constraints WHERE "+
+    "parent_object_id IN (OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),"+
+    "OBJECT_ID(N'uqp.DashboardChartTrustRequest'),"+
+    "OBJECT_ID(N'uqp.DashboardChartPrivacyReview')))<>4 "+
+    "THROW 51928,'CHART_A_DIAG_CHECK_COUNT',1;\n";
+  testBase=replaceOnce(testBase,metadataAnchor,
+    checksDiagnostic+metadataAnchor);
   let testSql=replaceOnce(source,first,
    "IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19 "+
    "OR SUBSTRING(DB_NAME(),8,12) COLLATE Latin1_General_100_BIN2 "+
@@ -311,6 +339,10 @@ export async function verifyChartOptionAWriterSql(
  }catch(error){
   const e=error as {number?:unknown;lineNumber?:unknown;code?:unknown};
   console.error("CHART_A_SQL_FAIL_STAGE:"+stage);
+  // Synthetic-only named check failure codes, never SQL text or credentials.
+  const hint=String((error as {message?:unknown})?.message??"")
+    .match(/CHART_A_DIAG_CHECK_(?:[1-5]|COUNT)/)?.[0]??"NONE";
+  console.error("CHART_A_SQL_CHECK_WITNESS_HINT:"+hint);
   console.error("CHART_A_SQL_ERROR_META:"+String(e?.number??"NA")+":"+
    String(e?.lineNumber??"NA")+":"+String(e?.code??"NA"));
   throw Error("CHART_A_REAL_SQL_DISPOSABLE_ACCEPTANCE_FAILED");
