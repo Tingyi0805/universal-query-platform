@@ -12,6 +12,7 @@ import {createAuthenticateJwt} from "../modules/auth/auth.middleware.js";
 import {createChartCreateRouter} from "../modules/dashboard/dashboardChartCreate.routes.js";
 import {createChartSavedReadbackRouter} from "../modules/dashboard/dashboardChartSavedReadback.routes.js";
 import {createDormantChartTrustReaders} from "../modules/dashboard/dashboardChartTrust.repository.js";
+import {readDashboardLayoutFromPool} from "../modules/dashboard/dashboardLayout.repository.js";
 import {chartLocalJwtWriterCreateSql} from "../modules/dashboard/dashboardChartLocalJwtSqlCreate.js";
 import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
@@ -81,7 +82,10 @@ export async function verifyChartOptionAWriterSql(
    "CREATE TABLE uqp.RoleQueryAccess(RoleId BIGINT NOT NULL,QueryDefinitionId BIGINT NOT NULL,CanView BIT NOT NULL,CanExecute BIT NOT NULL); " +
    "CREATE TABLE uqp.DatasetParameter(DatasetId BIGINT NOT NULL,LookupDatasetId BIGINT NULL); " +
    "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
-   " DashboardId BIGINT NOT NULL," +
+   " DashboardId BIGINT NOT NULL,Name NVARCHAR(200) NOT NULL DEFAULT(N'Disposable')," +
+   " CanvasWidth INT NOT NULL DEFAULT(1280),CanvasHeight INT NOT NULL DEFAULT(720)," +
+   " IsDefault BIT NOT NULL DEFAULT(1),SortOrder INT NOT NULL DEFAULT(0)," +
+   " ConfigJson NVARCHAR(MAX) NOT NULL DEFAULT(N'{}')," +
    " CONSTRAINT FK_DashboardDisplayProfile_Dashboard FOREIGN KEY(DashboardId)" +
    " REFERENCES uqp.Dashboard(Id) ON DELETE CASCADE); " +
    "CREATE TABLE uqp.DashboardWidget(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
@@ -89,6 +93,7 @@ export async function verifyChartOptionAWriterSql(
    " CONSTRAINT FK_DashboardWidget_Profile FOREIGN KEY(ProfileId)" +
    " REFERENCES uqp.DashboardDisplayProfile(Id) ON DELETE CASCADE," +
    " WidgetType NVARCHAR(30) NOT NULL,SourceKey NVARCHAR(256) NULL," +
+   " StaticText NVARCHAR(MAX) NULL," +
    " ConfigJson NVARCHAR(MAX) NOT NULL DEFAULT N'{}'," +
    " Title NVARCHAR(200) NULL,X INT NOT NULL DEFAULT(0),Y INT NOT NULL DEFAULT(0)," +
    " Width INT NOT NULL DEFAULT(600),Height INT NOT NULL DEFAULT(360)," +
@@ -457,6 +462,22 @@ export async function verifyChartOptionAWriterSql(
    assert.deepEqual(await crossAuthor.json(),{
     error:{code:"CHART_SAVED_READBACK_REQUIRED"},
    });
+   // Use the exact reader behind /dashboards/:id/layout. It exposes only
+   // Widget identity/placement: sealed ConfigJson must not leak into layout.
+   stage="HTTP_CREATED_CHART_LAYOUT_RELOAD";
+   const layout=await readDashboardLayoutFromPool(db!,7,false);
+   const profiles=layout.profiles.filter(profile=>profile.id===22);
+   assert.equal(profiles.length,1);
+   const loaded=profiles[0]!.widgets.filter(widget=>
+    widget.id===Number(saved.widgetId));
+   assert.equal(loaded.length,1);
+   const chart=loaded[0]!;
+   assert.equal(chart.widgetType,"CHART");
+   assert.equal(chart.profileId,22);
+   assert.deepEqual([chart.x,chart.y,chart.width,chart.height],
+    [80,80,600,360]);
+   assert.deepEqual(chart.config,{});
+   assert.equal(JSON.stringify(layout).includes(configJson.json),false);
    const replay=await send(body);
    assert.equal(replay.status,503);
    await expectCounts(3);
