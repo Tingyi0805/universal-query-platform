@@ -152,7 +152,7 @@ export async function installChart928OptionA(
    "N'TR_ChartReview_Transition',N'TR_ChartTrustRequest_Immutable',"+
    "N'TR_ChartSeal_AuditReceipt',N'TR_ChartReview_AuditReceipt',"+
    "N'TR_ChartTrustRequest_AuditReceipt') "+
-   "AND schema_id=SCHEMA_ID(N'uqp')"
+   "AND o.schema_id=SCHEMA_ID(N'uqp')"
   )).recordset;
   if(protection.length!==1||Number(protection[0]?.EnabledCount)!==7)
    throw Error("CHART_A_928_PROTECTION_TRIGGERS_NOT_ENABLED");
