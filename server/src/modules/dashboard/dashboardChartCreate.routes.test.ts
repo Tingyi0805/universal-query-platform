@@ -34,7 +34,7 @@ type Session = { isActive: boolean; tokenVersion: number; permissions: string[] 
 
 async function fixture(
   approved: boolean,
-  create?: (plan: DormantChartCreatePlan, bearerHeader:string)=>Promise<unknown>,
+  create?: (plan: DormantChartCreatePlan)=>Promise<unknown>,
   tamper: "none" | "permissions" | "header" = "none",
 ) {
   const previous = env.JWT_SECRET;
@@ -44,7 +44,6 @@ async function fixture(
     permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"],
   };
   const plans: DormantChartCreatePlan[] = [];
-  const forwardedHeaders:string[]=[];
   const app = express();
   app.use(express.json({limit:"4kb"}));
   app.use(createAuthenticateJwt(async()=>session));
@@ -56,10 +55,9 @@ async function fixture(
   });
   app.use(createChartCreateRouter({
     approved: () => approved,
-    create: async (plan,bearerHeader) => {
+    create: async (plan) => {
       plans.push(plan);
-      forwardedHeaders.push(bearerHeader);
-      return create ? create(plan,bearerHeader) : sqlReceipt;
+      return create ? create(plan) : sqlReceipt;
     },
   }));
   const server = createServer(app);
@@ -77,7 +75,7 @@ async function fixture(
   const capabilities = (token=valid,path="/7/charts/v1/capabilities")=>
     fetch(root+path,{headers:{Authorization:"Bearer "+token}});
   return {
-    send, capabilities, valid, invalid, plans, forwardedHeaders,
+    send, capabilities, valid, invalid, plans,
     session: (next:Session)=>{session=next;},
     close: async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));env.JWT_SECRET=previous;},
   };
@@ -180,7 +178,7 @@ test("malformed/oversharing Writer results never reach HTTP, SQL errors are reda
   }
 });
 
-test("CHART creation requires immutable live EXECUTE_QUERY and passes original JWT only",async()=>{
+test("Option A CHART creation requires immutable live rights and never forwards a Bearer",async()=>{
   // A mutable Express authUser must not add a permission missing from the
   // DB-verified snapshot. No Writer/Signer calls occur.
   const promoted=await fixture(true,undefined,"permissions");
@@ -188,17 +186,18 @@ test("CHART creation requires immutable live EXECUTE_QUERY and passes original J
     promoted.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
     assert.equal((await promoted.send()).status,403);
     assert.equal(promoted.plans.length,0);
-    assert.equal(promoted.forwardedHeaders.length,0);
   }finally{await promoted.close();}
 
-  // Later request-header mutation cannot swap the independently signed
-  // identity used by a future mTLS signer.
+  // Later request-header mutation cannot replace the authenticated actor
+  // bound to the immutable, JWT-verified server plan.
   const swapped=await fixture(true,undefined,"header");
   try{
     const response=await swapped.send();
     assert.equal(response.status,201);
     assert.deepEqual(await response.json(),receipt);
-    assert.deepEqual(swapped.forwardedHeaders,["Bearer "+swapped.valid]);
+    assert.equal(swapped.plans.length,1);
+    assert.equal(swapped.plans[0]!.actorId,8);
+    assert.equal(JSON.stringify(swapped.plans[0]).includes(swapped.valid),false);
     assert.equal(JSON.stringify(receipt).includes(swapped.valid),false);
   }finally{await swapped.close();}
 });
