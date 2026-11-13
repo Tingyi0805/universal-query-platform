@@ -4,6 +4,13 @@
 // For isolated acceptance ONLY, hard guard and NULL evidence pins are
 // substituted IN MEMORY after exact machine and target checks.
 import assert from "node:assert/strict";
+import {createServer} from "node:http";
+import express from "express";
+import jwt from "jsonwebtoken";
+import {env} from "../config/env.js";
+import {createAuthenticateJwt} from "../modules/auth/auth.middleware.js";
+import {createChartCreateRouter} from "../modules/dashboard/dashboardChartCreate.routes.js";
+import {chartLocalJwtWriterCreateSql} from "../modules/dashboard/dashboardChartLocalJwtSqlCreate.js";
 import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import sql from "mssql";
@@ -329,6 +336,63 @@ export async function verifyChartOptionAWriterSql(
   await expectCounts(1);
   stage="RETRY_AFTER_ROLLBACK";
   assert.equal((await exec(4)).recordset.length,1);await expectCounts(2);
+  // Actual HTTP JWT -> canonical plan -> dedicated SQL Writer -> audited SQL
+  // receipt, using ONLY the existing disposable D1 database and login.
+  // The normal UQP production create release constant remains false.
+  stage="HTTP_LOCAL_JWT_REAL_WRITER_CREATE";
+  const previousJwtSecret=env.JWT_SECRET;
+  env.JWT_SECRET="chart-option-a-disposable-"+randomBytes(24).toString("hex");
+  const app=express();
+  const httpServer=createServer(app);
+  try{
+   app.use(express.json({limit:"4kb"}));
+   app.use(createAuthenticateJwt(async()=>({
+    isActive:true,tokenVersion:1,
+    permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
+   })));
+   app.use(createChartCreateRouter({
+    approved:()=>true, // isolated dependency injection, not release flag
+    create:async plan=>(await writer!.request()
+     .input("dashboard",sql.BigInt,plan.dashboardId)
+     .input("profile",sql.BigInt,plan.profileId)
+     .input("actor",sql.BigInt,plan.actorId)
+     .input("token",sql.Int,plan.tokenVersion)
+     .input("requestId",sql.UniqueIdentifier,plan.requestId)
+     .input("source",sql.NVarChar(64),plan.sourceKey)
+     .input("config",sql.NVarChar(sql.MAX),plan.config.json)
+     .input("x",sql.Int,plan.placement.x)
+     .input("y",sql.Int,plan.placement.y)
+     .input("width",sql.Int,plan.placement.width)
+     .input("height",sql.Int,plan.placement.height)
+     .query(chartLocalJwtWriterCreateSql)).recordset[0],
+   }));
+   await new Promise<void>(resolve=>httpServer.listen(0,"127.0.0.1",resolve));
+   const addr=httpServer.address();
+   assert(addr&&typeof addr!=="string");
+   const bearer=jwt.sign({sub:"8",tokenVersion:1},env.JWT_SECRET!,{expiresIn:"5m"});
+   const endpoint="http://127.0.0.1:"+addr.port+"/7/charts/v1";
+   const body={profileId:22,requestId:requestId(5),
+    config:configJson.data,placement:{x:80,y:80,width:600,height:360}};
+   const send=(value:unknown)=>fetch(endpoint,{method:"POST",headers:{
+    Authorization:"Bearer "+bearer,"Content-Type":"application/json",
+   },body:JSON.stringify(value)});
+   const deniedActor=await send({...body,actorId:77});
+   assert.equal(deniedActor.status,400);
+   const response=await send(body);
+   assert.equal(response.status,201);
+   const saved=await response.json() as Record<string,unknown>;
+   assert.deepEqual(Object.keys(saved).sort(),
+    ["auditLogId","sealRevision","widgetId"]);
+   assert.match(String(saved.sealRevision),/^[0-9a-f]{16}$/);
+   await expectCounts(3);
+   const replay=await send(body);
+   assert.equal(replay.status,503);
+   await expectCounts(3);
+   console.log("CHART_A_DISPOSABLE_HTTP_JWT_SQL_CREATE_PASS");
+  }finally{
+   await new Promise<void>(resolve=>httpServer.close(()=>resolve()));
+   env.JWT_SECRET=previousJwtSecret;
+  }
   console.log("CHART_928_OPTION_A_REAL_SQL_2019_2022_WRITER_PASS");
  }catch(error){
   const e=error as {number?:unknown;lineNumber?:unknown;code?:unknown};
