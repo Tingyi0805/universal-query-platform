@@ -417,6 +417,16 @@ export async function verifyChartOptionAWriterSql(
    assert.equal(String(row.WidgetId),String(saved.widgetId));
    assert.equal(String(row.AuditLogId),saved.auditLogId);
    stage="HTTP_PERSISTENCE_RECEIPT_SEAL_REVISION";
+   // The disposable database has no clinical data. Report only formatting
+   // characteristics, not identifiers or stored values.
+   if(row.SealRevision!==saved.sealRevision)console.error(
+    "CHART_A_SEAL_REVISION_SHAPE:"+
+    [typeof row.SealRevision,typeof saved.sealRevision,
+     String(row.SealRevision).length,String(saved.sealRevision).length,
+     String(row.SealRevision).toLowerCase()===
+      String(saved.sealRevision).toLowerCase(),
+     /^[0-9a-f]{16}$/.test(String(row.SealRevision)),
+     /^[0-9a-f]{16}$/.test(String(saved.sealRevision))].join(":"));
    assert.equal(row.SealRevision,saved.sealRevision);
    stage="HTTP_PERSISTENCE_AUDIT_STATUS";
    assert.equal(row.Status,"SUCCESS");
