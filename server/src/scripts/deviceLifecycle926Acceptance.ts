@@ -103,6 +103,11 @@ async function main(){
  await (await import("./chartSignerScopeSqlAcceptance.js"))
    .verifyIndependentSignerSourceScopeSql(admin,config,machine);
  stage="chart-928-draft-disposable-sql";await (await import("./chart928DraftSqlAcceptance.js")).verifyChart928DraftSql(admin,config,machine);
+  // The Option A source gets real SQL 2019/2022 acceptance in ANOTHER
+  // disposable UQP_CH_ fixture on the same CI container, not hospital SQL.
+  stage="chart-928-option-a-writer-disposable-sql";
+  await (await import("./chart928OptionAWriterSqlAcceptance.js"))
+    .verifyChartOptionAWriterSql(admin,config,machine);
   stage="disabled-check-not-repaired";
   await query("ALTER TABLE uqp.DashboardDisplayDevice NOCHECK CONSTRAINT CK_DashboardDevice_LifecycleTerminal");
   assert.equal((await query(chartHistoricalFootprintSql)).recordset
