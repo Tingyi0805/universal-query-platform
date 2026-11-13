@@ -145,8 +145,9 @@ export async function installChart928OptionA(
 
   // Every 928 protection trigger must remain enabled, not only the Writer gate.
   const protection=(await request().query(
-   "SELECT COUNT_BIG(*) AS EnabledCount FROM sys.triggers "+
-   "WHERE is_disabled=0 AND name IN ("+
+   "SELECT COUNT_BIG(*) AS EnabledCount FROM sys.triggers t "+
+   "JOIN sys.objects o ON o.object_id=t.object_id "+
+   "WHERE t.is_disabled=0 AND t.name IN ("+
    "N'TR_DashboardWidget_ChartFreeze',N'TR_ChartSeal_DeleteBlock',"+
    "N'TR_ChartReview_Transition',N'TR_ChartTrustRequest_Immutable',"+
    "N'TR_ChartSeal_AuditReceipt',N'TR_ChartReview_AuditReceipt',"+
