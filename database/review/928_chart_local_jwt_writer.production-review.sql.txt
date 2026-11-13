@@ -117,7 +117,13 @@ BEGIN
    OR (UPPER(@SourceKey)=N''PRIMARY'' AND
        @SourceKey COLLATE Latin1_General_100_BIN2<>N''PRIMARY'')
   THROW 51928,''CHART_A_SOURCE_INVALID'',1;
- IF JSON_VALUE(@ConfigJson,N''$.dataSourceKey'') COLLATE Latin1_General_100_BIN2
+ -- Explicitly reject NULL JSON_VALUE keys; SQL three-valued comparisons
+ -- alone can otherwise let missing fields bypass the mandatory checks.
+ IF JSON_VALUE(@ConfigJson,N''$.dataSourceKey'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.version'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.valueMode'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.chartType'') IS NULL
+   OR JSON_VALUE(@ConfigJson,N''$.dataSourceKey'') COLLATE Latin1_General_100_BIN2
       <> @SourceKey COLLATE Latin1_General_100_BIN2
    OR DATALENGTH(JSON_VALUE(@ConfigJson,N''$.dataSourceKey''))<>DATALENGTH(@SourceKey)
    OR JSON_VALUE(@ConfigJson,N''$.version'')<>N''1''
