@@ -21,6 +21,16 @@ The project owner has explicitly made **three implementation-scope decisions** f
 
 **Record status:** Owner direction **RECORDED**; DBA approval **PENDING**, security/SQL Writer approval **PENDING**, clinical-data scope approval **PENDING where applicable**, actual hospital target evidence **NOT RECORDED**, production deployment **BLOCKED**. This does not change compile-time release gates, PR Draft status, or the historical Stage 18 acceptance.
 
+## Project owner update — 2026-11-14: reuse existing SQL login (no new account)
+
+The project owner explicitly declines provisioning a separate SQL Writer login. Reuse the existing UQP SQL Server connection/login for initial administrator-only CHART testing, while continuing to use existing `uqp.AuditLog`; AuditLog is an audit table, **not** a SQL login or an authorization boundary.
+
+This supersedes the earlier *dedicated-login* part of Option A, but does **not** authorize production DDL or disabling safety checks. The existing Writer procedure currently pins a dedicated original-login SID and the release installer is compiled OFF. These are **not yet compatible** with the revised shared-login decision. Do not change SID pins to NULL, remove login checks, or enable the release gate as a shortcut.
+
+Gate 3 must review and document the actual existing UQP SQL principal, its effective database permissions, and whether direct DML/DDL on CHART tables can be denied without breaking existing UQP features. If the shared principal retains broad direct-write or schema privileges, document the reduced isolation and require explicit acceptance of that residual risk; do not claim EXECUTE-only protection. Retain JWT-derived actor authorization, procedure transaction/replay/revocation checks, AuditLog, protective triggers, and administrator-only initial scope. Public/device CHART playback remains OFF.
+
+The four existing gates are unchanged. Gate 2 SQL source review and Gate 3 shared-principal compatibility remain pending; no new account, test phase, deployment, or repeat of prior 926/Stage 18 acceptance is requested.
+
 ## Selected architecture (2026-11-13, Option A — supersedes prior Signer/Issuer requirement)
 
 The project owner has selected **Option A: existing UQP LOCAL JWT + a dedicated least-privilege SQL Writer**. This *architecture choice* is accepted, but Gates 2/3 production readiness is still PENDING. There is no requirement to deploy an independent IdP, mTLS Signer, SQL Issuer or HMAC service for Option A. Historic Signer/Issuer references **below are preserved as evidence of discarded prototypes, not current release prerequisites**. The accepted trust assumption is that UQP is the original authenticated HTTP authority; a compromised UQP process/JWT secret is outside the independent-identity protection scope of Option A. Browser actor spoofing is blocked by verified JWT/session-derived server plans. See [Gate 3 Option A binding decision](chart-928-gate3-actor-binding-review-decision.md).
