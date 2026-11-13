@@ -385,6 +385,33 @@ export async function verifyChartOptionAWriterSql(
     ["auditLogId","sealRevision","widgetId"]);
    assert.match(String(saved.sealRevision),/^[0-9a-f]{16}$/);
    await expectCounts(3);
+   // Read persisted bytes through a fresh SQL query, not the POST response.
+   // This is the SQL persistence boundary; designer seal/readback HTTP and
+   // public playback remain independent future integration checks.
+   stage="HTTP_CREATED_CHART_SQL_PERSISTENCE_READBACK";
+   const persisted=(await db!.request().input("widgetId",sql.BigInt,saved.widgetId)
+    .query("SELECT w.Id AS WidgetId,w.ProfileId,w.WidgetType,w.SourceKey,"+
+     "w.ConfigJson,w.X,w.Y,w.Width,w.Height,s.ConfigDigest,"+
+     "s.IsActive,s.SealedBy,s.AuditLogId,"+
+     "LOWER(CONVERT(varchar(16),s.SealRowVersion,2)) AS SealRevision,"+
+     "a.EventType,a.Status FROM uqp.DashboardWidget w "+
+     "JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=w.Id "+
+     "JOIN uqp.AuditLog a ON a.Id=s.AuditLogId "+
+     "WHERE w.Id=@widgetId")).recordset;
+   assert.equal(persisted.length,1);
+   const row=persisted[0]!;
+   assert.equal(row.ProfileId,22);
+   assert.equal(row.WidgetType,"CHART");
+   assert.equal(row.SourceKey,"PRIMARY");
+   assert.equal(row.ConfigJson,configJson.json);
+   assert.deepEqual([row.X,row.Y,row.Width,row.Height],[80,80,600,360]);
+   assert.equal(row.ConfigDigest,configJson.sha256);
+   assert.equal(row.IsActive,true);
+   assert.equal(row.SealedBy,8);
+   assert.equal(String(row.WidgetId),String(saved.widgetId));
+   assert.equal(String(row.AuditLogId),saved.auditLogId);
+   assert.equal(row.SealRevision,saved.sealRevision);
+   assert.equal(row.Status,"SUCCESS");
    const replay=await send(body);
    assert.equal(replay.status,503);
    await expectCounts(3);
