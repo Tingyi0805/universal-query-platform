@@ -29,6 +29,9 @@ import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecutio
 // Issue #89: production CHART projection adapter remains hard-disabled until
 // sealed Widget, DB 928, trusted aggregate and HTTP release are approved.
 import { CHART_CREATE_HTTP_RELEASE_APPROVED, createChartCreateRouter } from "./dashboardChartCreate.routes.js";
+import {createReleaseDisabledLocalJwtChartCreate} from "./dashboardChartLocalJwtSqlCreate.js";
+import {getPlatformDbPool} from "../../config/database.js";
+import {getChartWriterDbPool} from "../../config/chartWriterDatabase.js";
 import {
   CHART_SAVED_READBACK_HTTP_RELEASE_APPROVED,
   createChartSavedReadbackRouter,
@@ -367,11 +370,22 @@ dashboardRouter.use(createChartUserProjectionRouter({
   readSession: getTokenSessionState,
   project: trustedUserChartProjection,
 }));
-// Deliberately inert: no signer, issuer, SQL writer, or migration 928 is
-// provisioned in the application. The injected handler MUST fail closed.
+// Option A: current UQP LOCAL JWT is the authenticated actor authority.
+// The dedicated SQL Writer adapter is wired by dependency, but BOTH the
+// HTTP and Writer hard release switches are OFF. There is no signer/Issuer,
+// no JWT transfer to SQL and no SQL connection until explicitly approved.
+// The planned Writer stored procedure must atomically recheck all live RBAC,
+// TokenVersion, Query/Dataset versions, replay and audit on the SQL side.
+const chartLocalJwtCreate=createReleaseDisabledLocalJwtChartCreate(
+  getPlatformDbPool,getChartWriterDbPool);
 dashboardRouter.use(createChartCreateRouter({
   approved: () => CHART_CREATE_HTTP_RELEASE_APPROVED,
-  create: async () => { throw Error("CHART_CREATE_NOT_RELEASED"); },
+  create: async (plan) => {
+    // Do NOT forward the original Bearer to SQL or a second service.
+    const receipt=await chartLocalJwtCreate(plan);
+    if(!receipt)throw Error("CHART_LOCAL_JWT_WRITER_NOT_RELEASED");
+    return receipt;
+  },
 }));
 // The dedicated author-only persisted Widget+Seal readback is separate from
 // public projection and requires a DB-verified original designer JWT.
