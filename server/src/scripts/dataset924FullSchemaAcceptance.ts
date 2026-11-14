@@ -1,5 +1,6 @@
 import {testDatasetDisplay925,testDisplay925CleanCatalog} from "./datasetDisplay925Acceptance.js";
 import {createDormantPlaybackApprovalReader} from "../modules/dashboard/dashboardChartPlaybackApproval.repository.js";
+import {decideChartPlaybackApproval} from "../modules/dashboard/dashboardChartPlaybackApproval.service.js";
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
 import {createDatasetColumnCandidate,readColumnCandidateSnapshot,defaultColumnCandidateDependencies} from "../modules/dataset/datasetColumnCandidate.js";
@@ -391,6 +392,21 @@ async function main(){
     check((await root.request().query("SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C===0,
       "CHART_GATE3_EMPTY_APPROVAL_CATALOG");
     console.log("CHART_GATE3_SQL2019_EMPTY_APPROVAL_FAIL_CLOSED_PASS");
+    // The real transactional writer must not fabricate an approval or audit
+    // receipt when the requested chart/widget has no verified seal.
+    stage="CHART_GATE3_UNSEALED_WRITE_DENIAL";
+    const beforeDecision=(await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C;
+    check(await decideChartPlaybackApproval({
+      dashboardId:1,widgetId:1,actorUserId:303,tokenVersion:1,action:"APPROVE"
+    },async()=>root!)===false,"CHART_GATE3_UNSEALED_APPROVE_DENIED");
+    check(await decideChartPlaybackApproval({
+      dashboardId:1,widgetId:1,actorUserId:303,tokenVersion:1,action:"REVOKE"
+    },async()=>root!)===false,"CHART_GATE3_UNSEALED_REVOKE_DENIED");
+    check((await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C===beforeDecision,
+      "CHART_GATE3_DENIAL_NO_APPROVAL_MUTATION");
+    console.log("CHART_GATE3_SQL2019_UNSEALED_WRITES_DENIED_NO_APPROVAL_MUTATION_PASS");
     stage="CHART_928_REPEAT_GUARD";
     await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_REPEAT_MUST_FAIL");
     console.log("CHART_928_SQL2019_DISPOSABLE_FULL_SCHEMA_INSTALL_AND_REPEAT_GUARD_PASS");
