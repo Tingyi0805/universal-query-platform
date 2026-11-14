@@ -50,28 +50,39 @@ export function publicConfig(value: unknown) {
   return safe;
 }
 
-function mapWidget(row: any) {
+/** Public/layout metadata only. CHART configuration is sealed server state,
+ * never an input to client rendering or public device pages. */
+export function mapDashboardWidgetForDisplay(row: any) {
   return {
     id: Number(row.Id),
     profileId: Number(row.ProfileId),
     widgetType: String(row.WidgetType),
     title: row.Title == null ? null : String(row.Title),
     sourceKey: row.SourceKey == null ? null : String(row.SourceKey),
-    staticText: row.StaticText == null ? null : String(row.StaticText),
+    staticText: row.WidgetType === "CHART" ? null : row.StaticText == null ? null : String(row.StaticText),
     x: Number(row.X),
     y: Number(row.Y),
     width: Number(row.Width),
     height: Number(row.Height),
     fontSize: Number(row.FontSize),
     alignment: String(row.Alignment),
-    config: publicConfig(row.ConfigJson),
+    // Do not parse, forward or reuse sealed Chart ConfigJson through the
+    // general layout API. The authorized chart projection endpoint owns it.
+    config: row.WidgetType === "CHART" ? {} : publicConfig(row.ConfigJson),
     sortOrder: Number(row.SortOrder),
   };
 }
 
 export async function getDashboardLayout(dashboardId: number, includeInteractive = false) {
   const pool = await requirePool();
+  return readDashboardLayoutFromPool(pool, dashboardId, includeInteractive);
+}
 
+/** The same layout mapping used by normal UQP, with an explicit existing SQL
+ * pool for isolated integration verification. No write or release switch. */
+export async function readDashboardLayoutFromPool(
+  pool: sql.ConnectionPool, dashboardId: number, includeInteractive = false,
+) {
   const profileResult = await pool.request()
     .input("dashboardId", sql.BigInt, dashboardId)
     .query(`
@@ -96,12 +107,12 @@ export async function getDashboardLayout(dashboardId: number, includeInteractive
       ORDER BY w.ProfileId, w.SortOrder, w.Id
     `);
 
-  const widgetsByProfile = new Map<number, ReturnType<typeof mapWidget>[]>();
+  const widgetsByProfile = new Map<number, ReturnType<typeof mapDashboardWidgetForDisplay>[]>();
   for (const row of widgetsResult.recordset) {
     const profileId = Number(row.ProfileId);
     widgetsByProfile.set(profileId, [
       ...(widgetsByProfile.get(profileId) ?? []),
-      mapWidget(row),
+      mapDashboardWidgetForDisplay(row),
     ]);
   }
 

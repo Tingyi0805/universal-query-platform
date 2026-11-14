@@ -66,7 +66,11 @@ test("signer SQL scope authorizes only active QUERY_ONLY dashboard/profile, publ
   });
   const sqlText=h.calls[0]!.statement;
   for(const fragment of [
-    "d.QueryMode=N'QUERY_ONLY'","profile.DashboardId=d.Id",
+    "d.QueryMode=N'QUERY_ONLY'","d.QueryModeVersion>0",
+    "d.QuerySourceMaxRows IS NOT NULL","profile.DashboardId=d.Id",
+    "CASE WHEN @sourceKey=N'PRIMARY' THEN d.QueryDefinitionId",
+    "ds.QueryBindingRevision>=1","ds.MaxRows IS NOT NULL",
+    "ds.DatasetId=q.DatasetId",
     "ds.IsEnabled=1","q.IsPublished=1","q.IsArchived=0",
     "dataset.IsArchived=0","source.IsActive=1",
     "ra.CanView=1","ra.CanExecute=1",
@@ -77,6 +81,7 @@ test("signer SQL scope authorizes only active QUERY_ONLY dashboard/profile, publ
   for(const invalid of [
     [0,7,22,"PRIMARY"],[8,0,22,"PRIMARY"],
     [8,7,0,"PRIMARY"],[8,7,22,"unknown-key"],
+    [8,7,22,"Primary"],[8,7,22,"primary"],
     [8,7,22,"PRIMARY';DROP TABLE"],[8,7,22,""],
   ]as Array<[number,number,number,string]>)
     assert.equal(await s.authorizeChartCreate(...invalid),false);
@@ -97,4 +102,25 @@ test("unapproved, ambiguous or incompatible SQL scope cannot authorize signing",
   const h=fakePool(async()=>{throw Error("permission denied");});
   assert.equal(await createIndependentSignerSqlReaders(h.pool)
     .authorizeChartCreate(8,7,22,"PRIMARY"),false);
+});
+
+test("Signer SQL cannot substitute a secondary source for PRIMARY even under case-insensitive collation",async()=>{
+  const f=fakePool(async()=>({recordset:[{Approved:true}]}));
+  const source=createIndependentSignerSqlReaders(f.pool);
+  assert.equal(await source.authorizeChartCreate(8,7,22,"PRIMARY"),true);
+  assert.equal(await source.authorizeChartCreate(8,7,22,"SURGERY"),true);
+  assert.equal(await source.authorizeChartCreate(8,7,22,"Primary"),false);
+  assert.equal(f.calls.length,2);
+  const sqlText=f.calls[0]!.statement;
+  assert.match(sqlText,/LEFT JOIN uqp\.DashboardDataSource ds/);
+  assert.match(sqlText,/ds\.SourceKey COLLATE Latin1_General_100_BIN2/);
+  // BIN2 string equality still ignores SQL Server's trailing-space padding;
+  // require equal byte length after normalizing stored VARCHAR/NVARCHAR.
+  assert.match(sqlText,/DATALENGTH\(CONVERT\(nvarchar\(max\),ds\.SourceKey\)\)\s*=\s*DATALENGTH\(@sourceKey\)/);
+  assert.match(sqlText,/shadow\.DashboardId=d\.Id/);
+  assert.match(sqlText,/shadow\.SourceKey\)=N'PRIMARY'/);
+  assert.match(sqlText,/d\.QueryDefinitionId/);
+  assert.match(sqlText,/ds\.QueryDefinitionId/);
+  assert.match(sqlText,/ds\.DatasetId=q\.DatasetId/);
+  assert.doesNotMatch(sqlText,/JOIN uqp\.DashboardDataSource ds ON ds\.DashboardId=d\.Id\s+AND ds\.SourceKey=@sourceKey AND ds\.IsEnabled=1/);
 });

@@ -1,0 +1,616 @@
+-- UQP CHART 928 GATE 2 -- FROZEN-SCHEMA PRODUCTION SOURCE-REVIEW CANDIDATE
+-- REVIEW ONLY / NOT A PRODUCTION INSTALLER / NOT SECURITY OR DBA APPROVED.
+-- PR #99 reviewed baseline: 68611ba7afc9cf3ce13eaee7ebf82eda78a402f4
+-- Kept outside database/migrations with .sql.txt extension to prevent discovery.
+--
+-- This is one precise SQL source for independent DBA/security review, NOT an
+-- authorization to install. Every copy MUST retain the unconditional stop
+-- until an independent review signs the exact final source and separately
+-- approves the installer/runner change, hospital-target attestation, backup,
+-- SchemaMigration transaction, and Gate 3 signer/Issuer/Writer transition.
+-- DO NOT run against any hospital SQL instance. Removing this guard alone
+-- DOES NOT approve installation or the separate authorized Writer transition.
+--
+-- WARNING: THIS FIRST STATEMENT ALWAYS STOPS EXECUTION; NO SQL DDL RUNS.
+THROW 51928,'CHART_928_PRODUCTION_REVIEW_NOT_APPROVED',1;
+-- BELOW THIS LINE: UNREACHABLE REVIEW SOURCE ONLY
+--
+-- Required execution contract AFTER independent authorization (not implemented):
+--   * Exact reviewed target server, DB, ORIGINAL_LOGIN and 925/926 schema/ledger.
+--   * Generic migration runner transaction owns DDL and SchemaMigration commit.
+--   * 927 not a prerequisite when cleanly absent; 928 must be absent or exact.
+--   * No parallel installer, silent ledger adoption, production GRANT or
+--     CHART HTTP, signer, issuer, Writer, playback or public-release switches.
+--   * This candidate installs FROZEN CHART only. Creating a CHART requires
+--     a SEPARATE independently reviewed and pinned permit-Writer transition.
+--   * Source SHA-256 must be computed on final approved bytes by DBA.
+SET XACT_ABORT ON;
+IF @@TRANCOUNT<>1
+ THROW 51928,'CHART_928_APPROVED_MIGRATION_TRANSACTION_REQUIRED',1;
+BEGIN TRY
+ DECLARE @lockResult int;
+ EXEC @lockResult=sys.sp_getapplock @Resource=N'UQP:928:ChartTrustBaseReview',
+   @LockMode=N'Exclusive',@LockOwner=N'Transaction',@LockTimeout=10000;
+ IF @lockResult<0 THROW 51928,'CHART_928_SCHEMA_LOCK_REQUIRED',1;
+ IF OBJECT_ID(N'uqp.Dashboard',N'U') IS NULL
+    OR OBJECT_ID(N'uqp.DashboardDisplayProfile',N'U') IS NULL
+    OR OBJECT_ID(N'uqp.DashboardWidget',N'U') IS NULL
+    OR OBJECT_ID(N'uqp.AppUser',N'U') IS NULL
+    OR OBJECT_ID(N'uqp.Dataset',N'U') IS NULL
+    OR OBJECT_ID(N'uqp.QueryDefinition',N'U') IS NULL
+    OR OBJECT_ID(N'uqp.AuditLog',N'U') IS NULL
+    OR OBJECT_ID(N'uqp.DatasetPublicDisplayPolicy',N'U') IS NULL
+    OR COL_LENGTH(N'uqp.DashboardWidget',N'ConfigJson') IS NULL
+    OR COL_LENGTH(N'uqp.DashboardWidget',N'WidgetType') IS NULL
+    OR COL_LENGTH(N'uqp.DashboardWidget',N'SourceKey') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'EventCategory') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'IsImportant') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'EventType') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'UserId') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLog',N'Status') IS NULL
+    OR OBJECT_ID(N'uqp.AuditLogArchive',N'U') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'EventType') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'IsImportant') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'UserId') IS NULL
+    OR COL_LENGTH(N'uqp.AuditLogArchive',N'Status') IS NULL
+  THROW 51928,'CHART_928_PREREQUISITES_REQUIRED',1;
+
+ DECLARE @count int=
+  CASE WHEN OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') IS NULL THEN 0 ELSE 1 END+
+  CASE WHEN OBJECT_ID(N'uqp.DashboardChartPrivacyReview',N'U') IS NULL THEN 0 ELSE 1 END+
+  CASE WHEN OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') IS NULL THEN 0 ELSE 1 END;
+ IF @count NOT IN (0,3)
+  THROW 51928,'CHART_928_PARTIAL_SCHEMA',1;
+ IF @count=0
+ BEGIN
+  IF EXISTS(SELECT 1 FROM sys.objects WHERE schema_id=SCHEMA_ID(N'uqp')
+   AND name IN(
+    N'TR_DashboardWidget_ChartFreeze',N'TR_ChartSeal_DeleteBlock',
+    N'TR_ChartReview_Transition',N'TR_ChartTrustRequest_Immutable',
+    N'TR_ChartSeal_AuditReceipt',N'TR_ChartReview_AuditReceipt',
+    N'TR_ChartTrustRequest_AuditReceipt',
+    N'CK_ChartReview_State',N'CK_ChartTrustRequest_Action',
+    N'CK_ChartSeal_Digest',N'UX_ChartReview_Active'))
+   THROW 51928,'CHART_928_NAME_CONFLICT',1;
+  IF EXISTS(SELECT 1 FROM uqp.DashboardWidget WHERE WidgetType=N'CHART')
+   THROW 51928,'CHART_928_UNSEALED_EXISTING_WIDGET',1;
+  IF NOT EXISTS (SELECT 1 FROM sys.check_constraints
+    WHERE parent_object_id=OBJECT_ID(N'uqp.DashboardWidget')
+     AND name=N'CK_DashboardWidget_Type'
+     AND is_disabled=0 AND is_not_trusted=0 AND is_not_for_replication=0
+     AND definition NOT LIKE N'%CHART%')
+   THROW 51928,'CHART_928_BASE_WIDGET_CHECK_MISMATCH',1;
+
+  CREATE TABLE uqp.DashboardChartWidgetSeal(
+   WidgetId bigint NOT NULL CONSTRAINT PK_DashboardChartWidgetSeal PRIMARY KEY,
+   ConfigDigest char(64) COLLATE Latin1_General_100_BIN2 NOT NULL,
+   IsActive bit NOT NULL CONSTRAINT DF_ChartSeal_Active DEFAULT(0),
+   SealedBy bigint NOT NULL,
+   AuditLogId bigint NOT NULL,
+   SealRowVersion rowversion NOT NULL,
+   CreatedAtUtc datetime2(3) NOT NULL CONSTRAINT DF_ChartSeal_Created DEFAULT SYSUTCDATETIME(),
+   CONSTRAINT FK_ChartSeal_Widget FOREIGN KEY(WidgetId) REFERENCES uqp.DashboardWidget(Id),
+   CONSTRAINT FK_ChartSeal_User FOREIGN KEY(SealedBy) REFERENCES uqp.AppUser(Id),
+   CONSTRAINT CK_ChartSeal_Digest CHECK(LEN(ConfigDigest)=64 AND ConfigDigest NOT LIKE '%[^0-9a-f]%')
+  );
+  CREATE TABLE uqp.DashboardChartTrustRequest(
+   RequestId uniqueidentifier NOT NULL CONSTRAINT PK_DashboardChartTrustRequest PRIMARY KEY,
+   Action nvarchar(40) NOT NULL,
+   ActorId bigint NOT NULL,
+   AuditLogId bigint NULL,
+   CONSTRAINT FK_ChartRequest_Actor FOREIGN KEY(ActorId) REFERENCES uqp.AppUser(Id),
+   CONSTRAINT CK_ChartTrustRequest_Action CHECK(Action IN
+     (N'SEAL_WIDGET',N'REQUEST_REVIEW',N'APPROVE_REVIEW',N'REVOKE_REVIEW'))
+  );
+  CREATE TABLE uqp.DashboardChartPrivacyReview(
+   Id bigint IDENTITY(1,1) NOT NULL CONSTRAINT PK_DashboardChartPrivacyReview PRIMARY KEY,
+   DashboardId bigint NOT NULL,
+   QueryId bigint NOT NULL,
+   DatasetId bigint NOT NULL,
+   SourceKey nvarchar(64) NOT NULL,
+   CategoryColumn nvarchar(128) NOT NULL,
+   ValueColumn nvarchar(128) NOT NULL,
+   QueryRevision binary(8) NOT NULL,
+   DatasetRevision binary(8) NOT NULL,
+   PolicyRevision char(64) COLLATE Latin1_General_100_BIN2 NOT NULL,
+   Status varchar(20) NOT NULL,
+   MinimumCellCount int NOT NULL CONSTRAINT DF_ChartReview_Minimum DEFAULT(0),
+   CategoryPrivacyReviewed bit NOT NULL CONSTRAINT DF_ChartReview_Category DEFAULT(0),
+   DifferencingRiskReviewed bit NOT NULL CONSTRAINT DF_ChartReview_Differencing DEFAULT(0),
+   RequestedByUserId bigint NOT NULL,
+   RequestedAtUtc datetime2(3) NOT NULL CONSTRAINT DF_ChartReview_RequestedAt DEFAULT SYSUTCDATETIME(),
+   ReviewerUserId bigint NULL,
+   ReviewedAtUtc datetime2(3) NULL,
+   ValidUntilUtc datetime2(3) NULL,
+   AuditLogId bigint NOT NULL,
+   ReviewRowVersion rowversion NOT NULL,
+   CONSTRAINT FK_ChartReview_Dashboard FOREIGN KEY(DashboardId) REFERENCES uqp.Dashboard(Id),
+   CONSTRAINT FK_ChartReview_Query FOREIGN KEY(QueryId) REFERENCES uqp.QueryDefinition(Id),
+   CONSTRAINT FK_ChartReview_Dataset FOREIGN KEY(DatasetId) REFERENCES uqp.Dataset(Id),
+   CONSTRAINT FK_ChartReview_Requester FOREIGN KEY(RequestedByUserId) REFERENCES uqp.AppUser(Id),
+   CONSTRAINT FK_ChartReview_Reviewer FOREIGN KEY(ReviewerUserId) REFERENCES uqp.AppUser(Id),
+   CONSTRAINT CK_ChartReview_State CHECK(
+    (Status='REQUESTED' AND MinimumCellCount=0 AND CategoryPrivacyReviewed=0
+     AND DifferencingRiskReviewed=0 AND ReviewerUserId IS NULL AND
+     ReviewedAtUtc IS NULL AND ValidUntilUtc IS NULL)
+    OR (Status IN ('APPROVED','REVOKED') AND MinimumCellCount BETWEEN 5 AND 1000
+     AND CategoryPrivacyReviewed=1 AND DifferencingRiskReviewed=1
+     AND ReviewerUserId IS NOT NULL AND ReviewerUserId<>RequestedByUserId
+     AND ReviewedAtUtc IS NOT NULL AND ValidUntilUtc IS NOT NULL
+     AND (Status='REVOKED' OR
+      (ValidUntilUtc>ReviewedAtUtc AND
+       DATEDIFF_BIG(millisecond,ReviewedAtUtc,ValidUntilUtc) BETWEEN 1 AND 7776000000)))
+   ),
+   CONSTRAINT CK_ChartReview_Scope CHECK (
+    LEN(SourceKey) BETWEEN 1 AND 64 AND LEN(CategoryColumn) BETWEEN 1 AND 128
+    AND LEN(ValueColumn) BETWEEN 1 AND 128 AND CategoryColumn<>ValueColumn
+    AND LEN(PolicyRevision)=64 AND PolicyRevision NOT LIKE '%[^0-9a-f]%'
+   )
+  );
+  CREATE UNIQUE INDEX UX_ChartReview_Active
+    ON uqp.DashboardChartPrivacyReview
+      (DashboardId,QueryId,DatasetId,SourceKey,CategoryColumn,ValueColumn)
+    WHERE Status IN ('REQUESTED','APPROVED');
+  CREATE INDEX IX_ChartReview_Dashboard ON
+    uqp.DashboardChartPrivacyReview(DashboardId,Status,Id);
+  ALTER TABLE uqp.DashboardWidget DROP CONSTRAINT CK_DashboardWidget_Type;
+  -- Type registered, but AFTER trigger below still refuses all CHART DML.
+  ALTER TABLE uqp.DashboardWidget WITH CHECK ADD CONSTRAINT CK_DashboardWidget_Type CHECK
+   (WidgetType IN(N'TEXT',N'PARAMETER',N'FIELD',N'CLOCK',N'PAGE_INFO',
+                  N'COUNTDOWN',N'TABLE',N'CONTAINER',N'CHART'));
+  EXEC(N'CREATE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget AFTER INSERT,UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ -- CHART type is registered for future migration, never enabled by 928.
+ IF EXISTS(SELECT 1 FROM inserted WHERE WidgetType=N''CHART'')
+ OR EXISTS(SELECT 1 FROM deleted WHERE WidgetType=N''CHART'')
+ OR EXISTS(SELECT 1 FROM inserted i JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=i.Id)
+ OR EXISTS(SELECT 1 FROM deleted d JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=d.Id)
+  THROW 51928,''CHART_928_WIDGET_FROZEN'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartSeal_DeleteBlock ON uqp.DashboardChartWidgetSeal AFTER DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM deleted)
+  THROW 51928,''CHART_928_SEAL_DELETE_BLOCKED'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartReview_Transition ON uqp.DashboardChartPrivacyReview AFTER UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(
+  SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.Id=d.Id
+  WHERE i.Id IS NULL OR i.DashboardId<>d.DashboardId OR i.QueryId<>d.QueryId
+   OR i.DatasetId<>d.DatasetId
+   -- BIN2 equality still ignores trailing spaces: compare lengths as well.
+   OR i.SourceKey COLLATE Latin1_General_100_BIN2
+        <> d.SourceKey COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.SourceKey)<>DATALENGTH(d.SourceKey)
+   OR i.CategoryColumn COLLATE Latin1_General_100_BIN2
+        <> d.CategoryColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.CategoryColumn)<>DATALENGTH(d.CategoryColumn)
+   OR i.ValueColumn COLLATE Latin1_General_100_BIN2
+        <> d.ValueColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.ValueColumn)<>DATALENGTH(d.ValueColumn)
+   OR i.QueryRevision<>d.QueryRevision OR i.DatasetRevision<>d.DatasetRevision
+   OR i.PolicyRevision<>d.PolicyRevision OR i.RequestedByUserId<>d.RequestedByUserId
+   OR i.RequestedAtUtc<>d.RequestedAtUtc
+   -- Revocation cannot rewrite the original approved privacy decision.
+   OR (d.Status=''APPROVED'' AND (
+      i.MinimumCellCount<>d.MinimumCellCount
+      OR i.CategoryPrivacyReviewed<>d.CategoryPrivacyReviewed
+      OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
+      OR i.ReviewerUserId<>d.ReviewerUserId
+      OR i.ReviewedAtUtc<>d.ReviewedAtUtc
+      -- Revocation may shorten approval validity but NEVER extend it.
+      OR i.ValidUntilUtc>d.ValidUntilUtc))
+   OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
+       OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
+ )
+  THROW 51928,''CHART_928_REVIEW_IMMUTABLE'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartTrustRequest_Immutable ON uqp.DashboardChartTrustRequest AFTER UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(
+  SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.RequestId=d.RequestId
+  WHERE i.RequestId IS NULL
+   OR i.Action COLLATE Latin1_General_100_BIN2
+        <> d.Action COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.Action)<>DATALENGTH(d.Action)
+   OR i.ActorId<>d.ActorId
+   OR d.AuditLogId IS NOT NULL OR i.AuditLogId IS NULL
+ )
+  THROW 51928,''CHART_928_LEDGER_IMMUTABLE'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartSeal_AuditReceipt ON uqp.DashboardChartWidgetSeal AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.UserId=i.SealedBy
+     AND a.EventType=N''CHART_SEAL_WIDGET'' AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_SEAL_AUDIT_REQUIRED'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartReview_AuditReceipt ON uqp.DashboardChartPrivacyReview AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.Status=N''SUCCESS'' AND a.IsImportant=1
+     AND a.EventType=CASE i.Status
+       WHEN ''REQUESTED'' THEN N''CHART_REQUEST_REVIEW''
+       WHEN ''APPROVED'' THEN N''CHART_APPROVE_REVIEW''
+       WHEN ''REVOKED'' THEN N''CHART_REVOKE_REVIEW'' ELSE N''INVALID'' END
+     AND a.UserId=CASE WHEN i.Status=''REQUESTED'' THEN i.RequestedByUserId
+       ELSE i.ReviewerUserId END))
+  THROW 51928,''CHART_928_REVIEW_AUDIT_REQUIRED'',1;
+END');
+  EXEC(N'CREATE TRIGGER uqp.TR_ChartTrustRequest_AuditReceipt ON uqp.DashboardChartTrustRequest AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE i.AuditLogId IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+     WHERE a.Id=i.AuditLogId AND a.UserId=i.ActorId AND a.EventType=N''CHART_''+i.Action
+       AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_REQUEST_AUDIT_REQUIRED'',1;
+END');
+ END;
+ -- Never silently adopt a partial or disabled schema.
+ IF (SELECT COUNT(*) FROM sys.tables WHERE object_id IN
+     (OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),OBJECT_ID(N'uqp.DashboardChartPrivacyReview'),
+      OBJECT_ID(N'uqp.DashboardChartTrustRequest')))<>3
+    OR (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal'))<>7
+    OR (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest'))<>4
+    OR (SELECT COUNT(*) FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))<>21
+  THROW 51928,'CHART_928_CATALOG_COLUMNS_MISMATCH',1;
+ -- Exact 928 column contract: reject renamed/retyped/reordered, nullable,
+ -- length, scale and identity drift (counts alone are not sufficient).
+ DECLARE @expectedColumns TABLE(
+  TableName sysname NOT NULL, ColumnName sysname NOT NULL, ColumnId int NOT NULL,
+  TypeName sysname NOT NULL, MaxLength smallint NULL,
+  Scale tinyint NOT NULL, IsNullable bit NOT NULL, IsIdentity bit NOT NULL,
+  PRIMARY KEY(TableName,ColumnName));
+ INSERT INTO @expectedColumns(TableName,ColumnName,ColumnId,TypeName,MaxLength,Scale,IsNullable,IsIdentity)
+ VALUES
+   (N'DashboardChartWidgetSeal',N'WidgetId',1,N'bigint',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'ConfigDigest',2,N'char',64,0,0,0),
+   (N'DashboardChartWidgetSeal',N'IsActive',3,N'bit',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'SealedBy',4,N'bigint',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'AuditLogId',5,N'bigint',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'SealRowVersion',6,N'timestamp',NULL,0,0,0),
+   (N'DashboardChartWidgetSeal',N'CreatedAtUtc',7,N'datetime2',NULL,3,0,0),
+   (N'DashboardChartTrustRequest',N'RequestId',1,N'uniqueidentifier',NULL,0,0,0),
+   (N'DashboardChartTrustRequest',N'Action',2,N'nvarchar',80,0,0,0),
+   (N'DashboardChartTrustRequest',N'ActorId',3,N'bigint',NULL,0,0,0),
+   (N'DashboardChartTrustRequest',N'AuditLogId',4,N'bigint',NULL,0,1,0),
+   (N'DashboardChartPrivacyReview',N'Id',1,N'bigint',NULL,0,0,1),
+   (N'DashboardChartPrivacyReview',N'DashboardId',2,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'QueryId',3,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'DatasetId',4,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'SourceKey',5,N'nvarchar',128,0,0,0),
+   (N'DashboardChartPrivacyReview',N'CategoryColumn',6,N'nvarchar',256,0,0,0),
+   (N'DashboardChartPrivacyReview',N'ValueColumn',7,N'nvarchar',256,0,0,0),
+   (N'DashboardChartPrivacyReview',N'QueryRevision',8,N'binary',8,0,0,0),
+   (N'DashboardChartPrivacyReview',N'DatasetRevision',9,N'binary',8,0,0,0),
+   (N'DashboardChartPrivacyReview',N'PolicyRevision',10,N'char',64,0,0,0),
+   (N'DashboardChartPrivacyReview',N'Status',11,N'varchar',20,0,0,0),
+   (N'DashboardChartPrivacyReview',N'MinimumCellCount',12,N'int',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'CategoryPrivacyReviewed',13,N'bit',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'DifferencingRiskReviewed',14,N'bit',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'RequestedByUserId',15,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'RequestedAtUtc',16,N'datetime2',NULL,3,0,0),
+   (N'DashboardChartPrivacyReview',N'ReviewerUserId',17,N'bigint',NULL,0,1,0),
+   (N'DashboardChartPrivacyReview',N'ReviewedAtUtc',18,N'datetime2',NULL,3,1,0),
+   (N'DashboardChartPrivacyReview',N'ValidUntilUtc',19,N'datetime2',NULL,3,1,0),
+   (N'DashboardChartPrivacyReview',N'AuditLogId',20,N'bigint',NULL,0,0,0),
+   (N'DashboardChartPrivacyReview',N'ReviewRowVersion',21,N'timestamp',NULL,0,0,0);
+ -- Compare both directions; column ID is part of the sealed schema contract.
+ IF EXISTS (
+  SELECT e.TableName,e.ColumnName,e.ColumnId,e.TypeName,e.MaxLength,e.Scale,e.IsNullable,e.IsIdentity
+  FROM @expectedColumns e
+  EXCEPT
+  SELECT OBJECT_NAME(c.object_id),c.name,c.column_id,t.name,
+    CASE WHEN t.name IN(N'char',N'varchar',N'nchar',N'nvarchar',N'binary',N'varbinary')
+      THEN c.max_length ELSE NULL END,
+    CASE WHEN t.name IN(N'datetime2',N'datetimeoffset',N'time',N'decimal',N'numeric')
+      THEN c.scale ELSE CONVERT(tinyint,0) END,
+    c.is_nullable,c.is_identity
+  FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id
+  WHERE c.object_id IN (
+   OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+   OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+   OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))
+ ) OR EXISTS (
+  SELECT OBJECT_NAME(c.object_id),c.name,c.column_id,t.name,
+    CASE WHEN t.name IN(N'char',N'varchar',N'nchar',N'nvarchar',N'binary',N'varbinary')
+      THEN c.max_length ELSE NULL END,
+    CASE WHEN t.name IN(N'datetime2',N'datetimeoffset',N'time',N'decimal',N'numeric')
+      THEN c.scale ELSE CONVERT(tinyint,0) END,
+    c.is_nullable,c.is_identity
+  FROM sys.columns c JOIN sys.types t ON t.user_type_id=c.user_type_id
+  WHERE c.object_id IN (
+   OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+   OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+   OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))
+  EXCEPT
+  SELECT e.TableName,e.ColumnName,e.ColumnId,e.TypeName,e.MaxLength,e.Scale,e.IsNullable,e.IsIdentity
+  FROM @expectedColumns e
+ )
+  THROW 51928,'CHART_928_EXACT_COLUMN_CONTRACT_MISMATCH',1;
+ -- Fixed digest columns must retain binary collation for deterministic hashes.
+ IF EXISTS (SELECT 1 FROM sys.columns c WHERE
+   (c.object_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal') AND c.name=N'ConfigDigest'
+    OR c.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview') AND c.name=N'PolicyRevision')
+   AND c.collation_name<>N'Latin1_General_100_BIN2')
+  THROW 51928,'CHART_928_DIGEST_COLLATION_MISMATCH',1;
+ -- Gate 2 exact-witness contract: the original source and SQL Server's
+ -- catalog-normalized CHECK expressions must be attested independently.
+ -- Never derive these SHA-256 pins from the hospital target being examined.
+ -- NULL deliberately rejects promotion even if the leading approval guard
+ -- were removed. DBA must review and pin exact SQL 2019/2022 witnesses.
+ DECLARE @approvedChecks TABLE(
+   TableName sysname NOT NULL,
+   ConstraintName sysname NOT NULL,
+   ApprovedDefinitionSha256 varbinary(32) NULL,
+   PRIMARY KEY(TableName,ConstraintName));
+ INSERT INTO @approvedChecks(TableName,ConstraintName,ApprovedDefinitionSha256)
+ VALUES
+   (N'DashboardWidget',N'CK_DashboardWidget_Type',NULL),
+   (N'DashboardChartWidgetSeal',N'CK_ChartSeal_Digest',NULL),
+   (N'DashboardChartTrustRequest',N'CK_ChartTrustRequest_Action',NULL),
+   (N'DashboardChartPrivacyReview',N'CK_ChartReview_State',NULL),
+   (N'DashboardChartPrivacyReview',N'CK_ChartReview_Scope',NULL);
+ IF EXISTS(SELECT 1 FROM @approvedChecks WHERE ApprovedDefinitionSha256 IS NULL)
+   THROW 51928,'CHART_928_CHECK_SOURCE_WITNESSES_NOT_APPROVED',1;
+ IF EXISTS(
+   SELECT 1 FROM @approvedChecks e
+   LEFT JOIN sys.check_constraints c ON
+     c.parent_object_id=OBJECT_ID(N'uqp.'+e.TableName) AND c.name=e.ConstraintName
+   WHERE c.object_id IS NULL OR c.definition IS NULL
+      OR c.is_disabled<>0 OR c.is_not_trusted<>0 OR c.is_not_for_replication<>0
+      OR c.parent_column_id<>CASE
+           WHEN e.TableName=N'DashboardWidget'
+            AND e.ConstraintName=N'CK_DashboardWidget_Type'
+           THEN ISNULL(COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),
+                  N'WidgetType',N'ColumnId'),-1)
+           WHEN e.TableName=N'DashboardChartWidgetSeal'
+            AND e.ConstraintName=N'CK_ChartSeal_Digest'
+           THEN ISNULL(COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+                  N'ConfigDigest',N'ColumnId'),-1)
+           WHEN e.TableName=N'DashboardChartTrustRequest'
+            AND e.ConstraintName=N'CK_ChartTrustRequest_Action'
+           THEN ISNULL(COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+                  N'Action',N'ColumnId'),-1)
+           ELSE 0 END
+      OR c.is_system_named<>0
+      OR HASHBYTES('SHA2_256',CONVERT(varbinary(max),c.definition))
+          <>e.ApprovedDefinitionSha256
+ ) OR (SELECT COUNT(*) FROM sys.check_constraints c WHERE c.parent_object_id IN(
+       OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+       OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+       OBJECT_ID(N'uqp.DashboardChartPrivacyReview')))<>4
+   THROW 51928,'CHART_928_EXACT_CHECK_DEFINITION_MISMATCH',1;
+
+ -- Compare every single-column FK's name, child, parent, referenced column
+ -- and trust/action flags in BOTH directions. Counts alone are insufficient.
+ DECLARE @expectedFk TABLE(
+   FkName sysname NOT NULL, ChildTable sysname NOT NULL,
+   ChildColumn sysname NOT NULL, ParentTable sysname NOT NULL,
+   ParentColumn sysname NOT NULL, PRIMARY KEY(FkName));
+ INSERT INTO @expectedFk(FkName,ChildTable,ChildColumn,ParentTable,ParentColumn)
+ VALUES
+ (N'FK_ChartSeal_Widget',N'DashboardChartWidgetSeal',N'WidgetId',N'DashboardWidget',N'Id'),
+ (N'FK_ChartSeal_User',N'DashboardChartWidgetSeal',N'SealedBy',N'AppUser',N'Id'),
+ (N'FK_ChartRequest_Actor',N'DashboardChartTrustRequest',N'ActorId',N'AppUser',N'Id'),
+ (N'FK_ChartReview_Dashboard',N'DashboardChartPrivacyReview',N'DashboardId',N'Dashboard',N'Id'),
+ (N'FK_ChartReview_Query',N'DashboardChartPrivacyReview',N'QueryId',N'QueryDefinition',N'Id'),
+ (N'FK_ChartReview_Dataset',N'DashboardChartPrivacyReview',N'DatasetId',N'Dataset',N'Id'),
+ (N'FK_ChartReview_Requester',N'DashboardChartPrivacyReview',N'RequestedByUserId',N'AppUser',N'Id'),
+ (N'FK_ChartReview_Reviewer',N'DashboardChartPrivacyReview',N'ReviewerUserId',N'AppUser',N'Id');
+ DECLARE @actualFk TABLE(
+   FkName sysname,ChildTable sysname,ChildColumn sysname,
+   ParentTable sysname,ParentColumn sysname);
+ INSERT INTO @actualFk(FkName,ChildTable,ChildColumn,ParentTable,ParentColumn)
+ SELECT fk.name,OBJECT_NAME(fk.parent_object_id),c.name,
+        OBJECT_NAME(fk.referenced_object_id),r.name
+ FROM sys.foreign_keys fk
+ JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id=fk.object_id
+ JOIN sys.columns c ON c.object_id=fk.parent_object_id
+    AND c.column_id=fkc.parent_column_id
+ JOIN sys.columns r ON r.object_id=fk.referenced_object_id
+    AND r.column_id=fkc.referenced_column_id
+ WHERE fk.parent_object_id IN(
+       OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+       OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+       OBJECT_ID(N'uqp.DashboardChartPrivacyReview'))
+   -- OBJECT_NAME alone is not enough: dbo.AppUser and uqp.AppUser
+   -- would compare equal by table name while targeting different objects.
+   AND OBJECT_SCHEMA_NAME(fk.referenced_object_id)=N'uqp'
+   AND fk.is_disabled=0 AND fk.is_not_trusted=0 AND fk.is_not_for_replication=0
+   AND fk.delete_referential_action=0 AND fk.update_referential_action=0
+   AND fkc.constraint_column_id=1
+   AND (SELECT COUNT(*) FROM sys.foreign_key_columns x
+        WHERE x.constraint_object_id=fk.object_id)=1;
+ IF (SELECT COUNT(*) FROM sys.foreign_keys fk WHERE fk.parent_object_id IN(
+       OBJECT_ID(N'uqp.DashboardChartWidgetSeal'),
+       OBJECT_ID(N'uqp.DashboardChartTrustRequest'),
+       OBJECT_ID(N'uqp.DashboardChartPrivacyReview')))<>8
+    OR EXISTS(SELECT * FROM @expectedFk EXCEPT SELECT * FROM @actualFk)
+    OR EXISTS(SELECT * FROM @actualFk EXCEPT SELECT * FROM @expectedFk)
+   THROW 51928,'CHART_928_EXACT_FOREIGN_KEY_MISMATCH',1;
+
+ -- The unique filtered index must match the exact six ascending key columns
+ -- without included columns. Its catalog-normalized filter requires a
+ -- separate independently approved SHA-256 witness (not a substring LIKE).
+ DECLARE @approvedActiveFilterSha256 varbinary(32)=NULL;
+ IF @approvedActiveFilterSha256 IS NULL
+   THROW 51928,'CHART_928_FILTER_SOURCE_WITNESS_NOT_APPROVED',1;
+ IF NOT EXISTS(SELECT 1 FROM sys.indexes i
+   WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+     AND i.name=N'UX_ChartReview_Active'
+     AND i.is_unique=1 AND i.has_filter=1 AND i.is_disabled=0
+     AND i.is_hypothetical=0 AND i.type=2
+     AND i.is_primary_key=0 AND i.is_unique_constraint=0
+     AND i.ignore_dup_key=0 AND i.filter_definition IS NOT NULL
+     AND HASHBYTES('SHA2_256',CONVERT(varbinary(max),i.filter_definition))
+          =@approvedActiveFilterSha256)
+   THROW 51928,'CHART_928_EXACT_FILTER_DEFINITION_MISMATCH',1;
+ DECLARE @expectedIndexKeys TABLE(KeyOrdinal tinyint PRIMARY KEY,ColumnName sysname);
+ INSERT INTO @expectedIndexKeys(KeyOrdinal,ColumnName) VALUES
+ (1,N'DashboardId'),(2,N'QueryId'),(3,N'DatasetId'),(4,N'SourceKey'),
+ (5,N'CategoryColumn'),(6,N'ValueColumn');
+ DECLARE @actualIndexKeys TABLE(KeyOrdinal tinyint,ColumnName sysname);
+ INSERT INTO @actualIndexKeys(KeyOrdinal,ColumnName)
+ SELECT CONVERT(tinyint,ic.key_ordinal),c.name
+ FROM sys.indexes i
+ JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+ JOIN sys.columns c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+ WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+   AND i.name=N'UX_ChartReview_Active'
+   AND ic.is_included_column=0 AND ic.key_ordinal>0 AND ic.is_descending_key=0;
+ -- Do not silently omit an extra descending index key from @actualIndexKeys.
+ -- Compare all physical key positions before checking the ascending key set.
+ IF EXISTS(SELECT * FROM @expectedIndexKeys EXCEPT SELECT * FROM @actualIndexKeys)
+    OR EXISTS(SELECT * FROM @actualIndexKeys EXCEPT SELECT * FROM @expectedIndexKeys)
+    OR (SELECT COUNT(*) FROM sys.indexes i
+        JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+        WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+          AND i.name=N'UX_ChartReview_Active' AND ic.key_ordinal>0)<>6
+    OR EXISTS(SELECT 1 FROM sys.indexes i
+       JOIN sys.index_columns ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+       WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+       AND i.name=N'UX_ChartReview_Active' AND ic.is_included_column=1)
+   THROW 51928,'CHART_928_EXACT_INDEX_KEY_MISMATCH',1;
+ IF (SELECT COUNT(*) FROM sys.triggers WHERE
+    (object_id=OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardWidget') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartSeal_DeleteBlock',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartReview_Transition',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartTrustRequest_Immutable',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartSeal_AuditReceipt',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartWidgetSeal') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartReview_AuditReceipt',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview') AND is_disabled=0)
+    OR (object_id=OBJECT_ID(N'uqp.TR_ChartTrustRequest_AuditReceipt',N'TR') AND
+     parent_id=OBJECT_ID(N'uqp.DashboardChartTrustRequest') AND is_disabled=0))<>7
+  THROW 51928,'CHART_928_TRIGGERS_REQUIRED',1;
+ -- Fail closed on trigger BODY drift, including an enabled same-name replacement.
+ -- The expected definitions are literal copies of the CREATE text above, not
+ -- hashes learned from an already installed/possibly tampered database.
+ DECLARE @expectedTriggerSql TABLE(TriggerName sysname PRIMARY KEY, Definition nvarchar(max) NOT NULL);
+ INSERT INTO @expectedTriggerSql(TriggerName,Definition) VALUES
+  (N'TR_DashboardWidget_ChartFreeze',N'CREATE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget AFTER INSERT,UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ -- CHART type is registered for future migration, never enabled by 928.
+ IF EXISTS(SELECT 1 FROM inserted WHERE WidgetType=N''CHART'')
+ OR EXISTS(SELECT 1 FROM deleted WHERE WidgetType=N''CHART'')
+ OR EXISTS(SELECT 1 FROM inserted i JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=i.Id)
+ OR EXISTS(SELECT 1 FROM deleted d JOIN uqp.DashboardChartWidgetSeal s ON s.WidgetId=d.Id)
+  THROW 51928,''CHART_928_WIDGET_FROZEN'',1;
+END'),
+  (N'TR_ChartSeal_DeleteBlock',N'CREATE TRIGGER uqp.TR_ChartSeal_DeleteBlock ON uqp.DashboardChartWidgetSeal AFTER DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM deleted)
+  THROW 51928,''CHART_928_SEAL_DELETE_BLOCKED'',1;
+END'),
+  (N'TR_ChartReview_Transition',N'CREATE TRIGGER uqp.TR_ChartReview_Transition ON uqp.DashboardChartPrivacyReview AFTER UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(
+  SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.Id=d.Id
+  WHERE i.Id IS NULL OR i.DashboardId<>d.DashboardId OR i.QueryId<>d.QueryId
+   OR i.DatasetId<>d.DatasetId
+   -- BIN2 equality still ignores trailing spaces: compare lengths as well.
+   OR i.SourceKey COLLATE Latin1_General_100_BIN2
+        <> d.SourceKey COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.SourceKey)<>DATALENGTH(d.SourceKey)
+   OR i.CategoryColumn COLLATE Latin1_General_100_BIN2
+        <> d.CategoryColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.CategoryColumn)<>DATALENGTH(d.CategoryColumn)
+   OR i.ValueColumn COLLATE Latin1_General_100_BIN2
+        <> d.ValueColumn COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.ValueColumn)<>DATALENGTH(d.ValueColumn)
+   OR i.QueryRevision<>d.QueryRevision OR i.DatasetRevision<>d.DatasetRevision
+   OR i.PolicyRevision<>d.PolicyRevision OR i.RequestedByUserId<>d.RequestedByUserId
+   OR i.RequestedAtUtc<>d.RequestedAtUtc
+   -- Revocation cannot rewrite the original approved privacy decision.
+   OR (d.Status=''APPROVED'' AND (
+      i.MinimumCellCount<>d.MinimumCellCount
+      OR i.CategoryPrivacyReviewed<>d.CategoryPrivacyReviewed
+      OR i.DifferencingRiskReviewed<>d.DifferencingRiskReviewed
+      OR i.ReviewerUserId<>d.ReviewerUserId
+      OR i.ReviewedAtUtc<>d.ReviewedAtUtc
+      -- Revocation may shorten approval validity but NEVER extend it.
+      OR i.ValidUntilUtc>d.ValidUntilUtc))
+   OR NOT((d.Status=''REQUESTED'' AND i.Status=''APPROVED'')
+       OR (d.Status=''APPROVED'' AND i.Status=''REVOKED''))
+ )
+  THROW 51928,''CHART_928_REVIEW_IMMUTABLE'',1;
+END'),
+  (N'TR_ChartTrustRequest_Immutable',N'CREATE TRIGGER uqp.TR_ChartTrustRequest_Immutable ON uqp.DashboardChartTrustRequest AFTER UPDATE,DELETE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(
+  SELECT 1 FROM deleted d LEFT JOIN inserted i ON i.RequestId=d.RequestId
+  WHERE i.RequestId IS NULL
+   OR i.Action COLLATE Latin1_General_100_BIN2
+        <> d.Action COLLATE Latin1_General_100_BIN2
+   OR DATALENGTH(i.Action)<>DATALENGTH(d.Action)
+   OR i.ActorId<>d.ActorId
+   OR d.AuditLogId IS NOT NULL OR i.AuditLogId IS NULL
+ )
+  THROW 51928,''CHART_928_LEDGER_IMMUTABLE'',1;
+END'),
+  (N'TR_ChartSeal_AuditReceipt',N'CREATE TRIGGER uqp.TR_ChartSeal_AuditReceipt ON uqp.DashboardChartWidgetSeal AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.UserId=i.SealedBy
+     AND a.EventType=N''CHART_SEAL_WIDGET'' AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_SEAL_AUDIT_REQUIRED'',1;
+END'),
+  (N'TR_ChartReview_AuditReceipt',N'CREATE TRIGGER uqp.TR_ChartReview_AuditReceipt ON uqp.DashboardChartPrivacyReview AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE NOT EXISTS
+  (SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+   WHERE a.Id=i.AuditLogId AND a.Status=N''SUCCESS'' AND a.IsImportant=1
+     AND a.EventType=CASE i.Status
+       WHEN ''REQUESTED'' THEN N''CHART_REQUEST_REVIEW''
+       WHEN ''APPROVED'' THEN N''CHART_APPROVE_REVIEW''
+       WHEN ''REVOKED'' THEN N''CHART_REVOKE_REVIEW'' ELSE N''INVALID'' END
+     AND a.UserId=CASE WHEN i.Status=''REQUESTED'' THEN i.RequestedByUserId
+       ELSE i.ReviewerUserId END))
+  THROW 51928,''CHART_928_REVIEW_AUDIT_REQUIRED'',1;
+END'),
+  (N'TR_ChartTrustRequest_AuditReceipt',N'CREATE TRIGGER uqp.TR_ChartTrustRequest_AuditReceipt ON uqp.DashboardChartTrustRequest AFTER INSERT,UPDATE AS
+BEGIN
+ SET NOCOUNT ON;
+ IF EXISTS(SELECT 1 FROM inserted i WHERE i.AuditLogId IS NOT NULL
+    AND NOT EXISTS(SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK)
+     WHERE a.Id=i.AuditLogId AND a.UserId=i.ActorId AND a.EventType=N''CHART_''+i.Action
+       AND a.Status=N''SUCCESS'' AND a.IsImportant=1))
+  THROW 51928,''CHART_928_REQUEST_AUDIT_REQUIRED'',1;
+END');
+ IF EXISTS (
+  SELECT 1 FROM @expectedTriggerSql e
+  LEFT JOIN sys.triggers t ON t.object_id=OBJECT_ID(N'uqp.'+e.TriggerName,N'TR')
+  LEFT JOIN sys.sql_modules m ON m.object_id=t.object_id
+  WHERE t.object_id IS NULL OR t.is_disabled<>0 OR m.definition IS NULL
+   OR HASHBYTES('SHA2_256',CONVERT(varbinary(max),m.definition))
+    <> HASHBYTES('SHA2_256',CONVERT(varbinary(max),e.Definition))
+ )
+  THROW 51928,'CHART_928_TRIGGER_DEFINITION_MISMATCH',1;
+ -- Success deliberately does not COMMIT: migration runner alone owns DDL+ledger.
+END TRY
+BEGIN CATCH
+ -- Deliberately do not COMMIT, rollback to savepoint, or change the ledger.
+ -- Approved runner MUST roll back the outer transaction on any failure.
+ THROW;
+END CATCH;

@@ -10,12 +10,13 @@ import {attestChartWriterSqlPrincipals,attestChartWriterSqlPools,
  chartWriterIdentitySql,ChartWriterBoundaryError} from "./dashboardChartWriterBoundary.js";
 
 const EXPECTED_SHA="f".repeat(64);
+const approvedSids={platform:"A1",writer:"B2"};
 const base={
  DbName:"UQP_TEST",ServerName:"SQL_TEST",OriginalSid:"A1",EffectiveUser:"platform",
  ProcedureId:101,ProcedureSha256:EXPECTED_SHA,
  Sysadmin:0,ServerControl:0,ServerImpersonateAny:0,ServerAlterLogins:0,
  ServerAlterRoles:0,ServerSelectAllUserData:0,
- DbOwner:0,DbDdlAdmin:0,DbSecurityAdmin:0,DbDataWriter:0,DbAccessAdmin:0,
+ DbOwner:0,DbDdlAdmin:0,DbSecurityAdmin:0,DbDataWriter:0,DbDataReader:0,DbAccessAdmin:0,
  DbAlterAnyUser:0,DbAlterAnyRole:0,DbAlterAnySchema:0,
  DbControl:0,SchemaControl:0,SchemaAlter:0,
  ImpersonateWriter:0,CreateExecute:0,CreateAlter:0,
@@ -27,12 +28,24 @@ const writer=()=>({...base,OriginalSid:"B2",EffectiveUser:"writer",CreateExecute
 const rejects=(code:string,fn:()=>unknown)=>assert.throws(fn,
  (e:unknown)=>e instanceof ChartWriterBoundaryError&&e.code===code);
 const attest=(p:Record<string,unknown>,w:Record<string,unknown>)=>
-  attestChartWriterSqlPrincipals(p,w,EXPECTED_SHA);
+  attestChartWriterSqlPrincipals(p,w,EXPECTED_SHA,approvedSids);
 
 test("2B-15C independent OriginalLogin SID, not EXECUTE AS USER, is required",()=>{
  assert.match(chartWriterIdentitySql,/ORIGINAL_LOGIN\(\)/);
  assert.match(chartWriterIdentitySql,/SUSER_SID/);
  assert.doesNotMatch(chartWriterIdentitySql,/\b(?:GRANT|CREATE LOGIN|ALTER ROLE|INSERT INTO)\b/i);
+ // Pure predicate cannot be called without independent original-login pins.
+ rejects("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA));
+ rejects("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA,
+     {...approvedSids,platform:"B2"}));
+ rejects("CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA,
+     {...approvedSids,writer:"b2"}));
+ rejects("CHART_WRITER_LOGIN_SID_NOT_APPROVED",()=>
+   attestChartWriterSqlPrincipals(platform(),writer(),EXPECTED_SHA,
+     {...approvedSids,writer:"C3"}));
  assert.doesNotThrow(()=>attest(platform(),writer()));
  rejects("CHART_WRITER_LOGIN_NOT_ISOLATED",()=>attest(
    platform(),{...writer(),OriginalSid:"A1"}));
@@ -50,12 +63,13 @@ test("2B-15C broad roles, SQL DML sidecars, impersonation fail closed",()=>{
    "ALTER ANY LOGIN","ALTER ANY SERVER ROLE","SELECT ALL USER SECURABLES"]){
    assert(chartWriterIdentitySql.includes("N'"+name+"'"));
  }
+ assert.match(chartWriterIdentitySql,/IS_MEMBER\(N'db_datareader'\) AS DbDataReader/);
  assert(chartWriterIdentitySql.includes("N'ALTER ANY USER'"));
  assert(chartWriterIdentitySql.includes("N'ALTER ANY ROLE'"));
  assert(chartWriterIdentitySql.includes("N'ALTER ANY SCHEMA'"));
  for(const key of ["Sysadmin","ServerControl","ServerImpersonateAny",
  "ServerAlterLogins","ServerAlterRoles","ServerSelectAllUserData",
- "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbAccessAdmin",
+ "DbOwner","DbDdlAdmin","DbSecurityAdmin","DbDataWriter","DbDataReader","DbAccessAdmin",
  "DbAlterAnyUser","DbAlterAnyRole","DbAlterAnySchema",
  "DbControl","SchemaControl","SchemaAlter","ImpersonateWriter",
  "CreateAlter","PermitInsert","SealInsert","LedgerInsert","ReviewUpdate"]){
@@ -90,13 +104,24 @@ test("2B-15C independently supplied SQL pools; no connection creation",async()=>
    return {recordset:row===null?[]:[row]};
  }})}) as unknown as sql.ConnectionPool;
  const p=pool(platform()),w=pool(writer());
- await assert.doesNotReject(attestChartWriterSqlPools(p,w,EXPECTED_SHA));
- await assert.rejects(attestChartWriterSqlPools(p,p,EXPECTED_SHA),(e:unknown)=>
+ // No direct SQL inspection without two independently reviewed login SIDs.
+ await assert.rejects(attestChartWriterSqlPools(p,w,EXPECTED_SHA),(e:unknown)=>
+   e instanceof ChartWriterBoundaryError&&
+   e.code==="CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED");
+ for(const invalid of [
+   {...approvedSids,writer:"A1"},
+   {...approvedSids,writer:"b2"},
+   {...approvedSids,platform:""},
+ ])await assert.rejects(attestChartWriterSqlPools(p,w,EXPECTED_SHA,invalid),(e:unknown)=>
+   e instanceof ChartWriterBoundaryError&&
+   e.code==="CHART_WRITER_LOGIN_SID_APPROVAL_REQUIRED");
+ await assert.doesNotReject(attestChartWriterSqlPools(p,w,EXPECTED_SHA,approvedSids));
+ await assert.rejects(attestChartWriterSqlPools(p,p,EXPECTED_SHA,approvedSids),(e:unknown)=>
    e instanceof ChartWriterBoundaryError&&e.code==="CHART_WRITER_POOL_NOT_ISOLATED");
- await assert.rejects(attestChartWriterSqlPools(pool(null),w,EXPECTED_SHA),(e:unknown)=>
+ await assert.rejects(attestChartWriterSqlPools(pool(null),w,EXPECTED_SHA,approvedSids),(e:unknown)=>
    e instanceof ChartWriterBoundaryError&&e.code==="CHART_WRITER_IDENTITY_UNAVAILABLE");
  await assert.rejects(attestChartWriterSqlPools(
-   {request:()=>{throw Error("DB_FAIL")}} as unknown as sql.ConnectionPool,w,EXPECTED_SHA),
+   {request:()=>{throw Error("DB_FAIL")}} as unknown as sql.ConnectionPool,w,EXPECTED_SHA,approvedSids),
    (e:unknown)=>e instanceof ChartWriterBoundaryError&&e.code==="CHART_WRITER_IDENTITY_UNAVAILABLE");
 });
 

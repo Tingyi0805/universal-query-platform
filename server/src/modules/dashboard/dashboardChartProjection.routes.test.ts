@@ -20,6 +20,7 @@ type Session = {isActive:boolean;tokenVersion:number;permissions:string[]};
 type Scenario = {
   approved: boolean;
   project?: (id:number,wid:number,subject:ExecutionSubject) => Promise<unknown>;
+  tamper?: "permissions" | "header";
 };
 async function serverFixture(scenario: Scenario) {
   const previous = env.JWT_SECRET;
@@ -31,6 +32,12 @@ async function serverFixture(scenario: Scenario) {
   const app=express();
   app.use(express.json({limit:"2kb"}));
   app.use(createAuthenticateJwt(async () => session));
+  app.use((req,_res,next)=>{
+    if(scenario.tamper==="permissions"&&req.authUser)
+      req.authUser={...req.authUser,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]};
+    if(scenario.tamper==="header")req.headers.authorization="Bearer unverified.jwt.injected";
+    next();
+  });
   app.use(createChartProjectionRouter({
     approved: () => scenario.approved,
     project: async(id,wid,subject) => {
@@ -44,7 +51,7 @@ async function serverFixture(scenario: Scenario) {
   assert(address && typeof address!=="string");
   const root="http://127.0.0.1:"+address.port;
   const valid=jwt.sign({sub:"8",tokenVersion:3,username:"synthetic",
-    permissions:[],actorId:999},env.JWT_SECRET);
+    permissions:[],actorId:999},env.JWT_SECRET,{expiresIn:"1h"});
   const invalid=jwt.sign({sub:"8",tokenVersion:3}, "untrusted-key");
   const send=(path="/dashboards/7/charts/v1/88/projection",
     body:unknown=undefined,token:string=valid)=>
@@ -110,6 +117,43 @@ test("verified JWT actor is the only projection identity; response contains only
   }finally{await f.close();}
 });
 
+
+test("CHART projection rejects original tokens without expiry or expired mid-query",async()=>{
+  let expirySeconds=0;
+  const f=await serverFixture({approved:true,project:async()=>{
+    if(expirySeconds>0){
+      // The request entered with a valid JWT. Hold the trusted projector
+      // until after exp, to prove that the HTTP adapter rechecks it.
+      await new Promise<void>(resolve=>setTimeout(resolve,
+        Math.max(0,expirySeconds*1000-Date.now()+80)));
+    }
+    return config;
+  }});
+  try{
+    // The fixture installs this synthetic key before the test starts.
+    const signingKey=env.JWT_SECRET;
+    if (typeof signingKey!=="string" || signingKey.length===0)
+      throw Error("SYNTHETIC_CHART_JWT_TEST_KEY_REQUIRED");
+    const withoutExpiry=jwt.sign({sub:"8",tokenVersion:3},signingKey);
+    const noExpiry=await f.send(undefined,undefined,withoutExpiry);
+    assert.equal(noExpiry.status,503);
+    assert.deepEqual(await noExpiry.json(),
+      {error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}});
+
+    expirySeconds=Math.floor(Date.now()/1000)+3;
+    const shortLived=jwt.sign({
+      sub:"8",tokenVersion:3,exp:expirySeconds,
+    },signingKey);
+    const expiredDuringWork=await f.send(undefined,undefined,shortLived);
+    assert.equal(expiredDuringWork.status,503);
+    const payload=await expiredDuringWork.text();
+    assert.deepEqual(JSON.parse(payload),
+      {error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}});
+    assert.equal(payload.includes("診間"),false);
+    assert.equal(f.calls,2);
+  }finally{await f.close();}
+});
+
 test("authorization must come from live session, not a forgeable JWT permission claim",async()=>{
   const f=await serverFixture({approved:true});
   try{
@@ -150,4 +194,22 @@ test("malformed, untrusted or leaky projections fail closed without returning pr
     assert.equal(res.status,503);
     assert.equal((await res.text()).includes("PACS_SQL_PATIENT_ID_DONT_LOG"),false);
   }finally{await f.close();}
+});
+
+test("CHART projection cannot elevate mutable permissions or swap authenticated JWT hash",async()=>{
+  const promoted=await serverFixture({approved:true,tamper:"permissions"});
+  try{
+    promoted.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
+    assert.equal((await promoted.send()).status,403);
+    assert.equal(promoted.calls,0);
+  }finally{await promoted.close();}
+  const swapped=await serverFixture({approved:true,tamper:"header"});
+  try{
+    const response=await swapped.send();
+    assert.equal(response.status,200);
+    assert.deepEqual(swapped.subjects[0],{
+      context:"designer",userId:8,tokenVersion:3,
+      tokenHash:createHash("sha256").update(swapped.valid).digest("hex"),
+    });
+  }finally{await swapped.close();}
 });

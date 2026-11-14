@@ -17,6 +17,10 @@ import {
  CHART_WRITER_DB_ACTOR_BINDING_APPROVED,CHART_WRITER_APPROVED_PROCEDURE_SHA256,
 } from "./dashboardChartWriterBoundary.js";
 import {CHART_ISSUER_APPROVED_PROCEDURE_SHA256} from "./dashboardChartIssuerBoundary.js";
+import {
+ CHART_SQL_APPROVED_PLATFORM_SID,CHART_SQL_APPROVED_ISSUER_SID,
+ CHART_SQL_APPROVED_WRITER_SID,
+} from "./dashboardChartSqlPrincipalPreflight.js";
 import {canonicalChartConfig} from "./dashboardChartAtomicCreate.contract.js";
 
 const config={
@@ -32,7 +36,7 @@ test("2B-15D-9 handoff intent is derived only from JWT plus live server session"
  const before=env.JWT_SECRET;
  env.JWT_SECRET="synthetic-chart-issuer-handoff-secret-only";
  let session={
-   isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"],
+   isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
  };
  let sqlCalls=0;
  const noDbPool={
@@ -99,12 +103,22 @@ test("2B-15D-9 handoff intent is derived only from JWT plus live server session"
    assert.equal(CHART_WRITER_DB_ACTOR_BINDING_APPROVED,false);
    assert.equal(CHART_WRITER_APPROVED_PROCEDURE_SHA256,null);
    assert.equal(CHART_ISSUER_APPROVED_PROCEDURE_SHA256,null);
+   // Missing independently reviewed SID pins must not be replaced by
+   // caller-controlled fields or by three merely distinct SQL logins.
+   assert.equal(CHART_SQL_APPROVED_PLATFORM_SID,null);
+   assert.equal(CHART_SQL_APPROVED_ISSUER_SID,null);
+   assert.equal(CHART_SQL_APPROVED_WRITER_SID,null);
    assert.equal((await send("/synthetic-handoff",body)).status,403);
    assert.equal(sqlCalls,0);
+   session={...session,permissions:["DESIGN_QUERY"]};
+   assert.equal((await send("/synthetic-intent",body)).status,403);
+   assert.equal((await send("/synthetic-handoff",body)).status,403);
+   session={...session,permissions:["EXECUTE_QUERY"]};
+   assert.equal((await send("/synthetic-intent",body)).status,403);
    session={...session,permissions:[]};
    assert.equal((await send("/synthetic-intent",body)).status,403);
    assert.equal((await send("/synthetic-handoff",body)).status,403);
-   session={...session,permissions:["DESIGN_QUERY"],tokenVersion:4};
+   session={...session,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],tokenVersion:4};
    assert.equal((await send("/synthetic-intent",body)).status,401);
    assert.equal(sqlCalls,0);
  }finally{

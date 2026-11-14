@@ -25,12 +25,15 @@ test("legacy excludes 916-918 while coexistence includes them; both contain 919 
   assert.throws(() => selectProfile(rows.filter(row => row.id !== 907), "legacy"));
   assert.throws(() => selectProfile(rows, "all"));
 });
-test("runner source still auto-selects 916-919 and status bootstrap precedes command dispatch", async () => {
+test("runner migration inventory remains explicit and status cannot bootstrap the ledger", async () => {
   const runner = await readFile(new URL("./migrate.ts", import.meta.url), "utf8");
   assert.ok(runner.includes('.filter((file) => /^\\d+_.*\\.sql$/i.test(file))'));
   assert.ok(runner.includes('.sort((a, b) => a.localeCompare(b))'));
   assert.ok(runner.indexOf('const command =') < runner.indexOf("CREATE TABLE uqp.SchemaMigration"));
-  assert.ok(runner.includes('if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
+  assert.ok(runner.includes('if (command !== "status" && command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
+  assert.ok(runner.includes("MIGRATION_STATUS_LEDGER_MISSING_READ_ONLY"));
+  assert.ok(runner.indexOf('SELECT OBJECT_ID(N\'uqp.SchemaMigration\',N\'U\') AS LedgerId') <
+    runner.indexOf('SELECT FileName FROM uqp.SchemaMigration'));
   assert.ok(runner.indexOf('const pool = await getPlatformDbPool()') < runner.indexOf('command === "status"'));
   const files = (await inventory()).map(row => row.file).filter(file => /^\d+_.*\.sql$/i.test(file));
   assert.deepEqual(files.filter(file => /^(916|917|918|919)_/.test(file)).map(file => Number(file.slice(0,3))), [916,917,918,919]);
@@ -130,7 +133,7 @@ test("scoped upgrade validates target identity before any bootstrap and requires
   assert.ok(runner.includes("UQP_MIGRATION_EXPECTED_SERVER"));
   assert.ok(runner.includes("UQP_MIGRATION_EXPECTED_LOGIN"));
   assert.ok(runner.indexOf('if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool)') <
-    runner.indexOf('if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
+    runner.indexOf('if (command !== "status" && command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
   assert.ok(runner.indexOf('if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool)') <
     runner.indexOf("SELECT FileName FROM uqp.SchemaMigration"));
 });
@@ -145,7 +148,7 @@ test("resume requires exact recorded 916 and restricts writes to 917-919", async
   assert.ok(runner.includes('const outside = files.filter(file => !expected.includes(file) && !applied.has(file))'));
   assert.ok(runner.includes('applied.size !== files.length - expected.length'));
   assert.ok(runner.includes('if (command === "apply-range" || command === "resume-916-to-919") await requireScopedTarget(pool)'));
-  assert.ok(runner.includes('if (command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
+  assert.ok(runner.includes('if (command !== "status" && command !== "apply-range" && command !== "resume-916-to-919") await pool.request().batch('));
 });
 
 test("migration rollback failure preserves original error and prohibits automatic retry", async () => {

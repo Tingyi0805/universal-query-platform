@@ -68,6 +68,7 @@ export function validateSealedChartWidget(
     if (!parsed.success || parsed.data.dataSourceKey !== row.SourceKey) return null;
     return {
       id: widgetId, dashboardId, widgetType: "CHART", revision: rv,
+      sealedByUserId: exactPositive(row.SealedBy)!,
       config: parsed.data,
     };
   } catch { return null; }

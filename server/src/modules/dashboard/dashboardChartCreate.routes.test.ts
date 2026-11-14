@@ -1,0 +1,203 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import express from "express";
+import jwt from "jsonwebtoken";
+import { env } from "../../config/env.js";
+import { createAuthenticateJwt } from "../auth/auth.middleware.js";
+import {
+  CHART_CREATE_HTTP_RELEASE_APPROVED,
+  createChartCreateRouter,
+} from "./dashboardChartCreate.routes.js";
+import type { DormantChartCreatePlan } from "./dashboardChartAtomicCreate.contract.js";
+import {canonicalChartConfig} from "./dashboardChartAtomicCreate.contract.js";
+
+const body = {
+  profileId: 22,
+  requestId: "00000000-0000-4000-8000-000000000011",
+  config: {
+    version: 1, chartType: "BAR", dataSourceKey: "PRIMARY",
+    categoryColumn: "ROOM", valueColumn: "TOTAL",
+    valueMode: "QUERY_RESULT", maxPoints: 20, showLegend: true,
+  },
+  placement: { x: 80, y: 80, width: 600, height: 360 },
+};
+const receipt = {
+  widgetId: 88, sealRevision: "0011223344556677",
+  auditLogId: "9007199254740993",
+};
+const sqlReceipt = {
+  WidgetId:"88",SealRevision:receipt.sealRevision,
+  AuditLogId:receipt.auditLogId,Digest:canonicalChartConfig(body.config)!.sha256,
+};
+type Session = { isActive: boolean; tokenVersion: number; permissions: string[] };
+
+async function fixture(
+  approved: boolean,
+  create?: (plan: DormantChartCreatePlan)=>Promise<unknown>,
+  tamper: "none" | "permissions" | "header" = "none",
+) {
+  const previous = env.JWT_SECRET;
+  env.JWT_SECRET = "issue89-chart-create-http-synthetic-only";
+  let session: Session = {
+    isActive: true, tokenVersion: 3,
+    permissions: ["DESIGN_QUERY", "EXECUTE_QUERY"],
+  };
+  const plans: DormantChartCreatePlan[] = [];
+  const app = express();
+  app.use(express.json({limit:"4kb"}));
+  app.use(createAuthenticateJwt(async()=>session));
+  app.use((req,_res,next)=>{
+    if(tamper==="permissions"&&req.authUser)
+      req.authUser={...req.authUser,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]};
+    if(tamper==="header")req.headers.authorization="Bearer unverified.jwt.injected";
+    next();
+  });
+  app.use(createChartCreateRouter({
+    approved: () => approved,
+    create: async (plan) => {
+      plans.push(plan);
+      return create ? create(plan) : sqlReceipt;
+    },
+  }));
+  const server = createServer(app);
+  await new Promise<void>(resolve=>server.listen(0,"127.0.0.1",resolve));
+  const address = server.address();
+  assert(address && typeof address !== "string");
+  const root = "http://127.0.0.1:" + address.port;
+  const valid = jwt.sign({sub:"8",tokenVersion:3,actorId:777,
+    permissions:["DESIGN_QUERY","EXECUTE_QUERY"]},env.JWT_SECRET);
+  const invalid = jwt.sign({sub:"8",tokenVersion:3},"untrusted-key");
+  const send = (payload:unknown=body, token=valid, path="/7/charts/v1") =>
+    fetch(root+path,{method:"POST",headers:{
+      Authorization:"Bearer "+token,"Content-Type":"application/json",
+    },body:JSON.stringify(payload)});
+  const capabilities = (token=valid,path="/7/charts/v1/capabilities")=>
+    fetch(root+path,{headers:{Authorization:"Bearer "+token}});
+  return {
+    send, capabilities, valid, invalid, plans,
+    session: (next:Session)=>{session=next;},
+    close: async()=>{await new Promise<void>(resolve=>server.close(()=>resolve()));env.JWT_SECRET=previous;},
+  };
+}
+
+test("CHART create route remains hard-OFF with zero SQL/Writer invocations",async()=>{
+  assert.equal(CHART_CREATE_HTTP_RELEASE_APPROVED,false);
+  const f=await fixture(false,async()=>{throw Error("MUST_NOT_BE_CALLED");});
+  try{
+    for(const payload of [body,{...body,actorId:999,approved:true}]){
+      const result=await f.send(payload);
+      assert.equal(result.status,404);
+      assert.equal(result.headers.get("cache-control"),"no-store, max-age=0");
+      assert.deepEqual(await result.json(),{error:{code:"CHART_NOT_AVAILABLE"}});
+    }
+    assert.equal(f.plans.length,0);
+    const available=await f.capabilities();
+    assert.equal(available.status,200);
+    assert.equal(available.headers.get("cache-control"),"no-store, max-age=0");
+    assert.deepEqual(await available.json(),{canCreate:false});
+    assert.equal(f.plans.length,0);
+  }finally{await f.close();}
+});
+
+test("CHART UI capability is advisory, JWT-bound and never invokes SQL",async()=>{
+  const f=await fixture(true);
+  try{
+    assert.deepEqual(await (await f.capabilities()).json(),{canCreate:true});
+    f.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
+    assert.deepEqual(await (await f.capabilities()).json(),{canCreate:false});
+    f.session({isActive:true,tokenVersion:3,permissions:["EXECUTE_QUERY"]});
+    assert.deepEqual(await (await f.capabilities()).json(),{canCreate:false});
+    assert.equal((await f.capabilities(f.invalid)).status,401);
+    f.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]});
+    assert.equal((await f.capabilities(f.valid,"/0/charts/v1/capabilities")).status,400);
+    assert.equal((await f.capabilities(f.valid,"/7/charts/v1/capabilities?approved=true")).status,400);
+    assert.equal(f.plans.length,0);
+  }finally{await f.close();}
+});
+
+test("test-only transport honors only verified JWT actor, strict plan and safe audit receipt",async()=>{
+  const f=await fixture(true);
+  try{
+    const r=await f.send();
+    assert.equal(r.status,201);
+    assert.deepEqual(await r.json(),receipt);
+    assert.equal(f.plans.length,1);
+    assert.equal(f.plans[0]!.actorId,8);
+    assert.equal(f.plans[0]!.tokenVersion,3);
+    assert.equal(f.plans[0]!.dashboardId,7);
+    assert.equal(f.plans[0]!.profileId,22);
+    assert.equal(f.plans[0]!.config.data.chartType,"BAR");
+    assert.equal((await f.send(body,f.invalid)).status,401);
+    for(const extra of [
+      {actorId:999},{tokenVersion:100},{approved:true},
+      {grantId:"00000000-0000-4000-8000-000000000001"},
+      {deviceToken:"public"},{widgetId:100},{issuerSid:"fake"},
+      {sqlMac:"fake"},{signerKey:"fake"},{rows:[{PATIENT_ID:"secret"}]},
+    ]){
+      assert.equal((await f.send({...body,...extra})).status,400);
+    }
+    for(const invalid of [
+      {...body,profileId:0},
+      {...body,placement:{...body.placement,width:0}},
+      {...body,config:{...body.config,approved:true}},
+    ])assert.equal((await f.send(invalid)).status,400);
+    assert.equal((await f.send(body,f.valid,"/7/charts/v1?approved=1")).status,400);
+    assert.equal((await f.send(body,f.valid,"/0/charts/v1")).status,400);
+    assert.equal(f.plans.length,1);
+    f.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
+    assert.equal((await f.send()).status,403);
+    f.session({isActive:true,tokenVersion:4,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]});
+    assert.equal((await f.send()).status,401);
+    f.session({isActive:false,tokenVersion:3,permissions:["DESIGN_QUERY","EXECUTE_QUERY"]});
+    assert.equal((await f.send()).status,401);
+    assert.equal(f.plans.length,1);
+  }finally{await f.close();}
+});
+
+test("malformed/oversharing Writer results never reach HTTP, SQL errors are redacted",async()=>{
+  for(const create of [
+    async()=>({...sqlReceipt,sql:"PATIENT_ID_SECRET"}),
+    async()=>({...sqlReceipt,AuditLogId:9007199254740993}),
+    async()=>({...sqlReceipt,WidgetId:-1}),
+    async()=>({...sqlReceipt,WidgetId:"9007199254740993"}),
+    async()=>({...sqlReceipt,SealRevision:"not-a-rowversion"}),
+    async()=>({...sqlReceipt,Digest:"0".repeat(64)}),
+    async()=>{throw Error("PRIVATE_PACS_SQL_PATIENT_ID");},
+  ]){
+    const f=await fixture(true,create);
+    try{
+      const response=await f.send();
+      assert.equal(response.status,503);
+      const txt=await response.text();
+      assert.deepEqual(JSON.parse(txt),{error:{code:"CHART_TRUSTED_CREATE_REQUIRED"}});
+      assert.equal(txt.includes("PATIENT"),false);
+      assert.equal(txt.includes("PRIVATE"),false);
+      assert.equal(f.plans.length,1);
+    }finally{await f.close();}
+  }
+});
+
+test("Option A CHART creation requires immutable live rights and never forwards a Bearer",async()=>{
+  // A mutable Express authUser must not add a permission missing from the
+  // DB-verified snapshot. No Writer/Signer calls occur.
+  const promoted=await fixture(true,undefined,"permissions");
+  try{
+    promoted.session({isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]});
+    assert.equal((await promoted.send()).status,403);
+    assert.equal(promoted.plans.length,0);
+  }finally{await promoted.close();}
+
+  // Later request-header mutation cannot replace the authenticated actor
+  // bound to the immutable, JWT-verified server plan.
+  const swapped=await fixture(true,undefined,"header");
+  try{
+    const response=await swapped.send();
+    assert.equal(response.status,201);
+    assert.deepEqual(await response.json(),receipt);
+    assert.equal(swapped.plans.length,1);
+    assert.equal(swapped.plans[0]!.actorId,8);
+    assert.equal(JSON.stringify(swapped.plans[0]).includes(swapped.valid),false);
+    assert.equal(JSON.stringify(receipt).includes(swapped.valid),false);
+  }finally{await swapped.close();}
+});

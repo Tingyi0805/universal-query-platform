@@ -17,7 +17,8 @@
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "db:924:preflight": "tsx src/scripts/installDataset924.ts preflight",
     "db:924:apply": "tsx src/scripts/installDataset924.ts apply",
-    "db:924:verify": "tsx src/scripts/installDataset924.ts verify"
+    "db:924:verify": "tsx src/scripts/installDataset924.ts verify",
+    "db:chart:preflight": "tsx src/scripts/chart928ReadOnlyTargetPreflight.ts preflight"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

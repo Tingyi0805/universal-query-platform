@@ -60,7 +60,10 @@ test("compat real masking -> XLSX bytes -> readback preserves Chinese/date/numbe
 });
 test("compat streaming XLSX uses actual Archiver and unzipper.Parse(forceStream), preserving multiple rows",async t=>{
  const dir=await fixture(t),file=path.join(dir,"串流 報表.xlsx"),date=new Date("2026-10-31T01:02:03.000Z");
- const writer=new ExcelJS.stream.xlsx.WorkbookWriter({filename:file,useSharedStrings:true,useStyles:true}),sheet=writer.addWorksheet("串流");
+ // ExcelJS streaming reads may encounter worksheets before sharedStrings.xml;
+ // use inline strings for the deterministic streaming round-trip (the buffered
+ // XLSX masking/readback test above independently verifies formatted text).
+ const writer=new ExcelJS.stream.xlsx.WorkbookWriter({filename:file,useSharedStrings:false,useStyles:true}),sheet=writer.addWorksheet("串流");
  for(let i=0;i<120;i++)sheet.addRow([`合○資料${i}`,i+0.25,date]).commit();await writer.commit();assert((await readFile(file)).length>100);
  let count=0;for await(const ws of new ExcelJS.stream.xlsx.WorkbookReader(file,{sharedStrings:"cache",styles:"cache",worksheets:"emit"})){
   for await(const row of ws){assert.equal(row.getCell(1).value,`合○資料${count}`);assert.equal(row.getCell(2).value,count+0.25);assert.equal((row.getCell(3).value as Date).toISOString(),date.toISOString());count++;}

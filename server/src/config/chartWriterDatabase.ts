@@ -9,6 +9,10 @@ import {
  CHART_WRITER_APPROVED_PROCEDURE_SHA256,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
  attestChartWriterSqlPools,
 } from "../modules/dashboard/dashboardChartWriterBoundary.js";
+import {CHART_LOCAL_JWT_WRITER_RELEASE_APPROVED}
+ from "../modules/dashboard/dashboardChartLocalJwtSqlCreate.js";
+import {CHART_SQL_APPROVED_PLATFORM_SID,CHART_SQL_APPROVED_WRITER_SID}
+ from "../modules/dashboard/dashboardChartSqlPrincipalPreflight.js";
 
 export type ChartDbSettings=Readonly<{
  enabled:boolean;platformServer?:string;platformPort:number;
@@ -62,7 +66,14 @@ let generation=0;
 export async function getChartWriterDbPool():Promise<sql.ConnectionPool|null>{
  if(!CHART_ATOMIC_CREATE_RUNTIME_ENABLED||
     !CHART_WRITER_APPROVED_PROCEDURE_SHA256||
-    !CHART_WRITER_DB_ACTOR_BINDING_APPROVED)return null;
+    !CHART_SQL_APPROVED_PLATFORM_SID||!CHART_SQL_APPROVED_WRITER_SID||
+    !(CHART_WRITER_DB_ACTOR_BINDING_APPROVED||
+      CHART_LOCAL_JWT_WRITER_RELEASE_APPROVED))return null;
+ // Option A accepts UQP as the original LOCAL JWT identity authority; SQL
+ // still enforces separately approved Writer credentials/SID, procedure
+ // digest, least privilege and transactional authorization.
+ const pins={platform:CHART_SQL_APPROVED_PLATFORM_SID,
+             writer:CHART_SQL_APPROVED_WRITER_SID};
  // A previously attested SQL connection is NOT permanently trusted.
  // Revalidate both original logins, grants and the pinned procedure digest
  // before every later pool handoff; a revoked grant or altered procedure
@@ -72,7 +83,7 @@ export async function getChartWriterDbPool():Promise<sql.ConnectionPool|null>{
    try{
      const platform=await getPlatformDbPool();
      if(!platform)throw Error("PLATFORM_DB_UNAVAILABLE");
-     await attestChartWriterSqlPools(platform,active);
+     await attestChartWriterSqlPools(platform,active,CHART_WRITER_APPROVED_PROCEDURE_SHA256,pins);
      await attestChartWriterBaseSqlCatalog(active);
      return active;
    }catch{
@@ -90,7 +101,7 @@ export async function getChartWriterDbPool():Promise<sql.ConnectionPool|null>{
      const platform=await getPlatformDbPool();
      if(!platform)return null;
      candidate=await new sql.ConnectionPool(config).connect();
-     await attestChartWriterSqlPools(platform,candidate);
+     await attestChartWriterSqlPools(platform,candidate,CHART_WRITER_APPROVED_PROCEDURE_SHA256,pins);
      await attestChartWriterBaseSqlCatalog(candidate);
      if(epoch!==generation){await candidate.close();return null;}
      active=candidate;return active;

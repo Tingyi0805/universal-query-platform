@@ -383,7 +383,8 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   };
   const writeSigned=(s:ProofScope,grant:{GrantId:string;Secret:Buffer},
       changes:Readonly<{actor?:number;token?:number;config?:string;secret?:Buffer;
-        requestId?:string;profile?:number;dashboard?:number}>={})=>
+        requestId?:string;profile?:number;dashboard?:number;
+        source?:string}>={})=>
     db.request()
       .input("grant",sql.UniqueIdentifier,grant.GrantId)
       .input("secret",sql.VarBinary(sql.MAX),changes.secret??grant.Secret)
@@ -392,7 +393,7 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
       .input("dashboard",sql.BigInt,changes.dashboard??s.dashboard)
       .input("profile",sql.BigInt,changes.profile??s.profile)
       .input("request",sql.UniqueIdentifier,changes.requestId??s.requestId)
-      .input("source",sql.NVarChar(64),s.source)
+      .input("source",sql.NVarChar(64),changes.source??s.source)
       .input("config",sql.NVarChar(sql.MAX),changes.config??chartJson)
       .input("x",sql.Int,s.x).input("y",sql.Int,s.y)
       .input("width",sql.Int,s.width).input("height",sql.Int,s.height)
@@ -417,10 +418,14 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     {actor:77},{token:2},{dashboard:8},{profile:23},
     {config:JSON.stringify({...JSON.parse(chartJson),maxPoints:21})},
     {secret:Buffer.alloc(32,0x55)},{requestId:randomUUID()},
+    // A signed PRIMARY grant cannot be repurposed as a different source
+    // solely because the SQL Server database collation ignores case.
+    {source:"Primary"},{source:"primary"},{source:"PrImArY"},
   ]){
     await assert.rejects(writeSigned(signedChart,signedChartGrant,modifications),forbidden);
     assert.deepEqual(await writerCounts(),beforeWrite);
   }
+  console.log("CHART_SIGNED_WRITER_EXACT_CASE_SOURCE_SCOPE_DENY_PASS");
   // A valid signed grant is still denied if the Actor is revoked after issue
   // and before SQL Writer obtains its transaction-scoped locks.
   await db.request().query("UPDATE uqp.AppUser SET IsActive=0 WHERE Id=8");
@@ -430,6 +435,49 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     await db.request().query("UPDATE uqp.AppUser SET IsActive=1 WHERE Id=8");
   }
   assert.deepEqual(await writerCounts(),beforeWrite);
+  // A valid SIGNED grant and active global roles must not permit creation
+  // after Query-specific ACL, publication, active source or QueryMode changes.
+  // These denials occur inside the same Writer transaction, before it
+  // consumes the grant or produces Ledger/Audit/Widget/Seal records.
+  const deniedAfterSigning=async(change:string,restore:string)=>{
+    await db.request().query(change);
+    try{
+      await assert.rejects(writeSigned(signedChart,signedChartGrant),forbidden);
+      assert.deepEqual(await writerCounts(),beforeWrite);
+    }finally{
+      await db.request().query(restore);
+    }
+  };
+  await deniedAfterSigning(
+    "UPDATE uqp.RoleQueryAccess SET CanExecute=0 WHERE RoleId=1 AND QueryDefinitionId=9",
+    "UPDATE uqp.RoleQueryAccess SET CanExecute=1 WHERE RoleId=1 AND QueryDefinitionId=9");
+  await deniedAfterSigning(
+    "UPDATE uqp.RoleQueryAccess SET CanView=0 WHERE RoleId=1 AND QueryDefinitionId=9",
+    "UPDATE uqp.RoleQueryAccess SET CanView=1 WHERE RoleId=1 AND QueryDefinitionId=9");
+  await deniedAfterSigning(
+    "UPDATE uqp.QueryDefinition SET IsPublished=0 WHERE Id=9",
+    "UPDATE uqp.QueryDefinition SET IsPublished=1 WHERE Id=9");
+  await deniedAfterSigning(
+    "UPDATE uqp.Dataset SET IsActive=0 WHERE Id=10",
+    "UPDATE uqp.Dataset SET IsActive=1 WHERE Id=10");
+  await deniedAfterSigning(
+    "UPDATE uqp.DataSource SET IsActive=0 WHERE Id=11",
+    "UPDATE uqp.DataSource SET IsActive=1 WHERE Id=11");
+  await deniedAfterSigning(
+    "UPDATE uqp.Dashboard SET QueryMode=N'QUERY_ONLY_DISABLED' WHERE Id=7",
+    "UPDATE uqp.Dashboard SET QueryMode=N'QUERY_ONLY' WHERE Id=7");
+  await deniedAfterSigning(
+    "INSERT uqp.DashboardDataSource(DashboardId,SourceKey,DatasetId,"+
+    "QueryDefinitionId,IsEnabled,QueryBindingRevision,MaxRows)"+
+    " VALUES(7,N'Primary',10,9,1,1,3000)",
+    "DELETE FROM uqp.DashboardDataSource WHERE DashboardId=7");
+  await deniedAfterSigning(
+    "INSERT uqp.Dataset(Id,IsArchived) VALUES(12,1);"+
+    "INSERT uqp.DatasetParameter(DatasetId,LookupDatasetId) VALUES(10,12)",
+    "DELETE FROM uqp.DatasetParameter WHERE DatasetId=10;"+
+    "DELETE FROM uqp.Dataset WHERE Id=12");
+  assert.deepEqual(await writerCounts(),beforeWrite);
+  console.log("CHART_SIGNED_WRITER_SAME_TX_QUERY_ACL_BINDING_REVOKE_PASS");
   const committed=await writeSigned(signedChart,signedChartGrant);
   const output=committed.recordset[0];
   const widgetId=Number(output?.WidgetId),auditId=Number(output?.AuditLogId);
@@ -592,14 +640,14 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
   const syntheticJwtSecret="chart-http-synthetic-"+randomBytes(24).toString("hex");
   env.JWT_SECRET=syntheticJwtSecret;
   let actor8Session={
-    isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY"],
+    isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
   };
   const app=express();
   app.use(express.json({limit:"12kb"}));
   app.use(createAuthenticateJwt(async(userId:number)=>{
     if(userId===8)return actor8Session;
     if(userId===77)return {
-      isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY"],
+      isActive:true,tokenVersion:1,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
     };
     return null;
   }));
@@ -664,6 +712,17 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     const invalidJwt=jwt.sign({sub:"8",tokenVersion:1},"wrong-test-key");
     assert.equal((await send(body,invalidJwt)).status,401);
     assert.equal((await send(body,createToken(8,2))).status,401);
+    // HTTP may still hold a valid JWT, but SQL's current RBAC wins.
+    // Missing EXECUTE_QUERY must not create a nonce or signed grant.
+    await db.request().query(
+      "DELETE FROM uqp.RolePermission WHERE RoleId=1 AND PermissionId=5");
+    try {
+      assert.equal((await send(body)).status,403);
+      assert.deepEqual(await countSigned(),beforeHttp);
+    } finally {
+      await db.request().query(
+        "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,5)");
+    }
     for(const forged of [
       {actorId:77},{ActorId:77},{tokenVersion:5},
       {grantId:randomUUID()},{issuerSid:"fake"},{secret:"fake"},
@@ -671,7 +730,7 @@ DENY EXECUTE ON OBJECT::uqp.usp_ChartIssuerMacVerify_IsolatedDraft
     ])assert.equal((await send({...body,...forged})).status,403);
     actor8Session={...actor8Session,permissions:[]};
     assert.equal((await send(body)).status,403);
-    actor8Session={...actor8Session,permissions:["DESIGN_QUERY"],isActive:false};
+    actor8Session={...actor8Session,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],isActive:false};
     assert.equal((await send(body)).status,401);
     actor8Session={...actor8Session,isActive:true,tokenVersion:2};
     assert.equal((await send(body)).status,401);

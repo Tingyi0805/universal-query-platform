@@ -29,7 +29,7 @@ test("2B-15C actor is bound ONLY to verified JWT + live session, never request b
  const old=env.JWT_SECRET;
  env.JWT_SECRET="synthetic-chart-session-secret-not-production";
  let session={
-  isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"],
+  isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
  };
  const app=express();app.use(express.json());
  app.use(createAuthenticateJwt(async()=>session));
@@ -68,11 +68,15 @@ test("2B-15C actor is bound ONLY to verified JWT + live session, never request b
    {issuerApproved:true},{delegationConsumed:false},
   ])assert.equal((await send({...body,...field})).status,403);
   assert.equal((await send({...body,profileId:0})).status,403);
+  session={...session,permissions:["DESIGN_QUERY"]};
+  assert.equal((await send(body)).status,403);
+  session={...session,permissions:["EXECUTE_QUERY"]};
+  assert.equal((await send(body)).status,403);
   session={...session,permissions:[]};
   assert.equal((await send(body)).status,403);
   // No permission in the verified DB session: a forged authUser cannot grant it.
   assert.equal((await send(body,token,url.replace("/chart-plan","/chart-poisoned"))).status,403);
-  session={...session,permissions:["DESIGN_QUERY"],tokenVersion:4};
+  session={...session,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],tokenVersion:4};
   assert.equal((await send(body)).status,401);
   session={...session,tokenVersion:3,isActive:false};
   assert.equal((await send(body)).status,401);
@@ -100,13 +104,15 @@ test("2B-15C final transaction recheck fails closed on revoke, missing DB and RB
  const mock=(state:unknown)=>async(_id:number,_tx?:unknown)=>state as
    Awaited<ReturnType<typeof import("../auth/auth.repository.js").getTokenSessionState>>;
  assert.equal(await recheckChartActorInTransaction(tx,plan,mock({
-  isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"],
+  isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
  }) as never),true);
  for(const state of [
   null,undefined,
   {isActive:false,tokenVersion:3,permissions:["DESIGN_QUERY"]},
   {isActive:true,tokenVersion:4,permissions:["DESIGN_QUERY"]},
   {isActive:true,tokenVersion:3,permissions:[]},
+  {isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"]},
+  {isActive:true,tokenVersion:3,permissions:["EXECUTE_QUERY"]},
  ])assert.equal(await recheckChartActorInTransaction(tx,plan,mock(state) as never),false);
  assert.equal(await recheckChartActorInTransaction(tx,plan,async()=>{throw Error("DATABASE_FAILURE");}),false);
 });
@@ -136,7 +142,7 @@ test("2B-15C dormant write preflight demands verified actor AND two independent 
  const chartPool=fakePool(()=>writerIdentity);
  const app=express(); app.use(express.json());
  app.use(createAuthenticateJwt(async()=>({
-   isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY"],
+   isActive:true,tokenVersion:3,permissions:["DESIGN_QUERY","EXECUTE_QUERY"],
  })));
  app.post("/preflight",async(req,res)=>{
    const plan=await prepareDormantChartWriteRequest(req,7,req.body,appPool,chartPool);

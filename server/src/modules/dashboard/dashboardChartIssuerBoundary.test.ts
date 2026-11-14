@@ -9,6 +9,7 @@ import {
 } from "./dashboardChartIssuerBoundary.js";
 
 const digest="a".repeat(64);
+const approvedSids={platform:"AA",issuer:"BB",writer:"CC"};
 const base={
  DbName:"UQP_TEST",ServerName:"CI_SQL",OriginalSid:"AA",EffectiveUser:"platform",
  IssuerProcedureId:123,IssuerProcedureSha256:digest,
@@ -25,7 +26,7 @@ const platform=()=>({...base});
 const issuer=()=>({...base,OriginalSid:"BB",EffectiveUser:"issuer",IssueExecute:1});
 const writer=()=>({...base,OriginalSid:"CC",EffectiveUser:"writer",CreateExecute:1});
 const check=(p:Record<string,unknown>,i:Record<string,unknown>,w:Record<string,unknown>)=>
- attestChartIssuerSqlPrincipals(p,i,w,digest);
+ attestChartIssuerSqlPrincipals(p,i,w,digest,approvedSids);
 const rejects=(code:string,action:()=>unknown)=>
  assert.throws(action,(e:unknown)=>e instanceof ChartIssuerBoundaryError&&e.code===code);
 
@@ -33,11 +34,29 @@ test("2B-15D-8 three distinct SQL ORIGINAL_LOGIN identities are required",()=>{
  assert.match(chartIssuerIdentitySql,/ORIGINAL_LOGIN\(\)/);
  assert.match(chartIssuerIdentitySql,/SUSER_SID/);
  assert.match(chartIssuerIdentitySql,/sys\.sql_modules/);
+ // Procedure identity, digest and EXECUTE/ALTER rights are checked only
+ // for the independently reviewed signed Issuer. Never attest an unsigned
+ // legacy Issuer under the same approved hash or privilege decision.
+ assert.equal((chartIssuerIdentitySql.match(/uqp\.usp_ChartDelegationIssueSigned/g)??[]).length,4);
+ assert.doesNotMatch(chartIssuerIdentitySql,/uqp\.usp_ChartDelegationIssue'/);
+
  assert.match(chartIssuerIdentitySql,/HASHBYTES\('SHA2_256'/);
  assert.match(chartIssuerIdentitySql,/HAS_PERMS_BY_NAME/);
  assert.match(chartIssuerIdentitySql,/^SELECT\s/);
  assert.doesNotMatch(chartIssuerIdentitySql,/\b(?:INSERT INTO|UPDATE uqp\.|DELETE FROM|GRANT EXECUTE)\b/i);
  assert.equal(CHART_ISSUER_APPROVED_PROCEDURE_SHA256,null);
+ // The callable pure predicate must also require independently approved pins.
+ rejects("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest));
+ rejects("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest,
+     {...approvedSids,issuer:"AA"}));
+ rejects("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest,
+     {...approvedSids,writer:"cc"}));
+ rejects("CHART_ISSUER_LOGIN_SID_NOT_APPROVED",()=>
+   attestChartIssuerSqlPrincipals(platform(),issuer(),writer(),digest,
+     {...approvedSids,writer:"DD"}));
  assert.doesNotThrow(()=>check(platform(),issuer(),writer()));
  for(const oldSid of ["AA","CC"])
   rejects("CHART_ISSUER_LOGINS_NOT_ISOLATED",()=>
@@ -114,17 +133,29 @@ test("2B-15D-8 pools are independent; unapproved release never executes SQL",asy
  await assert.rejects(attestChartIssuerSqlPools(p,i,w),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_RELEASE_NOT_APPROVED");
  assert.equal(queries,0);
- await assert.doesNotReject(attestChartIssuerSqlPools(p,i,w,digest));
+ // A valid reviewed hash is insufficient when independent login SIDs are absent.
+ await assert.rejects(attestChartIssuerSqlPools(p,i,w,digest),(e:unknown)=>
+   e instanceof ChartIssuerBoundaryError&&
+   e.code==="CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
+ for(const invalid of [
+   {...approvedSids,platform:"AA",issuer:"AA"},
+   {...approvedSids,writer:"cc"},
+   {...approvedSids,platform:""},
+ ])await assert.rejects(attestChartIssuerSqlPools(p,i,w,digest,invalid),(e:unknown)=>
+   e instanceof ChartIssuerBoundaryError&&
+   e.code==="CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
+ assert.equal(queries,0);
+ await assert.doesNotReject(attestChartIssuerSqlPools(p,i,w,digest,approvedSids));
  assert.equal(queries,3);
- await assert.rejects(attestChartIssuerSqlPools(p,p,w,digest),(e:unknown)=>
+ await assert.rejects(attestChartIssuerSqlPools(p,p,w,digest,approvedSids),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_POOL_NOT_ISOLATED");
- await assert.rejects(attestChartIssuerSqlPools(p,i,i,digest),(e:unknown)=>
+ await assert.rejects(attestChartIssuerSqlPools(p,i,i,digest,approvedSids),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_POOL_NOT_ISOLATED");
  assert.equal(queries,3);
- await assert.rejects(attestChartIssuerSqlPools(p,pool(null),w,digest),(e:unknown)=>
+ await assert.rejects(attestChartIssuerSqlPools(p,pool(null),w,digest,approvedSids),(e:unknown)=>
    e instanceof ChartIssuerBoundaryError&&e.code==="CHART_ISSUER_IDENTITY_UNAVAILABLE");
  await assert.rejects(attestChartIssuerSqlPools(
-  {request:()=>{throw Error("DATABASE_UNAVAILABLE");}} as unknown as sql.ConnectionPool,i,w,digest),
+  {request:()=>{throw Error("DATABASE_UNAVAILABLE");}} as unknown as sql.ConnectionPool,i,w,digest,approvedSids),
   (e:unknown)=>e instanceof ChartIssuerBoundaryError&&
     e.code==="CHART_ISSUER_IDENTITY_UNAVAILABLE");
 });

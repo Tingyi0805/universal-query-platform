@@ -1,4 +1,5 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { createDashboardPageSnapshot } from "./dashboardPageSnapshot.js";
 import {
@@ -77,19 +78,34 @@ type Scenario = {
   changeReview?: boolean;
   failedAudit?: boolean;
   changeWidget?: boolean;
+  changeWidgetAfterFence?: boolean;
+  revokeDeviceAfterPage?: boolean;
+  expireUserAfterPage?: boolean;
   context?: "device" | "admin-preview";
   validDeviceProof?: boolean;
   expiredUser?: boolean;
   unreviewedPublic?: boolean;
   invalidPublicThreshold?: boolean;
   wrongReviewScope?: boolean;
+  approvedPlayback?: boolean;
+  missingPlaybackApproval?: boolean;
+  noPlaybackReader?: boolean;
+  revokePlaybackAfterPage?: boolean;
+  stalePlaybackRevision?: boolean;
+  stalePlaybackDigest?: boolean;
 };
 function fixture(options: Scenario = {}) {
   const isPublic = options.isPublic ?? Boolean(options.context);
+  let deviceProofCalls = 0;
   const actor: ExecutionSubject = options.context === "device"
     ? { ...viewer, context: "device", deviceId: 71,
       verifyDevice: options.validDeviceProof
-        ? async () => ({ deviceId: 71, userId: 8, tokenVersion: 1, fingerprint: "synthetic" })
+        ? async () => {
+            deviceProofCalls++;
+            if (options.revokeDeviceAfterPage && deviceProofCalls > 1)
+              throw Error("DEVICE_GRANT_REVOKED_SYNTHETIC");
+            return { deviceId: 71, userId: 8, tokenVersion: 1, fingerprint: "synthetic" };
+          }
         : undefined }
     : options.context === "admin-preview" ? { ...viewer, context: "admin-preview" }
     : isPublic ? { ...viewer, expiresAt: options.expiredUser
@@ -110,14 +126,29 @@ function fixture(options: Scenario = {}) {
     rows,
   });
   let readWidget = 0, reads = 0, calls = 0, publicReads = 0, fenceReads = 0;
+  let playbackReads = 0;
   const savedFacts = facts(isPublic);
   const deps: ChartCoordinatorDependencies = {
     enabled: () => options.enabled !== false,
+    readPlaybackApproval: options.noPlaybackReader ? undefined : async (_dashboardId, widgetId) => {
+      playbackReads++;
+      if (options.missingPlaybackApproval ||
+          (options.context === "admin-preview" && !options.approvedPlayback)) return null;
+      return {
+        widgetId, widgetRevision: options.stalePlaybackRevision ? "b".repeat(16) : "a".repeat(16),
+        configDigest: options.stalePlaybackDigest ? "0".repeat(64) :
+          createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+        reviewerUserId: 3, auditLogId: "42",
+        reviewerIsActiveAdmin: true, auditReceiptVerified: true,
+        status: options.revokePlaybackAfterPage && calls > 0 ? "REVOKED" : "APPROVED",
+      };
+    },
     readSavedWidget: async (id, widgetId) => {
       readWidget++;
       return options.denyWidget ? null : {
         dashboardId: id, id: widgetId, widgetType: "CHART",
-        revision: options.changeWidget && calls > 0
+        revision: (options.changeWidget && calls > 0) ||
+          (options.changeWidgetAfterFence && fenceReads > 1)
           ? "b".repeat(16) : "a".repeat(16), config,
       };
     },
@@ -132,6 +163,8 @@ function fixture(options: Scenario = {}) {
     },
     auditedPage: { page: async () => {
       calls++;
+      if (options.expireUserAfterPage && actor.expiresAt)
+        actor.expiresAt = Math.floor(Date.now() / 1000) - 1;
       if (options.failedAudit) throw new Error("PATIENT_AUDIT_UNAVAILABLE:SECRET");
       const provided = rows.map(row => ({
         ROOM: options.masked ? "○○○" : row.ROOM, TOTAL: row.TOTAL,
@@ -170,6 +203,8 @@ function fixture(options: Scenario = {}) {
     actor, invoke: (id = 7, wid = 88) =>
       createDormantChartCoordinator(deps)(id, wid, actor),
     counts: () => ({ readWidget, reads, calls, publicReads, fenceReads }),
+    deviceProofCalls: () => deviceProofCalls,
+    playbackReads: () => playbackReads,
   };
 }
 async function refused(f: ReturnType<typeof fixture>) {
@@ -267,6 +302,30 @@ test("valid synthetic device proof still requires public review and existing aud
   });
   assert.equal(f.counts().publicReads, 2);
 });
+test("a public JWT that expires during audited page delivery cannot return chart data",async()=>{
+  const f=fixture({isPublic:true,expireUserAfterPage:true});
+  await refused(f);
+  assert.equal(f.counts().calls,1);
+  assert.equal(f.counts().publicReads,2);
+  assert.equal(f.counts().fenceReads,2);
+});
+
+test("a device revoked after first proof is rechecked after audited playback",async()=>{
+  const f=fixture({context:"device",validDeviceProof:true,revokeDeviceAfterPage:true});
+  await refused(f);
+  assert.equal(f.counts().calls,1);
+  assert.equal(f.deviceProofCalls(),2);
+  assert.equal(f.counts().fenceReads,2);
+});
+
+test("a Widget seal changed after the final Query fence cannot return stale points",async()=>{
+  const f=fixture({changeWidgetAfterFence:true});
+  await refused(f);
+  assert.equal(f.counts().calls,1);
+  assert.equal(f.counts().fenceReads,2);
+  assert.equal(f.counts().readWidget,3);
+});
+
 test("admin-preview is treated as public, never internal designer mode", async () => {
   const f = fixture({ context: "admin-preview", noReview: true });
   await refused(f);
@@ -283,5 +342,76 @@ test("unreviewed, invalid-threshold or wrong-scope public review prevents Query 
     await refused(f);
     assert.equal(f.counts().calls, 0);
     assert.equal(f.counts().publicReads, 1);
+  }
+});
+
+test("admin preview requires exact administrator playback authorization before Query", async () => {
+  const f = fixture({context:"admin-preview"});
+  await refused(f);
+  assert.equal(f.counts().calls, 0);
+  assert.equal(f.playbackReads(), 1);
+});
+
+test("admin preview with approved version still passes existing privacy review", async () => {
+  const f = fixture({context:"admin-preview", approvedPlayback:true});
+  const result = await f.invoke();
+  assert.equal(result.points.length, 2);
+  assert.equal(f.counts().publicReads, 2);
+  assert.ok(f.playbackReads() >= 3);
+});
+
+test("revoked admin playback approval during audited Query cannot release points", async () => {
+  const f = fixture({context:"admin-preview", approvedPlayback:true, revokePlaybackAfterPage:true});
+  await refused(f);
+  assert.equal(f.counts().calls, 1);
+  assert.ok(f.playbackReads() >= 3);
+});
+
+test("user and device playback reject missing administrator approval before Query", async () => {
+  for (const scenario of [
+    {isPublic:true, missingPlaybackApproval:true},
+    {context:"device" as const, validDeviceProof:true, missingPlaybackApproval:true},
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 0);
+    assert.equal(f.playbackReads(), 1);
+  }
+});
+
+test("changed chart revision or config digest invalidates admin playback approval", async () => {
+  for (const scenario of [
+    {context:"admin-preview" as const, approvedPlayback:true, stalePlaybackRevision:true},
+    {context:"admin-preview" as const, approvedPlayback:true, stalePlaybackDigest:true},
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 0);
+    assert.equal(f.playbackReads(), 1);
+  }
+});
+
+test("revocation during user/device playback prevents data release", async () => {
+  for (const scenario of [
+    {isPublic:true, revokePlaybackAfterPage:true},
+    {context:"device" as const, validDeviceProof:true, revokePlaybackAfterPage:true},
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 1);
+    assert.ok(f.playbackReads() >= 3);
+  }
+});
+
+test("missing production approval reader fails closed for every playback context", async () => {
+  for (const scenario of [
+    {isPublic:true, noPlaybackReader:true},
+    {context:"device" as const, validDeviceProof:true, noPlaybackReader:true},
+    {context:"admin-preview" as const, noPlaybackReader:true},
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 0);
+    assert.equal(f.playbackReads(), 0);
   }
 });

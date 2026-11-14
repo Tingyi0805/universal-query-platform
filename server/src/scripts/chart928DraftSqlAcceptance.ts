@@ -7,6 +7,8 @@ import {randomBytes,createHash} from "node:crypto";
 import sql from "mssql";
 import {
   attestChart928TriggerCatalog,Chart928CatalogError,
+  parseChart928DisposablePermitTriggerDefinitions,
+  attestChart928TriggerCatalogDefinitions,
 } from "./chart928TriggerAttestation.js";
 import {
   chartWriterIdentitySql,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
@@ -32,6 +34,21 @@ export async function verifyChart928DraftSql(
   throw Error("CHART_928_TARGET_IDENTITY_MISMATCH");
  const name="UQP_CH_"+randomBytes(6).toString("hex");
  const script=await readFile(sqlPath,"utf8");
+ // The 928 base schema is still a disposable draft. Unlike the release
+ // installer, it MUST refuse non-UQP_CH_ targets before any schema DDL.
+ assert(script.includes("IF LEFT(DB_NAME(),7)<>N'UQP_CH_' OR LEN(DB_NAME())<>19\n OR SUBSTRING(DB_NAME(),8,12) COLLATE Latin1_General_100_BIN2 LIKE N'%[^0-9a-f]%'\n THROW 51928,'CHART_928_DISPOSABLE_ONLY',1;"));
+ // Execute the actual draft against master in the already isolated SQL CI container.
+ // It must THROW before any DDL, transaction or application-table access.
+ await assert.rejects(
+  admin.request().batch(script),
+  (error:unknown)=>{
+   const value=error as {number?:number;message?:string};
+   return value?.number===51928 &&
+    String(value.message).includes("CHART_928_DISPOSABLE_ONLY");
+  },
+  "CHART_928_DRAFT_MUST_REJECT_MASTER",
+ );
+ console.log("CHART_928_DRAFT_NON_DISPOSABLE_TARGET_DENIED_PASS");
  const readinessScript=await readFile(readinessPath,"utf8");
  // This tool must remain a SELECT-only catalog report, not a migration.
  assert(!/^\s*(?:CREATE|ALTER|DROP|MERGE|INSERT|UPDATE|DELETE|TRUNCATE|EXEC(?:UTE)?|GRANT|REVOKE|DENY)\b/im.test(readinessScript));
@@ -59,9 +76,14 @@ export async function verifyChart928DraftSql(
    "CREATE TABLE uqp.Permission(Id BIGINT NOT NULL PRIMARY KEY,Code NVARCHAR(100) NOT NULL); " +
    "CREATE TABLE uqp.UserRole(UserId BIGINT NOT NULL,RoleId BIGINT NOT NULL); " +
    "CREATE TABLE uqp.RolePermission(RoleId BIGINT NOT NULL,PermissionId BIGINT NOT NULL); " +
-   "CREATE TABLE uqp.QueryDefinition(Id BIGINT NOT NULL PRIMARY KEY); " +
-   "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY); " +
-   "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY); " +
+   "CREATE TABLE uqp.DataSource(Id BIGINT NOT NULL PRIMARY KEY,IsActive BIT NOT NULL DEFAULT(1)); " +
+   "CREATE TABLE uqp.QueryDefinition(Id BIGINT NOT NULL PRIMARY KEY,DatasetId BIGINT NOT NULL DEFAULT(10),IsActive BIT NOT NULL DEFAULT(1),IsPublished BIT NOT NULL DEFAULT(1),IsArchived BIT NOT NULL DEFAULT(0)); " +
+   "CREATE TABLE uqp.Dataset(Id BIGINT NOT NULL PRIMARY KEY,DataSourceId BIGINT NOT NULL DEFAULT(11),IsActive BIT NOT NULL DEFAULT(1),IsArchived BIT NOT NULL DEFAULT(0)); " +
+   "CREATE TABLE uqp.Dashboard(Id BIGINT NOT NULL PRIMARY KEY,QueryDefinitionId BIGINT NOT NULL DEFAULT(9),IsActive BIT NOT NULL DEFAULT(1),QueryMode NVARCHAR(30) NOT NULL DEFAULT(N'QUERY_ONLY'),QueryModeVersion INT NOT NULL DEFAULT(1),QuerySourceMaxRows INT NULL DEFAULT(3000)); " +
+   "CREATE TABLE uqp.DashboardDataSource(DashboardId BIGINT NOT NULL,SourceKey NVARCHAR(64) NOT NULL,DatasetId BIGINT NOT NULL,QueryDefinitionId BIGINT NULL,IsEnabled BIT NOT NULL,QueryBindingRevision INT NULL,MaxRows INT NULL); " +
+   "CREATE TABLE uqp.UserQueryAccess(UserId BIGINT NOT NULL,QueryDefinitionId BIGINT NOT NULL,CanView BIT NOT NULL,CanExecute BIT NOT NULL); " +
+   "CREATE TABLE uqp.RoleQueryAccess(RoleId BIGINT NOT NULL,QueryDefinitionId BIGINT NOT NULL,CanView BIT NOT NULL,CanExecute BIT NOT NULL); " +
+   "CREATE TABLE uqp.DatasetParameter(DatasetId BIGINT NOT NULL,LookupDatasetId BIGINT NULL); " +
    "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY," +
    " DashboardId BIGINT NOT NULL," +
    " CONSTRAINT FK_DashboardDisplayProfile_Dashboard FOREIGN KEY(DashboardId)" +
@@ -92,7 +114,8 @@ export async function verifyChart928DraftSql(
   await q("SET IDENTITY_INSERT uqp.AppUser ON; " +
    "INSERT uqp.AppUser(Id) VALUES(8),(77); " +
    "SET IDENTITY_INSERT uqp.AppUser OFF; " +
-   "INSERT uqp.QueryDefinition(Id) VALUES(9); INSERT uqp.Dataset(Id) VALUES(10); " +
+   "INSERT uqp.DataSource(Id) VALUES(11); INSERT uqp.Dataset(Id) VALUES(10); " +
+   "INSERT uqp.QueryDefinition(Id) VALUES(9); " +
    "INSERT uqp.Dashboard(Id) VALUES(7); " +
    "SET IDENTITY_INSERT uqp.DashboardDisplayProfile ON; " +
    "INSERT uqp.DashboardDisplayProfile(Id,DashboardId) VALUES(22,7); " +
@@ -111,9 +134,10 @@ export async function verifyChart928DraftSql(
   console.log("CHART_2B15C_BASE_SCHEMA_COLUMNS_FK_2019_2022_PASS");
   stage="ATOMIC_CREATE_ROLE_FIXTURE";
   await q("INSERT uqp.Role(Id,IsActive) VALUES(1,1);" +
-    "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY');" +
+    "INSERT uqp.Permission(Id,Code) VALUES(4,N'DESIGN_QUERY'),(5,N'EXECUTE_QUERY');" +
     "INSERT uqp.UserRole(UserId,RoleId) VALUES(8,1);" +
-    "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4);");
+    "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4),(1,5);" +
+     "INSERT uqp.RoleQueryAccess(RoleId,QueryDefinitionId,CanView,CanExecute) VALUES(1,9,1,1);");
   stage="IDENTITY_SCHEMA_PARITY";
   const identity=(await q(
     "SELECT COLUMNPROPERTY(OBJECT_ID(N'uqp.DashboardWidget'),N'Id','IsIdentity') AS WidgetIdentity, " +
@@ -248,6 +272,19 @@ export async function verifyChart928DraftSql(
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='REQUESTED' WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
     "Status='REVOKED',QueryId=99,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
+  // Revocation may shorten validity and record a new audit receipt, but
+  // must never extend approved expiry, alter exact scope or change reviewers.
+  await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',ValidUntilUtc=DATEADD(day,1,ValidUntilUtc),AuditLogId=4 WHERE Id=1");
+  for(const mutation of [
+    "SourceKey=N'PRIMARY '","SourceKey=N'primary'",
+    "CategoryColumn=N'ROOM '","ValueColumn=N'TOTAL '",
+  ])await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',"+mutation+",ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
+  await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',MinimumCellCount=6,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
+  await rejects("UPDATE uqp.DashboardChartPrivacyReview SET " +
+    "Status='REVOKED',ReviewerUserId=8,ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await q("UPDATE uqp.DashboardChartPrivacyReview SET " +
     "Status='REVOKED',ValidUntilUtc=SYSUTCDATETIME(),AuditLogId=4 WHERE Id=1");
   await rejects("UPDATE uqp.DashboardChartPrivacyReview SET Status='APPROVED' WHERE Id=1");
@@ -256,6 +293,11 @@ export async function verifyChart928DraftSql(
   const reqid="'00000000-0000-4000-8000-000000000111'";
   await q("INSERT uqp.DashboardChartTrustRequest(RequestId,Action,ActorId) " +
     "VALUES("+reqid+",N'SEAL_WIDGET',8)");
+  // Before receipt finalization, SQL padded/case-insensitive '=' must not
+  // permit rewriting an immutable ledger Action under a forged spelling.
+  for(const action of ["N'SEAL_WIDGET '","N'seal_widget'"])
+    await rejects("UPDATE uqp.DashboardChartTrustRequest SET Action="+action+
+      ",AuditLogId=1 WHERE RequestId="+reqid);
   await q("UPDATE uqp.DashboardChartTrustRequest SET AuditLogId=1 WHERE RequestId="+reqid);
   await rejects("UPDATE uqp.DashboardChartTrustRequest SET AuditLogId=1 WHERE RequestId="+reqid);
   await rejects("DELETE FROM uqp.DashboardChartTrustRequest WHERE RequestId="+reqid);
@@ -361,6 +403,17 @@ export async function verifyChart928DraftSql(
   await assert.rejects(db.request().batch(script), (err:unknown)=>err instanceof Error);
   await q("ENABLE TRIGGER uqp.TR_DashboardWidget_ChartFreeze ON uqp.DashboardWidget");
   await attestChart928TriggerCatalog(db,script);
+  stage="DISABLED_CHART_CHECK_REJECT";
+  await q("ALTER TABLE uqp.DashboardChartPrivacyReview NOCHECK CONSTRAINT CK_ChartReview_Scope");
+  await assert.rejects(db.request().batch(script),
+    (error:unknown)=>{
+      const sqlError=error as {number?:number;message?:string};
+      return sqlError?.number===51928 &&
+        String(sqlError.message).includes("CHART_928_CHECK_CONSTRAINTS_INVALID");
+    });
+  await q("ALTER TABLE uqp.DashboardChartPrivacyReview WITH CHECK CHECK CONSTRAINT CK_ChartReview_Scope");
+  await db.request().batch(script);
+  console.log("CHART_928_DISABLED_CHECK_RERUN_REJECT_PASS");
   stage="FINAL";
   await check();
   await attestChartWriterBaseSqlCatalog(db);
@@ -387,6 +440,13 @@ export async function verifyChart928DraftSql(
   stage="ATOMIC_CREATE_DRAFT_INSTALL";
   const atom=await readFile(new URL("../../../database/drafts/928_chart_atomic_create_prototype.sql.draft",import.meta.url),"utf8");
   await db.request().batch(atom);
+  stage="ATOMIC_CREATE_TRIGGER_STATE_EXACT";
+  const permitTriggerDefinitions=parseChart928DisposablePermitTriggerDefinitions(script,atom);
+  await attestChart928TriggerCatalogDefinitions(db,permitTriggerDefinitions);
+  await assert.rejects(attestChart928TriggerCatalog(db,script),
+    (error:unknown)=>error instanceof Chart928CatalogError &&
+      error.code==="CHART_928_CATALOG_TRIGGER_DEFINITION");
+  console.log("CHART_928_FROZEN_PERMIT_EXACT_STATES_PASS");
   // Read-only real engine proof. The future approved proc does not yet
   // exist: its digest must be NULL. The isolated draft proc has a real
   // NVARCHAR definition whose SHA256 matches SQL Server's UTF-16 bytes.
@@ -939,10 +999,17 @@ export async function verifyChart928DraftSql(
     );
   // Expected digest is recomputed inside SQL from canonical UTF-8 JSON.
   // An extra caller digest argument must NEVER be trusted by this Writer.
-  const proveDelegatedReceipt=async(g:SyntheticGrant,created:{WidgetId?:unknown;AuditLogId?:unknown;Digest?:unknown})=>{
-    const widget=Number(created.WidgetId),audit=Number(created.AuditLogId);
+  const proveDelegatedReceipt=async(g:SyntheticGrant,created:{WidgetId?:unknown;AuditLogId?:unknown;Digest?:unknown;SealRevision?:unknown})=>{
+    const widget=Number(created.WidgetId),audit=String(created.AuditLogId??"");
+    stage="DELEGATED_RECEIPT_WIDGET_ID";
     assert(Number.isSafeInteger(widget)&&widget>0);
-    assert(Number.isSafeInteger(audit)&&audit>0);
+    stage="DELEGATED_RECEIPT_AUDIT_DECIMAL";
+    assert.match(audit,/^[1-9][0-9]{0,19}$/);
+    stage="DELEGATED_RECEIPT_AUDIT_STRING";
+    assert.equal(typeof created.AuditLogId,"string");
+    stage="DELEGATED_RECEIPT_REVISION_FORMAT";
+    assert.match(String(created.SealRevision??""),/^[a-f0-9]{16}$/);
+    stage="DELEGATED_RECEIPT_DIGEST";
     assert.equal(created.Digest,expected);
     const receipt=(await db!.request()
       .input("requestId",sql.UniqueIdentifier,g.requestId)
@@ -951,6 +1018,9 @@ export async function verifyChart928DraftSql(
         "a.EventType,a.UserId AS AuditActor,a.Status," +
         "w.Id AS WidgetId,w.WidgetType,w.ConfigJson,w.SourceKey," +
         "s.ConfigDigest,s.SealedBy,s.AuditLogId AS SealAuditId," +
+        // ROWVERSION needs an explicit VARBINARY cast: direct conversion
+        // returns 8 raw chars, not a stable 16-character hexadecimal value.
+        "LOWER(CONVERT(varchar(16),CONVERT(varbinary(8),s.SealRowVersion),2)) AS CurrentSealRevision," +
         "d.ConsumedAtUtc FROM uqp.DashboardChartTrustRequest r " +
         "JOIN uqp.AuditLog a ON a.Id=r.AuditLogId " +
         "JOIN uqp.DashboardChartWidgetSeal s ON s.AuditLogId=a.Id " +
@@ -958,14 +1028,22 @@ export async function verifyChart928DraftSql(
         "JOIN uqp.ChartActorDelegationDisposable d ON d.RequestId=r.RequestId " +
         "WHERE r.RequestId=@requestId AND d.GrantId=@grantId"
       )).recordset;
+    stage="DELEGATED_RECEIPT_JOIN_COUNT";
     assert.equal(receipt.length,1);
     const item=receipt[0];
+    stage="DELEGATED_RECEIPT_ACTOR";
     assert.equal(Number(item?.ActorId),8);
     assert.equal(Number(item?.AuditActor),8);
     assert.equal(Number(item?.SealedBy),8);
-    assert.equal(Number(item?.LedgerAuditId),audit);
-    assert.equal(Number(item?.SealAuditId),audit);
+    stage="DELEGATED_RECEIPT_LEDGER_AUDIT";
+    assert.equal(String(item?.LedgerAuditId),audit);
+    stage="DELEGATED_RECEIPT_SEAL_AUDIT";
+    assert.equal(String(item?.SealAuditId),audit);
+    stage="DELEGATED_RECEIPT_SEAL_ROWVERSION";
+    assert.equal(item?.CurrentSealRevision,created.SealRevision);
+    stage="DELEGATED_RECEIPT_WIDGET_JOIN";
     assert.equal(Number(item?.WidgetId),widget);
+    stage="DELEGATED_RECEIPT_AUDIT_FIELDS";
     assert.equal(item?.EventType,"CHART_SEAL_WIDGET");
     assert.equal(item?.Status,"SUCCESS");
     assert.equal(item?.WidgetType,"CHART");

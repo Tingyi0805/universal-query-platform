@@ -145,11 +145,18 @@ jobs:
       - run: npm run build
       - name: Validate offline SQL Schema usage inventory
         run: node ../tools/validate-database-schema-inventory.mjs
+      - name: Verify CHART 928 isolated test installer source integrity
+        run: node ../tools/validate-chart-928-test-installer.mjs
       - name: Measure tracked source and clean Server build bytes
         run: node ../tools/measure-browser-build.mjs
 
   client:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    # Use the exact Playwright 1.64.1 browser and Ubuntu system dependencies
+    # from the official test image; do not substitute system Chromium 156 or
+    # download APT font packages during CI. This is test-only isolation.
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
     defaults:
       run:
         working-directory: client
@@ -167,12 +174,24 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+      - name: Trust only this checkout for Git metadata reads inside Playwright container
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(git -C "$GITHUB_WORKSPACE" rev-parse --show-toplevel)" = "$GITHUB_WORKSPACE"
       - name: Measure tracked source and Client build bytes
         run: node ../tools/measure-browser-build.mjs
       - name: Install synthetic kiosk API test dependencies (no database/native drivers)
         run: npm ci --prefix ../server --ignore-scripts
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - name: Verify pinned Playwright browser from official container
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const p=require('playwright');const fs=require('fs');if(require('playwright/package.json').version!=='1.64.1'||!fs.existsSync(p.chromium.executablePath()))process.exit(1);console.log('CHART_CI_PINNED_BROWSER='+p.chromium.executablePath())"
+      - name: Run full Playwright browser regressions with matching browser
+        run: npm run test:e2e
       - name: Upload PR88 Client build (TEST ONLY, NOT production deployment)
         if: github.event_name == 'pull_request' && github.event.pull_request.number == 88
         uses: actions/upload-artifact@v4
@@ -239,8 +258,10 @@ jobs:
         run: docker rm -f uqp-923-ephemeral >/dev/null 2>&1 || true
 
   sql-924-full-schema:
-    # All 48 real 001-921 migration sources + dedicated 923/924 installers. No user DB secrets.
-    if: github.event_name == 'pull_request' && github.event.pull_request.number == 66
+    # All historical 001-921 migration sources + dedicated 923/924/925 acceptance.
+    # PR #99 reuses this exact SQL Server 2019 full-schema path to attest 925;
+    # it is a disposable CI database, not user SQL or 928 deployment.
+    if: github.event_name == 'pull_request' && (github.event.pull_request.number == 66 || github.event.pull_request.number == 99)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     defaults:
@@ -722,5 +743,108 @@ jobs:
           path: |
             pr88-staging.zip
             pr88-staging.zip.sha256
+          retention-days: 14
+          if-no-files-found: error
+
+  pr99-chart-windows-test-zip:
+    # Isolated synthetic-preview ZIP only. No SQL migration, live UQP or deploy permissions.
+    if: github.event_name == 'pull_request' && github.event.pull_request.number == 99
+    needs: [server, client, sql-924-full-schema, device-lifecycle-d1-sql, windows-node24-dependencies, windows-kiosk-launcher, dependency-sql-smoke]
+    runs-on: windows-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: core.autocrlf
+      GIT_CONFIG_VALUE_0: "false"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+      - run: npm install --global npm@12.2.1
+      - name: Require immutable PR99 Draft HEAD and successful isolated checks
+        uses: actions/github-script@v7
+        env:
+          UQP_PR99_HEAD: ${{ github.event.pull_request.head.sha }}
+          UQP_PR99_NEEDS: ${{ toJSON(needs) }}
+        with:
+          script: |
+            const fs=require('node:fs');
+            const pr=await github.rest.pulls.get({...context.repo,pull_number:99});
+            if(!pr.data.draft||pr.data.merged||pr.data.head.sha!==process.env.UQP_PR99_HEAD)
+              throw Error('CHART_PR99_HEAD_OR_DRAFT_CHANGED');
+            const jobs=JSON.parse(process.env.UQP_PR99_NEEDS);
+            const required=['server','client','sql-924-full-schema','device-lifecycle-d1-sql','windows-node24-dependencies','windows-kiosk-launcher','dependency-sql-smoke'];
+            for(const name of required)
+              if(jobs[name]?.result!=='success')throw Error('CHART_PR99_PREREQUISITE_FAILED:'+name);
+            fs.writeFileSync('pr99-chart-test-evidence.json',JSON.stringify({
+              sourceCommit:pr.data.head.sha,pr99Draft:true,
+              url:'https://github.com/'+context.repo.owner+'/'+context.repo.repo+'/actions/runs/'+context.runId,jobs,
+            },null,2));
+      - name: Build Windows x64 Server and Client from exact PR99 HEAD
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          Push-Location server
+          npm ci
+          if($LASTEXITCODE){throw 'CHART_PR99_SERVER_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw 'CHART_PR99_SERVER_BUILD_FAILED'}
+          npm prune --omit=dev --ignore-scripts
+          if($LASTEXITCODE){throw 'CHART_PR99_SERVER_PRUNE_FAILED'}
+          node ../tools/test-pr83-node-runtime.mjs .
+          if($LASTEXITCODE){throw 'CHART_PR99_NATIVE_RUNTIME_FAILED'}
+          Pop-Location
+          Push-Location client
+          npm ci
+          if($LASTEXITCODE){throw 'CHART_PR99_CLIENT_INSTALL_FAILED'}
+          npm run build
+          if($LASTEXITCODE){throw 'CHART_PR99_CLIENT_BUILD_FAILED'}
+          Pop-Location
+      - name: Produce synthetic-only ZIP with manifest and SHA-256
+        shell: pwsh
+        run: |
+          node tools/package-pr99-chart-test.mjs pr99-chart-test pr99-chart-test-evidence.json
+          if($LASTEXITCODE){throw 'CHART_PR99_ZIP_BUILD_FAILED'}
+          node tools/verify-pr99-chart-test.mjs pr99-chart-test
+          if($LASTEXITCODE){throw 'CHART_PR99_MANIFEST_FAILED'}
+      - name: Verify extracted archive and detect tampering
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $temp=Join-Path $env:RUNNER_TEMP ('pr99-chart-test-'+[guid]::NewGuid().ToString('N'))
+          try {
+            Expand-Archive -LiteralPath pr99-chart-test.zip -DestinationPath $temp
+            node tools/verify-pr99-chart-test.mjs $temp
+            if($LASTEXITCODE){throw 'CHART_PR99_EXTRACTED_ZIP_INVALID'}
+            $file=Join-Path $temp 'payload/client/dist/index.html'
+            [IO.File]::AppendAllText($file,'tamper')
+            node tools/test-pr99-chart-tamper.mjs $temp
+            if($LASTEXITCODE){throw 'CHART_PR99_TAMPER_TEST_FAILED'}
+          } finally {
+            if(Test-Path -LiteralPath $temp){Remove-Item -LiteralPath $temp -Recurse -Force}
+          }
+      - name: Recheck PR99 HEAD and Draft status before artifact publication
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs=require('node:fs');
+            const e=JSON.parse(fs.readFileSync('pr99-chart-test-evidence.json','utf8'));
+            const pr=await github.rest.pulls.get({...context.repo,pull_number:99});
+            if(!pr.data.draft||pr.data.merged||pr.data.head.sha!==e.sourceCommit)
+              throw Error('CHART_PR99_HEAD_CHANGED_REBUILD_REQUIRED');
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr99-chart-windows-synthetic-test-${{ github.event.pull_request.head.sha }}
+          path: |
+            pr99-chart-test.zip
+            pr99-chart-test.zip.sha256
           retention-days: 14
           if-no-files-found: error

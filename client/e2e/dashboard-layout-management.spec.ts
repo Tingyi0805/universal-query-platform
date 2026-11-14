@@ -2,6 +2,12 @@ import { test, expect, type Page } from "@playwright/test";
 async function setup(page: Page) {
   const widget = { id: 1, widgetType: "TEXT", title: "合成標題", sourceKey: null, staticText: "固定合成文字", x: 10, y: 20, width: 300, height: 60, fontSize: 24, alignment: "LEFT", config: { color: "#112233", preservedStyle: { marker: "synthetic" } }, sortOrder: 0 };
   const state = { revision: 1, conflict: false, disabled: false, race: false, pending: false, sourceEnabled: true, missingVersion: false, writes: [] as any[], legacy: [] as string[],
+    chartProjectionCalls: [] as {method:string;body:string|null;authorization:string|null}[],
+    chartProjectionRevoked: false,
+    chartCreateAllowed:false,chartCreateCalls:[] as unknown[],
+    chartCreateReject:false,
+    chartSavedConfig:null as Record<string,unknown>|null,
+    chartReadbackCalls:[] as {method:string;authorization:string|null}[],
     profiles: [
       { id: 1, name: "橫向合成版型", isDefault: true, sortOrder: 0, canvasWidth: 1920, canvasHeight: 1080, config: { backgroundColor: "#abcdef", retained: true }, widgets: [widget,
         { ...widget, id: 2, widgetType: "FIELD", staticText: null, sourceKey: "NAME", y: 100, config: { dataSourceKey: "WARD", color: "#223344" } },
@@ -15,6 +21,56 @@ async function setup(page: Page) {
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path.endsWith("/configuration")) { await route.fulfill(state.disabled ? { status: 404, json: { error: { code: "QUERY_SOURCE_MANAGEMENT_DISABLED", message: "SQL private synthetic" } } } : { json: config() }); return; }
+    if (path === "/api/dashboards/1/charts/v1/capabilities") {
+      await route.fulfill({json:{canCreate:state.chartCreateAllowed}});return;
+    }
+    if (path === "/api/dashboards/1/charts/v1" && request.method() === "POST") {
+      const posted=request.postDataJSON() as Record<string,unknown>;
+      state.chartCreateCalls.push(posted);
+      if(state.chartCreateReject){
+        await route.fulfill({status:503,json:{
+          error:{code:"CHART_TRUSTED_CREATE_REQUIRED"}
+        }});
+        return;
+      }
+      if(!state.chartCreateAllowed){
+        await route.fulfill({status:404,json:{error:{code:"CHART_NOT_AVAILABLE"}}});
+        return;
+      }
+      // Emulate SQL-owned persistence, not a claim in the 201 response.
+      state.chartSavedConfig=structuredClone(posted.config as Record<string,unknown>);
+      const place=posted.placement as {x:number;y:number;width:number;height:number};
+      // Test-only JSON fixture permits the extra persisted Widget fields;
+      // the production UI never trusts this object as a create receipt.
+      (state.profiles[0]!.widgets as unknown as Array<Record<string,unknown>>).push({
+        ...widget,id:88,profileId:1,widgetType:"CHART",title:"受控圖表",
+        sourceKey:"PRIMARY",staticText:null,
+        ...place,config:{},sortOrder:40,
+      });
+      await route.fulfill({status:201,json:{
+        widgetId:88,sealRevision:"0011223344556677",
+        auditLogId:"9007199254740993",
+      }});
+      return;
+    }
+    if (path === "/api/dashboards/1/charts/v1/88/readback") {
+      state.chartReadbackCalls.push({method:request.method(),authorization:request.headers()["authorization"]??null});
+      if(request.method()!=="GET"||!state.chartSavedConfig){
+        await route.fulfill({status:404,json:{error:{code:"CHART_NOT_AVAILABLE"}}});return;
+      }
+      await route.fulfill({json:{widgetId:88,sealRevision:"0011223344556677",
+        config:structuredClone(state.chartSavedConfig)}});
+      return;
+    }
+    if (path === "/api/dashboards/1/charts/v1/88/projection") {
+      state.chartProjectionCalls.push({method:request.method(),body:request.postData(),authorization:request.headers()["authorization"]??null});
+      if(state.chartProjectionRevoked){
+        await route.fulfill({status:503,json:{error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}}});
+        return;
+      }
+      await route.fulfill({json:{chartType:"BAR",showLegend:true,points:[{label:"診間 A",value:9}]}});
+      return;
+    }
     if (path === "/api/dashboards/1/layout" && request.method() === "GET") {
       const profiles = structuredClone(state.profiles);
       if (state.race) { state.revision++; state.race = false; }
@@ -170,6 +226,17 @@ test("2B-14 chart draft is editable but cannot enter saved layout, Query API or 
   await draftHeight.pressSequentially("200");
   await draftHeight.press("Tab");
   await expect(draftHeight).toHaveValue("200");
+  // Max-points uses the same complete-entry behavior as placement numbers.
+  const maxPoints=draft.getByLabel("最大資料點數（1–50）");
+  await maxPoints.click();
+  await maxPoints.press("ControlOrMeta+A");
+  await maxPoints.pressSequentially("25");
+  await expect(maxPoints).toHaveValue("25");
+  await maxPoints.press("Enter");
+  await expect(maxPoints).toHaveValue("25");
+  await maxPoints.fill("99");
+  await maxPoints.press("Tab");
+  await expect(maxPoints).toHaveValue("25");
   await expect(draft.getByRole("img",{name:/圓餅圖，僅合成資料示意/})).toBeVisible();
   await expect(draft.getByText("區域 A · 8")).toBeVisible();
   expect(state.writes).toHaveLength(0);
@@ -234,4 +301,156 @@ test("global typography writes only on explicit save, preserves legacy layout, a
  expect(saved.widgets[2].config.tableHeaderTextColor).toBe("#123456");
  expect(saved.widgets[2].config.textColor).toBe("#123456");
  expect(state.legacy).toEqual([]);
+});
+
+
+test("sealed CHART persisted by future audited writer remains read-only and never leaks into legacy layout PUT", async ({page})=>{
+ const state=await setup(page);
+ const chart={...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",
+   x:1200,y:400,width:450,height:300,
+   title:"受控統計",staticText:null,config:{sealedId:88,privateMarker:"NEVER_RENDER_RAW"}};
+ (state.profiles[0]!.widgets as unknown[]).push(chart);
+ await page.goto("/designer/dashboards/1/layout");
+ await expect(page.getByText(/已載入版型曾包含受控 CHART/)).toBeVisible();
+ await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toBeVisible();
+ await expect(page.getByLabel("圖表圖例")).toContainText("診間 A");
+ await expect(save(page)).toBeDisabled();
+ await expect(page.getByRole("button",{name:"＋ 受控圖表（唯讀）"})).toHaveCount(0);
+ await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
+ await expect(page.getByText(/受控 CHART 目前為唯讀/)).toBeVisible();
+ await expect(page.locator(".layout-inspector-grid")).toHaveCount(0);
+ expect(state.writes).toHaveLength(0);
+ expect(state.legacy).toEqual([]);
+ expect(JSON.stringify(state.profiles[0]!.widgets)).toContain("NEVER_RENDER_RAW");
+ await expect(page.getByText("NEVER_RENDER_RAW")).toHaveCount(0);
+ // Deleting the only CHART-containing profile locally must not restore legacy write access.
+ page.once("dialog",d=>void d.accept());
+ await page.getByRole("button",{name:"刪除版型",exact:true}).click();
+ await expect(save(page)).toBeDisabled();
+ await expect(page.getByText(/已載入版型曾包含受控 CHART/)).toBeVisible();
+ expect(state.writes).toHaveLength(0);
+});
+
+
+test("native layout designer renders saved sealed CHART from server projection without using untrusted config",async({page})=>{
+  const state=await setup(page);
+  const chart={...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",
+    title:"門診彙總",staticText:null,x:1160,y:460,width:620,height:360,
+    config:{approved:true,patientRows:[{PATIENT_ID:"FORBIDDEN_CONFIG_ROW"}]}};
+  (state.profiles[0]!.widgets as unknown[]).push(chart);
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toBeVisible();
+  await expect(page.getByLabel("圖表圖例")).toContainText("診間 A");
+  await expect(save(page)).toBeDisabled();
+  expect(state.chartProjectionCalls.length).toBeGreaterThanOrEqual(1);
+  for(const call of state.chartProjectionCalls)expect(call).toEqual({
+    method:"POST",body:null,authorization:"Bearer synthetic",
+  });
+  const initialCalls=state.chartProjectionCalls.length;
+  await page.context().setOffline(true);
+  await expect(page.getByText("圖表尚未獲准在此播放模式顯示")).toBeVisible();
+  await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toHaveCount(0);
+  await page.context().setOffline(false);
+  await expect(page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"})).toBeVisible();
+  expect(state.chartProjectionCalls.length).toBeGreaterThan(initialCalls);
+  expect(state.writes).toHaveLength(0);
+  await expect(page.getByText("FORBIDDEN_CONFIG_ROW")).toHaveCount(0);
+  await expect(page.getByText("PATIENT_ID")).toHaveCount(0);
+});
+
+test("saved CHART rechecks seal and hides revoked data without changing layout version",async({page})=>{
+  // Virtual clock: no 30-second wall-clock delay or unapproved SQL fixture.
+  await page.clock.install();
+  const state=await setup(page);
+  const chart={...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",
+    title:"已封印彙總",staticText:null,x:1160,y:460,width:620,height:360,
+    config:{privateMarker:"NEVER_RENDER_RAW"}};
+  (state.profiles[0]!.widgets as unknown[]).push(chart);
+  await page.goto("/designer/dashboards/1/layout");
+  const image=page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"});
+  await expect(image).toBeVisible();
+  const firstCount=state.chartProjectionCalls.length;
+  state.chartProjectionRevoked=true;
+  await page.clock.fastForward(30_000);
+  await expect(page.getByText("圖表未取得核准的彙總資料，停止顯示")).toBeVisible();
+  await expect(image).toHaveCount(0);
+  expect(state.chartProjectionCalls.length).toBeGreaterThan(firstCount);
+  const revokedCount=state.chartProjectionCalls.length;
+  state.chartProjectionRevoked=false;
+  await page.clock.fastForward(30_000);
+  await expect(image).toBeVisible();
+  expect(state.chartProjectionCalls.length).toBeGreaterThan(revokedCount);
+  await expect(page.getByText("NEVER_RENDER_RAW")).toHaveCount(0);
+  expect(state.writes).toHaveLength(0);
+});
+
+
+test("native CHART remains disabled without independently approved server capability",async({page})=>{
+  const state=await setup(page);
+  await page.goto("/designer/dashboards/1/layout");
+  const draft=page.getByRole("region",{name:"圖表設計草稿"});
+  await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+  await expect(draft.getByRole("button",{name:"正式新增 CHART 至此版型"})).toBeDisabled();
+  await expect(draft.getByText(/正式 CHART 建立服務尚未核准/)).toBeVisible();
+  expect(state.chartCreateCalls).toHaveLength(0);
+  expect(state.writes).toHaveLength(0);
+});
+
+test("authorized test-only native CREATE verifies exact server readback and keeps legacy save blocked",async({page})=>{
+  test.setTimeout(60_000);
+  const state=await setup(page);
+  state.chartCreateAllowed=true;
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByText("固定合成文字",{exact:true})).toBeVisible();
+  const draft=page.getByRole("region",{name:"圖表設計草稿"});
+  await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+  const create=draft.getByRole("button",{name:"正式新增 CHART 至此版型"});
+  await expect(create).toBeEnabled();
+  await create.click();
+  await expect(page.getByText(/已確認伺服器儲存 CHART/)).toBeVisible();
+  expect(state.chartCreateCalls).toHaveLength(1);
+  expect(state.chartReadbackCalls).toEqual([{method:"GET",authorization:"Bearer synthetic"}]);
+  const sent=state.chartCreateCalls[0] as Record<string,unknown>;
+  expect(Object.keys(sent).sort()).toEqual(["config","placement","profileId","requestId"]);
+  expect(sent.profileId).toBe(1);
+  expect(sent.requestId).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i);
+  expect(sent.config).toMatchObject({version:1,chartType:"BAR",
+    dataSourceKey:"PRIMARY",valueMode:"QUERY_RESULT"});
+  expect(sent.placement).toEqual({x:80,y:80,width:600,height:360});
+  expect(JSON.stringify(sent)).not.toContain("PATIENT_ID");
+  await expect(page.locator(".layout-widget-readonly")).toHaveCount(1);
+  await expect(save(page)).toBeDisabled();
+  expect(state.writes).toHaveLength(0);
+  expect(state.legacy).toEqual([]);
+});
+
+test("a legacy layout PUT invalidates profile IDs until an explicit reload",async({page})=>{
+  const state=await setup(page);
+  state.chartCreateAllowed=true;
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByText("固定合成文字",{exact:true})).toBeVisible();
+  await save(page).click();
+  await expect(page.getByText("Dashboard 版面已儲存。",{exact:true})).toBeVisible();
+  const draft=page.getByRole("region",{name:"圖表設計草稿"});
+  await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+  await expect(draft.getByRole("button",{name:"正式新增 CHART 至此版型"})).toBeDisabled();
+  expect(state.chartCreateCalls).toHaveLength(0);
+});
+
+
+test("ambiguous native CREATE cannot issue another UUID before server reload",async({page})=>{
+  test.setTimeout(60_000);
+  const state=await setup(page);
+  state.chartCreateAllowed=true;
+  state.chartCreateReject=true;
+  await page.goto("/designer/dashboards/1/layout");
+  const draft=page.getByRole("region",{name:"圖表設計草稿"});
+  await draft.getByRole("button",{name:/圖表設計草稿（僅示意）/}).click();
+  const create=draft.getByRole("button",{name:"正式新增 CHART 至此版型"});
+  await expect(create).toBeEnabled();
+  await create.click();
+  await expect(page.getByText(/正式 CHART 建立未獲確認/)).toBeVisible();
+  await expect(create).toBeDisabled();
+  expect(state.chartCreateCalls).toHaveLength(1);
+  expect(state.writes).toHaveLength(0);
 });
