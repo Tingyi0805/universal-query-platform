@@ -3,7 +3,7 @@ import test from "node:test";
 import { validatePlaybackApprovalRow } from "./dashboardChartPlaybackApproval.repository.js";
 
 const valid = {
-  WidgetId: 88, WidgetRevision: Buffer.from("aaaaaaaaaaaaaaaa", "hex"),
+  DashboardId: 7, WidgetId: 88, WidgetRevision: Buffer.from("aaaaaaaaaaaaaaaa", "hex"),
   ConfigDigest: "b".repeat(64), ReviewerUserId: 3, AuditLogId: "42",
   Status: "APPROVED", ReviewerIsActiveAdmin: true, AuditReceiptVerified: true,
 };
@@ -21,4 +21,10 @@ test("missing, ambiguous or invalid trust evidence cannot create approval", () =
     {...valid, ConfigDigest:"invalid"}, {...valid, AuditLogId:"0"},
     {...valid, ReviewerUserId:0}, {...valid, WidgetId:0},
   ]) assert.equal(validatePlaybackApprovalRow(row), null);
+});
+
+test("approval from another dashboard or widget cannot authorize requested playback", () => {
+  assert.equal(validatePlaybackApprovalRow(valid, 8, 88), null);
+  assert.equal(validatePlaybackApprovalRow(valid, 7, 89), null);
+  assert.ok(validatePlaybackApprovalRow(valid, 7, 88));
 });
