@@ -71,7 +71,10 @@ export async function decideChartPlaybackApproval(
     if (sealReceipt.recordset.length !== 1) throw Error("INVALID_SEAL_AUDIT");
     const parsed = chartWidgetConfigSchema.safeParse(JSON.parse(row.ConfigJson));
     if (!parsed.success || parsed.data.dataSourceKey !== row.SourceKey) throw Error("INVALID_CHART_CONFIG");
-    const digest = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
+    // Approval must bind to the *same* canonical bytes already attested by
+    // the active seal. Re-serializing a parsed object can change the digest
+    // and leave a successful approval that playback can never validate.
+    const digest = sealDigest;
     const receipt = await writeAuditEvent({
       eventType: input.action === "APPROVE" ? "CHART_APPROVE_PLAYBACK" : "CHART_REVOKE_PLAYBACK",
       userId: input.actorUserId, status: "SUCCESS",
