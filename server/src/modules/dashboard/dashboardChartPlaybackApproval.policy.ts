@@ -6,6 +6,8 @@ export type ChartPlaybackApproval = Readonly<{
   widgetRevision: string;
   configDigest: string;
   reviewerUserId: number;
+  reviewerIsActiveAdmin: boolean;
+  auditReceiptVerified: boolean;
   auditLogId: string;
   status: "APPROVED" | "REVOKED";
 }>;
@@ -26,5 +28,7 @@ export function isChartPlaybackApproved(
     approval.configDigest === configDigest &&
     Number.isSafeInteger(approval.reviewerUserId) &&
     approval.reviewerUserId > 0 &&
+    approval.reviewerIsActiveAdmin === true &&
+    approval.auditReceiptVerified === true &&
     /^(?:[1-9][0-9]{0,18})$/.test(approval.auditLogId);
 }
