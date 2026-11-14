@@ -75,7 +75,7 @@ export async function decideChartPlaybackApproval(
       eventType: input.action === "APPROVE" ? "CHART_APPROVE_PLAYBACK" : "CHART_REVOKE_PLAYBACK",
       userId: input.actorUserId, status: "SUCCESS",
       parameters: { dashboardId: input.dashboardId, widgetId: input.widgetId,
-        revision: row.SealRowVersion.toString("hex"), digest },
+        revision: (row.SealRowVersion as Buffer).toString("hex"), digest },
     }, tx);
     const status = input.action === "APPROVE" ? "APPROVED" : "REVOKED";
     const update = await new sql.Request(tx)
