@@ -365,16 +365,17 @@ async function main(){
         console.log(info.message);
       }
     };
-    root.on("info",witnessListener);
+    const chartInstallRequest=root.request();
+    chartInstallRequest.on("info",witnessListener);
     try {
-      await root.request().batch(chartSql);
+      await chartInstallRequest.batch(chartSql);
     } catch (error) {
       const dbError=error as {number?:number;message?:string;originalError?:{info?:{number?:number;message?:string}}};
       const message=String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240).replace(/[\r\n]/g," ");
       console.error(`CHART_928_SQL_INSTALL_FAILURE number=${dbError.originalError?.info?.number??dbError.number??0};message=${message}`);
       throw error;
     } finally {
-      root.removeListener("info",witnessListener);
+      chartInstallRequest.removeListener("info",witnessListener);
     }
     const chartCatalog=(await root.request().query(`SELECT
       OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
