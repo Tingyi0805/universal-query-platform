@@ -26,7 +26,7 @@ IF IS_SRVROLEMEMBER(N'sysadmin')<>1 AND IS_MEMBER(N'db_owner')<>1
  THROW 51928,'CHART_TEST_DB_OWNER_REQUIRED',1;
 BEGIN TRY
  BEGIN TRANSACTION;
- -- Embedded reviewed 928 frozen-schema DDL; its own fail-closed checks remain.
+ -- Embedded reviewed 928 frozen-schema DDL with CI SQL2019-only catalog witness pins.\n -- These are test artifacts, NOT hospital deployment approvals.
 SET XACT_ABORT ON;
 IF @@TRANCOUNT<>1
  THROW 51928,'CHART_928_APPROVED_MIGRATION_TRANSACTION_REQUIRED',1;
@@ -358,11 +358,11 @@ END');
    PRIMARY KEY(TableName,ConstraintName));
  INSERT INTO @approvedChecks(TableName,ConstraintName,ApprovedDefinitionSha256)
  VALUES
-   (N'DashboardWidget',N'CK_DashboardWidget_Type',NULL),
-   (N'DashboardChartWidgetSeal',N'CK_ChartSeal_Digest',NULL),
-   (N'DashboardChartTrustRequest',N'CK_ChartTrustRequest_Action',NULL),
-   (N'DashboardChartPrivacyReview',N'CK_ChartReview_State',NULL),
-   (N'DashboardChartPrivacyReview',N'CK_ChartReview_Scope',NULL);
+   (N'DashboardWidget',N'CK_DashboardWidget_Type',0xDEE5565B983CF83FA8AF4A9E0487DF581BAC22A36825301852FCD6195D4D5572),
+   (N'DashboardChartWidgetSeal',N'CK_ChartSeal_Digest',0xD5AC9CFEA066A4BC5538B7091A42B682BA0B90759C7D19F0091C91FEA3EAC9AD),
+   (N'DashboardChartTrustRequest',N'CK_ChartTrustRequest_Action',0xA832672851FE463FAD585483EBA2C90F0F87983BE9E4F3F96330200B366B119D),
+   (N'DashboardChartPrivacyReview',N'CK_ChartReview_State',0xBF110DB36C7852BA51BD828600BA4C7DA433C52994C7FA6CED5C34A85DBCA86C),
+   (N'DashboardChartPrivacyReview',N'CK_ChartReview_Scope',0x77B5E224444B1B437989AABFC6F243E0A877867F51B2432FCF83BF342192937A);
  -- TEST-ONLY: capture SQL Server catalog-normalized witnesses before the
  -- reviewed release's intentionally NULL pins reject the installation.
  -- No witness is copied into an approval slot or trusted automatically.
@@ -470,7 +470,7 @@ END');
  -- The unique filtered index must match the exact six ascending key columns
  -- without included columns. Its catalog-normalized filter requires a
  -- separate independently approved SHA-256 witness (not a substring LIKE).
- DECLARE @approvedActiveFilterSha256 varbinary(32)=NULL;
+ DECLARE @approvedActiveFilterSha256 varbinary(32)=0x590373D358AA5E0669D7E237653010FFC6C3050BD55D5A373F5835F42BF3747D;
  IF @approvedActiveFilterSha256 IS NULL
    THROW 51928,'CHART_928_FILTER_SOURCE_WITNESS_NOT_APPROVED',1;
  IF NOT EXISTS(SELECT 1 FROM sys.indexes i
