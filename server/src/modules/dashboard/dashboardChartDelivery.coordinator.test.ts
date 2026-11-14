@@ -90,6 +90,8 @@ type Scenario = {
   approvedPlayback?: boolean;
   missingPlaybackApproval?: boolean;
   revokePlaybackAfterPage?: boolean;
+  stalePlaybackRevision?: boolean;
+  stalePlaybackDigest?: boolean;
 };
 function fixture(options: Scenario = {}) {
   const isPublic = options.isPublic ?? Boolean(options.context);
@@ -131,8 +133,9 @@ function fixture(options: Scenario = {}) {
       playbackReads++;
       if (options.missingPlaybackApproval || (!isPublic && !options.approvedPlayback)) return null;
       return {
-        widgetId, widgetRevision: "a".repeat(16),
-        configDigest: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+        widgetId, widgetRevision: options.stalePlaybackRevision ? "b".repeat(16) : "a".repeat(16),
+        configDigest: options.stalePlaybackDigest ? "0".repeat(64) :
+          createHash("sha256").update(JSON.stringify(config)).digest("hex"),
         reviewerUserId: 3, auditLogId: "42",
         reviewerIsActiveAdmin: true, auditReceiptVerified: true,
         status: options.revokePlaybackAfterPage && calls > 0 ? "REVOKED" : "APPROVED",
@@ -371,5 +374,29 @@ test("user and device playback reject missing administrator approval before Quer
     await refused(f);
     assert.equal(f.counts().calls, 0);
     assert.equal(f.playbackReads(), 1);
+  }
+});
+
+test("changed chart revision or config digest invalidates admin playback approval", async () => {
+  for (const scenario of [
+    {context:"admin-preview" as const, approvedPlayback:true, stalePlaybackRevision:true},
+    {context:"admin-preview" as const, approvedPlayback:true, stalePlaybackDigest:true},
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 0);
+    assert.equal(f.playbackReads(), 1);
+  }
+});
+
+test("revocation during user/device playback prevents data release", async () => {
+  for (const scenario of [
+    {isPublic:true, revokePlaybackAfterPage:true},
+    {context:"device" as const, validDeviceProof:true, revokePlaybackAfterPage:true},
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 1);
+    assert.ok(f.playbackReads() >= 3);
   }
 });
