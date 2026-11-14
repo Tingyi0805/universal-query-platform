@@ -315,9 +315,9 @@ jobs:
           pw="F2a!$(openssl rand -hex 20)Z"
           echo "::add-mask::$pw"
           echo "UQP_924_CI_PASSWORD=$pw" >> "$GITHUB_ENV"
-          docker run -d --rm --name uqp-924-full-schema --hostname uqp-924-full-schema \\
-            -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$pw" \\
-            -p 127.0.0.1:14334:1433 \\
+          docker run -d --rm --name uqp-924-full-schema --hostname uqp-924-full-schema \
+            -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD="$pw" \
+            -p 127.0.0.1:14334:1433 \
             mcr.microsoft.com/mssql/server:2022-latest >/dev/null
       - name: Full UQP Schema and 928 isolated SQL Server 2022 acceptance
         env:
