@@ -381,8 +381,11 @@ async function main(){
       chartInstallRequest.removeListener("info",witnessListener);
     }
     check(blockedByReview,"CHART_928_REVIEW_GUARD_MUST_BLOCK");
-    check(chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_CHECK_WITNESS ")).length===5 &&
-      chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_FILTER_WITNESS ")).length===1,
+    const checkWitnesses=chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_CHECK_WITNESS "));
+    const filterWitnesses=chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_FILTER_WITNESS "));
+    check(checkWitnesses.length===5 && filterWitnesses.length===1 &&
+      chartWitnesses.every(v=>/sha256=[0-9A-F]{64}$/.test(v)) &&
+      new Set(checkWitnesses.map(v=>v.match(/name=([^;]+)/)?.[1])).size===5,
       "CHART_928_CATALOG_WITNESS_CAPTURE");
     const chartCatalog=(await root.request().query(`SELECT
       OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
