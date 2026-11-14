@@ -1,0 +1,25 @@
+// PR99: static source-drift gate. Does not execute SQL or assert DB compatibility.
+import {readFileSync} from "node:fs";
+import {resolve} from "node:path";
+const root=resolve(import.meta.dirname,"..");
+const read=p=>readFileSync(resolve(root,p),"utf8").replace(/\r\n/g,"\n");
+const frozen=read("database/review/928_dashboard_chart_trust_base.production-review.sql.txt");
+const approval=read("database/review/928_chart_playback_approval.test-install.sql.txt");
+const candidate=read("database/review/928_chart_frozen_and_approval_isolated_test_install.sql.txt");
+const requireTrue=(value,label)=>{if(!value)throw Error("CHART_928_TEST_INSTALL_"+label)};
+const start=frozen.indexOf("SET XACT_ABORT ON;");
+requireTrue(start>=0,"BASE_MISSING");
+const base=frozen.slice(start).trim();
+requireTrue(candidate.includes(base),"BASE_SOURCE_DRIFT");
+const approvalStart=approval.indexOf("    CREATE TABLE uqp.DashboardChartPlaybackApproval (");
+const approvalEnd=approval.indexOf("    COMMIT TRANSACTION;",approvalStart);
+requireTrue(approvalStart>=0&&approvalEnd>approvalStart,"APPROVAL_SOURCE_MISSING");
+requireTrue(candidate.includes(approval.slice(approvalStart,approvalEnd).trim()),"APPROVAL_SOURCE_DRIFT");
+requireTrue(candidate.includes("IF @@TRANCOUNT<>0 THROW 51928,'CHART_TEST_OUTER_TRANSACTION_NOT_ALLOWED',1;"),"OUTER_TRANSACTION_GUARD");
+requireTrue(candidate.includes("UQP_CHART_TEST_DISPOSABLE"),"DISPOSABLE_MARKER_GUARD");
+requireTrue(candidate.includes("CHART_TEST_DB_OWNER_REQUIRED"),"OWNER_GUARD");
+requireTrue(candidate.includes("CHART_TEST_SYSTEM_DATABASE_FORBIDDEN"),"SYSTEM_DATABASE_GUARD");
+requireTrue(candidate.includes("BEGIN TRANSACTION;")&&candidate.includes("COMMIT TRANSACTION;")&&candidate.includes("ROLLBACK TRANSACTION;"),"TRANSACTION_GUARD");
+requireTrue(!candidate.includes("CREATE LOGIN ")&&!candidate.includes("GRANT EXECUTE")&&!candidate.includes("INSERT INTO uqp.SchemaMigration"),"NO_PRIVILEGE_OR_LEDGER_WRITES");
+requireTrue(candidate.indexOf("CREATE TABLE uqp.DashboardChartPlaybackApproval")>candidate.indexOf(base),"APPROVAL_ORDER");
+console.log("CHART_928_TEST_INSTALL_STATIC_SOURCE_CONTRACT_PASS (not SQL execution)");
