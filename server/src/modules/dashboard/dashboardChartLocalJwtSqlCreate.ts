@@ -105,6 +105,42 @@ export function createDormantLocalJwtChartCreate(
   };
 }
 
+/** Option A: one existing UQP SQL pool, with the verified local JWT actor.
+ * This is an injectable integration seam only. The HTTP and atomic-create
+ * release gates stay compiled OFF until the DB-owned procedure is validated.
+ * Unlike the legacy two-login prototype, this path does not request a
+ * second SQL login, writer SID, or separately signed actor assertion.
+ */
+export function createDormantSinglePoolChartCreate(
+  deps:Readonly<{
+    enabled:()=>boolean;
+    getPool:()=>Promise<sql.ConnectionPool|null>;
+  }>,
+):(plan:DormantChartCreatePlan)=>Promise<unknown|null>{
+  return async(plan)=>{
+    if(!deps.enabled()||!validPlan(plan))return null;
+    try{
+      const pool=await deps.getPool();
+      if(!pool)return null;
+      const rows=(await pool.request()
+        .input("dashboard",sql.BigInt,plan.dashboardId)
+        .input("profile",sql.BigInt,plan.profileId)
+        .input("actor",sql.BigInt,plan.actorId)
+        .input("token",sql.Int,plan.tokenVersion)
+        .input("requestId",sql.UniqueIdentifier,plan.requestId)
+        .input("source",sql.NVarChar(64),plan.sourceKey)
+        .input("config",sql.NVarChar(sql.MAX),plan.config.json)
+        .input("x",sql.Int,plan.placement.x)
+        .input("y",sql.Int,plan.placement.y)
+        .input("width",sql.Int,plan.placement.width)
+        .input("height",sql.Int,plan.placement.height)
+        .query(chartLocalJwtWriterCreateSql)).recordset;
+      return rows?.length===1&&parseChartCreateSqlReceipt(rows[0],plan)
+        ?rows[0]:null;
+    }catch{return null;}
+  };
+}
+
 /** Only factory allowed into Dashboard runtime. No test injection of gate
  * values or approved identities: compile-time hard-OFF until the approved
  * Gate 2/3 release change, followed by a separate Gate 4 IIS acceptance.
