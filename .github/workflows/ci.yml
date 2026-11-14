@@ -322,6 +322,7 @@ jobs:
       - name: Full UQP Schema and 928 isolated SQL Server 2022 acceptance
         env:
           UQP_924_CI_EPHEMERAL: "1"
+          UQP_924_CI_SQL_MAJOR: "16"
         run: npx tsx src/scripts/dataset924FullSchemaAcceptance.ts
       - name: Destroy full-schema SQL Server 2022
         if: always()
