@@ -6,7 +6,7 @@ import { getPlatformDbPool } from "../../config/database.js";
 import type { ChartPlaybackApproval } from "./dashboardChartPlaybackApproval.policy.js";
 
 type ApprovalRow = {
-  WidgetId?: unknown; WidgetRevision?: unknown; ConfigDigest?: unknown;
+  DashboardId?: unknown; WidgetId?: unknown; WidgetRevision?: unknown; ConfigDigest?: unknown;
   ReviewerUserId?: unknown; AuditLogId?: unknown; Status?: unknown;
   ReviewerIsActiveAdmin?: unknown; AuditReceiptVerified?: unknown;
 };
@@ -57,7 +57,7 @@ export function createDormantPlaybackApprovalReader(
       const rows = (await pool.request()
         .input("dashboardId", sql.BigInt, dashboardId)
         .input("widgetId", sql.BigInt, widgetId)
-        .query("SELECT p.WidgetId,p.WidgetRevision,p.ConfigDigest,p.ReviewerUserId," +
+        .query("SELECT p.DashboardId,p.WidgetId,p.WidgetRevision,p.ConfigDigest,p.ReviewerUserId," +
           "p.AuditLogId,p.Status," +
           "CONVERT(bit,CASE WHEN EXISTS (SELECT 1 FROM uqp.AppUser u WITH (HOLDLOCK) " +
           "WHERE u.Id=p.ReviewerUserId AND u.IsActive=1 AND EXISTS " +
@@ -75,7 +75,8 @@ export function createDormantPlaybackApprovalReader(
           "WHERE p.DashboardId=@dashboardId AND p.WidgetId=@widgetId " +
           "AND p.Status='APPROVED'")).recordset as ApprovalRow[];
       // An ambiguous row set is not a valid authorization decision.
-      return rows.length === 1 && positive(rows[0].WidgetId) === widgetId
+      return rows.length === 1 && positive(rows[0].DashboardId) === dashboardId &&
+        positive(rows[0].WidgetId) === widgetId
         ? validatePlaybackApprovalRow(rows[0]) : null;
     } catch { return null; }
   };
