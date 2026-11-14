@@ -1,4 +1,5 @@
 import {testDatasetDisplay925,testDisplay925CleanCatalog} from "./datasetDisplay925Acceptance.js";
+import {createDormantPlaybackApprovalReader} from "../modules/dashboard/dashboardChartPlaybackApproval.repository.js";
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
 import {createDatasetColumnCandidate,readColumnCandidateSnapshot,defaultColumnCandidateDependencies} from "../modules/dataset/datasetColumnCandidate.js";
@@ -382,6 +383,15 @@ async function main(){
       OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') TrustRequest,
       OBJECT_ID(N'uqp.DashboardChartPlaybackApproval',N'U') PlaybackApproval`)).recordset[0];
     check(Object.values(chartCatalog).every(v=>typeof v==="number"&&v>0),"CHART_928_INSTALLED_CATALOG");
+    // Gate 3: use the real SQL-backed approval reader against installed 928.
+    // With no administrator decision recorded, playback must fail closed.
+    stage="CHART_GATE3_EMPTY_APPROVAL_READ";
+    const approvalReader=createDormantPlaybackApprovalReader(async()=>root!);
+    check(await approvalReader(1,1)===null,"CHART_GATE3_NO_UNRECORDED_APPROVAL");
+    check((await root.request().query("SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C===0,
+      "CHART_GATE3_EMPTY_APPROVAL_CATALOG");
+    console.log("CHART_GATE3_SQL2019_EMPTY_APPROVAL_FAIL_CLOSED_PASS");
+    stage="CHART_928_REPEAT_GUARD";
     await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_REPEAT_MUST_FAIL");
     console.log("CHART_928_SQL2019_DISPOSABLE_FULL_SCHEMA_INSTALL_AND_REPEAT_GUARD_PASS");
     stage="FINAL_923_924_COMPATIBILITY";
