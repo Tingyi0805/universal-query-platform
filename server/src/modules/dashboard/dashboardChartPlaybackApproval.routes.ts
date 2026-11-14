@@ -2,7 +2,7 @@
 // No client-supplied actor, digest, revision or audit receipt is trusted.
 import { Router } from "express";
 import { z } from "zod";
-import { readVerifiedJwtActor } from "../auth/auth.middleware.js";
+import { readVerifiedChartAdminActor } from "../auth/auth.middleware.js";
 import { decideChartPlaybackApproval } from "./dashboardChartPlaybackApproval.service.js";
 
 export const CHART_PLAYBACK_APPROVAL_HTTP_RELEASE_APPROVED = false as const;
@@ -19,7 +19,7 @@ export function createChartPlaybackApprovalRouter(deps: {
     if (!deps.enabled()) {
       res.status(404).json({error:{code:"CHART_NOT_AVAILABLE"}}); return;
     }
-    const actor = readVerifiedJwtActor(req);
+    const actor = readVerifiedChartAdminActor(req);
     if (!actor) {
       res.status(403).json({error:{code:"FORBIDDEN"}}); return;
     }
