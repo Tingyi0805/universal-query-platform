@@ -77,6 +77,14 @@ export function createDormantPlaybackApprovalReader(
           "AND ar.Status=N'SUCCESS' AND ar.EventType=N'CHART_APPROVE_PLAYBACK') " +
           "THEN 1 ELSE 0 END) AS AuditReceiptVerified " +
           "FROM uqp.DashboardChartPlaybackApproval p WITH (HOLDLOCK) " +
+          "JOIN uqp.DashboardChartWidgetSeal seal WITH (HOLDLOCK) " +
+          "ON seal.WidgetId=p.WidgetId AND seal.IsActive=1 " +
+          "AND seal.SealRowVersion=p.WidgetRevision " +
+          "AND seal.ConfigDigest=p.ConfigDigest " +
+          "JOIN uqp.DashboardWidget w WITH (HOLDLOCK) " +
+          "ON w.Id=p.WidgetId AND w.WidgetType=N'CHART' " +
+          "JOIN uqp.DashboardDisplayProfile profile WITH (HOLDLOCK) " +
+          "ON profile.Id=w.ProfileId AND profile.DashboardId=p.DashboardId " +
           "WHERE p.DashboardId=@dashboardId AND p.WidgetId=@widgetId " +
           "AND p.Status='APPROVED'")).recordset as ApprovalRow[];
       // An ambiguous row set is not a valid authorization decision.
