@@ -358,6 +358,14 @@ async function main(){
     check(chartSql.includes("(N'DashboardWidget',N'CK_DashboardWidget_Type',NULL)") &&
       chartSql.includes("DECLARE @approvedActiveFilterSha256 varbinary(32)=NULL;"),
       "CHART_928_REVIEW_WITNESSES_MUST_REMAIN_UNAPPROVED");
+    const chartWitnesses:string[]=[];
+    const witnessListener=(info:{message?:string})=>{
+      if(/^CHART_928_TEST_(CHECK|FILTER)_WITNESS /.test(info.message??"")){
+        chartWitnesses.push(info.message!);
+        console.log(info.message);
+      }
+    };
+    root.on("info",witnessListener);
     try {
       await root.request().batch(chartSql);
     } catch (error) {
@@ -365,6 +373,8 @@ async function main(){
       const message=String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240).replace(/[\r\n]/g," ");
       console.error(`CHART_928_SQL_INSTALL_FAILURE number=${dbError.originalError?.info?.number??dbError.number??0};message=${message}`);
       throw error;
+    } finally {
+      root.removeListener("info",witnessListener);
     }
     const chartCatalog=(await root.request().query(`SELECT
       OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
