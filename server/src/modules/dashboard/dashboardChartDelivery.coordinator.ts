@@ -230,6 +230,8 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
           lastWidget.revision !== saved.revision ||
           JSON.stringify(lastWidget.config) !== JSON.stringify(saved.config))
         return deny();
+      // Approval can be revoked after the audited page and final widget check.
+      await requirePlaybackApproval();
       return result;
     } catch {
       // No SQL, patient identifiers, credentials or internal error detail to
