@@ -409,6 +409,14 @@ async function main(){
     check((await root.request().query(
       "SELECT OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P') P")).recordset[0].P===null,
       "CHART_OPTION_A_PROCEDURE_NOT_INSTALLED");
+    // The dormant Option A gate must reject before even acquiring a pool.
+    let disabledPoolCalls=0;
+    const disabledCreate=createDormantSinglePoolChartCreate({
+      enabled:()=>false,
+      getPool:async()=>{disabledPoolCalls++;return root!;},
+    });
+    check(await disabledCreate(chartPlan)===null&&disabledPoolCalls===0,
+      "CHART_OPTION_A_DISABLED_NO_SQL_POOL_ACQUISITION");
     const createChart=createDormantSinglePoolChartCreate({
       enabled:()=>true,getPool:async()=>root!,
     });
@@ -416,7 +424,7 @@ async function main(){
     check((await root.request().query(
       "SELECT COUNT(*) C FROM uqp.DashboardChartWidgetSeal")).recordset[0].C===0,
       "CHART_OPTION_A_MISSING_PROCEDURE_NO_SEAL");
-    console.log("CHART_OPTION_A_SQL2019_MISSING_PROCEDURE_FAIL_CLOSED_PASS");
+    console.log("CHART_OPTION_A_SQL2019_DISABLED_NO_POOL_AND_MISSING_PROCEDURE_FAIL_CLOSED_PASS");
 
     // The real transactional writer must not fabricate an approval or audit
     // receipt when the requested chart/widget has no verified seal.
