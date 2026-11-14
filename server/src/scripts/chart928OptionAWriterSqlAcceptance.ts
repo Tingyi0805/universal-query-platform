@@ -158,8 +158,13 @@ export async function verifyChartOptionAWriterSql(
      .input("UqpTestLogin",sql.NVarChar(128),config.user).query(text);
    }
    const manifest=JSON.parse(await readFile(new URL("928_source_manifest.json",root),"utf8")) as {modules:Record<string,string>};
-   const modules=(await new sql.Request(authorizedProbe).query("SELECT o.name Name,LOWER(CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),m.definition)),2)) Digest FROM sys.objects o JOIN sys.sql_modules m ON m.object_id=o.object_id WHERE o.schema_id=SCHEMA_ID(N'uqp')")).recordset;
-   for(const [module,digest] of Object.entries(manifest.modules))assert.equal(modules.find(r=>r.Name===module)?.Digest,digest);
+   const modules=(await new sql.Request(authorizedProbe).query("SELECT o.name Name,DATALENGTH(m.definition) DefinitionBytes,LEFT(m.definition,6) Verb,LOWER(CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),m.definition)),2)) Digest FROM sys.objects o JOIN sys.sql_modules m ON m.object_id=o.object_id WHERE o.schema_id=SCHEMA_ID(N'uqp')")).recordset;
+   // Fixed-name module metadata ONLY from this disposable fixture. Never log
+   // SQL definitions, rows, JWTs, credentials or target-learned trust pins.
+   const mismatch=Object.entries(manifest.modules).filter(([name,digest])=>modules.find(r=>r.Name===name)?.Digest!==digest);
+   for(const [module,expected] of mismatch){const actual=modules.find(r=>r.Name===module);
+    console.error("CHART_TEST_MODULE_MISMATCH:"+JSON.stringify({module,expected,actual:actual?.Digest,bytes:actual?.DefinitionBytes,verb:actual?.Verb}));}
+   assert.equal(mismatch.length,0,"CHART_TEST_MODULE_SOURCE_MISMATCH");
    console.log("CHART_AUTHORIZED_TEST_EXACT_SOURCES_AND_MODULES_PASS");
   }finally{await authorizedProbe.rollback();}
   assert.equal((await q("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal') Id")).recordset[0]?.Id,null);
