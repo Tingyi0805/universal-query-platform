@@ -37,9 +37,10 @@ export async function decideChartPlaybackApproval(
     const role = await new sql.Request(tx)
       .input("actorId", sql.BigInt, input.actorUserId)
       .query("SELECT u.Id FROM uqp.AppUser u WITH (UPDLOCK,HOLDLOCK) " +
-        "JOIN uqp.UserRole ur WITH (HOLDLOCK) ON ur.UserId=u.Id " +
+        "WHERE u.Id=@actorId AND u.IsActive=1 AND EXISTS (" +
+        "SELECT 1 FROM uqp.UserRole ur WITH (HOLDLOCK) " +
         "JOIN uqp.Role r WITH (HOLDLOCK) ON r.Id=ur.RoleId " +
-        "WHERE u.Id=@actorId AND u.IsActive=1 AND r.Code=N'SYSTEM_ADMIN' AND r.IsActive=1");
+        "WHERE ur.UserId=u.Id AND r.Code=N'SYSTEM_ADMIN' AND r.IsActive=1)");
     if (role.recordset.length !== 1) throw Error("ADMIN_REQUIRED");
 
     const result = await new sql.Request(tx)
