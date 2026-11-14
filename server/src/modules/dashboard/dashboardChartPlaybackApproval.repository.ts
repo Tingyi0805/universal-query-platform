@@ -80,9 +80,10 @@ export function createDormantPlaybackApprovalReader(
           "WHERE p.DashboardId=@dashboardId AND p.WidgetId=@widgetId " +
           "AND p.Status='APPROVED'")).recordset as ApprovalRow[];
       // An ambiguous row set is not a valid authorization decision.
-      return rows.length === 1 && positive(rows[0].DashboardId) === dashboardId &&
-        positive(rows[0].WidgetId) === widgetId
-        ? validatePlaybackApprovalRow(rows[0], dashboardId, widgetId) : null;
+      const row = rows.length === 1 ? rows[0] : undefined;
+      return row && positive(row.DashboardId) === dashboardId &&
+        positive(row.WidgetId) === widgetId
+        ? validatePlaybackApprovalRow(row, dashboardId, widgetId) : null;
     } catch { return null; }
   };
 }
