@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isChartPlaybackApproved } from "./dashboardChartPlaybackApproval.policy.js";
+import { isChartPlaybackApproved, type ChartPlaybackApproval } from "./dashboardChartPlaybackApproval.policy.js";
 
 const approved = {
   widgetId: 17, widgetRevision: "0123456789abcdef",
@@ -14,11 +14,11 @@ test("approved exact widget revision and digest is accepted", () => {
 });
 
 test("missing, revoked, edited, unaudited or unreviewed versions fail closed", () => {
-  const check = (a: typeof approved | null, id = 17,
+  const check = (a: ChartPlaybackApproval | null, id = 17,
     revision = approved.widgetRevision, digest = approved.configDigest) =>
     isChartPlaybackApproved(a, id, revision, digest);
   assert.equal(check(null), false);
-  assert.equal(check({...approved, status: "REVOKED"} as typeof approved), false);
+  assert.equal(check({...approved, status: "REVOKED"}), false);
   assert.equal(check(approved, 18), false);
   assert.equal(check(approved, 17, "fedcba9876543210"), false);
   assert.equal(check(approved, 17, approved.widgetRevision, "b".repeat(64)), false);
