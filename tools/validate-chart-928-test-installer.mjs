@@ -10,7 +10,11 @@ const requireTrue=(value,label)=>{if(!value)throw Error("CHART_928_TEST_INSTALL_
 const start=frozen.indexOf("SET XACT_ABORT ON;");
 requireTrue(start>=0,"BASE_MISSING");
 const base=frozen.slice(start).trim();
-requireTrue(candidate.includes(base),"BASE_SOURCE_DRIFT");
+const witnessStart=candidate.indexOf(" -- TEST-ONLY: capture SQL Server catalog-normalized witnesses");
+const witnessEnd=candidate.indexOf(" IF EXISTS(SELECT 1 FROM @approvedChecks WHERE ApprovedDefinitionSha256 IS NULL)",witnessStart);
+requireTrue(witnessStart>=0&&witnessEnd>witnessStart,"WITNESS_CAPTURE_MISSING");
+const candidateWithoutWitness=candidate.slice(0,witnessStart)+candidate.slice(witnessEnd);
+requireTrue(candidateWithoutWitness.includes(base),"BASE_SOURCE_DRIFT");
 const approvalStart=approval.indexOf("    CREATE TABLE uqp.DashboardChartPlaybackApproval (");
 const approvalEnd=approval.indexOf("    COMMIT TRANSACTION;",approvalStart);
 requireTrue(approvalStart>=0&&approvalEnd>approvalStart,"APPROVAL_SOURCE_MISSING");
