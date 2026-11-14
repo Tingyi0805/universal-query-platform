@@ -430,7 +430,7 @@ async function main(){
     // only. The independent 928 base installer remains frozen and unchanged.
     stage="CHART_OPTION_A_DISPOSABLE_PROCEDURE_INSTALL";
     const optionASql=await readFile(new URL(
-      "../../../database/review/928_chart_option_a_disposable_create_test_install.sql.txt",
+      "../../../database/review/928_chart_option_a_disposable_create_test_install.fixture.txt",
       import.meta.url),"utf8");
     check(optionASql.includes("CHART_A_TEST_DISPOSABLE_MARKER_REQUIRED"),
       "CHART_OPTION_A_DISPOSABLE_ONLY_INSTALLER");
