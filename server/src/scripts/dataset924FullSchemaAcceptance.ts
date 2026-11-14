@@ -63,6 +63,9 @@ async function businessSnapshot(pool:sql.ConnectionPool){
 }
 async function main(){
   check(process.env.GITHUB_ACTIONS==="true"&&process.env.UQP_924_CI_EPHEMERAL==="1"&&!!process.env.UQP_924_CI_PASSWORD,"CI_ONLY");
+  // CI selects only the expected major version of its own disposable Docker SQL.
+  // Production connection configuration remains inaccessible to this runner.
+  const expectedMajorVersion=process.env.UQP_924_CI_SQL_MAJOR==="16"?16:15;
   // Fixed loopback target, never reads PLATFORM_DB_* or .env connection settings.
   const config:sql.config={server:"127.0.0.1",port,user:"sa",password:process.env.UQP_924_CI_PASSWORD!,database:"master",
     options:{encrypt:true,trustServerCertificate:true},pool:{min:0,max:4},connectionTimeout:2000,requestTimeout:30000};
@@ -75,7 +78,7 @@ async function main(){
     stage="IDENTITY";
     const identity=(await master.request().query(`SELECT @@SERVERNAME S,DB_NAME() D,ORIGINAL_LOGIN() L,
       CONVERT(nvarchar(128),SERVERPROPERTY(N'MachineName')) M,CONVERT(int,SERVERPROPERTY(N'ProductMajorVersion')) V,DB_ID(N'${db}') Existing`)).recordset[0];
-    check(identity.S===machine&&identity.M===machine&&identity.D==="master"&&identity.L==="sa"&&identity.V===15&&identity.Existing===null,"CI_IDENTITY");
+    check(identity.S===machine&&identity.M===machine&&identity.D==="master"&&identity.L==="sa"&&identity.V===expectedMajorVersion&&identity.Existing===null,"CI_IDENTITY");
     await master.request().batch(`CREATE DATABASE [${db}]; ALTER DATABASE [${db}] SET COMPATIBILITY_LEVEL=150;`);created=true;
     root=await new sql.ConnectionPool({...config,database:db}).connect();
     await root.request().batch("CREATE SCHEMA uqp");
