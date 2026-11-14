@@ -363,6 +363,31 @@ END');
    (N'DashboardChartTrustRequest',N'CK_ChartTrustRequest_Action',NULL),
    (N'DashboardChartPrivacyReview',N'CK_ChartReview_State',NULL),
    (N'DashboardChartPrivacyReview',N'CK_ChartReview_Scope',NULL);
+ -- TEST-ONLY: capture SQL Server catalog-normalized witnesses before the
+ -- reviewed release's intentionally NULL pins reject the installation.
+ -- No witness is copied into an approval slot or trusted automatically.
+ DECLARE @ciWitnessName sysname,@ciWitnessDigest varchar(64);
+ DECLARE chartWitnessCursor CURSOR LOCAL FAST_FORWARD FOR
+ SELECT e.ConstraintName,
+   CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),c.definition)),2)
+ FROM @approvedChecks e
+ LEFT JOIN sys.check_constraints c ON
+   c.parent_object_id=OBJECT_ID(N'uqp.'+e.TableName) AND c.name=e.ConstraintName
+ ORDER BY e.TableName,e.ConstraintName;
+ OPEN chartWitnessCursor;
+ FETCH NEXT FROM chartWitnessCursor INTO @ciWitnessName,@ciWitnessDigest;
+ WHILE @@FETCH_STATUS=0
+ BEGIN
+   PRINT CONCAT('CHART_928_TEST_CHECK_WITNESS name=',@ciWitnessName,
+     ';sha256=',COALESCE(@ciWitnessDigest,'MISSING'));
+   FETCH NEXT FROM chartWitnessCursor INTO @ciWitnessName,@ciWitnessDigest;
+ END;
+ CLOSE chartWitnessCursor; DEALLOCATE chartWitnessCursor;
+ DECLARE @ciFilterDigest varchar(64)=
+   (SELECT CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),i.filter_definition)),2)
+    FROM sys.indexes i WHERE i.object_id=OBJECT_ID(N'uqp.DashboardChartPrivacyReview')
+      AND i.name=N'UX_ChartReview_Active');
+ PRINT CONCAT('CHART_928_TEST_FILTER_WITNESS sha256=',COALESCE(@ciFilterDigest,'MISSING'));
  IF EXISTS(SELECT 1 FROM @approvedChecks WHERE ApprovedDefinitionSha256 IS NULL)
    THROW 51928,'CHART_928_CHECK_SOURCE_WITNESSES_NOT_APPROVED',1;
  IF EXISTS(
