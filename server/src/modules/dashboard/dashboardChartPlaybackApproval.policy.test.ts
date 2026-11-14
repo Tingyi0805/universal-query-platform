@@ -5,7 +5,8 @@ import { isChartPlaybackApproved } from "./dashboardChartPlaybackApproval.policy
 const approved = {
   widgetId: 17, widgetRevision: "0123456789abcdef",
   configDigest: "a".repeat(64), reviewerUserId: 3,
-  auditLogId: "42", status: "APPROVED" as const,
+  auditLogId: "42", reviewerIsActiveAdmin: true,
+  auditReceiptVerified: true, status: "APPROVED" as const,
 };
 
 test("approved exact widget revision and digest is accepted", () => {
@@ -22,5 +23,7 @@ test("missing, revoked, edited, unaudited or unreviewed versions fail closed", (
   assert.equal(check(approved, 17, "fedcba9876543210"), false);
   assert.equal(check(approved, 17, approved.widgetRevision, "b".repeat(64)), false);
   assert.equal(check({...approved, reviewerUserId: 0}), false);
+  assert.equal(check({...approved, reviewerIsActiveAdmin: false}), false);
+  assert.equal(check({...approved, auditReceiptVerified: false}), false);
   assert.equal(check({...approved, auditLogId: "0"}), false);
 });
