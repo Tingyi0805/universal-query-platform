@@ -132,7 +132,8 @@ function fixture(options: Scenario = {}) {
     enabled: () => options.enabled !== false,
     readPlaybackApproval: options.noPlaybackReader ? undefined : async (_dashboardId, widgetId) => {
       playbackReads++;
-      if (options.missingPlaybackApproval || (!isPublic && !options.approvedPlayback)) return null;
+      if (options.missingPlaybackApproval ||
+          (options.context === "admin-preview" && !options.approvedPlayback)) return null;
       return {
         widgetId, widgetRevision: options.stalePlaybackRevision ? "b".repeat(16) : "a".repeat(16),
         configDigest: options.stalePlaybackDigest ? "0".repeat(64) :
