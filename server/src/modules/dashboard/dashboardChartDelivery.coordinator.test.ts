@@ -134,6 +134,7 @@ function fixture(options: Scenario = {}) {
         widgetId, widgetRevision: "a".repeat(16),
         configDigest: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
         reviewerUserId: 3, auditLogId: "42",
+        reviewerIsActiveAdmin: true, auditReceiptVerified: true,
         status: options.revokePlaybackAfterPage && calls > 0 ? "REVOKED" : "APPROVED",
       };
     },
