@@ -353,47 +353,26 @@ async function main(){
     check((await root.request().query("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal")).recordset[0].Seal===null,"CHART_928_UNMARKED_NO_DDL");
     await root.request().batch("EXEC sys.sp_addextendedproperty @name=N'UQP_CHART_TEST_DISPOSABLE',@value=N'YES'");
     check(chartSql.includes("CHART_TEST_DISPOSABLE_DB_MARKER_REQUIRED"),"CHART_928_TEST_MARKER_SOURCE");
-    // These are deliberately unapproved production witness slots. Assert that
-    // the test cannot silently treat a review-only source as released SQL.
-    check(chartSql.includes("(N'DashboardWidget',N'CK_DashboardWidget_Type',NULL)") &&
-      chartSql.includes("DECLARE @approvedActiveFilterSha256 varbinary(32)=NULL;"),
-      "CHART_928_REVIEW_WITNESSES_MUST_REMAIN_UNAPPROVED");
-    const chartWitnesses:string[]=[];
-    const witnessListener=(info:{message?:string})=>{
-      if(/^CHART_928_TEST_(CHECK|FILTER)_WITNESS /.test(info.message??"")){
-        chartWitnesses.push(info.message!);
-        console.log(info.message);
-      }
-    };
-    const chartInstallRequest=root.request();
-    chartInstallRequest.on("info",witnessListener);
-    let blockedByReview=false;
+    // SQL2019-only witness pins are copied from independent disposable CI
+    // evidence, never from a hospital database or the production review file.
+    check(chartSql.includes("0xDEE5565B983CF83FA8AF4A9E0487DF581BAC22A36825301852FCD6195D4D5572") &&
+      chartSql.includes("0x590373D358AA5E0669D7E237653010FFC6C3050BD55D5A373F5835F42BF3747D"),
+      "CHART_928_ISOLATED_PIN_CONTRACT");
     try {
-      await chartInstallRequest.batch(chartSql);
+      await root.request().batch(chartSql);
     } catch (error) {
       const dbError=error as {number?:number;message?:string;originalError?:{info?:{number?:number;message?:string}}};
-      const message=String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240).replace(/[\\r\\n]/g," ");
-      console.log(`CHART_928_SQL_REVIEW_BLOCK number=${dbError.originalError?.info?.number??dbError.number??0};message=${message}`);
-      blockedByReview=(dbError.originalError?.info?.number??dbError.number)===51928 &&
-        message.includes("CHART_928_CHECK_SOURCE_WITNESSES_NOT_APPROVED");
-      if(!blockedByReview)throw error;
-    } finally {
-      chartInstallRequest.removeListener("info",witnessListener);
+      console.error(`CHART_928_SQL_INSTALL_FAILURE number=${dbError.originalError?.info?.number??dbError.number??0};message=${String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240)}`);
+      throw error;
     }
-    check(blockedByReview,"CHART_928_REVIEW_GUARD_MUST_BLOCK");
-    const checkWitnesses=chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_CHECK_WITNESS "));
-    const filterWitnesses=chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_FILTER_WITNESS "));
-    check(checkWitnesses.length===5 && filterWitnesses.length===1 &&
-      chartWitnesses.every(v=>/sha256=[0-9A-F]{64}$/.test(v)) &&
-      new Set(checkWitnesses.map(v=>v.match(/name=([^;]+)/)?.[1])).size===5,
-      "CHART_928_CATALOG_WITNESS_CAPTURE");
     const chartCatalog=(await root.request().query(`SELECT
       OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
       OBJECT_ID(N'uqp.DashboardChartPrivacyReview',N'U') Review,
       OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') TrustRequest,
       OBJECT_ID(N'uqp.DashboardChartPlaybackApproval',N'U') PlaybackApproval`)).recordset[0];
-    check(Object.values(chartCatalog).every(v=>v===null),"CHART_928_REVIEW_BLOCK_ROLLBACK");
-    console.log("CHART_928_SQL2019_DISPOSABLE_REVIEW_BLOCK_WITNESSES_CAPTURED_NO_DDL_PASS");
+    check(Object.values(chartCatalog).every(v=>typeof v==="number"&&v>0),"CHART_928_INSTALLED_CATALOG");
+    await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_REPEAT_MUST_FAIL");
+    console.log("CHART_928_SQL2019_DISPOSABLE_FULL_SCHEMA_INSTALL_AND_REPEAT_GUARD_PASS");
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");
