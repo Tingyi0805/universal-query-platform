@@ -48,8 +48,8 @@ export function validatePlaybackApprovalRow(
 
 /** Deliberately dormant until an approved schema and admin role predicate exist.
  * The SQL query returns no approval if the table, columns or evidence are absent.
- * Administrator role joins below are provisional until checked against the
- * existing 927 schema; the production CHART gate must remain disabled.
+ * Administrator role joins match 001_platform_identity.sql; the production
+ * CHART gate must remain disabled until the 928 catalog and API are installed.
  */
 export function createDormantPlaybackApprovalReader(
   getPool: typeof getPlatformDbPool = getPlatformDbPool,
@@ -67,7 +67,7 @@ export function createDormantPlaybackApprovalReader(
           "CONVERT(bit,CASE WHEN EXISTS (SELECT 1 FROM uqp.AppUser u WITH (HOLDLOCK) " +
           "WHERE u.Id=p.ReviewerUserId AND u.IsActive=1 AND EXISTS " +
           "(SELECT 1 FROM uqp.UserRole ur WITH (HOLDLOCK) JOIN uqp.Role r WITH (HOLDLOCK) " +
-          "ON r.Id=ur.RoleId WHERE ur.UserId=u.Id AND r.Name=N'ADMIN')) " +
+          "ON r.Id=ur.RoleId WHERE ur.UserId=u.Id AND r.Code=N'SYSTEM_ADMIN' AND r.IsActive=1)) " +
           "THEN 1 ELSE 0 END) AS ReviewerIsActiveAdmin," +
           "CONVERT(bit,CASE WHEN EXISTS (SELECT 1 FROM uqp.AuditLog a WITH (HOLDLOCK) " +
           "WHERE a.Id=p.AuditLogId AND a.UserId=p.ReviewerUserId AND a.IsImportant=1 " +
