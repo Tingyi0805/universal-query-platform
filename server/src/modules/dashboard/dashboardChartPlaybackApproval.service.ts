@@ -46,14 +46,14 @@ export async function decideChartPlaybackApproval(
     const result = await new sql.Request(tx)
       .input("dashboardId", sql.BigInt, input.dashboardId)
       .input("widgetId", sql.BigInt, input.widgetId)
-      .query("SELECT w.ConfigJson,s.SealRowVersion,s.ConfigDigest,s.SealedBy,s.AuditLogId " +
+      .query("SELECT w.ConfigJson,w.SourceKey,s.SealRowVersion,s.ConfigDigest,s.SealedBy,s.AuditLogId " +
         "FROM uqp.DashboardWidget w WITH (UPDLOCK,HOLDLOCK) " +
         "JOIN uqp.DashboardDisplayProfile p WITH (HOLDLOCK) ON p.Id=w.ProfileId " +
         "JOIN uqp.DashboardChartWidgetSeal s WITH (HOLDLOCK) ON s.WidgetId=w.Id " +
         "WHERE w.Id=@widgetId AND p.DashboardId=@dashboardId " +
         "AND w.WidgetType=N'CHART' AND s.IsActive=1");
     if (result.recordset.length !== 1) throw Error("CHART_NOT_ATTESTED");
-    const row = result.recordset[0] as { ConfigJson: unknown; SealRowVersion: unknown; ConfigDigest: unknown; SealedBy: unknown; AuditLogId: unknown };
+    const row = result.recordset[0] as { ConfigJson: unknown; SourceKey: unknown; SealRowVersion: unknown; ConfigDigest: unknown; SealedBy: unknown; AuditLogId: unknown };
     if (typeof row.ConfigJson !== "string" || row.ConfigJson.length > 8192 ||
         !Buffer.isBuffer(row.SealRowVersion) || row.SealRowVersion.length !== 8)
       throw Error("INVALID_SEAL");
@@ -70,7 +70,7 @@ export async function decideChartPlaybackApproval(
         AND Status=N'SUCCESS' AND EventType=N'CHART_SEAL_WIDGET'`);
     if (sealReceipt.recordset.length !== 1) throw Error("INVALID_SEAL_AUDIT");
     const parsed = chartWidgetConfigSchema.safeParse(JSON.parse(row.ConfigJson));
-    if (!parsed.success) throw Error("INVALID_CHART_CONFIG");
+    if (!parsed.success || parsed.data.dataSourceKey !== row.SourceKey) throw Error("INVALID_CHART_CONFIG");
     const digest = createHash("sha256").update(JSON.stringify(parsed.data)).digest("hex");
     const receipt = await writeAuditEvent({
       eventType: input.action === "APPROVE" ? "CHART_APPROVE_PLAYBACK" : "CHART_REVOKE_PLAYBACK",
