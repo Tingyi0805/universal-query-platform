@@ -46,7 +46,8 @@ export type ChartCoordinatorDependencies = {
   auditedPage: AuditedPageProvider;
   readFence: ChartFenceReader;
   // Gate 3 administrator playback approval, read from server-owned audit-backed storage.
-  // Required for admin-preview; a missing reader fails closed before Query execution.
+  // Required for every playback context (user, device, admin-preview).
+  // A missing reader fails closed before Query execution.
   readPlaybackApproval?: (dashboardId: number, widgetId: number) => Promise<ChartPlaybackApproval | null>;
   // Must read a trusted, immutable-revision privacy decision; Widget ConfigJson
   // and HTTP bodies must never carry a review or an approval flag.
@@ -138,14 +139,15 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
       if (!parsed.success) return deny();
       const config = parsed.data;
       const configDigest = createHash("sha256").update(JSON.stringify(config)).digest("hex");
-      const requireAdminApproval = async () => {
-        if (context !== "admin-preview") return;
+      const requirePlaybackApproval = async () => {
+        // Only an inactive designer preview may omit playback authorization.
+        if (context === "designer") return;
         const decision = await deps.readPlaybackApproval?.(dashboardId, widgetId) ?? null;
         if (!isChartPlaybackApproved(decision, widgetId, saved.revision, configDigest)) return deny();
       };
       // Do not allow admin playback to reach the data source without a reviewed
       // exact widget revision and config digest.
-      await requireAdminApproval();
+      await requirePlaybackApproval();
       const readFacts = deps.createFactsReader(config);
       const load = async () => {
         const facts = await readFacts(dashboardId, config.dataSourceKey, subject);
@@ -161,7 +163,7 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
 
       const initial = await load();
       const fenceOperation = createFencedChartOperation(deps.readFence, async () => {
-        await requireAdminApproval();
+        await requirePlaybackApproval();
         const current = await load();
         if (current.approval.version !== initial.approval.version) return deny();
         const scope = scopeOf(current.facts, current.approval.version, config);
