@@ -17,6 +17,7 @@ declare global {
 // CHART routes use this proof only after the independently reviewed HTTP gate.
 const verifiedActors = new WeakMap<Request,Readonly<{
   userId:number;tokenVersion:number;designQueryAllowed:boolean;
+  manageUsersAllowed:boolean;
   viewQueryAllowed:boolean;executeQueryAllowed:boolean;
   expiresAt:number|null;originalBearerHeader:string;
 }>>();
@@ -29,6 +30,20 @@ export function readVerifiedJwtActor(req: Request):Readonly<{userId:number;token
      !Array.isArray(req.authUser.permissions) ||
      !req.authUser.permissions.includes("DESIGN_QUERY"))return null;
   return {userId:actor.userId,tokenVersion:actor.tokenVersion};
+}
+
+/** CHART administrator decisions require a verified live MANAGE_USERS session,
+ * not DESIGN_QUERY. SYSTEM_ADMIN membership is checked again transactionally
+ * by the approval service. Request-body and mutable authUser cannot add scope.
+ */
+export function readVerifiedChartAdminActor(req: Request):Readonly<{
+  userId:number;tokenVersion:number;
+}>|null {
+  const proof=verifiedActors.get(req);
+  if(!proof?.manageUsersAllowed || req.authUser?.id!==proof.userId ||
+     !Array.isArray(req.authUser.permissions) ||
+     !req.authUser.permissions.includes("MANAGE_USERS"))return null;
+  return {userId:proof.userId,tokenVersion:proof.tokenVersion};
 }
 
 /** Chart-only immutable, verified JWT and live-DB EXECUTE_QUERY scope.
@@ -125,6 +140,7 @@ export function createAuthenticateJwt(getSession = getTokenSessionState): Reques
       verifiedActors.set(req,Object.freeze({
         userId,tokenVersion,
         designQueryAllowed:session.permissions.includes("DESIGN_QUERY"),
+        manageUsersAllowed:session.permissions.includes("MANAGE_USERS"),
         viewQueryAllowed:session.permissions.includes("VIEW_QUERY"),
         executeQueryAllowed:session.permissions.includes("EXECUTE_QUERY"),
         expiresAt:Number.isSafeInteger(payload.exp)&&payload.exp!>0
