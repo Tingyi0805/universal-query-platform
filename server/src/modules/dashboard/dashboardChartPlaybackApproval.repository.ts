@@ -43,6 +43,8 @@ export function validatePlaybackApprovalRow(row: ApprovalRow | null): ChartPlayb
 
 /** Deliberately dormant until an approved schema and admin role predicate exist.
  * The SQL query returns no approval if the table, columns or evidence are absent.
+ * Administrator role joins below are provisional until checked against the
+ * existing 927 schema; the production CHART gate must remain disabled.
  */
 export function createDormantPlaybackApprovalReader(
   getPool: typeof getPlatformDbPool = getPlatformDbPool,
@@ -72,7 +74,9 @@ export function createDormantPlaybackApprovalReader(
           "FROM uqp.DashboardChartPlaybackApproval p WITH (HOLDLOCK) " +
           "WHERE p.DashboardId=@dashboardId AND p.WidgetId=@widgetId " +
           "AND p.Status='APPROVED'")).recordset as ApprovalRow[];
-      return rows.length === 1 ? validatePlaybackApprovalRow(rows[0]) : null;
+      // An ambiguous row set is not a valid authorization decision.
+      return rows.length === 1 && positive(rows[0].WidgetId) === widgetId
+        ? validatePlaybackApprovalRow(rows[0]) : null;
     } catch { return null; }
   };
 }
