@@ -353,6 +353,11 @@ async function main(){
     check((await root.request().query("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal")).recordset[0].Seal===null,"CHART_928_UNMARKED_NO_DDL");
     await root.request().batch("EXEC sys.sp_addextendedproperty @name=N'UQP_CHART_TEST_DISPOSABLE',@value=N'YES'");
     check(chartSql.includes("CHART_TEST_DISPOSABLE_DB_MARKER_REQUIRED"),"CHART_928_TEST_MARKER_SOURCE");
+    // These are deliberately unapproved production witness slots. Assert that
+    // the test cannot silently treat a review-only source as released SQL.
+    check(chartSql.includes("(N'DashboardWidget',N'CK_DashboardWidget_Type',NULL)") &&
+      chartSql.includes("DECLARE @approvedActiveFilterSha256 varbinary(32)=NULL;"),
+      "CHART_928_REVIEW_WITNESSES_MUST_REMAIN_UNAPPROVED");
     try {
       await root.request().batch(chartSql);
     } catch (error) {
