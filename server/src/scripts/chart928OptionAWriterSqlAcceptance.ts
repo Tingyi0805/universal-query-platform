@@ -50,8 +50,9 @@ export async function verifyChartOptionAWriterSql(
  assert.equal(reviewedBase.split(filterWitness).length,2);
  const first="THROW 51928,'CHART_A_WRITER_PRODUCTION_REVIEW_NOT_APPROVED',1;";
  const frozenPin="DECLARE @approvedFrozenTriggerDefinitionSha256 VARBINARY(32)=NULL;";
- const writerPin="DECLARE @approvedWriterOriginalSid VARBINARY(85)=NULL;";
- for(const s of [first,frozenPin,writerPin])assert.equal(source.split(s).length,2);
+ // Option A deliberately has no SQL original-login SID pin.
+ for(const guard of [first,frozenPin])assert.equal(source.split(guard).length,2);
+ assert.doesNotMatch(source,/@approvedWriterOriginalSid|SUSER_SID\(ORIGINAL_LOGIN\(\)\)<>/);
  await assert.rejects(admin.request().batch(source),(e:unknown)=>
   Number((e as {number?:number}).number)===51928);
  let db:sql.ConnectionPool|undefined,writer:sql.ConnectionPool|undefined;
@@ -243,8 +244,8 @@ export async function verifyChartOptionAWriterSql(
    "LIKE N'%[^0-9a-f]%' THROW 51928,'CHART_A_DISPOSABLE_ONLY',1;");
   testSql=replaceOnce(testSql,frozenPin,
    "DECLARE @approvedFrozenTriggerDefinitionSha256 VARBINARY(32)=0x"+frozenHash+";");
-  testSql=replaceOnce(testSql,writerPin,
-   "DECLARE @approvedWriterOriginalSid VARBINARY(85)=0x"+sid+";");
+  // The existing platform SQL pool is the authorized Option A caller;
+  // no second SID substitution is necessary in the reviewed procedure.
   stage="ATOMIC_REVIEWED_BASE_AND_WRITER_INSTALL";
   const tx=new sql.Transaction(db);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
