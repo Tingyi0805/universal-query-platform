@@ -353,7 +353,14 @@ async function main(){
     check((await root.request().query("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal")).recordset[0].Seal===null,"CHART_928_UNMARKED_NO_DDL");
     await root.request().batch("EXEC sys.sp_addextendedproperty @name=N'UQP_CHART_TEST_DISPOSABLE',@value=N'YES'");
     check(chartSql.includes("CHART_TEST_DISPOSABLE_DB_MARKER_REQUIRED"),"CHART_928_TEST_MARKER_SOURCE");
-    await root.request().batch(chartSql);
+    try {
+      await root.request().batch(chartSql);
+    } catch (error) {
+      const dbError=error as {number?:number;message?:string;originalError?:{info?:{number?:number;message?:string}}};
+      const message=String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240).replace(/[\r\n]/g," ");
+      console.error(`CHART_928_SQL_INSTALL_FAILURE number=${dbError.originalError?.info?.number??dbError.number??0};message=${message}`);
+      throw error;
+    }
     const chartCatalog=(await root.request().query(`SELECT
       OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
       OBJECT_ID(N'uqp.DashboardChartPrivacyReview',N'U') Review,
