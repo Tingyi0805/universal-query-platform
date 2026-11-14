@@ -14,15 +14,15 @@ const candidateUrl=new URL(
 );
 const load=()=>readFile(candidateUrl,"utf8");
 
-test("Option A reviewed SQL candidate is non-scanned and hard-stopped twice",async()=>{
+test("Option A reviewed SQL candidate is non-scanned and deployment-blocked",async()=>{
   const sql=await load();
   assert.equal(
     sql.split("\n").map(l=>l.trim()).find(l=>l&&!l.startsWith("--")),
     "THROW 51928,'CHART_A_WRITER_PRODUCTION_REVIEW_NOT_APPROVED',1;",
   );
   assert.match(sql,/@approvedFrozenTriggerDefinitionSha256 VARBINARY\(32\)=NULL/);
-  assert.match(sql,/@approvedWriterOriginalSid VARBINARY\(85\)=NULL/);
-  assert.match(sql,/SUSER_SID\(ORIGINAL_LOGIN\(\)\)<>@approvedWriterOriginalSid/);
+  assert.doesNotMatch(sql,/@approvedWriterOriginalSid|SUSER_SID\(ORIGINAL_LOGIN\(\)\)/);
+  assert.match(sql,/existing platform SQL connection pool/);
   assert.match(sql,/IF @@TRANCOUNT<>1/);
   assert.doesNotMatch(sql,/^\s*(?:GRANT\s+EXECUTE|CREATE\s+LOGIN|INSERT\s+(?:INTO\s+)?uqp\.SchemaMigration)\b/im);
   assert.equal(CHART_928_GENERIC_MIGRATION_APPROVED,false);
