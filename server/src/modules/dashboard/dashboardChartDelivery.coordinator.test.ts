@@ -1,4 +1,5 @@
 import test from "node:test";
+import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { createDashboardPageSnapshot } from "./dashboardPageSnapshot.js";
 import {
@@ -86,6 +87,8 @@ type Scenario = {
   unreviewedPublic?: boolean;
   invalidPublicThreshold?: boolean;
   wrongReviewScope?: boolean;
+  approvedPlayback?: boolean;
+  revokePlaybackAfterPage?: boolean;
 };
 function fixture(options: Scenario = {}) {
   const isPublic = options.isPublic ?? Boolean(options.context);
@@ -119,9 +122,20 @@ function fixture(options: Scenario = {}) {
     rows,
   });
   let readWidget = 0, reads = 0, calls = 0, publicReads = 0, fenceReads = 0;
+  let playbackReads = 0;
   const savedFacts = facts(isPublic);
   const deps: ChartCoordinatorDependencies = {
     enabled: () => options.enabled !== false,
+    readPlaybackApproval: async (_dashboardId, widgetId) => {
+      playbackReads++;
+      if (!options.approvedPlayback) return null;
+      return {
+        widgetId, widgetRevision: "a".repeat(16),
+        configDigest: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+        reviewerUserId: 3, auditLogId: "42",
+        status: options.revokePlaybackAfterPage && calls > 0 ? "REVOKED" : "APPROVED",
+      };
+    },
     readSavedWidget: async (id, widgetId) => {
       readWidget++;
       return options.denyWidget ? null : {
@@ -183,6 +197,7 @@ function fixture(options: Scenario = {}) {
       createDormantChartCoordinator(deps)(id, wid, actor),
     counts: () => ({ readWidget, reads, calls, publicReads, fenceReads }),
     deviceProofCalls: () => deviceProofCalls,
+    playbackReads: () => playbackReads,
   };
 }
 async function refused(f: ReturnType<typeof fixture>) {
@@ -321,4 +336,26 @@ test("unreviewed, invalid-threshold or wrong-scope public review prevents Query 
     assert.equal(f.counts().calls, 0);
     assert.equal(f.counts().publicReads, 1);
   }
+});
+
+test("admin preview requires exact administrator playback authorization before Query", async () => {
+  const f = fixture({context:"admin-preview"});
+  await refused(f);
+  assert.equal(f.counts().calls, 0);
+  assert.equal(f.playbackReads(), 1);
+});
+
+test("admin preview with approved version still passes existing privacy review", async () => {
+  const f = fixture({context:"admin-preview", approvedPlayback:true});
+  const result = await f.invoke();
+  assert.equal(result.points.length, 2);
+  assert.equal(f.counts().publicReads, 2);
+  assert.ok(f.playbackReads() >= 3);
+});
+
+test("revoked admin playback approval during audited Query cannot release points", async () => {
+  const f = fixture({context:"admin-preview", approvedPlayback:true, revokePlaybackAfterPage:true});
+  await refused(f);
+  assert.equal(f.counts().calls, 1);
+  assert.ok(f.playbackReads() >= 3);
 });
