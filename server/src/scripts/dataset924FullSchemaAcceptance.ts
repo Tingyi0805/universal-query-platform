@@ -345,6 +345,22 @@ async function main(){
     console.log("DATASET_PARAMETER_METADATA: REAL_SQL2019_INFERENCE_DESCRIBE_ZERO_ROW_COLUMNS_PERSIST_PARAMETER_CAS_PASS; NO_ACTUAL_VALUES_BOUND_OR_RETURNED");
     stage="DATASET_DISPLAY_925";
     await testDatasetDisplay925(root,app,login);
+    // PR99: run actual frozen 928 + Gate3 approval DDL against this disposable
+    // full-schema SQL Server 2019 DB. Never touches the user's SQL instance.
+    stage="CHART_928_ISOLATED_INSTALL";
+    await root.request().batch("EXEC sys.sp_addextendedproperty @name=N'UQP_CHART_TEST_DISPOSABLE',@value=N'YES'");
+    const chartSql=await readFile(new URL("../../../database/review/928_chart_frozen_and_approval_isolated_test_install.sql.txt",import.meta.url),"utf8");
+    check(chartSql.includes("CHART_TEST_DISPOSABLE_DB_MARKER_REQUIRED"),"CHART_928_TEST_MARKER_SOURCE");
+    await root.request().batch(chartSql);
+    const chartCatalog=(await root.request().query(`SELECT
+      OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
+      OBJECT_ID(N'uqp.DashboardChartPrivacyReview',N'U') Review,
+      OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') TrustRequest,
+      OBJECT_ID(N'uqp.DashboardChartPlaybackApproval',N'U') PlaybackApproval,
+      OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') FreezeTrigger`)).recordset[0];
+    check(Object.values(chartCatalog).every(v=>typeof v==="number"&&v>0),"CHART_928_INSTALL_CATALOG");
+    await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_REINSTALL_MUST_FAIL");
+    console.log("CHART_928_SQL2019_DISPOSABLE_FULL_SCHEMA_INSTALL_AND_REENTRY_GUARD_PASS");
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");
