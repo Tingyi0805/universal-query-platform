@@ -348,8 +348,10 @@ async function main(){
     // PR99: run actual frozen 928 + Gate3 approval DDL against this disposable
     // full-schema SQL Server 2019 DB. Never touches the user's SQL instance.
     stage="CHART_928_ISOLATED_INSTALL";
-    await root.request().batch("EXEC sys.sp_addextendedproperty @name=N'UQP_CHART_TEST_DISPOSABLE',@value=N'YES'");
     const chartSql=await readFile(new URL("../../../database/review/928_chart_frozen_and_approval_isolated_test_install.sql.txt",import.meta.url),"utf8");
+    await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_UNMARKED_DB_MUST_FAIL");
+    check((await root.request().query("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal")).recordset[0].Seal===null,"CHART_928_UNMARKED_NO_DDL");
+    await root.request().batch("EXEC sys.sp_addextendedproperty @name=N'UQP_CHART_TEST_DISPOSABLE',@value=N'YES'");
     check(chartSql.includes("CHART_TEST_DISPOSABLE_DB_MARKER_REQUIRED"),"CHART_928_TEST_MARKER_SOURCE");
     await root.request().batch(chartSql);
     const chartCatalog=(await root.request().query(`SELECT
