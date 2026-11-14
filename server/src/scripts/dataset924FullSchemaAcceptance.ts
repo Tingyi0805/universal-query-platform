@@ -426,6 +426,29 @@ async function main(){
       "CHART_OPTION_A_MISSING_PROCEDURE_NO_SEAL");
     console.log("CHART_OPTION_A_SQL2019_DISABLED_NO_POOL_AND_MISSING_PROCEDURE_FAIL_CLOSED_PASS");
 
+    // Install the actual Option A stored procedure in this disposable CI database
+    // only. The independent 928 base installer remains frozen and unchanged.
+    stage="CHART_OPTION_A_DISPOSABLE_PROCEDURE_INSTALL";
+    const optionASql=await readFile(new URL(
+      "../../../database/review/928_chart_option_a_disposable_create_test_install.sql.txt",
+      import.meta.url),"utf8");
+    check(optionASql.includes("CHART_A_TEST_DISPOSABLE_MARKER_REQUIRED"),
+      "CHART_OPTION_A_DISPOSABLE_ONLY_INSTALLER");
+    await root.request().batch(optionASql);
+    check((await root.request().query(
+      "SELECT OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P') P")).recordset[0].P!==null,
+      "CHART_OPTION_A_PROCEDURE_INSTALLED");
+    console.log("CHART_OPTION_A_SQL2019_DISPOSABLE_PROCEDURE_INSTALLED_PASS");
+    // Existing synthetic dashboard is deliberately not a published,
+    // query-scoped authorized CHART source. Creation must remain denied.
+    stage="CHART_OPTION_A_UNAUTHORIZED_SOURCE";
+    check(await createChart(chartPlan)===null,
+      "CHART_OPTION_A_UNAUTHORIZED_SOURCE_DENIED");
+    check((await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartWidgetSeal")).recordset[0].C===0,
+      "CHART_OPTION_A_DENIED_NO_SEAL");
+    console.log("CHART_OPTION_A_SQL2019_UNAUTHORIZED_SOURCE_DENIED_PASS");
+
     // The real transactional writer must not fabricate an approval or audit
     // receipt when the requested chart/widget has no verified seal.
     stage="CHART_GATE3_UNSEALED_WRITE_DENIAL";
