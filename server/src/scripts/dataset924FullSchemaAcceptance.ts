@@ -1,6 +1,8 @@
 import {testDatasetDisplay925,testDisplay925CleanCatalog} from "./datasetDisplay925Acceptance.js";
 import {createDormantPlaybackApprovalReader} from "../modules/dashboard/dashboardChartPlaybackApproval.repository.js";
 import {decideChartPlaybackApproval} from "../modules/dashboard/dashboardChartPlaybackApproval.service.js";
+import {planDormantChartCreate} from "../modules/dashboard/dashboardChartAtomicCreate.contract.js";
+import {createDormantSinglePoolChartCreate} from "../modules/dashboard/dashboardChartLocalJwtSqlCreate.js";
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
 import {createDatasetColumnCandidate,readColumnCandidateSnapshot,defaultColumnCandidateDependencies} from "../modules/dataset/datasetColumnCandidate.js";
@@ -392,6 +394,30 @@ async function main(){
     check((await root.request().query("SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C===0,
       "CHART_GATE3_EMPTY_APPROVAL_CATALOG");
     console.log("CHART_GATE3_SQL2019_EMPTY_APPROVAL_FAIL_CLOSED_PASS");
+    // Option A must not fabricate a Widget/Seal/Audit receipt when the
+    // database-owned atomic create procedure has not been installed.
+    stage="CHART_OPTION_A_MISSING_PROCEDURE";
+    const chartPlan=planDormantChartCreate({
+      dashboardId:1,profileId:1,actorId:303,tokenVersion:1,
+      requestId:"123e4567-e89b-42d3-a456-426614174000",
+      config:{version:1,chartType:"BAR",dataSourceKey:"PRIMARY",
+        categoryColumn:"Department",valueColumn:"Total",
+        valueMode:"QUERY_RESULT",maxPoints:10,showLegend:false},
+      placement:{x:0,y:0,width:300,height:200},
+    });
+    check(chartPlan!==null,"CHART_OPTION_A_VALID_TEST_PLAN");
+    check((await root.request().query(
+      "SELECT OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P') P")).recordset[0].P===null,
+      "CHART_OPTION_A_PROCEDURE_NOT_INSTALLED");
+    const createChart=createDormantSinglePoolChartCreate({
+      enabled:()=>true,getPool:async()=>root!,
+    });
+    check(await createChart(chartPlan)===null,"CHART_OPTION_A_MISSING_PROCEDURE_FAIL_CLOSED");
+    check((await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartWidgetSeal")).recordset[0].C===0,
+      "CHART_OPTION_A_MISSING_PROCEDURE_NO_SEAL");
+    console.log("CHART_OPTION_A_SQL2019_MISSING_PROCEDURE_FAIL_CLOSED_PASS");
+
     // The real transactional writer must not fabricate an approval or audit
     // receipt when the requested chart/widget has no verified seal.
     stage="CHART_GATE3_UNSEALED_WRITE_DENIAL";
