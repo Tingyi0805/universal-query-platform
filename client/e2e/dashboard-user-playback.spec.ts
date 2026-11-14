@@ -1,15 +1,21 @@
 import { test, expect, type Page } from "@playwright/test";
-async function setup(page: Page) {
-  const state = { mode: "QUERY_ONLY", revision: "a", metaStatus: 0, pageStatus: 0, failSource: "PRIMARY", errorCode: "QUERY_SOURCE_QUERY_FORBIDDEN",
+async function setup(page: Page,chart=false) {
+  const state = { chartRevoked:false,chartCalls:[] as {body:string|null;authorization:string|undefined}[], mode: "QUERY_ONLY", revision: "a", metaStatus: 0, pageStatus: 0, failSource: "PRIMARY", errorCode: "QUERY_SOURCE_QUERY_FORBIDDEN",
     authExpiresAt: Date.parse("2026-10-20T01:00:00Z"), holdFresh: false, releaseFresh: (() => {}) as () => void, generation: 0, expiries: new Map<string, number>(), legacy: 0, designer: 0, device: 0, requests: [] as { key: string; snapshot?: string; page: number; jwt: boolean }[], pending: false };
   await page.clock.install({ time: new Date("2026-10-20T00:00:00Z") }); await page.clock.pauseAt(new Date("2026-10-20T00:00:01Z"));
   await page.addInitScript(() => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic-user-session", user: { id: 1, username: "synthetic", displayName: "合成使用者", permissions: ["VIEW_QUERY", "EXECUTE_QUERY"] } })));
   const dashboard = { id: 1, code: "SYNTHETIC", name: "合成安全看板", description: "合成測試", queryName: "合成 Query", isActive: true,
     displayTitle: "合成安全看板", displayMode: "BIG_SCREEN", refreshSeconds: 30, pageSeconds: 5, pageSize: 1, parameters: {} };
   const widgets = ["PRIMARY", "WARD"].map((key, index) => ({ id: index + 1, widgetType: "TABLE", x: index * 500, y: 0, width: 480, height: 400, fontSize: 20, alignment: "LEFT", config: { dataSourceKey: key }, sourceKey: null, sortOrder: index }));
+  if(chart)widgets.push({...widgets[0]!,id:88,widgetType:"CHART",x:500,y:400,width:600,height:250,config:{dataSourceKey:"PRIMARY"}});
   const profiles = [{ id: 1, isDefault: true, canvasWidth: 1280, canvasHeight: 720, config: {}, widgets }];
   await page.context().route(url => url.pathname.startsWith("/api/"), async route => {
     const req = route.request(), path = new URL(req.url()).pathname;
+    if(path==="/api/dashboards/1/charts/v1/test-capabilities"){await route.fulfill({json:{playback:chart}});return;}
+    if(path==="/api/dashboards/1/playback/v1/charts/88/projection"){
+      state.chartCalls.push({body:req.postData(),authorization:req.headers().authorization});
+      await route.fulfill(state.chartRevoked?{status:409,json:{error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}}}:{json:{chartType:"BAR",showLegend:true,points:[{label:"合成統計",value:9}]}});return;
+    }
     if (path === "/api/dashboards/available") { await route.fulfill({ json: { dashboards: [dashboard] } }); return; }
     if (path === "/api/dashboards/1/playback/v1") {
       if (state.metaStatus) { await route.fulfill({ status: state.metaStatus, json: { error: { code: state.errorCode, message: "PRIVATE DRIVER DETAIL" } } }); return; }
@@ -92,4 +98,12 @@ test("background transition clears all patient data before browser timers can fr
   const state=await setup(page);await shown(page);
   await page.evaluate(()=>{Object.defineProperty(document,"visibilityState",{configurable:true,get:()=>"hidden"});document.dispatchEvent(new Event("visibilitychange"));});
   await empty(page);await expect(page.getByRole("heading",{name:"Dashboard 播放已停止"})).toBeVisible();expect(state.legacy).toBe(0);
+});
+
+test("ordinary Query user plays server-enabled sealed CHART and clears it after approval revocation",async({page})=>{
+ const state=await setup(page,true);const chart=page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"});
+ await expect(chart).toBeVisible();expect(state.chartCalls.length).toBeGreaterThan(0);
+ expect(state.chartCalls.every(x=>x.body===null&&x.authorization==="Bearer synthetic-user-session")).toBe(true);
+ state.chartRevoked=true;await page.clock.runFor(30001);await expect(chart).toHaveCount(0);
+ await expect(page.getByText("圖表未取得核准的彙總資料，停止顯示")).toBeVisible();expect([state.designer,state.device]).toEqual([0,0]);
 });

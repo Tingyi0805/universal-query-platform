@@ -145,6 +145,25 @@ export async function verifyChartOptionAWriterSql(
     "INSERT uqp.RolePermission(RoleId,PermissionId) VALUES(1,4),(1,5);" +
      "INSERT uqp.RoleQueryAccess(RoleId,QueryDefinitionId,CanView,CanExecute) VALUES(1,9,1,1);");
 
+  // Verify NEW authorized-target artifacts in this already approved disposable
+  // engine, then rollback. This does not re-run Stage18 or install any user DB.
+  stage="AUTHORIZED_TEST_ARTIFACT_ROUNDTRIP";
+  const authorizedProbe=new sql.Transaction(db);await authorizedProbe.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try{
+   const root=new URL("../../../database/authorized-test/",import.meta.url);
+   for(const file of ["928_chart_base.test-install.sql.txt","928_chart_approval.test-install.sql.txt","928_chart_writer.test-install.sql.txt"]){
+    const text=await readFile(new URL(file,root),"utf8");
+    await new sql.Request(authorizedProbe).input("UqpTestPurpose",sql.NVarChar(64),"UQP_AUTHORIZED_CHART_TEST_ONLY")
+     .input("UqpTestServer",sql.NVarChar(128),machine).input("UqpTestDatabase",sql.NVarChar(128),name)
+     .input("UqpTestLogin",sql.NVarChar(128),config.user).query(text);
+   }
+   const manifest=JSON.parse(await readFile(new URL("928_source_manifest.json",root),"utf8")) as {modules:Record<string,string>};
+   const modules=(await new sql.Request(authorizedProbe).query("SELECT o.name Name,LOWER(CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),m.definition)),2)) Digest FROM sys.objects o JOIN sys.sql_modules m ON m.object_id=o.object_id WHERE o.schema_id=SCHEMA_ID(N'uqp')")).recordset;
+   for(const [module,digest] of Object.entries(manifest.modules))assert.equal(modules.find(r=>r.Name===module)?.Digest,digest);
+   console.log("CHART_AUTHORIZED_TEST_EXACT_SOURCES_AND_MODULES_PASS");
+  }finally{await authorizedProbe.rollback();}
+  assert.equal((await q("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal') Id")).recordset[0]?.Id,null);
+
   // Use the previously accepted disposable 928 draft ONLY as a disposable
   // witness factory. Roll it back, then install BOTH actual reviewed SQL
   // sources in ONE transaction rather than mixing base draft and new Writer.

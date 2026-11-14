@@ -40,6 +40,8 @@ export function sealedChartProjectionPath(
 }
 
 export type NativeDeviceChartContext=Readonly<{
+  kioskDeviceId?:number|null;
+  serverPlaybackAvailable?:boolean;
   widgetType:string;dashboardId:number;widgetId:number;
   deviceMode:boolean;userRoute:boolean;queryPreview:boolean;
   activationRequired:boolean;previewAuthorized:boolean;
@@ -52,8 +54,10 @@ export type NativeDeviceChartContext=Readonly<{
  * live creator permissions, grant versions and expiry for every request.
  */
 export function sealedDeviceChartProjectionHeaders(
-  deviceToken:string|null,expectedDeviceId?:number|null,
+  deviceToken:string|null,expectedDeviceId?:number|null,kioskDeviceId?:number|null,
 ):Record<string,string>|null{
+  if(deviceToken===null&&Number.isSafeInteger(kioskDeviceId)&&kioskDeviceId!>0&&kioskDeviceId===expectedDeviceId)
+    return {"X-UQP-Kiosk":"1","X-UQP-Device-Id":String(kioskDeviceId),"X-UQP-Expected-Device-Id":String(kioskDeviceId)};
   if(typeof deviceToken!=="string"||
      !/^[A-Za-z0-9_-]{43}$/.test(deviceToken)||
      (expectedDeviceId!=null&&(!Number.isSafeInteger(expectedDeviceId)||
@@ -79,17 +83,19 @@ export function sealedDeviceChartProjectionPath(
 export function mayRequestSealedDeviceChartProjection(
   context:NativeDeviceChartContext,
 ):boolean{
-  return CHART_DEVICE_PLAYBACK_RELEASE_APPROVED &&
+  return (CHART_DEVICE_PLAYBACK_RELEASE_APPROVED || context.serverPlaybackAvailable===true) &&
     context.widgetType==="CHART" &&
     context.deviceMode && !context.userRoute && !context.queryPreview &&
     !context.activationRequired && context.previewAuthorized &&
     context.online && !context.hasDataWarning &&
     sealedDeviceChartProjectionPath(context.dashboardId,context.widgetId)!==null &&
     sealedDeviceChartProjectionHeaders(
-      context.deviceToken,context.expectedDeviceId)!==null;
+      context.deviceToken,context.expectedDeviceId,context.kioskDeviceId)!==null;
 }
 
 export type NativeUserChartContext=Readonly<{
+  kioskDeviceId?:number|null;
+  serverPlaybackAvailable?:boolean;
   widgetType:string;dashboardId:number;widgetId:number;
   userRoute:boolean;deviceMode:boolean;queryPreview:boolean;
   userMode:"QUERY_ONLY"|"LEGACY"|null;userSessionCurrent:boolean;
@@ -111,7 +117,7 @@ export function sealedUserChartProjectionPath(
 export function mayRequestSealedUserChartProjection(
   context:NativeUserChartContext,
 ):boolean{
-  return CHART_USER_PLAYBACK_RELEASE_APPROVED &&
+  return (CHART_USER_PLAYBACK_RELEASE_APPROVED || context.serverPlaybackAvailable===true) &&
     context.widgetType==="CHART" &&
     context.userRoute && !context.deviceMode && !context.queryPreview &&
     context.userMode==="QUERY_ONLY"&&context.userSessionCurrent&&

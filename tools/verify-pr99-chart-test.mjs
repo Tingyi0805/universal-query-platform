@@ -6,11 +6,11 @@ const root=path.resolve(process.argv[2]??".");
 const fail=reason=>{throw Error("CHART_PR99_TEST_PACKAGE_INVALID:"+reason);};
 const sha=b=>createHash("sha256").update(b).digest("hex");
 const manifest=JSON.parse(await readFile(path.join(root,"manifest.json"),"utf8"));
-if(manifest.format!=="UQP_PR99_CHART_SYNTHETIC_WINDOWS_TEST_V1"||
+if(manifest.format!=="UQP_PR99_CHART_AUTHORIZED_WINDOWS_TEST_V2"||
    !/^[a-f0-9]{40}$/.test(manifest.sourceCommit)||
    manifest.approval!=="TEST_ONLY_NOT_AUTHORIZED_FOR_DEPLOYMENT"||
    manifest.chartCreateEnabled!==false||manifest.publicPlaybackEnabled!==false||
-   manifest.contains928Sql!==false||manifest.sqlActionsOnExtract!=="NONE")
+   manifest.contains928Sql!==true||manifest.sqlActionsOnExtract!=="NONE")
   fail("MANIFEST_POLICY");
 const sums=await readFile(path.join(root,"SHA256SUMS.txt"),"utf8");
 const expected=new Map();
@@ -50,6 +50,10 @@ for(const file of manifest.files){
 }
 for(const rel of [
  "payload/server/dist/server.js","payload/client/dist/index.html",
+ "payload/database/authorized-test/928_source_manifest.json",
+ "payload/database/acceptance/chart-928-adoption-preflight-readonly.sql",
+ "payload/tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql",
+ "payload/server/dist/scripts/installChart928AuthorizedTest.js",
  "payload/server/package.json","README-TEST-ONLY.txt","verify-pr99-chart-test.mjs",
 ]){
  if(!actual.has(rel))fail("REQUIRED_FILE_MISSING");

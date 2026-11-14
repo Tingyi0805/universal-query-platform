@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
-async function setup(page: Page, single = false, hold = false, updatePosition?:string) {
-  const state = { failA: false, failAStatus: 503, failPrimary: false, failPrimaryStatus: 503, revoked: false,
+async function setup(page: Page, single = false, hold = false, updatePosition?:string,chart=false) {
+  const state = {chartCalls:[] as {authorization:string|undefined;token:string|undefined;body:string|null}[],chartRevoked:false, failA: false, failAStatus: 503, failPrimary: false, failPrimaryStatus: 503, revoked: false,
     sql: { PRIMARY: 0, A: 0, B: 0 }, pages: { PRIMARY: [] as number[], A: [] as number[], B: [] as number[] } };
   await page.clock.install({ time: new Date("2026-10-12T00:00:00Z") });
   await page.clock.pauseAt(new Date("2026-10-12T00:00:01Z"));
@@ -9,12 +9,17 @@ async function setup(page: Page, single = false, hold = false, updatePosition?:s
     fontSize: 20, alignment: "LEFT", config: { dataSourceKey: source }, sortOrder: id, sourceKey: null });
   await page.context().route("**/api/dashboards/device/1/**", async route => {
     const url = new URL(route.request().url());
+    if(url.pathname.endsWith("/charts/v1/capabilities")){await route.fulfill({json:{playback:chart}});return;}
+    if(url.pathname.endsWith("/charts/v1/88/projection")){
+      const r=route.request();state.chartCalls.push({authorization:r.headers().authorization,token:r.headers()["x-dashboard-device-token"],body:r.postData()});
+      await route.fulfill(state.chartRevoked?{status:409,json:{error:{code:"CHART_TRUSTED_DELIVERY_REQUIRED"}}}:{json:{chartType:"BAR",showLegend:true,points:[{label:"裝置合成統計",value:9}]}});return;
+    }
     if (state.revoked) { await route.fulfill({ status: 401, json: { error: { code: "DASHBOARD_DEVICE_UNAUTHORIZED" } } }); return; }
     if (url.pathname.endsWith("/layout")) {
       await route.fulfill({ json: { profiles: [{ id: 1, isDefault: true, canvasWidth: 1280, canvasHeight: 720, config: updatePosition?{lastSuccessPosition:updatePosition,lastSuccessFormat:"DATE_TIME"}:{},
         widgets: [{ id: 4, widgetType: "TEXT", staticText: "固定測試標題", x: 0, y: 0, width: 500, height: 60,
           fontSize: 24, alignment: "LEFT", config: {}, sortOrder: 0 }, widget(1, "PRIMARY", 0),
-          ...(single ? [] : [widget(2, "A", 400), widget(3, "B", 800)])] }] } }); return;
+          ...(single ? [] : [widget(2, "A", 400), widget(3, "B", 800)]),...(chart?[{...widget(88,"PRIMARY",500),widgetType:"CHART",y:420}]:[])] }] } }); return;
     }
     const key = (url.pathname.includes("/data-sources/A/") ? "A" : url.pathname.includes("/data-sources/B/") ? "B" : "PRIMARY") as keyof typeof state.sql;
     if ((key === "A" && state.failA) || (key === "PRIMARY" && state.failPrimary)) {
@@ -167,4 +172,12 @@ test.describe("D6-3 second round device timestamp positions",()=>{
    expect(position.startsWith("TOP")?box!.y+box!.height<=canvas!.y:box!.y>=canvas!.y+canvas!.height).toBe(true);
    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
  });
+});
+
+test("device CHART uses its own token route and clears revoked projection without a designer JWT",async({page})=>{
+ const state=await setup(page,true,true,undefined,true),chart=page.getByRole("img",{name:"經授權之 Dashboard 彙總圖表"});
+ await expect(chart).toBeVisible();expect(state.chartCalls.length).toBeGreaterThan(0);
+ expect(state.chartCalls.every(x=>x.body===null&&x.token==="A".repeat(43)&&x.authorization===undefined)).toBe(true);
+ state.chartRevoked=true;await page.clock.runFor(30001);await expect(chart).toHaveCount(0);
+ await expect(page.getByText("圖表未取得核准的彙總資料，停止顯示")).toBeVisible();
 });

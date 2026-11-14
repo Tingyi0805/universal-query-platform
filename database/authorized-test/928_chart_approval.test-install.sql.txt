@@ -1,0 +1,32 @@
+-- Authorized TEST target only. Separate source: does not change production-review guards.
+-- Never run standalone; the dedicated installer binds exact target and operator receipts.
+IF @@TRANCOUNT<>1 OR @UqpTestPurpose<>N'UQP_AUTHORIZED_CHART_TEST_ONLY'
+ OR @UqpTestPurpose IS NULL OR @UqpTestServer IS NULL OR @UqpTestDatabase IS NULL OR @UqpTestLogin IS NULL
+ OR CONVERT(nvarchar(128),@@SERVERNAME) COLLATE Latin1_General_100_BIN2<>@UqpTestServer COLLATE Latin1_General_100_BIN2
+ OR DB_NAME() COLLATE Latin1_General_100_BIN2<>@UqpTestDatabase COLLATE Latin1_General_100_BIN2
+ OR ORIGINAL_LOGIN() COLLATE Latin1_General_100_BIN2<>@UqpTestLogin COLLATE Latin1_General_100_BIN2
+ OR DB_NAME() IN(N'master',N'model',N'msdb',N'tempdb')
+ THROW 51928,'CHART_AUTHORIZED_TEST_TARGET_REQUIRED',1;
+    CREATE TABLE uqp.DashboardChartPlaybackApproval (
+        DashboardId BIGINT NOT NULL,
+        WidgetId BIGINT NOT NULL,
+        WidgetRevision BINARY(8) NOT NULL,
+        ConfigDigest CHAR(64) NOT NULL,
+        Status VARCHAR(20) NOT NULL,
+        ReviewerUserId BIGINT NOT NULL,
+        AuditLogId BIGINT NOT NULL,
+        ReviewedAtUtc DATETIME2(3) NOT NULL
+            CONSTRAINT DF_ChartPlaybackApproval_Reviewed DEFAULT SYSUTCDATETIME(),
+        DecisionRowVersion ROWVERSION NOT NULL,
+        CONSTRAINT PK_DashboardChartPlaybackApproval PRIMARY KEY (DashboardId,WidgetId),
+        CONSTRAINT FK_ChartPlaybackApproval_Dashboard FOREIGN KEY (DashboardId)
+            REFERENCES uqp.Dashboard(Id),
+        CONSTRAINT FK_ChartPlaybackApproval_Widget FOREIGN KEY (WidgetId)
+            REFERENCES uqp.DashboardWidget(Id),
+        CONSTRAINT FK_ChartPlaybackApproval_Reviewer FOREIGN KEY (ReviewerUserId)
+            REFERENCES uqp.AppUser(Id),
+        CONSTRAINT CK_ChartPlaybackApproval_Status CHECK (Status IN ('APPROVED','REVOKED')),
+        CONSTRAINT CK_ChartPlaybackApproval_Digest CHECK (
+            LEN(ConfigDigest)=64 AND ConfigDigest NOT LIKE '%[^0-9a-f]%' COLLATE Latin1_General_BIN2
+        )
+    );

@@ -161,6 +161,8 @@ export function DashboardDisplayPage() {
   },[dashboardId,deviceMode,deviceToken]);
   const { accessToken, user, hasPermission, logout } = useAuth();
   const userRoute = !deviceMode && !queryPreview && !window.location.pathname.startsWith("/designer/");
+  const [serverChartPlaybackAvailable,setServerChartPlaybackAvailable]=useState(false);
+
   const [userMode, setUserMode] = useState<"LEGACY" | "QUERY_ONLY" | null>(null);
   const userSourceExpiry = useRef(new Map<string, number>());
   const userAuthorizationExpiry = useRef<number | null>(null);
@@ -175,6 +177,16 @@ export function DashboardDisplayPage() {
   const pageSnapshotCreatedAt = useRef(0);
   const lastVisibleColumns = useRef<ReportColumn[]>([]);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
+  const hasNativeChart=profiles.some(p=>p.widgets.some(w=>w.widgetType==="CHART"));
+  useEffect(()=>{
+    setServerChartPlaybackAvailable(false);const abort=new AbortController();
+    if(!hasNativeChart)return;
+    if(deviceMode?(!deviceToken):(!userRoute||!accessToken))return;
+    const path=deviceMode?`/dashboards/device/${dashboardId}/charts/v1/capabilities`:`/dashboards/${dashboardId}/charts/v1/test-capabilities`;
+    void apiRequest<{playback:boolean}>(path,{signal:abort.signal,...(deviceMode?{headers:deviceHeaders}:{})},deviceMode?null:accessToken)
+      .then(r=>{if(!abort.signal.aborted)setServerChartPlaybackAvailable(r?.playback===true);}).catch(()=>{});
+    return()=>abort.abort();
+  },[dashboardId,deviceMode,deviceToken,cookieSession,userRoute,accessToken,intendedDeviceId,hasNativeChart]);
   type SupplementalPage = { snapshotExpiresAt?: number; sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; snapshotId: string; page: number;
     totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
   const [supplementalPages, setSupplementalPages] = useState<Record<string, SupplementalPage>>({});
@@ -905,6 +917,8 @@ export function DashboardDisplayPage() {
         intendedDeviceId>0?intendedDeviceId:null;
       const authorized=deviceMode
         ? mayRequestSealedDeviceChartProjection({
+            kioskDeviceId:cookieSession?intendedDeviceId:null,
+            serverPlaybackAvailable:serverChartPlaybackAvailable,
             widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
             deviceMode,userRoute,queryPreview,activationRequired,
             previewAuthorized,online,
@@ -914,6 +928,7 @@ export function DashboardDisplayPage() {
           })
         : userRoute
           ? mayRequestSealedUserChartProjection({
+              serverPlaybackAvailable:serverChartPlaybackAvailable,
               widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
               userRoute,deviceMode,queryPreview,userMode,
               userSessionCurrent:Boolean(accessToken)&&userSession===accessToken,
@@ -937,6 +952,8 @@ export function DashboardDisplayPage() {
       return <DashboardSavedChartWidget
         dashboardId={dashboardId} widgetId={widget.id}
         authorized={authorized} accessToken={deviceMode?null:accessToken}
+        kioskDeviceId={cookieSession?intendedDeviceId:null}
+        serverPlaybackAvailable={serverChartPlaybackAvailable}
         deviceMode={deviceMode} userPlayback={userRoute}
         deviceToken={deviceMode&&!cookieSession?deviceToken:null}
         expectedDeviceId={deviceMode?expectedDeviceId:null}

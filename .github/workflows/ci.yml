@@ -747,7 +747,7 @@ jobs:
           if-no-files-found: error
 
   pr99-chart-windows-test-zip:
-    # Isolated synthetic-preview ZIP only. No SQL migration, live UQP or deploy permissions.
+    # Authorized test ZIP only. No automatic SQL execution, live UQP access or deploy permissions.
     if: github.event_name == 'pull_request' && github.event.pull_request.number == 99
     needs: [server, client, sql-924-full-schema, device-lifecycle-d1-sql, windows-node24-dependencies, windows-kiosk-launcher, dependency-sql-smoke]
     runs-on: windows-latest
@@ -808,7 +808,7 @@ jobs:
           npm run build
           if($LASTEXITCODE){throw 'CHART_PR99_CLIENT_BUILD_FAILED'}
           Pop-Location
-      - name: Produce synthetic-only ZIP with manifest and SHA-256
+      - name: Produce authorized-test ZIP with manifest and SHA-256
         shell: pwsh
         run: |
           node tools/package-pr99-chart-test.mjs pr99-chart-test pr99-chart-test-evidence.json
@@ -842,7 +842,7 @@ jobs:
               throw Error('CHART_PR99_HEAD_CHANGED_REBUILD_REQUIRED');
       - uses: actions/upload-artifact@v4
         with:
-          name: uqp-pr99-chart-windows-synthetic-test-${{ github.event.pull_request.head.sha }}
+          name: uqp-pr99-chart-windows-authorized-test-${{ github.event.pull_request.head.sha }}
           path: |
             pr99-chart-test.zip
             pr99-chart-test.zip.sha256

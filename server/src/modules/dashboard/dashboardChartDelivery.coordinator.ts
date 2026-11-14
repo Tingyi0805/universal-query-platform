@@ -71,9 +71,9 @@ function reviewedBeforeQuery(scope: PublicCountScope, review: PublicCountReview 
   return (Object.keys(scope) as Array<keyof PublicCountScope>)
     .every(key => review[key] === scope[key]);
 }
-function scopeOf(
+export function chartPublicCountScope(
   facts: ServerChartFacts,
-  approvalVersion: string,
+  _approvalVersion: string,
   config: ChartWidgetConfig,
 ): PublicCountScope {
   return {
@@ -87,7 +87,12 @@ function scopeOf(
     datasetRevision: facts.revisions.dataset,
     // This fingerprint includes the current public-display approval and
     // revision facts. It is NOT a substitute for an independent privacy review.
-    policyRevision: approvalVersion,
+    policyRevision: createHash("sha256").update(JSON.stringify({
+      version:"CHART_PUBLIC_POLICY_V1",source:facts.source,revisions:facts.revisions,
+      query:facts.query,dataset:facts.dataset,sensitivity:facts.sensitivity,
+      publicDisplay:facts.publicDisplay,reportColumns:facts.reportColumns,aggregate:facts.verifiedAggregate,
+      category:config.categoryColumn,value:config.valueColumn,
+    })).digest("hex"),
   };
 }
 
@@ -166,7 +171,7 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
         await requirePlaybackApproval();
         const current = await load();
         if (current.approval.version !== initial.approval.version) return deny();
-        const scope = scopeOf(current.facts, current.approval.version, config);
+        const scope = chartPublicCountScope(current.facts, current.approval.version, config);
         const reviewBefore = publicPlayback
           ? await deps.readPublicReview(scope, subject) : null;
         if (publicPlayback && !reviewedBeforeQuery(scope, reviewBefore))
@@ -192,7 +197,7 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
             JSON.stringify(lastSaved.config) !== JSON.stringify(saved.config))
           return deny();
         if (!publicPlayback) return projected;
-        const finalScope = scopeOf(final.facts, final.approval.version, config);
+        const finalScope = chartPublicCountScope(final.facts, final.approval.version, config);
         if (JSON.stringify(finalScope) !== JSON.stringify(scope)) return deny();
         const reviewAfter = await deps.readPublicReview(finalScope, subject);
         if (!reviewAfter ||

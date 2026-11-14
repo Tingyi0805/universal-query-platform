@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-async function setup(page: Page) {
+async function setup(page: Page,manage=false) {
   const widget = { id: 1, widgetType: "TEXT", title: "合成標題", sourceKey: null, staticText: "固定合成文字", x: 10, y: 20, width: 300, height: 60, fontSize: 24, alignment: "LEFT", config: { color: "#112233", preservedStyle: { marker: "synthetic" } }, sortOrder: 0 };
   const state = { revision: 1, conflict: false, disabled: false, race: false, pending: false, sourceEnabled: true, missingVersion: false, writes: [] as any[], legacy: [] as string[],
     chartProjectionCalls: [] as {method:string;body:string|null;authorization:string|null}[],
@@ -17,7 +17,7 @@ async function setup(page: Page) {
   const version = () => state.revision.toString(16).padStart(64, "0");
   const primary = { sourceKey: "PRIMARY", queryDefinitionId: 20, parameters: {}, refreshSeconds: 30, pageSize: 5, pageSeconds: 10, maxRows: 100, requiresConversion: false };
   const config = () => ({ version: state.missingVersion ? undefined : version(), editable: true, isActive: false, dashboardMode: "QUERY_ONLY_DISABLED", overCapacity: false, primary, sources: [{ ...primary, id: 10, sourceKey: "WARD", queryDefinitionId: state.pending ? null : 21, isEnabled: state.sourceEnabled }] });
-  await page.addInitScript(() => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "合成", permissions: ["DESIGN_QUERY", "VIEW_QUERY", "EXECUTE_QUERY"] } })));
+  await page.addInitScript((canManage:boolean) => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "合成", permissions: ["DESIGN_QUERY", "VIEW_QUERY", "EXECUTE_QUERY",...(canManage?["MANAGE_USERS"]:[])] } })),manage);
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path.endsWith("/configuration")) { await route.fulfill(state.disabled ? { status: 404, json: { error: { code: "QUERY_SOURCE_MANAGEMENT_DISABLED", message: "SQL private synthetic" } } } : { json: config() }); return; }
@@ -453,4 +453,23 @@ test("ambiguous native CREATE cannot issue another UUID before server reload",as
   await expect(create).toBeDisabled();
   expect(state.chartCreateCalls).toHaveLength(1);
   expect(state.writes).toHaveLength(0);
+});
+
+test("sealed CHART admin UI requests audited exact-version decisions and requires valid server readback",async({page})=>{
+ const state=await setup(page,true),decisions:{path:string;body:unknown}[]=[];
+ (state.profiles[0]!.widgets as unknown[]).push({...state.profiles[0]!.widgets[0],id:88,widgetType:"CHART",title:"受控統計",x:1200,y:400,width:450,height:300,staticText:null,config:{}});
+ let playback="UNCONFIRMED",broken=false;
+ await page.route("**/api/dashboards/1/charts/v1/88/status",route=>route.fulfill({json:broken?{}:{sealed:true,revision:"1".repeat(16),playbackStatus:playback,privacyReview:null}}));
+ await page.route("**/api/dashboards/1/charts/v1/88/playback-approval",async route=>{
+  const body=route.request().postDataJSON();decisions.push({path:new URL(route.request().url()).pathname,body});
+  expect(route.request().headers().authorization).toBe("Bearer synthetic");
+  playback=body.action==="APPROVE"?"APPROVED":"REVOKED";await route.fulfill({json:{status:playback}});
+ });
+ await page.goto("/designer/dashboards/1/layout");await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
+ await page.getByRole("button",{name:"核准此版本圖表播放",exact:true}).click();
+ await expect(page.getByText(/播放：APPROVED/)).toBeVisible();
+ await page.getByRole("button",{name:"撤銷圖表播放",exact:true}).click();await expect(page.getByText(/播放：REVOKED/)).toBeVisible();
+ expect(decisions.map(x=>x.body)).toEqual([{action:"APPROVE"},{action:"REVOKE"}]);expect(state.writes).toHaveLength(0);
+ broken=true;await page.getByRole("button",{name:"重新載入圖表核准"}).click();
+ await expect(page.getByText(/核准狀態無法驗證/)).toBeVisible();await expect(page.getByRole("button",{name:"核准此版本圖表播放",exact:true})).toHaveCount(0);
 });

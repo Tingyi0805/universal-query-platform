@@ -1,5 +1,5 @@
-// PR #99 synthetic-only Windows test ZIP builder. Never installs, reads .env,
-// talks to hospital SQL, enables CHART runtime, or authorizes C:\\UQP overlay.
+// PR #99 authorized Windows test ZIP builder. Extraction never installs SQL,
+// reads .env, enables CHART runtime or deploys the application.
 import {cp,mkdir,readFile,readdir,lstat,writeFile} from "node:fs/promises";
 import {createReadStream,createWriteStream} from "node:fs";
 import {createHash} from "node:crypto";
@@ -28,7 +28,11 @@ await mkdir(out,{recursive:true});
 const sources=[
   "server/dist","server/node_modules","server/package.json","server/package-lock.json",
   "client/dist","client/package.json","client/package-lock.json",
-  "docs/chart-928-production-migration-release-decision.md",
+  "docs/chart-928-authorized-test-operations.md",
+  "database/authorized-test",
+  // Read-only preflight dependencies, outside the generic Migration runner.
+  "database/acceptance/chart-928-adoption-preflight-readonly.sql",
+  "tools/sqlserver-acceptance/drafts/925/925_dataset_display_policy.sql",
 ];
 for(const sourcePath of sources){
   const dest=path.join(out,"payload",sourcePath);
@@ -37,15 +41,15 @@ for(const sourcePath of sources){
 }
 await cp("tools/verify-pr99-chart-test.mjs",path.join(out,"verify-pr99-chart-test.mjs"));
 await writeFile(path.join(out,"README-TEST-ONLY.txt"),[
-  "UQP PR #99 — WINDOWS x64 SYNTHETIC-ONLY TEST ARCHIVE",
-  "This archive is NOT an installer, NOT a production release, and NOT permission to overwrite C:\\UQP.",
-  "CHART SQL 928 is NOT included; no SQL scripts are executed. CHART create and public/device playback remain hard OFF.",
+  "UQP PR #99 — WINDOWS x64 AUTHORIZED TEST ARCHIVE",
+  "This is a TEST release only. Manually back up C:\\UQP and the approved target database before copying payload. Never auto-deploy.",
+  "Separate guarded 928 test sources are included under payload/database/authorized-test. Extraction executes NOTHING. Production gates stay OFF.",
   "No .env credentials or patient data are included. Extraction runs no commands.",
-  "For independent isolated Windows testing only. Never copy this payload into a working hospital system.",
+  "Keep the existing .env. Follow payload/docs/chart-928-authorized-test-operations.md for explicit test-target authorization and SQL preflight/apply/verify.",
   "Node.js 24.22.1, ABI 137, Windows x64 required for native runtime.",
   "Verify extracted checksums with: node verify-pr99-chart-test.mjs <extracted-folder>",
-  "A separate formal change approval, reviewed 928 migration, Signer/Writer authorization and IIS UAT",
-  "are mandatory before considering any real C:\\UQP deployment.",
+  "Option A uses the existing SQL Pool and verified JWT Actor. No extra SQL login, Signer or Issuer.",
+  "This archive is not production approval. Use only an expressly authorized test target; production deployment remains forbidden.",
 ].join("\n")+"\n");
 const files=[];
 async function walk(dir){
@@ -64,11 +68,11 @@ async function walk(dir){
 await walk(out);
 files.sort((a,b)=>a.path.localeCompare(b.path,"en"));
 const manifest={
-  format:"UQP_PR99_CHART_SYNTHETIC_WINDOWS_TEST_V1",sourceCommit:source,
+  format:"UQP_PR99_CHART_AUTHORIZED_WINDOWS_TEST_V2",sourceCommit:source,
   sourceTree:git("rev-parse","HEAD^{tree}"),
   runtime:{platform:process.platform,arch:process.arch,node:process.version,abi:process.versions.modules},
   approval:"TEST_ONLY_NOT_AUTHORIZED_FOR_DEPLOYMENT",
-  chartCreateEnabled:false,publicPlaybackEnabled:false,contains928Sql:false,
+  chartCreateEnabled:false,publicPlaybackEnabled:false,contains928Sql:true,
   sqlActionsOnExtract:"NONE",ci:evidence,files,
 };
 const body=Buffer.from(JSON.stringify(manifest,null,2)+"\n");
@@ -86,4 +90,4 @@ await new Promise((resolve,reject)=>{
 const digest=createHash("sha256");
 for await(const chunk of createReadStream(out+".zip"))digest.update(chunk);
 await writeFile(out+".zip.sha256",digest.digest("hex")+"  "+path.basename(out)+".zip\n");
-console.log("CHART_PR99_WINDOWS_SYNTHETIC_TEST_PACKAGE_CREATED:"+source+":files="+files.length);
+console.log("CHART_PR99_WINDOWS_AUTHORIZED_TEST_PACKAGE_CREATED:"+source+":files="+files.length);

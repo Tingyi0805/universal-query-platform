@@ -24,6 +24,8 @@ type Props=Readonly<{
   refreshKey:string;
   // Only the actual public-device mode can pass a Device Token. It is NEVER
   // reinterpreted as a Bearer JWT; cookie-only kiosk remains denied.
+  kioskDeviceId?:number|null;
+  serverPlaybackAvailable?:boolean;
   deviceMode?:boolean;
   userPlayback?:boolean;
   deviceToken?:string|null;
@@ -52,7 +54,7 @@ type Loaded=Readonly<{
  */
 export function DashboardSavedChartWidget({
   dashboardId,widgetId,accessToken,authorized,refreshKey,
-  deviceMode=false,userPlayback=false,deviceToken=null,expectedDeviceId=null,
+  deviceMode=false,userPlayback=false,deviceToken=null,expectedDeviceId=null,serverPlaybackAvailable=false,kioskDeviceId=null,
 }:Props){
   const [loaded,setLoaded]=useState<Loaded|null>(null);
   // A 404 CHART_NOT_AVAILABLE is a release decision, not a transient
@@ -68,9 +70,9 @@ export function DashboardSavedChartWidget({
       ? sealedUserChartProjectionPath(dashboardId,widgetId)
       : sealedChartProjectionPath(dashboardId,widgetId);
   const deviceHeaders=deviceMode
-    ? sealedDeviceChartProjectionHeaders(deviceToken,expectedDeviceId)
+    ? sealedDeviceChartProjectionHeaders(deviceToken,expectedDeviceId,kioskDeviceId)
     : null;
-  const selectedToken=deviceMode?deviceToken:accessToken;
+  const selectedToken=deviceMode?(deviceToken??(kioskDeviceId?"COOKIE_SESSION:"+kioskDeviceId:null)):accessToken;
   const mode=deviceMode?"device":userPlayback?"user":"designer";
   const releaseUnavailable=unavailable!==null&&unavailable.dashboardId===dashboardId&&
     unavailable.widgetId===widgetId&&
@@ -81,9 +83,9 @@ export function DashboardSavedChartWidget({
     Boolean(refreshKey)&&Boolean(path)&&
     !(deviceMode&&userPlayback)&&
     (deviceMode
-      ? CHART_DEVICE_PLAYBACK_RELEASE_APPROVED && deviceHeaders!==null
+      ? (CHART_DEVICE_PLAYBACK_RELEASE_APPROVED || serverPlaybackAvailable) && deviceHeaders!==null
       : userPlayback
-        ? CHART_USER_PLAYBACK_RELEASE_APPROVED && Boolean(accessToken)
+        ? (CHART_USER_PLAYBACK_RELEASE_APPROVED || serverPlaybackAvailable) && Boolean(accessToken)
         : Boolean(accessToken));
   // Invalidate any earlier projection on the FIRST denied render, not only
   // in a delayed effect. A later re-authorization of the same token/key must

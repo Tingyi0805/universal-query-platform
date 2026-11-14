@@ -1,3 +1,4 @@
+import {DashboardChartApprovalPanel} from "../components/DashboardChartApprovalPanel";
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
   hasCreatedSealedChartInLayout,confirmsNativeChartSavedReadback} from "../dashboard/nativeChartCreate";
@@ -1134,6 +1135,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
           <h2>Widget 屬性</h2>
           {!selectedWidget && <p className="layout-hint">選取畫布上的 Widget 後即可調整。</p>}
 
+          {selectedWidget?.widgetType === "CHART" && <DashboardChartApprovalPanel key={`${dashboardId}:${selectedWidget.id}`} dashboardId={dashboardId}
+            widgetId={selectedWidget.id!} accessToken={accessToken} canManage={hasPermission("MANAGE_USERS")}/>}
           {selectedWidget?.widgetType === "CHART" && <p role="status">受控 CHART 目前為唯讀，不能在舊版設計器修改、移動、刪除或重新儲存。</p>}
           {selectedWidget && selectedWidget.widgetType !== "CHART" && (
             <div className="layout-inspector-form">

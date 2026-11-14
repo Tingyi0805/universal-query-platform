@@ -130,3 +130,19 @@ test("server disabled CHART release is terminal but temporary delivery failures 
     new Error("CHART_NOT_AVAILABLE"),null,undefined,{},123,
   ])assert.equal(chartProjectionReleaseUnavailable(error),false);
 });
+
+test("server test capability permits attempts only with unchanged user/device/session predicates",()=>{
+ const device={widgetType:"CHART",dashboardId:7,widgetId:88,deviceMode:true,userRoute:false,queryPreview:false,
+  activationRequired:false,previewAuthorized:true,online:true,hasDataWarning:false,deviceToken:"A".repeat(43),expectedDeviceId:71,serverPlaybackAvailable:true};
+ assert.equal(mayRequestSealedDeviceChartProjection(device),true);
+ for(const patch of [{online:false},{activationRequired:true},{previewAuthorized:false},{deviceToken:null},{hasDataWarning:true},{queryPreview:true}])
+  assert.equal(mayRequestSealedDeviceChartProjection({...device,...patch}),false);
+ assert.equal(mayRequestSealedDeviceChartProjection({...device,deviceToken:null,kioskDeviceId:71}),true);
+ assert.equal(mayRequestSealedDeviceChartProjection({...device,deviceToken:null,kioskDeviceId:72}),false);
+ assert.deepEqual(sealedDeviceChartProjectionHeaders(null,71,71),{"X-UQP-Kiosk":"1","X-UQP-Device-Id":"71","X-UQP-Expected-Device-Id":"71"});
+ const user={widgetType:"CHART",dashboardId:7,widgetId:88,userRoute:true,deviceMode:false,queryPreview:false,userMode:"QUERY_ONLY" as const,
+  userSessionCurrent:true,previewAuthorized:true,online:true,hasDataWarning:false,accessTokenPresent:true,canViewQuery:true,canExecuteQuery:true,serverPlaybackAvailable:true};
+ assert.equal(mayRequestSealedUserChartProjection(user),true);
+ for(const patch of [{userSessionCurrent:false},{canExecuteQuery:false},{canViewQuery:false},{accessTokenPresent:false},{online:false},{deviceMode:true}])
+  assert.equal(mayRequestSealedUserChartProjection({...user,...patch}),false);
+});

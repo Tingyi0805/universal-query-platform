@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import assert from "node:assert/strict";
 import { createDashboardPageSnapshot } from "./dashboardPageSnapshot.js";
 import {
-  createDormantChartCoordinator, type ChartCoordinatorDependencies,
+  chartPublicCountScope, createDormantChartCoordinator, type ChartCoordinatorDependencies,
 } from "./dashboardChartDelivery.coordinator.js";
 import { ChartContractError } from "./dashboardChartWidget.contract.js";
 import type { ServerChartFacts } from "./dashboardChartApproval.policy.js";
@@ -414,4 +414,15 @@ test("missing production approval reader fails closed for every playback context
     assert.equal(f.counts().calls, 0);
     assert.equal(f.playbackReads(), 0);
   }
+});
+
+test("public review fingerprint is shared across authorized viewers but remains bound to policies and revisions",()=>{
+ const first=facts(true),second=structuredClone(first);second.actor={...second.actor,userId:99,tokenVersion:7};
+ const parsed=(awaitConfig:unknown)=>awaitConfig as Parameters<typeof chartPublicCountScope>[2];
+ const a=chartPublicCountScope(first,"actor-A-approval",parsed(config));
+ assert.deepEqual(chartPublicCountScope(second,"actor-B-approval",parsed(config)),a);
+ for(const change of [()=>{second.sensitivity.version++;},()=>{second.revisions.dataset="1".repeat(16);},
+  ()=>{second.publicDisplay!.version="2".repeat(16);},()=>{second.revisions.access="3".repeat(64);}]){
+  change();assert.notEqual(chartPublicCountScope(second,"actor-B",parsed(config)).policyRevision,a.policyRevision);
+ }
 });
