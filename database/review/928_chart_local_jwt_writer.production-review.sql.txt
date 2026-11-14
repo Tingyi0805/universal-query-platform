@@ -1,4 +1,4 @@
--- UQP CHART 928 / OPTION A — LOCAL JWT + DEDICATED SQL WRITER
+-- UQP CHART 928 / OPTION A — LOCAL JWT + EXISTING PLATFORM SQL POOL
 -- SOURCE REVIEW ONLY: NOT AN INSTALLER, NOT DBA APPROVED.
 -- PR #99 SOURCE BASELINE 7de33eba240257c89b101efc2eb4dbe7c8228679
 -- Current UQP authenticated LOCAL JWT is the original ActorId authority.
@@ -9,11 +9,11 @@
 --
 -- FIRST EXECUTABLE STATEMENT ALWAYS BLOCKS. DO NOT REMOVE OR RUN AS-IS.
 THROW 51928,'CHART_A_WRITER_PRODUCTION_REVIEW_NOT_APPROVED',1;
--- Further review-only hard stops: frozen Trigger source digest and original
--- SQL Writer login SID intentionally NULL, even if outer THROW were removed.
+-- Further review-only hard stop: frozen Trigger source digest is intentionally
+-- NULL. No separate Writer login or SQL principal is introduced by Option A.
 -- Approval requires exact hospital 925/926/928 catalog + ledger, backup,
 -- reviewed final DDL, transaction runner, procedure/Trigger digests, SQL
--- principal grants, private-test SQL acceptance and device privacy decision.
+-- existing pool EXECUTE privilege, private-test SQL acceptance and device privacy decision.
 SET XACT_ABORT ON;
 IF @@TRANCOUNT<>1
  THROW 51928,'CHART_A_MIGRATION_TRANSACTION_REQUIRED',1;
@@ -84,7 +84,9 @@ BEGIN TRY
    IF @@ROWCOUNT<>1 THROW 51928,''CHART_A_PERMIT_CONSUMED'',1;
   END
  END');
- -- This procedure is also hard-blocked by its NULL, unapproved Writer SID.
+ -- The procedure uses the existing platform SQL connection pool (Option A).
+ -- Deployment is still blocked by the review-only top-level THROW and
+ -- the intentionally NULL approved frozen-trigger definition digest.
  EXEC(N'CREATE PROCEDURE uqp.usp_DashboardChartCreate
  @DashboardId bigint,@ProfileId bigint,@ActorId bigint,@TokenVersion int,
  @RequestId uniqueidentifier,
@@ -95,12 +97,9 @@ AS
 BEGIN
  SET NOCOUNT ON;
  SET XACT_ABORT ON;
- DECLARE @approvedWriterOriginalSid VARBINARY(85)=NULL;
- -- Must be pinned to an independently reviewed, immutable ORIGINAL_LOGIN SID.
- -- Never trust @ActorId as independent proof against an app compromise.
- IF @approvedWriterOriginalSid IS NULL OR
-    SUSER_SID(ORIGINAL_LOGIN())<>@approvedWriterOriginalSid
-  THROW 51928,''CHART_A_WRITER_ORIGINAL_SID_NOT_APPROVED'',1;
+ -- Option A: the JWT middleware supplies ActorId; this transaction
+ -- independently checks the live actor, token version, permissions and
+ -- query-scoped ACL. No second SQL login or issuer is required.
  IF @@TRANCOUNT<>0
   THROW 51928,''CHART_A_EXTERNAL_TRANSACTION_BLOCKED'',1;
  IF @DashboardId<=0 OR @ProfileId<=0 OR @ActorId<=0 OR @TokenVersion<=0
@@ -276,9 +275,9 @@ BEGIN
   THROW;
  END CATCH
 END');
- -- This source never grants EXECUTE. DBA must independently review and pin
- -- source SHA-256, SQL original SID, procedure/Trigger definition digests,
- -- and least-privilege rights before separate migration approval.
+ -- This review-only source never grants EXECUTE. Before installation,
+ -- verify source SHA-256, procedure/trigger definitions and least-privilege
+ -- EXECUTE rights for the existing platform SQL principal.
 END TRY
 BEGIN CATCH
  -- The approved migration runner must rollback all DDL and ledger together.
