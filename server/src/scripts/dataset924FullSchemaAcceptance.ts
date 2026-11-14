@@ -34,7 +34,15 @@ async function cli(which:"923"|"924",mode:string,approval=true,extra:Record<stri
     child.on("error",reject);child.on("close",exit=>resolve({exit,out,err}));
   });
 }
-function passed(r:{exit:number|null;out:string},marker:string){check(r.exit===0&&r.out.includes(marker),"CLI_"+marker);}
+function passed(r:{exit:number|null;out:string;err?:string},marker:string){
+  if(r.exit!==0||!r.out.includes(marker)){
+    // CI only: expose the installer diagnostic, never credentials or SQL connection settings.
+    console.error("F2_CLI_ACCEPTANCE_DIAGNOSTIC marker="+marker+" exit="+r.exit+
+      " stdout="+r.out.slice(-1200).replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]")+
+      " stderr="+(r.err??"").slice(-800).replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]"));
+  }
+  check(r.exit===0&&r.out.includes(marker),"CLI_"+marker);
+}
 function rejected(r:{exit:number|null;err:string},marker?:string){check(r.exit!==0&&(!marker||r.err.includes(marker)),"CLI_REJECTION_"+(marker??"EXPECTED"));}
 async function catalog(pool:sql.ConnectionPool){
   const r=(await pool.request().query(render924CatalogSql())).recordset[0];
