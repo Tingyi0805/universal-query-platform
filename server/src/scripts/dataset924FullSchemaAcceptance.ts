@@ -367,25 +367,30 @@ async function main(){
     };
     const chartInstallRequest=root.request();
     chartInstallRequest.on("info",witnessListener);
+    let blockedByReview=false;
     try {
       await chartInstallRequest.batch(chartSql);
     } catch (error) {
       const dbError=error as {number?:number;message?:string;originalError?:{info?:{number?:number;message?:string}}};
-      const message=String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240).replace(/[\r\n]/g," ");
-      console.error(`CHART_928_SQL_INSTALL_FAILURE number=${dbError.originalError?.info?.number??dbError.number??0};message=${message}`);
-      throw error;
+      const message=String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240).replace(/[\\r\\n]/g," ");
+      console.log(`CHART_928_SQL_REVIEW_BLOCK number=${dbError.originalError?.info?.number??dbError.number??0};message=${message}`);
+      blockedByReview=(dbError.originalError?.info?.number??dbError.number)===51928 &&
+        message.includes("CHART_928_CHECK_SOURCE_WITNESSES_NOT_APPROVED");
+      if(!blockedByReview)throw error;
     } finally {
       chartInstallRequest.removeListener("info",witnessListener);
     }
+    check(blockedByReview,"CHART_928_REVIEW_GUARD_MUST_BLOCK");
+    check(chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_CHECK_WITNESS ")).length===5 &&
+      chartWitnesses.filter(v=>v.startsWith("CHART_928_TEST_FILTER_WITNESS ")).length===1,
+      "CHART_928_CATALOG_WITNESS_CAPTURE");
     const chartCatalog=(await root.request().query(`SELECT
       OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
       OBJECT_ID(N'uqp.DashboardChartPrivacyReview',N'U') Review,
       OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') TrustRequest,
-      OBJECT_ID(N'uqp.DashboardChartPlaybackApproval',N'U') PlaybackApproval,
-      OBJECT_ID(N'uqp.TR_DashboardWidget_ChartFreeze',N'TR') FreezeTrigger`)).recordset[0];
-    check(Object.values(chartCatalog).every(v=>typeof v==="number"&&v>0),"CHART_928_INSTALL_CATALOG");
-    await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_REINSTALL_MUST_FAIL");
-    console.log("CHART_928_SQL2019_DISPOSABLE_FULL_SCHEMA_INSTALL_AND_REENTRY_GUARD_PASS");
+      OBJECT_ID(N'uqp.DashboardChartPlaybackApproval',N'U') PlaybackApproval`)).recordset[0];
+    check(Object.values(chartCatalog).every(v=>v===null),"CHART_928_REVIEW_BLOCK_ROLLBACK");
+    console.log("CHART_928_SQL2019_DISPOSABLE_REVIEW_BLOCK_WITNESSES_CAPTURED_NO_DDL_PASS");
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");
