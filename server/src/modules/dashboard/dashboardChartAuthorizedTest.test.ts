@@ -38,3 +38,15 @@ test("test installer never connects without an explicit valid server-side test a
  await assert.rejects(installChart928AuthorizedTest("apply",async()=>{calls++;return null;}),/CHART_EXPLICIT_TEST_APPROVAL_FILE_REQUIRED/);
  assert.equal(calls,0);
 });
+
+test("fixed final freeze digest uses the SQL2019/2022 CREATE catalog serialization, derived only from source",()=>{
+ const root=new URL("../../../../database/authorized-test/",import.meta.url);
+ const source=readFileSync(new URL("928_chart_writer.test-install.sql.txt",root),"utf8");
+ const literal=/EXEC\(N'(ALTER TRIGGER(?:[^']|'')*)'\)/.exec(source)?.[1];assert.ok(literal);
+ // Both isolated engines persist the ALTER body as CREATE TRIGGER in sys.sql_modules.
+ // Do not trim, case-fold, normalize whitespace or learn hashes from a target.
+ const stored=literal.replace(/''/g,"'").replace(/^ALTER TRIGGER/,"CREATE TRIGGER");
+ const manifest=JSON.parse(readFileSync(new URL("928_source_manifest.json",root),"utf8"));
+ assert.equal(manifest.modules.TR_DashboardWidget_ChartFreeze,createHash("sha256").update(stored,"utf16le").digest("hex"));
+ assert.notEqual(manifest.modules.TR_DashboardWidget_ChartFreeze,createHash("sha256").update(literal.replace(/''/g,"'"),"utf16le").digest("hex"));
+});

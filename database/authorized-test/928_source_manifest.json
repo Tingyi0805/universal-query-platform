@@ -6,7 +6,7 @@
     "928_chart_writer.test-install.sql.txt": "9154e9cb75eb8533f7bf5941016a3778706e3ef4b0f9b0a346a576ee00df041b"
   },
   "modules": {
-    "TR_DashboardWidget_ChartFreeze": "215eaefbcedcc5763d8b95bba24d4be2b481c820a46dbb01d82301aaaa0e9686",
+    "TR_DashboardWidget_ChartFreeze": "ffb52ab76fa46abb08c538d440d06095f3a740dedab569ad6da52f6fe8e486dc",
     "TR_ChartSeal_DeleteBlock": "249de4c51b7336a7b0b2fa7650556cdcb10684f7fbaf573b0f4738f08f61a48d",
     "TR_ChartReview_Transition": "2c7ed705b9c1e55b5271baf0d7f8e14b3b0b2a76dea569fe62e4f0e1c1ecab1b",
     "TR_ChartTrustRequest_Immutable": "b2e33cd2b5d29ce0f3f9dc6caa3f5dfdfba1b91a7ba72251bfaaf77c480edc46",

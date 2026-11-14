@@ -1,3 +1,4 @@
+import {newNativeChartRequestId} from "./nativeChartCreate";
 import test from "node:test";
 import assert from "node:assert/strict";
 import {newChartDraft} from "./chartDraft.js";
@@ -80,4 +81,9 @@ test("persisted CHART seal readback must match the SQL receipt and entire config
     {...saved,config:{}},null,[],
   ])assert.equal(confirmsNativeChartSavedReadback(
     invalid,receipt,draft.config),false);
+});
+
+test("CHART request UUID uses secure random bytes without requiring HTTPS-only randomUUID",()=>{
+ const a=newNativeChartRequestId(),b=newNativeChartRequestId();assert.notEqual(a,b);
+ assert.match(a,/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
 });

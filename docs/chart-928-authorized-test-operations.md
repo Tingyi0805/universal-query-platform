@@ -9,6 +9,7 @@ This document authorizes no production deployment. Nothing runs on extraction or
 Default production constants remain false. An explicitly operator-managed, expiring test file enables only named Dashboard IDs,
 only with NODE_ENV=test, exact SQL server/database/original-login identity, the installed TEST extended property and all eight
 pinned SQL module hashes. The packaged925 DDL is only the existing Catalog validator's comparison source; never execute it as part of928 installation. Missing file, expiry, wrong target, absent/tampered module or revoked actor fails closed.
+SQL2019/2022 store the final ALTER TRIGGER body with a CREATE header; the fixed fingerprint follows that observed serialization, derived from the literal checked-in source, without learning target hashes.
 Browser URL/query/config flags cannot enable the server. Browser capability booleans only permit attempting an authenticated API.
 No JWT secret, password, Device Token or original SQL is returned by those capabilities.
 
@@ -71,9 +72,19 @@ playback approval, single-Pool Writer. One SERIALIZABLE transaction covers DDL, 
 `928_chart_authorized_test.sql` ledger receipt. It does not create accounts, grant privileges or repair925/926 ledger.
 A repeated `apply` refuses installation; use `verify`. Missing rights require an authorized DBA to review the existing account's
 minimum DDL/metadata/EXECUTE permissions; do not create an independent Writer login or routinely grant sa/db_owner.
-Runtime needs existing UQP object rights plus EXECUTE on uqp.usp_DashboardChartCreate and required metadata visibility. No VIEW SERVER STATE
-is requested by the new test path. SQL source has a mandatory exact-target parameter guard and is not a standalone SSMS migration.
-The old production-review SQL guards remain unchanged.
+The authorized DBA must review temporary installer DDL/REFERENCES/metadata/extended-property rights for the **same existing UQP login**,
+and remove temporary installer rights after verification. Do not grant privileges automatically or keep db_owner for convenience.
+Runtime retains its existing UQP/Audit permissions and additionally needs:
+
+- EXECUTE on uqp.usp_DashboardChartCreate; SELECT on DashboardChartWidgetSeal.
+- SELECT/INSERT/UPDATE on DashboardChartPlaybackApproval, DashboardChartPrivacyReview and DashboardChartTrustRequest for the guarded decision services.
+- Metadata visibility for the pinned modules and existing925/926 Catalog checks (object-scoped VIEW DEFINITION, or reviewed uqp-schema scope).
+
+No direct Widget/Seal/CreatePermit INSERT privilege or VIEW SERVER STATE is requested by this path. The existing procedure's EXECUTE AS OWNER
+is retained; its actor/RBAC/ACL/version checks and single-transaction Permit restrict operations. This is Option A's application trust boundary,
+not protection from a compromised service or dbo. If rights are missing, stop and have the authorized DBA review them; the installer does not
+create a second login, issue GRANTs or silently change the account. SQL source has a mandatory exact-target parameter guard and is not a standalone
+SSMS migration. The old production-review SQL guards remain unchanged.
 
 Start only the authorized test Node/IIS service with those **process-level** variables; do not rewrite .env or JWT_SECRET.
 IIS/service managers must explicitly supply the same environment. Ordinary startup without this file stays disabled.

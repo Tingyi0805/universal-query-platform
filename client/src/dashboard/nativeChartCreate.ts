@@ -15,6 +15,13 @@ export type NativeChartCreateBody=Readonly<{
 export type NativeChartCreateReceipt=Readonly<{
   widgetId:number;sealRevision:string;auditLogId:string;
 }>;
+/** CSPRNG UUID v4 also works on authorized HTTP intranet test origins.
+ * randomUUID alone is unavailable outside secure browser contexts. */
+export function newNativeChartRequestId():string{
+ const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]!&15)|64;bytes[8]=(bytes[8]!&63)|128;
+ const h=Array.from(bytes,n=>n.toString(16).padStart(2,"0")).join("");
+ return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
+}
 const uuidV4=/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
 const id=(v:unknown):v is number=>
   typeof v==="number"&&Number.isSafeInteger(v)&&v>0;

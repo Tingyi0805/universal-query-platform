@@ -1,3 +1,4 @@
+import {newNativeChartRequestId} from "../dashboard/nativeChartCreate";
 import {useEffect,useRef,useState} from "react";
 import {apiRequest} from "../api/client";
 type Status={sealed:boolean;revision:string;playbackStatus:string;privacyReview:null|{id:number;status:string;revision:string;requestedBy:number}};
@@ -41,16 +42,16 @@ export function DashboardChartApprovalPanel({dashboardId,widgetId,accessToken,ca
  <button type="button" disabled={busy} onClick={()=>void decide("/playback-approval",{action:"APPROVE"})}>核准此版本圖表播放</button>
  <button type="button" disabled={busy||state.playbackStatus!=="APPROVED"} onClick={()=>void decide("/playback-approval",{action:"REVOKE"})}>撤銷圖表播放</button>
  <p>一般使用者／裝置播放還須 Dataset 公開顯示政策及獨立彙總隱私審查；設計者不能替另一個帳號取得權限。</p>
- {!state.privacyReview&&<button type="button" disabled={busy} onClick={()=>void decide("/privacy-review",{action:"REQUEST",requestId:crypto.randomUUID()})}>申請公開彙總審查</button>}
+ {!state.privacyReview&&<button type="button" disabled={busy} onClick={()=>void decide("/privacy-review",{action:"REQUEST",requestId:newNativeChartRequestId()})}>申請公開彙總審查</button>}
  {state.privacyReview?.status==="REQUESTED"&&<>
  <label>最小群組筆數<input type="number" min={5} max={1000} value={minimum} onChange={e=>setMinimum(Number(e.target.value))}/></label>
  <label><input type="checkbox" checked={category} onChange={e=>setCategory(e.target.checked)}/>已審查分類欄位及群組隱私</label>
  <label><input type="checkbox" checked={difference} onChange={e=>setDifference(e.target.checked)}/>已審查重複播放與差分揭露風險</label>
  <button type="button" disabled={busy||!category||!difference||!Number.isInteger(minimum)||minimum<5||minimum>1000}
- onClick={()=>void decide("/privacy-review",{action:"APPROVE",requestId:crypto.randomUUID(),reviewId:state.privacyReview!.id,
+ onClick={()=>void decide("/privacy-review",{action:"APPROVE",requestId:newNativeChartRequestId(),reviewId:state.privacyReview!.id,
  expectedRevision:state.privacyReview!.revision,minimumCellCount:minimum,validDays:30,categoryPrivacyReviewed:true,differencingRiskReviewed:true})}>以獨立審查人核准彙總</button></>}
  {state.privacyReview?.status==="APPROVED"&&<button type="button" disabled={busy} onClick={()=>void decide("/privacy-review",{
- action:"REVOKE",requestId:crypto.randomUUID(),reviewId:state.privacyReview!.id,expectedRevision:state.privacyReview!.revision})}>撤銷公開彙總審查</button>}
+ action:"REVOKE",requestId:newNativeChartRequestId(),reviewId:state.privacyReview!.id,expectedRevision:state.privacyReview!.revision})}>撤銷公開彙總審查</button>}
  </>}
  </section>;
 }

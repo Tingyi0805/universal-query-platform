@@ -1,3 +1,4 @@
+import {newNativeChartRequestId} from "../dashboard/nativeChartCreate";
 import {DashboardChartApprovalPanel} from "../components/DashboardChartApprovalPanel";
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
@@ -784,7 +785,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       hasSourceVersion:sourceVersion!==undefined,
       layoutUnmodified:savedProfiles!==null&&JSON.stringify(profiles)===savedProfiles,
       profileIdsCurrent:!layoutWriteRequiresReload,
-    },crypto.randomUUID());
+    },newNativeChartRequestId());
     if(!request){setError("圖表設定、來源或版型狀態不符合正式新增條件。");return;}
     nativeChartCreateInFlight.current=true;
     setNativeChartCreateBusy(true);setError("");setNotice("");
