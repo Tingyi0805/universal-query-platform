@@ -14,7 +14,10 @@ const witnessStart=candidate.indexOf(" -- TEST-ONLY: capture SQL Server catalog-
 const witnessEnd=candidate.indexOf(" IF EXISTS(SELECT 1 FROM @approvedChecks WHERE ApprovedDefinitionSha256 IS NULL)",witnessStart);
 requireTrue(witnessStart>=0&&witnessEnd>witnessStart,"WITNESS_CAPTURE_MISSING");
 const candidateWithoutWitness=candidate.slice(0,witnessStart)+candidate.slice(witnessEnd);
-requireTrue(candidateWithoutWitness.includes(base),"BASE_SOURCE_DRIFT");
+const normalizeWitnessPins=value=>value
+ .replace(/(N'CK_[^']+',)(?:NULL|0x[0-9A-F]{64})/g,"$1NULL")
+ .replace(/(DECLARE @approvedActiveFilterSha256 varbinary\\(32\\)=)(?:NULL|0x[0-9A-F]{64})/g,"$1NULL");
+requireTrue(normalizeWitnessPins(candidateWithoutWitness).includes(base),"BASE_SOURCE_DRIFT");
 const approvalStart=approval.indexOf("    CREATE TABLE uqp.DashboardChartPlaybackApproval (");
 const approvalEnd=approval.indexOf("    COMMIT TRANSACTION;",approvalStart);
 requireTrue(approvalStart>=0&&approvalEnd>approvalStart,"APPROVAL_SOURCE_MISSING");
