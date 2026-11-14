@@ -20,8 +20,13 @@ const auditId = (v: unknown): string | null => {
   const s = typeof v === "bigint" ? String(v) : String(v ?? "");
   return /^[1-9][0-9]{0,18}$/.test(s) ? s : null;
 };
-export function validatePlaybackApprovalRow(row: ApprovalRow | null): ChartPlaybackApproval | null {
-  if (!row || row.Status !== "APPROVED" ||
+export function validatePlaybackApprovalRow(
+  row: ApprovalRow | null, expectedDashboardId?: number, expectedWidgetId?: number,
+): ChartPlaybackApproval | null {
+  if (!row ||
+      (expectedDashboardId !== undefined && positive(row.DashboardId) !== expectedDashboardId) ||
+      (expectedWidgetId !== undefined && positive(row.WidgetId) !== expectedWidgetId) ||
+      row.Status !== "APPROVED" ||
       row.ReviewerIsActiveAdmin !== true || row.AuditReceiptVerified !== true ||
       !positive(row.WidgetId) || !positive(row.ReviewerUserId) || !auditId(row.AuditLogId))
     return null;
@@ -77,7 +82,7 @@ export function createDormantPlaybackApprovalReader(
       // An ambiguous row set is not a valid authorization decision.
       return rows.length === 1 && positive(rows[0].DashboardId) === dashboardId &&
         positive(rows[0].WidgetId) === widgetId
-        ? validatePlaybackApprovalRow(rows[0]) : null;
+        ? validatePlaybackApprovalRow(rows[0], dashboardId, widgetId) : null;
     } catch { return null; }
   };
 }
