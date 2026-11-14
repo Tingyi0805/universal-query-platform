@@ -89,6 +89,7 @@ type Scenario = {
   wrongReviewScope?: boolean;
   approvedPlayback?: boolean;
   missingPlaybackApproval?: boolean;
+  noPlaybackReader?: boolean;
   revokePlaybackAfterPage?: boolean;
   stalePlaybackRevision?: boolean;
   stalePlaybackDigest?: boolean;
@@ -129,7 +130,7 @@ function fixture(options: Scenario = {}) {
   const savedFacts = facts(isPublic);
   const deps: ChartCoordinatorDependencies = {
     enabled: () => options.enabled !== false,
-    readPlaybackApproval: async (_dashboardId, widgetId) => {
+    readPlaybackApproval: options.noPlaybackReader ? undefined : async (_dashboardId, widgetId) => {
       playbackReads++;
       if (options.missingPlaybackApproval || (!isPublic && !options.approvedPlayback)) return null;
       return {
@@ -398,5 +399,18 @@ test("revocation during user/device playback prevents data release", async () =>
     await refused(f);
     assert.equal(f.counts().calls, 1);
     assert.ok(f.playbackReads() >= 3);
+  }
+});
+
+test("missing production approval reader fails closed for every playback context", async () => {
+  for (const scenario of [
+    {isPublic:true, noPlaybackReader:true},
+    {context:"device" as const, validDeviceProof:true, noPlaybackReader:true},
+    {context:"admin-preview" as const, noPlaybackReader:true},
+  ]) {
+    const f = fixture(scenario);
+    await refused(f);
+    assert.equal(f.counts().calls, 0);
+    assert.equal(f.playbackReads(), 0);
   }
 });
