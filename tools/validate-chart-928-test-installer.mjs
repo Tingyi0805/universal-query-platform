@@ -16,7 +16,7 @@ requireTrue(witnessStart>=0&&witnessEnd>witnessStart,"WITNESS_CAPTURE_MISSING");
 const candidateWithoutWitness=candidate.slice(0,witnessStart)+candidate.slice(witnessEnd);
 const normalizeWitnessPins=value=>value
  .replace(/(N'CK_[^']+',)(?:NULL|0x[0-9A-F]{64})/g,"$1NULL")
- .replace(/(DECLARE @approvedActiveFilterSha256 varbinary\\(32\\)=)(?:NULL|0x[0-9A-F]{64})/g,"$1NULL");
+ .replace(/(DECLARE @approvedActiveFilterSha256 varbinary\(32\)=)(?:NULL|0x[0-9A-F]{64})/g,"$1NULL");
 requireTrue(normalizeWitnessPins(candidateWithoutWitness).includes(base),"BASE_SOURCE_DRIFT");
 const approvalStart=approval.indexOf("    CREATE TABLE uqp.DashboardChartPlaybackApproval (");
 const approvalEnd=approval.indexOf("    COMMIT TRANSACTION;",approvalStart);
@@ -28,5 +28,5 @@ requireTrue(candidate.includes("CHART_TEST_DB_OWNER_REQUIRED"),"OWNER_GUARD");
 requireTrue(candidate.includes("CHART_TEST_SYSTEM_DATABASE_FORBIDDEN"),"SYSTEM_DATABASE_GUARD");
 requireTrue(candidate.includes("BEGIN TRANSACTION;")&&candidate.includes("COMMIT TRANSACTION;")&&candidate.includes("ROLLBACK TRANSACTION;"),"TRANSACTION_GUARD");
 requireTrue(!candidate.includes("CREATE LOGIN ")&&!candidate.includes("GRANT EXECUTE")&&!candidate.includes("INSERT INTO uqp.SchemaMigration"),"NO_PRIVILEGE_OR_LEDGER_WRITES");
-requireTrue(candidate.indexOf("CREATE TABLE uqp.DashboardChartPlaybackApproval")>candidate.indexOf(base),"APPROVAL_ORDER");
+requireTrue(candidate.indexOf("CREATE TABLE uqp.DashboardChartPlaybackApproval")>normalizeWitnessPins(candidateWithoutWitness).indexOf(base),"APPROVAL_ORDER");
 console.log("CHART_928_TEST_INSTALL_STATIC_SOURCE_CONTRACT_PASS (not SQL execution)");
