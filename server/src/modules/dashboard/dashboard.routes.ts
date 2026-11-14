@@ -32,9 +32,8 @@ import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecutio
 // Issue #89: production CHART projection adapter remains hard-disabled until
 // sealed Widget, DB 928, trusted aggregate and HTTP release are approved.
 import { CHART_CREATE_HTTP_RELEASE_APPROVED, createChartCreateRouter } from "./dashboardChartCreate.routes.js";
-import {createReleaseDisabledLocalJwtChartCreate} from "./dashboardChartLocalJwtSqlCreate.js";
+import {createDormantSinglePoolChartCreate} from "./dashboardChartLocalJwtSqlCreate.js";
 import {getPlatformDbPool} from "../../config/database.js";
-import {getChartWriterDbPool} from "../../config/chartWriterDatabase.js";
 import {
   CHART_SAVED_READBACK_HTTP_RELEASE_APPROVED,
   createChartSavedReadbackRouter,
@@ -385,8 +384,12 @@ dashboardRouter.use(createChartUserProjectionRouter({
 // no JWT transfer to SQL and no SQL connection until explicitly approved.
 // The planned Writer stored procedure must atomically recheck all live RBAC,
 // TokenVersion, Query/Dataset versions, replay and audit on the SQL side.
-const chartLocalJwtCreate=createReleaseDisabledLocalJwtChartCreate(
-  getPlatformDbPool,getChartWriterDbPool);
+const chartLocalJwtCreate=createDormantSinglePoolChartCreate({
+  // Option A: retain one existing UQP SQL login and the verified JWT actor.
+  // Never activate until the DB-owned procedure has been accepted in Gate 3.
+  enabled:()=>false,
+  getPool:getPlatformDbPool,
+});
 dashboardRouter.use(createChartCreateRouter({
   approved: () => CHART_CREATE_HTTP_RELEASE_APPROVED,
   create: async (plan) => {
