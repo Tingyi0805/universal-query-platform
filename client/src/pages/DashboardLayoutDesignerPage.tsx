@@ -1,4 +1,4 @@
-import {newNativeChartRequestId} from "../dashboard/nativeChartCreate";
+import {newNativeChartRequestId,canCreateChartOnActivatedDashboard} from "../dashboard/nativeChartCreate";
 import {DashboardChartApprovalPanel} from "../components/DashboardChartApprovalPanel";
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
@@ -190,6 +190,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const { accessToken, hasPermission } = useAuth();
   const [chartOnline, setChartOnline] = useState(() => navigator.onLine);
   const [nativeChartCreateCapable,setNativeChartCreateCapable]=useState(false);
+  const [chartTargetReady,setChartTargetReady]=useState(false);
   const [nativeChartCreateBusy,setNativeChartCreateBusy]=useState(false);
   const nativeChartCreateInFlight=useRef(false);
   const [layoutWriteRequiresReload,setLayoutWriteRequiresReload]=useState(false);
@@ -198,7 +199,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [chartCreateMustReload,setChartCreateMustReload]=useState(false);
   useEffect(()=>{
     setNativeChartCreateCapable(false);
-    if(!active||embedded||!accessToken||
+    if(!active||!accessToken||
       !Number.isSafeInteger(dashboardId)||dashboardId<=0)return;
     let stopped=false;
     void apiRequest<{canCreate:boolean}>(
@@ -209,7 +210,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
           value.canCreate===true)setNativeChartCreateCapable(true);
       }).catch(()=>{if(!stopped)setNativeChartCreateCapable(false);});
     return ()=>{stopped=true;};
-  },[active,embedded,accessToken,dashboardId]);
+  },[active,accessToken,dashboardId]);
   useEffect(() => {
     const update = () => setChartOnline(navigator.onLine);
     window.addEventListener("online", update);
@@ -292,10 +293,11 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     try {
       configuration??=trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`,{signal:controller.signal},accessToken));
       const supplemental=configuration.sources.filter(source=>source.isEnabled&&source.queryDefinitionId!==null);
-      const primary=await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)
+      const previewRoute=configuration.isActive===true?"preview":"page";
+      const primary=await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/${previewRoute}`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)
         .then(value=>({...value,reportColumns:[],dashboard:{id:dashboardId,name:configuration!.presentation?.name??"Query-only 設計預覽",code:"",parameters:configuration!.primary.parameters??{},pageSize:configuration!.primary.pageSize,pageSeconds:configuration!.primary.pageSeconds}}))
         .catch(error=>{failures.push(sourcePreviewFailure("PRIMARY",error));return null;});
-      const sources=await Promise.allSettled(supplemental.map(async source=>({key:source.sourceKey,preview:await apiRequest<SupplementalPreview>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/page`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)})));
+      const sources=await Promise.allSettled(supplemental.map(async source=>({key:source.sourceKey,preview:await apiRequest<SupplementalPreview>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/${previewRoute}`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)})));
       if(read!==previewRead.current||!activeRef.current)return;
       sources.forEach((result,index)=>{if(result.status==="rejected")failures.push(sourcePreviewFailure(supplemental[index]!.sourceKey,result.reason));});
       setPreview(primary);setSupplementalPreviews(Object.fromEntries(sources.filter((r):r is PromiseFulfilledResult<{key:string;preview:SupplementalPreview}>=>r.status==="fulfilled").map(r=>[r.value.key,r.value.preview])));
@@ -316,6 +318,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       // Bind the saved layout to its version using a bracketed read. Reading a
       // newer version after an older layout alone could authorize a stale overwrite.
       setSourceVersion(undefined);
+      setChartTargetReady(false);
       let configuration: QuerySourceConfiguration | null = null;
       try { configuration = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken)); }
       catch (error) { failures.push(dashboardOperationError(error)); }
@@ -333,7 +336,8 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
         if (sequence !== loadSequence.current) return;
         if (after.version !== configuration.version) throw Object.assign(new Error(), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
         setSourceVersion(configuration.editable && !configuration.primary.requiresConversion && configuration.sources.every(source => source.queryDefinitionId !== null) ? configuration.version : undefined);
-        if (!configuration.editable) failures.push("此 Dashboard 仍啟用或版本不可寫；僅供查看，須安全停用後重新載入。");
+        setChartTargetReady(canCreateChartOnActivatedDashboard(configuration));
+        if (!configuration.editable) setNotice("此 Dashboard 已啟用：一般版型僅供查看；受控 CHART 可新增至已保存版型。其他版面修改仍需先安全停用。");
       }
       const supplemental: SupplementalSource[] = configuration?.sources.map(source => ({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled), queryDefinitionId: source.queryDefinitionId })) ?? [];
       setSupplementalSources(supplemental);
@@ -349,7 +353,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   useEffect(() => { setProfiles([]); setActiveProfileKey(""); setSelectedWidgetKey(""); void load(); return () => { loadSequence.current++;++previewRead.current;previewRequest.current?.abort(); }; }, [load]);
   useEffect(() => {
     const changed = (event: Event) => { const detail = (event as CustomEvent).detail;
-      if (detail?.dashboardId === dashboardId && detail.origin !== "layout") { setSourceVersion(undefined); setError("設定已變更；版型草稿保留，請先另行保存，再重新載入版型與版本。禁止自動覆寫。"); }
+      if (detail?.dashboardId === dashboardId && detail.origin !== "layout") { setSourceVersion(undefined); setChartTargetReady(false); setError("設定已變更；版型草稿保留，請先另行保存，再重新載入版型與版本。禁止自動覆寫。"); }
     };
     window.addEventListener("uqp.dashboard.configuration.changed", changed);
     return () => window.removeEventListener("uqp.dashboard.configuration.changed", changed);
@@ -749,15 +753,17 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const chartSaveBlocked = loadedSealedChartPresent || hasSealedChartWidgets(profiles);
   const nativeChartCreateAllowed=nativeChartCreateCapable &&
     !chartCreateMustReload &&
-    !nativeChartCreateBusy && !saving && active && !embedded &&
+    !nativeChartCreateBusy && !saving && active &&
     Boolean(activeProfile?.id && Number.isSafeInteger(activeProfile.id)) &&
-    sourceVersion!==undefined && !layoutWriteRequiresReload &&
+    chartTargetReady && !layoutWriteRequiresReload &&
     savedProfiles!==null && JSON.stringify(profiles)===savedProfiles &&
     hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY");
   const chartCreateBlockedReason=chartCreateMustReload
     ?"上一筆 CHART 建立結果未確認；請先重新載入版型核對，避免重複建立。"
     :!nativeChartCreateCapable
     ?"正式 CHART 建立服務尚未核准，現有草稿僅用於合成資料示意。"
+    :!chartTargetReady
+      ?"請先保存停用草稿版型，再至裝置管理啟用 Query-only。受控 CHART 僅能新增至已啟用、已儲存的版型；一般版面編輯仍須停用。"
     :layoutWriteRequiresReload
       ?"此版型最近曾以舊版方式儲存；請重新載入，以取得最新的 Profile ID。"
       :savedProfiles===null||JSON.stringify(profiles)!==savedProfiles
@@ -782,7 +788,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       canCreate:nativeChartCreateCapable,
       hasDesignPermission:hasPermission("DESIGN_QUERY"),
       hasExecutePermission:hasPermission("EXECUTE_QUERY"),
-      hasSourceVersion:sourceVersion!==undefined,
+      hasSourceVersion:chartTargetReady,
       layoutUnmodified:savedProfiles!==null&&JSON.stringify(profiles)===savedProfiles,
       profileIdsCurrent:!layoutWriteRequiresReload,
     },newNativeChartRequestId());

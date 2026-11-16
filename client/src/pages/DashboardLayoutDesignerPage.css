@@ -2,6 +2,12 @@
   display: grid;
   gap: 18px;
 }
+/* Uncap the generic narrow page shell on large-screen designer pages. */
+.page-shell.dashboard-layout-page,
+.page-shell.dashboard-designer-page {
+  width: min(1920px, calc(100% - 40px));
+}
+.page-shell.dashboard-layout-page { padding-top: 24px; }
 
 .dashboard-layout-toolbar-actions {
   display: flex;
@@ -11,7 +17,7 @@
 
 .dashboard-layout-workspace {
   display: grid;
-  grid-template-columns: 220px minmax(0, 1fr) 240px;
+  grid-template-columns: clamp(310px, 22vw, 380px) minmax(0, 1fr) clamp(250px, 18vw, 310px);
   gap: 12px;
   min-height: 0;
   align-items: start;
@@ -276,9 +282,9 @@
   font-size: 13px;
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1200px) {
   .dashboard-layout-workspace {
-    grid-template-columns: 200px minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 330px) minmax(0, 1fr);
   }
 
   .layout-canvas-stage {

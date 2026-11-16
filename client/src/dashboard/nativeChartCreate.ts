@@ -2,6 +2,22 @@
 // Browser authority is never sufficient: server-side JWT, Signer, SQL Writer
 // and the independently reviewed 928 gate must all approve this operation.
 import {chartDraftErrors,type ChartDraft} from "./chartDraft.js";
+import type {QuerySourceConfiguration,QuerySourceSettings} from "./querySourceManagement.js";
+/** This is a UI hint only; the SQL Writer revalidates all authorization.
+ * Generic layout edits require inactive mode, while dedicated CHART create
+ * uses an already-saved profile on an activated QUERY_ONLY Dashboard.
+ */
+export function canCreateChartOnActivatedDashboard(config:QuerySourceConfiguration):boolean{
+ const bound=(source:QuerySourceSettings)=>Number.isSafeInteger(source.queryDefinitionId)&&
+   Number(source.queryDefinitionId)>0&&source.requiresConversion!==true;
+ return config.dashboardMode==="QUERY_ONLY"&&config.isActive===true&&
+   config.editable===false&&config.overCapacity===false&&
+   /^[a-f0-9]{64}$/.test(config.version)&&
+   config.primary?.sourceKey==="PRIMARY"&&bound(config.primary)&&
+   Number.isInteger(config.primary.maxRows)&&Number(config.primary.maxRows)>0&&
+   Array.isArray(config.sources)&&
+   config.sources.filter(source=>source.isEnabled===true).every(bound);
+}
 export type NativeChartCreateScope=Readonly<{
   dashboardId:number;profileId:number;canvasWidth:number;canvasHeight:number;
   allowedSources:readonly string[];

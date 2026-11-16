@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {newChartDraft} from "./chartDraft.js";
 import {
   buildNativeChartCreateBody,parseNativeChartCreateReceipt,
+  canCreateChartOnActivatedDashboard,
   hasCreatedSealedChartInLayout,confirmsNativeChartSavedReadback,
 } from "./nativeChartCreate.js";
 const draft=newChartDraft();
@@ -14,6 +15,24 @@ const scope={
   hasDesignPermission:true,hasExecutePermission:true,
   hasSourceVersion:true,layoutUnmodified:true,profileIdsCurrent:true,
 };
+test("native CHART creation requires a valid activated QUERY_ONLY source",()=>{
+ const ready={
+   version:"a".repeat(64),dashboardMode:"QUERY_ONLY",isActive:true,
+   editable:false,overCapacity:false,
+   primary:{sourceKey:"PRIMARY",queryDefinitionId:7,maxRows:1000,requiresConversion:false,
+     refreshSeconds:60,pageSize:5,pageSeconds:20},sources:[],
+ };
+ assert.equal(canCreateChartOnActivatedDashboard(ready),true);
+ for(const change of [
+   {dashboardMode:"QUERY_ONLY_DISABLED"},{dashboardMode:"LEGACY"},
+   {isActive:false},{editable:true},{overCapacity:true},
+   {version:"stale"},{primary:{...ready.primary,queryDefinitionId:null}},
+   {primary:{...ready.primary,maxRows:null}},
+   {sources:[{...ready.primary,sourceKey:"SECONDARY",isEnabled:true,queryDefinitionId:null}]},
+ ])assert.equal(canCreateChartOnActivatedDashboard({...ready,...change}),false);
+ assert.equal(canCreateChartOnActivatedDashboard({...ready,
+   sources:[{...ready.primary,sourceKey:"DISABLED",isEnabled:false,queryDefinitionId:null}]}),true);
+});
 test("native Dashboard create POST contains only strict scoped draft fields",()=>{
   const body=buildNativeChartCreateBody(draft,scope,requestId);
   assert.deepEqual(body,{profileId:22,requestId,
