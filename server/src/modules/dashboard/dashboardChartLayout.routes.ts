@@ -45,7 +45,7 @@ export async function writeChartLayout(input:{
 }){
  const {dashboardId,widgetId,actorId,tokenVersion,change:cmd}=input;
  const pool=await getPlatformDbPool();
- if(!pool)deny("CHART_LAYOUT_DATABASE_UNAVAILABLE",503);
+ if(!pool)throw new ChartLayoutError("CHART_LAYOUT_DATABASE_UNAVAILABLE",503);
  const tx=new sql.Transaction(pool);
  let opened=false;
  try{

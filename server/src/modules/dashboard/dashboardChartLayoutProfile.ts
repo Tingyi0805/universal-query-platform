@@ -7,7 +7,6 @@ export const CHART_LAYOUT_OVERRIDES_KEY="chartLayoutOverridesV1";
 export type ChartGeometry={x:number;y:number;width:number;height:number;sortOrder:number;hidden:boolean;requestId:string};
 const id=(n:unknown):n is number=>typeof n==="number"&&Number.isSafeInteger(n)&&n>0;
 const integer=(n:unknown):n is number=>typeof n==="number"&&Number.isSafeInteger(n);
-const own=(o:object,key:string)=>Object.prototype.hasOwnProperty.call(o,key);
 export const chartLayoutRevision=(profileId:number,raw:string)=>
  createHash("sha256").update("UQP_CHART_PROFILE_LAYOUT_V1\n"+profileId+"\n"+raw).digest("hex");
 export function chartLayoutConfig(raw:unknown):Record<string,unknown>{

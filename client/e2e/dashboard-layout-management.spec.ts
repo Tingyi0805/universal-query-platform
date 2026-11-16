@@ -317,7 +317,7 @@ test("sealed CHART persisted by future audited writer remains read-only and neve
  await expect(save(page)).toBeDisabled();
  await expect(page.getByRole("button",{name:"＋ 受控圖表（唯讀）"})).toHaveCount(0);
  await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
- await expect(page.getByText(/受控 CHART 目前為唯讀/)).toBeVisible();
+ await expect(page.getByText(/受控 CHART 的資料與 Seal 維持唯讀/)).toBeVisible();
  await expect(page.locator(".layout-inspector-grid")).toHaveCount(0);
  expect(state.writes).toHaveLength(0);
  expect(state.legacy).toEqual([]);
