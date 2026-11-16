@@ -1,4 +1,5 @@
 import {createChartTestManagementRouter} from "./dashboardChartTestManagement.routes.js";
+import {createChartLayoutRouter} from "./dashboardChartLayout.routes.js";
 import {chartAuthorizedTestEnabled,requireChartAuthorizedTest} from "./dashboardChartAuthorizedTest.js";
 import { createDormantPlaybackApprovalReader } from "./dashboardChartPlaybackApproval.repository.js";
 import { createChartPlaybackApprovalRouter, CHART_PLAYBACK_APPROVAL_HTTP_RELEASE_APPROVED } from "./dashboardChartPlaybackApproval.routes.js";
@@ -380,6 +381,8 @@ dashboardRouter.get("/device/:id/charts/v1/capabilities",async(req,res)=>{
 });
 dashboardRouter.use(authenticateJwt);
 dashboardRouter.use(createChartTestManagementRouter());
+// Authorized test CHART layout edits share existing Dashboard security boundary.
+dashboardRouter.use(createChartLayoutRouter());
 dashboardRouter.use(createDrilldownRouter());
 dashboardRouter.use("/:id/query-sources/v1/layout", requirePermission("DESIGN_QUERY"), validateDrillLayout);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));

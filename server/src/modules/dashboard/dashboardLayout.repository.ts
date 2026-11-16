@@ -1,6 +1,7 @@
 import { assertLegacyDashboardWriter } from "./dashboardSourceWriteGuard.js";
 import { assertChartLayoutReplacementSafe } from "./dashboardChartLayoutReplacement.guard.js";
 import sql from "mssql";
+import {chartLayoutPublicRow} from "./dashboardChartLayoutProfile.js";
 import { getPlatformDbPool } from "../../config/database.js";
 
 export type DashboardWidgetInput = {
@@ -46,7 +47,7 @@ function parseConfig(value: unknown): Record<string, unknown> {
 }
 
 export function publicConfig(value: unknown) {
-  const { interactiveDrilldown: _graph, interactiveRoot: _root, ...safe } = parseConfig(value);
+  const { interactiveDrilldown: _graph, interactiveRoot: _root, chartLayoutOverridesV1: _chartLayout, ...safe } = parseConfig(value);
   return safe;
 }
 
@@ -107,13 +108,21 @@ export async function readDashboardLayoutFromPool(
       ORDER BY w.ProfileId, w.SortOrder, w.Id
     `);
 
+  const profileById=new Map<number,any>(
+    profileResult.recordset.map((p:any)=>[Number(p.Id),p]));
   const widgetsByProfile = new Map<number, ReturnType<typeof mapDashboardWidgetForDisplay>[]>();
   for (const row of widgetsResult.recordset) {
     const profileId = Number(row.ProfileId);
-    widgetsByProfile.set(profileId, [
-      ...(widgetsByProfile.get(profileId) ?? []),
-      mapDashboardWidgetForDisplay(row),
-    ]);
+    let mapped=mapDashboardWidgetForDisplay(row);
+    if(row.WidgetType==="CHART"){
+      const profile=profileById.get(profileId);
+      if(!profile)throw Error("CHART_LAYOUT_PROFILE_MISSING");
+      const override=chartLayoutPublicRow(mapped,profileId,
+        String(profile.ConfigJson??"{}"),Number(profile.CanvasWidth),Number(profile.CanvasHeight));
+      if(!override)continue;
+      mapped=override as ReturnType<typeof mapDashboardWidgetForDisplay>;
+    }
+    widgetsByProfile.set(profileId,[...(widgetsByProfile.get(profileId)??[]),mapped]);
   }
 
   return {
@@ -126,7 +135,7 @@ export async function readDashboardLayoutFromPool(
       isDefault: Boolean(row.IsDefault),
       sortOrder: Number(row.SortOrder),
       config: includeInteractive ? parseConfig(row.ConfigJson) : publicConfig(row.ConfigJson),
-      widgets: widgetsByProfile.get(Number(row.Id)) ?? [],
+      widgets: [...(widgetsByProfile.get(Number(row.Id))??[])].sort((a,b)=>a.sortOrder-b.sortOrder||a.id-b.id),
     })),
   };
 }

@@ -1,5 +1,6 @@
 import {newNativeChartRequestId,canCreateChartOnActivatedDashboard} from "../dashboard/nativeChartCreate";
 import {DashboardChartApprovalPanel} from "../components/DashboardChartApprovalPanel";
+import {DashboardChartLayoutControls,type ChartLayoutGeometry} from "../components/DashboardChartLayoutControls";
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
   hasCreatedSealedChartInLayout,confirmsNativeChartSavedReadback} from "../dashboard/nativeChartCreate";
@@ -69,6 +70,7 @@ type LayoutWidget = {
   alignment: "LEFT" | "CENTER" | "RIGHT";
   config: Record<string, unknown>;
   sortOrder: number;
+  chartLayoutRevision?:string;
 };
 
 type LayoutProfile = {
@@ -835,6 +837,40 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     }
   }
 
+
+  async function changeChartLayout(action:"MOVE"|"HIDE",geometry:ChartLayoutGeometry,expectedVersion:string):Promise<void>{
+    if(!selectedWidget||selectedWidget.widgetType!=="CHART"||
+      !Number.isSafeInteger(selectedWidget.id)||!activeProfile?.id||
+      !nativeChartCreateCapable||!chartTargetReady||
+      !hasPermission("DESIGN_QUERY")||!hasPermission("EXECUTE_QUERY")||
+      savedProfiles===null||JSON.stringify(profiles)!==savedProfiles||
+      nativeChartCreateBusy||!active||
+      expectedVersion!==selectedWidget.chartLayoutRevision||
+      !/^[a-f0-9]{64}$/.test(expectedVersion))
+      throw Error("CHART_LAYOUT_NOT_READY");
+    const widgetId=selectedWidget.id!;
+    setError("");setNotice("");
+    try{
+      const result=await apiRequest<{widgetId:number;revision:string;removed:boolean}>(
+        `/dashboards/${dashboardId}/charts/v1/${widgetId}/layout`,
+        {method:"POST",body:JSON.stringify({
+          action,...geometry,expectedVersion,requestId:newNativeChartRequestId(),
+        })},accessToken);
+      if(result?.widgetId!==widgetId||
+        !/^[a-f0-9]{64}$/.test(result.revision)||
+        result.revision===expectedVersion||
+        result.removed!==(action==="HIDE"))
+        throw Error("CHART_LAYOUT_RECEIPT_INVALID");
+      await load();
+      setNotice(action==="HIDE"?
+        "已從此版型移除 CHART；原始 Seal、核准紀錄及稽核保留。":
+        "CHART 位置與尺寸已儲存並重新載入。");
+    }catch(error){
+      setError("受控圖表版型修改尚未獲確認，請重新載入版型核對，避免重複操作。");
+      throw error;
+    }
+  }
+
   async function saveLayout() {
     if (saving || nativeChartCreateInFlight.current) return;
     if (loadedSealedChartPresent || hasSealedChartWidgets(profiles)) {
@@ -1142,9 +1178,25 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
           <h2>Widget 屬性</h2>
           {!selectedWidget && <p className="layout-hint">選取畫布上的 Widget 後即可調整。</p>}
 
+          {selectedWidget?.widgetType === "CHART" && activeProfile && (
+            <DashboardChartLayoutControls
+              key={`${selectedWidget.id}:${selectedWidget.chartLayoutRevision??"no-version"}`}
+              placement={{x:selectedWidget.x,y:selectedWidget.y,
+                width:selectedWidget.width,height:selectedWidget.height,
+                sortOrder:selectedWidget.sortOrder}}
+              version={selectedWidget.chartLayoutRevision??""}
+              canvasWidth={activeProfile.canvasWidth}
+              canvasHeight={activeProfile.canvasHeight}
+              enabled={nativeChartCreateCapable&&chartTargetReady&&
+                !nativeChartCreateBusy&&active&&
+                savedProfiles!==null&&JSON.stringify(profiles)===savedProfiles&&
+                /^[a-f0-9]{64}$/.test(selectedWidget.chartLayoutRevision??"")&&
+                hasPermission("DESIGN_QUERY")&&hasPermission("EXECUTE_QUERY")}
+              onCommit={changeChartLayout}/>
+          )}
           {selectedWidget?.widgetType === "CHART" && <DashboardChartApprovalPanel key={`${dashboardId}:${selectedWidget.id}`} dashboardId={dashboardId}
             widgetId={selectedWidget.id!} accessToken={accessToken} canManage={hasPermission("MANAGE_USERS")}/>}
-          {selectedWidget?.widgetType === "CHART" && <p role="status">受控 CHART 目前為唯讀，不能在舊版設計器修改、移動、刪除或重新儲存。</p>}
+          {selectedWidget?.widgetType === "CHART" && <p role="status">受控 CHART 的資料與 Seal 維持唯讀；位置、大小與移除請使用專用設定，不經舊版儲存版面。</p>}
           {selectedWidget && selectedWidget.widgetType !== "CHART" && (
             <div className="layout-inspector-form">
               <strong>{widgetLabels[selectedWidget.widgetType]}</strong>
