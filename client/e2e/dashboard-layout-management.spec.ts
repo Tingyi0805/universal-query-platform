@@ -4,7 +4,7 @@ async function setup(page: Page,manage=false) {
   const state = { revision: 1, conflict: false, disabled: false, race: false, pending: false, sourceEnabled: true, missingVersion: false, writes: [] as any[], legacy: [] as string[],
     chartProjectionCalls: [] as {method:string;body:string|null;authorization:string|null}[],
     chartProjectionRevoked: false,
-    chartCreateAllowed:false,chartCreateCalls:[] as unknown[],
+    chartCreateAllowed:false,chartActivated:false,chartCreateCalls:[] as unknown[],
     chartCreateReject:false,
     chartSavedConfig:null as Record<string,unknown>|null,
     chartReadbackCalls:[] as {method:string;authorization:string|null}[],
@@ -16,7 +16,7 @@ async function setup(page: Page,manage=false) {
     ] };
   const version = () => state.revision.toString(16).padStart(64, "0");
   const primary = { sourceKey: "PRIMARY", queryDefinitionId: 20, parameters: {}, refreshSeconds: 30, pageSize: 5, pageSeconds: 10, maxRows: 100, requiresConversion: false };
-  const config = () => ({ version: state.missingVersion ? undefined : version(), editable: true, isActive: false, dashboardMode: "QUERY_ONLY_DISABLED", overCapacity: false, primary, sources: [{ ...primary, id: 10, sourceKey: "WARD", queryDefinitionId: state.pending ? null : 21, isEnabled: state.sourceEnabled }] });
+  const config = () => ({ version: state.missingVersion ? undefined : version(), editable: !state.chartActivated, isActive: state.chartActivated, dashboardMode: state.chartActivated ? "QUERY_ONLY" : "QUERY_ONLY_DISABLED", overCapacity: false, primary, sources: [{ ...primary, id: 10, sourceKey: "WARD", queryDefinitionId: state.pending ? null : 21, isEnabled: state.sourceEnabled }] });
   await page.addInitScript((canManage:boolean) => sessionStorage.setItem("uqp.auth", JSON.stringify({ accessToken: "synthetic", user: { id: 1, username: "synthetic", displayName: "合成", permissions: ["DESIGN_QUERY", "VIEW_QUERY", "EXECUTE_QUERY",...(canManage?["MANAGE_USERS"]:[])] } })),manage);
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
@@ -81,7 +81,7 @@ async function setup(page: Page,manage=false) {
       if (state.conflict || body.expectedVersion !== version()) { await route.fulfill({ status: 409, json: { error: { code: "QUERY_SOURCE_VERSION_CONFLICT", message: "private SQL" } } }); return; }
       state.profiles = body.profiles; state.revision++; await route.fulfill({ json: { version: version() } }); return;
     }
-    if (/query-sources\/v1\/[^/]+\/page$/.test(path)) {
+    if (/query-sources\/v1\/[^/]+\/(?:page|preview)$/.test(path)) {
       await route.fulfill({ json: { page: 1, totalPages: 1, snapshotId: "11111111-1111-4111-8111-111111111111", result: { columns: [{ name: "NAME" }], rows: [{ NAME: "合○測試" }] } } }); return;
     }
     if (/\/preview$|\/data-sources/.test(path) || (path.endsWith("/layout") && request.method() === "PUT")) { state.legacy.push(path); await route.fulfill({ status: 500, json: { error: { code: "LEGACY_FORBIDDEN" } } }); return; }
@@ -385,6 +385,16 @@ test("saved CHART rechecks seal and hides revoked data without changing layout v
 });
 
 
+test("activated Query-only layout uses admin preview without permitting a legacy whole-layout save",async({page})=>{
+  const state=await setup(page);
+  state.chartActivated=true;
+  await page.goto("/designer/dashboards/1/layout");
+  await expect(page.getByText("固定合成文字",{exact:true})).toBeVisible();
+  await expect(save(page)).toBeDisabled();
+  await expect(page.getByText(/此 Dashboard 已啟用/)).toBeVisible();
+  expect(state.legacy).toEqual([]);
+});
+
 test("native CHART remains disabled without independently approved server capability",async({page})=>{
   const state=await setup(page);
   await page.goto("/designer/dashboards/1/layout");
@@ -399,6 +409,7 @@ test("native CHART remains disabled without independently approved server capabi
 test("authorized test-only native CREATE verifies exact server readback and keeps legacy save blocked",async({page})=>{
   test.setTimeout(60_000);
   const state=await setup(page);
+  state.chartActivated=true;
   state.chartCreateAllowed=true;
   await page.goto("/designer/dashboards/1/layout");
   await expect(page.getByText("固定合成文字",{exact:true})).toBeVisible();
@@ -441,6 +452,7 @@ test("a legacy layout PUT invalidates profile IDs until an explicit reload",asyn
 test("ambiguous native CREATE cannot issue another UUID before server reload",async({page})=>{
   test.setTimeout(60_000);
   const state=await setup(page);
+  state.chartActivated=true;
   state.chartCreateAllowed=true;
   state.chartCreateReject=true;
   await page.goto("/designer/dashboards/1/layout");
