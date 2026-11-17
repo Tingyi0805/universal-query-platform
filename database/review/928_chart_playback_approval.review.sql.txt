@@ -1,0 +1,33 @@
+-- UQP PR #99 / Gate 3: minimal chart playback approval storage proposal.
+-- REVIEW ONLY. NOT A MIGRATION. NO DEPLOYMENT AUTHORIZATION.
+-- Reuse the current UQP SQL login and uqp.AuditLog; no new SQL principal.
+-- First statement intentionally blocks execution in every environment.
+THROW 51928, 'CHART_PLAYBACK_APPROVAL_SCHEMA_REVIEW_ONLY', 1;
+-- BELOW THIS LINE: NON-EXECUTABLE REVIEW PROPOSAL.
+-- DBA must confirm uqp.DashboardWidget / uqp.AppUser / uqp.AuditLog
+-- exact PK names, types and existing permissions before preparing a migration.
+-- Approval must be granted by an authenticated current administrator through
+-- a server-owned API and persisted with the audit receipt in one transaction.
+-- Revocation must update the decision and audit atomically.
+-- A changed Widget rowversion or config digest is never approved by inheritance.
+-- No client-supplied reviewer, audit id, revision or digest is authoritative.
+--
+-- Proposed logical schema (DDL to be finalized after actual catalog inspection):
+-- uqp.DashboardChartPlaybackApproval
+--   DashboardId       bigint       NOT NULL
+--   WidgetId          bigint       NOT NULL
+--   WidgetRevision    binary(8)    NOT NULL
+--   ConfigDigest      char(64)     NOT NULL (lowercase SHA-256)
+--   Status            varchar(20)  NOT NULL ('APPROVED' or 'REVOKED')
+--   ReviewerUserId    bigint       NOT NULL
+--   ReviewedAtUtc     datetime2(3) NOT NULL
+--   AuditLogId        bigint       NOT NULL
+--   DecisionRowVersion rowversion  NOT NULL
+--   PRIMARY KEY (DashboardId, WidgetId)
+--   FK WidgetId / ReviewerUserId / AuditLogId: verify catalog before creating.
+--   On approval: enforce admin role at transaction time; audit event
+--   CHART_APPROVE_PLAYBACK with Status SUCCESS, IsImportant=1.
+--   On revocation: audit event CHART_REVOKE_PLAYBACK; Status REVOKED.
+--   On read: verify current admin membership, matching audit receipt,
+--   exact WidgetId, WidgetRevision, ConfigDigest, and status APPROVED.
+--   No chart playback is activated until this schema, API and tests are ready.

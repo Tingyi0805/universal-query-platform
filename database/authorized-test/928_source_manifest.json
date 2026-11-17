@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "files": {
+    "928_chart_approval.test-install.sql.txt": "bb2ccf2ca9a166a287c8c1d126efe00f0ff2cbe6894a8ff7b72faa1a3f30f727",
+    "928_chart_base.test-install.sql.txt": "a4afb172ca4a54be91fd7d1d608c23c58c5e32dc2ee37bfced28f4c6ef4d2b1f",
+    "928_chart_writer.test-install.sql.txt": "9154e9cb75eb8533f7bf5941016a3778706e3ef4b0f9b0a346a576ee00df041b"
+  },
+  "modules": {
+    "TR_DashboardWidget_ChartFreeze": "ffb52ab76fa46abb08c538d440d06095f3a740dedab569ad6da52f6fe8e486dc",
+    "TR_ChartSeal_DeleteBlock": "249de4c51b7336a7b0b2fa7650556cdcb10684f7fbaf573b0f4738f08f61a48d",
+    "TR_ChartReview_Transition": "2c7ed705b9c1e55b5271baf0d7f8e14b3b0b2a76dea569fe62e4f0e1c1ecab1b",
+    "TR_ChartTrustRequest_Immutable": "b2e33cd2b5d29ce0f3f9dc6caa3f5dfdfba1b91a7ba72251bfaaf77c480edc46",
+    "TR_ChartSeal_AuditReceipt": "e9991cbb1c2416f0a12d4354c264123f3e68aced1d5b4b7bd2d6ed16e2ce5418",
+    "TR_ChartReview_AuditReceipt": "f541edb648e4afae022b148632c3b02f05fad74985ac30290239adf3e2094f3c",
+    "TR_ChartTrustRequest_AuditReceipt": "6565a8d840e66eae1aba9141bedfaed0b13687f16a9e441f1f32335286339f53",
+    "usp_DashboardChartCreate": "d5243936c408c5ea829e5b97224f2a62312de0490df5b7a95072a1e80c711bc0"
+  }
+}

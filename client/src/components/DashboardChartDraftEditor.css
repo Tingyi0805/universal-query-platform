@@ -19,3 +19,19 @@
 .chart-draft-notice{font-size:12px;line-height:1.5;color:#475569}
 .chart-draft-reset{padding:8px;border:1px solid #94a3b8;border-radius:6px;background:white;cursor:pointer}
 .chart-draft-hidden-gate{display:none}
+
+/* Synthetic preview is not a height-constrained kiosk: show every legend item. */
+.chart-draft,.chart-draft-body,.chart-draft-sample{min-width:0}
+.chart-draft-sample{overflow:hidden}
+.chart-draft-sample .dashboard-chart-projection{
+  height:auto;min-height:0;overflow:visible;justify-content:flex-start;gap:6px;
+}
+.chart-draft-sample .dashboard-chart-projection svg{
+  flex:0 0 auto;width:100%;height:auto;max-height:none;aspect-ratio:800 / 310;
+}
+.chart-draft-sample .dashboard-chart-legend{
+  max-height:none;overflow:visible;justify-content:flex-start;flex-wrap:wrap;align-items:flex-start;
+}
+.chart-draft-sample .dashboard-chart-legend span{
+  min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;
+}

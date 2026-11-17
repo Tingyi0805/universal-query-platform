@@ -3,7 +3,7 @@
 // grant occurs. Body is a strict data-only draft, not an actor certificate.
 import type {Request} from "express";
 import sql from "mssql";
-import {readVerifiedJwtActor} from "../auth/auth.middleware.js";
+import {readVerifiedChartExecuteActor} from "../auth/auth.middleware.js";
 import {getTokenSessionState} from "../auth/auth.repository.js";
 import {
   attestChartWriterSqlPools,CHART_WRITER_DB_ACTOR_BINDING_APPROVED,
@@ -15,7 +15,7 @@ import {
 export function planVerifiedChartCreateRequest(
  req:Request,dashboardId:number,raw:unknown,
 ):DormantChartCreatePlan|null {
- const actor=readVerifiedJwtActor(req);
+ const actor=readVerifiedChartExecuteActor(req);
  if(!actor||!Number.isSafeInteger(dashboardId)||dashboardId<=0||
     !raw||typeof raw!=="object"||Array.isArray(raw))return null;
  const body=raw as Record<string,unknown>;
@@ -46,13 +46,15 @@ export async function recheckChartActorInTransaction(
    const live=await loadSession(plan.actorId,tx);
    return !!live&&live.isActive===true&&
      live.tokenVersion===plan.tokenVersion&&
-     live.permissions.includes("DESIGN_QUERY");
+     live.permissions.includes("DESIGN_QUERY")&&
+     live.permissions.includes("EXECUTE_QUERY");
  }catch{return false;}
 }
 
 
 /** FUTURE API preflight, NOT an authorization to write. Both a verified JWT
- * actor and two distinct low-rights SQL login identities are mandatory.
+ * actor with DESIGN_QUERY and EXECUTE_QUERY, plus two distinct low-rights
+ * SQL login identities, are mandatory.
  * No route is registered; this function never executes a mutation.
  * The final stored procedure must independently recheck actor and RBAC inside
  * its own SERIALIZABLE transaction, not trust this time-of-check.

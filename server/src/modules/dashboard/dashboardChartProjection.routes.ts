@@ -3,9 +3,11 @@
 // A verified JWT actor, a server-owned sealed Widget, aggregate proof,
 // Query disclosure audit, privacy review and revision fence are mandatory.
 import { createHash } from "node:crypto";
+import jwt from "jsonwebtoken";
+import { env } from "../../config/env.js";
 import { Router } from "express";
 import { z } from "zod";
-import { readVerifiedJwtActor } from "../auth/auth.middleware.js";
+import { readVerifiedChartExecuteActor } from "../auth/auth.middleware.js";
 import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 
 // Independent, reviewed release approval must be committed explicitly.
@@ -23,7 +25,7 @@ const pointSchema = z.object({
     .refine(n => Math.abs(n) <= 1_000_000_000_000 &&
       (!Number.isInteger(n) || Number.isSafeInteger(n))),
 }).strict();
-const projectionSchema = z.object({
+export const projectionSchema = z.object({
   chartType: z.enum(["BAR", "LINE", "PIE"]),
   showLegend: z.boolean(),
   points: z.array(pointSchema).max(50),
@@ -70,8 +72,8 @@ export function createChartProjectionRouter(deps: ChartProjectionRouterDependenc
         res.status(404).json({error:{code:"CHART_NOT_AVAILABLE"}});
         return;
       }
-      const actor = readVerifiedJwtActor(req);
-      if (!actor || !req.authUser?.permissions.includes("EXECUTE_QUERY")) {
+      const actor = readVerifiedChartExecuteActor(req);
+      if (!actor) {
         res.status(403).json({error:{code:"FORBIDDEN"}});
         return;
       }
@@ -86,7 +88,8 @@ export function createChartProjectionRouter(deps: ChartProjectionRouterDependenc
         return;
       }
       try {
-        const bearer = req.header("Authorization")?.slice(7) ?? "";
+        // The verified token is captured before mutable later middleware.
+        const bearer = actor.originalBearerHeader.slice(7);
         const subject: ExecutionSubject = {
           context: "designer",
           userId: actor.userId,
@@ -101,6 +104,18 @@ export function createChartProjectionRouter(deps: ChartProjectionRouterDependenc
         // ConfigJson, audit receipt or patient identifiers from a bad provider.
         const validated = projectionSchema.safeParse(projected);
         if (!validated.success) throw Error("CHART_PROJECTION_INVALID");
+        // JWT was valid when authenticateJwt started, but a long audited
+        // Query/public review may finish AFTER the token expires. Reverify
+        // the exact original authenticated bearer before releasing data.
+        // Never reread req.headers.authorization (mutable middleware state).
+        if (!env.JWT_SECRET) throw Error("CHART_JWT_RECHECK_REQUIRED");
+        const finalClaims = jwt.verify(bearer, env.JWT_SECRET);
+        if (typeof finalClaims === "string" ||
+            !Number.isSafeInteger(finalClaims.exp) ||
+            finalClaims.exp! * 1000 <= Date.now() ||
+            Number(finalClaims.sub) !== actor.userId ||
+            Number(finalClaims.tokenVersion) !== actor.tokenVersion)
+          throw Error("CHART_JWT_RECHECK_DENIED");
         res.json(validated.data);
       } catch {
         // No raw rows, SQL errors, patient identifiers, SQL details or audits

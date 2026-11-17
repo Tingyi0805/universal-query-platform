@@ -53,6 +53,8 @@ test("2B-15D-15 signature, nonce, actor and grant share one transaction",async()
   last=next;
  }
  assert.match(s,/SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;/);
+ assert.match(s,/p\.Code IN \(N''DESIGN_QUERY'',N''EXECUTE_QUERY''\)\s+GROUP BY u\.Id HAVING COUNT\(DISTINCT p\.Code\)=2/,
+   "SQL Issuer must recheck both effective Query permissions in its transaction");
  assert.match(s,/BEGIN CATCH\s+IF XACT_STATE\(\)<>0 ROLLBACK TRANSACTION;/);
  assert.match(s,/SET @GrantId=NULL;SET @Secret=NULL;\s+THROW;/);
 });

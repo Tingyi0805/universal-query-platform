@@ -1,5 +1,5 @@
 // 2B-15D-8: DORMANT read-only attestation for an independently provisioned
-// Chart Actor-delegation ISSUER SQL login. No connection config, secrets,
+// Chart Actor-delegation SIGNED ISSUER SQL login. No connection config, secrets,
 // route, GRANT, issuer procedure, runtime activation or production DML.
 import type sql from "mssql";
 
@@ -12,10 +12,10 @@ export const chartIssuerIdentitySql=[
  "SELECT DB_NAME() AS DbName,CONVERT(nvarchar(256),@@SERVERNAME) AS ServerName,",
  "CONVERT(varchar(256),SUSER_SID(ORIGINAL_LOGIN()),2) AS OriginalSid,",
  "USER_NAME() AS EffectiveUser,",
- "OBJECT_ID(N'uqp.usp_ChartDelegationIssue',N'P') AS IssuerProcedureId,",
+ "OBJECT_ID(N'uqp.usp_ChartDelegationIssueSigned',N'P') AS IssuerProcedureId,",
  "LOWER(CONVERT(varchar(64),HASHBYTES('SHA2_256',CONVERT(varbinary(max),",
  "(SELECT m.definition FROM sys.sql_modules m",
- "WHERE m.object_id=OBJECT_ID(N'uqp.usp_ChartDelegationIssue',N'P')))),2)) AS IssuerProcedureSha256,",
+ "WHERE m.object_id=OBJECT_ID(N'uqp.usp_ChartDelegationIssueSigned',N'P')))),2)) AS IssuerProcedureSha256,",
  "IS_SRVROLEMEMBER(N'sysadmin') AS Sysadmin,",
  "HAS_PERMS_BY_NAME(NULL,NULL,N'CONTROL SERVER') AS ServerControl,",
  "HAS_PERMS_BY_NAME(NULL,NULL,N'IMPERSONATE ANY LOGIN') AS ServerImpersonateAny,",
@@ -35,8 +35,8 @@ export const chartIssuerIdentitySql=[
  "HAS_PERMS_BY_NAME(N'uqp',N'SCHEMA',N'CONTROL') AS SchemaControl,",
  "HAS_PERMS_BY_NAME(N'uqp',N'SCHEMA',N'ALTER') AS SchemaAlter,",
  "HAS_PERMS_BY_NAME(N'UQP_Chart_Issuer',N'USER',N'IMPERSONATE') AS ImpersonateIssuer,",
- "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue',N'OBJECT',N'EXECUTE') AS IssueExecute,",
- "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssue',N'OBJECT',N'ALTER') AS IssueAlter,",
+ "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssueSigned',N'OBJECT',N'EXECUTE') AS IssueExecute,",
+ "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationIssueSigned',N'OBJECT',N'ALTER') AS IssueAlter,",
  "HAS_PERMS_BY_NAME(N'uqp.usp_DashboardChartCreate',N'OBJECT',N'EXECUTE') AS CreateExecute,",
  "HAS_PERMS_BY_NAME(N'uqp.usp_ChartDelegationConsume',N'OBJECT',N'EXECUTE') AS ConsumeExecute,",
  "HAS_PERMS_BY_NAME(N'uqp.ChartActorDelegation',N'OBJECT',N'SELECT') AS GrantSelect,",
@@ -46,11 +46,21 @@ export const chartIssuerIdentitySql=[
 ].join(" ");
 
 export type ChartIssuerIdentityRow=Readonly<Record<string,unknown>>;
+export type ChartApprovedOriginalSids=Readonly<{
+ platform:string;issuer:string;writer:string;
+}>;
 export class ChartIssuerBoundaryError extends Error {
  constructor(readonly code:string){super(code);this.name="ChartIssuerBoundaryError";}
 }
 const fail=(code:string):never=>{throw new ChartIssuerBoundaryError(code);};
 const nonempty=(x:unknown):x is string=>typeof x==="string"&&x.length>0;
+const validSid=(value:unknown):value is string=>
+ typeof value==="string"&&/^(?:[0-9A-F]{2}){1,85}$/.test(value);
+const reviewedSids=(value:ChartApprovedOriginalSids|null):
+ value is ChartApprovedOriginalSids=>
+ !!value&&validSid(value.platform)&&validSid(value.issuer)&&
+ validSid(value.writer)&&
+ new Set([value.platform,value.issuer,value.writer]).size===3;
 const privileged=[
  "Sysadmin","ServerControl","ServerImpersonateAny","ServerAlterLogins",
  "ServerAlterRoles","ServerSelectAllUserData",
@@ -70,9 +80,14 @@ export function attestChartIssuerSqlPrincipals(
  platform:ChartIssuerIdentityRow,issuer:ChartIssuerIdentityRow,
  writer:ChartIssuerIdentityRow,
  expectedDigest:string|null=CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
+ expectedSids:ChartApprovedOriginalSids|null=null,
 ):void {
  if(typeof expectedDigest!=="string"||!/^[a-f0-9]{64}$/.test(expectedDigest))
    return fail("CHART_ISSUER_RELEASE_NOT_APPROVED");
+ // The pure attestor is a callable trust boundary too; synthetic test hashes
+ // do not make omitted or malformed independent ORIGINAL_LOGIN SIDs acceptable.
+ if(!reviewedSids(expectedSids))
+   return fail("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
  const roles=[platform,issuer,writer];
  for(const row of roles)
    if(!row||!nonempty(row.DbName)||!nonempty(row.ServerName)||
@@ -84,6 +99,10 @@ export function attestChartIssuerSqlPrincipals(
    return fail("CHART_ISSUER_TARGET_MISMATCH");
  if(new Set(roles.map(row=>row.OriginalSid)).size!==3)
    return fail("CHART_ISSUER_LOGINS_NOT_ISOLATED");
+ if(platform.OriginalSid!==expectedSids.platform||
+    issuer.OriginalSid!==expectedSids.issuer||
+    writer.OriginalSid!==expectedSids.writer)
+   return fail("CHART_ISSUER_LOGIN_SID_NOT_APPROVED");
  if(typeof issuer.IssuerProcedureId!=="number"||
     !Number.isSafeInteger(issuer.IssuerProcedureId)||
     issuer.IssuerProcedureId<=0)
@@ -115,9 +134,14 @@ export function attestChartIssuerSqlPrincipals(
 export async function attestChartIssuerSqlPools(
  platform:sql.ConnectionPool,issuer:sql.ConnectionPool,writer:sql.ConnectionPool,
  expectedDigest:string|null=CHART_ISSUER_APPROVED_PROCEDURE_SHA256,
+ expectedSids:ChartApprovedOriginalSids|null=null,
 ):Promise<void> {
  if(typeof expectedDigest!=="string"||!/^[a-f0-9]{64}$/.test(expectedDigest))
    return fail("CHART_ISSUER_RELEASE_NOT_APPROVED");
+ // A direct pool attestor is also a production-facing entrypoint. Synthetic
+ // reviewed hashes alone must never authorize unpinned SQL login identities.
+ if(!reviewedSids(expectedSids))
+   return fail("CHART_ISSUER_LOGIN_SID_APPROVAL_REQUIRED");
  if(!platform||!issuer||!writer||
     platform===issuer||platform===writer||issuer===writer)
    return fail("CHART_ISSUER_POOL_NOT_ISOLATED");
@@ -131,7 +155,7 @@ export async function attestChartIssuerSqlPools(
      return fail("CHART_ISSUER_IDENTITY_UNAVAILABLE");
    attestChartIssuerSqlPrincipals(
      results[0]!.recordset[0]!,results[1]!.recordset[0]!,
-     results[2]!.recordset[0]!,expectedDigest);
+     results[2]!.recordset[0]!,expectedDigest,expectedSids);
  }catch(e){
    if(e instanceof ChartIssuerBoundaryError)throw e;
    return fail("CHART_ISSUER_IDENTITY_UNAVAILABLE");

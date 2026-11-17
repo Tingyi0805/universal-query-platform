@@ -20,7 +20,7 @@ function classifyEvent(eventType: string): { category: "SECURITY" | "CONFIG" | "
   if (/^(LOGIN|AUTH_|USER_|ROLE_|PERMISSION_)/.test(eventType)) {
     return { category: "SECURITY", important: true };
   }
-  if (/^(DATASOURCE_|DATASET_|QUERY_|REPORT_|DASHBOARD_|SETTING_|VERSION_|AUDIT_)/.test(eventType)) {
+  if (/^(DATASOURCE_|DATASET_|QUERY_|REPORT_|DASHBOARD_|CHART_|SETTING_|VERSION_|AUDIT_)/.test(eventType)) {
     return { category: "CONFIG", important: true };
   }
   return { category: "SYSTEM", important: false };

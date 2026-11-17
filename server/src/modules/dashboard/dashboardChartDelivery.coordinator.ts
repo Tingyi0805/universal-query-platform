@@ -1,6 +1,9 @@
 // 2B-7: dormant, server-only coordinator. No route, WidgetType activation,
 // persistence or public renderer is registered. All dependencies are explicit.
 // Only an authoritative saved-widget reader may supply ConfigJson/rowversion.
+import { createHash } from "node:crypto";
+import { isChartPlaybackApproved, type ChartPlaybackApproval } from "./dashboardChartPlaybackApproval.policy.js";
+import {validateDashboardChartPlaybackControl,type DashboardChartPlaybackControl} from "./dashboardChartInheritedPlayback.js";
 import { chartWidgetConfigSchema, ChartContractError } from "./dashboardChartWidget.contract.js";
 import type { ChartWidgetConfig } from "./dashboardChartWidget.contract.js";
 import {
@@ -29,6 +32,9 @@ export type TrustedSavedChartWidget = Readonly<{
   widgetType: "CHART";
   // Server-owned ROWVERSION. A future trusted layout repository must supply it.
   revision: string;
+  // SQL-sealed creator identity; mandatory for author-only metadata readback.
+  // Optional for existing projection fixtures, never optional in readback approval.
+  sealedByUserId?: number;
   config: unknown;
 }>;
 
@@ -40,6 +46,15 @@ export type ChartCoordinatorDependencies = {
   createFactsReader: (config: ChartWidgetConfig) => ChartSourceEvidenceReader;
   auditedPage: AuditedPageProvider;
   readFence: ChartFenceReader;
+  // Gate 3 administrator playback approval, read from server-owned audit-backed storage.
+  // Required for every playback context (user, device, admin-preview).
+  // A missing reader fails closed before Query execution.
+  readPlaybackApproval?: (dashboardId: number, widgetId: number) => Promise<ChartPlaybackApproval | null>;
+  // Project-owner decision: use the existing Dashboard enable/disable and
+  // versioned source/approval state for all charts. Legacy per-widget approval
+  // is retained only for fixtures/older callers; never fall back to it when
+  // the inherited reader is configured but denies.
+  readDashboardPlaybackControl?: (dashboardId:number) => Promise<DashboardChartPlaybackControl|null>;
   // Must read a trusted, immutable-revision privacy decision; Widget ConfigJson
   // and HTTP bodies must never carry a review or an approval flag.
   readPublicReview: (scope: PublicCountScope, subject: ExecutionSubject) => Promise<PublicCountReview | null>;
@@ -62,9 +77,9 @@ function reviewedBeforeQuery(scope: PublicCountScope, review: PublicCountReview 
   return (Object.keys(scope) as Array<keyof PublicCountScope>)
     .every(key => review[key] === scope[key]);
 }
-function scopeOf(
+export function chartPublicCountScope(
   facts: ServerChartFacts,
-  approvalVersion: string,
+  _approvalVersion: string,
   config: ChartWidgetConfig,
 ): PublicCountScope {
   return {
@@ -78,7 +93,12 @@ function scopeOf(
     datasetRevision: facts.revisions.dataset,
     // This fingerprint includes the current public-display approval and
     // revision facts. It is NOT a substitute for an independent privacy review.
-    policyRevision: approvalVersion,
+    policyRevision: createHash("sha256").update(JSON.stringify({
+      version:"CHART_PUBLIC_POLICY_V1",source:facts.source,revisions:facts.revisions,
+      query:facts.query,dataset:facts.dataset,sensitivity:facts.sensitivity,
+      publicDisplay:facts.publicDisplay,reportColumns:facts.reportColumns,aggregate:facts.verifiedAggregate,
+      category:config.categoryColumn,value:config.valueColumn,
+    })).digest("hex"),
   };
 }
 
@@ -129,6 +149,27 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
       const parsed = chartWidgetConfigSchema.safeParse(saved.config);
       if (!parsed.success) return deny();
       const config = parsed.data;
+      const configDigest = createHash("sha256").update(JSON.stringify(config)).digest("hex");
+      let inheritedRevision:string|null=null;
+      const requirePlaybackApproval = async () => {
+        // Design preview is not public delivery. User, kiosk and admin-preview
+        // share the verified Dashboard switch, never a browser approval flag.
+        if (context === "designer") return;
+        if (deps.readDashboardPlaybackControl){
+          const decision=await deps.readDashboardPlaybackControl(dashboardId);
+          if(!validateDashboardChartPlaybackControl(decision,dashboardId))return deny();
+          if(inheritedRevision===null)inheritedRevision=decision.revision;
+          else if(inheritedRevision!==decision.revision)return deny();
+          return;
+        }
+        // Backwards-compatible isolated policy tests. No fallback here when
+        // inherited authorization is configured but unavailable or revoked.
+        const decision=await deps.readPlaybackApproval?.(dashboardId,widgetId)??null;
+        if(!isChartPlaybackApproved(decision,widgetId,saved.revision,configDigest))return deny();
+      };
+      // Dashboard activation, live source permissions, seal, privacy and
+      // immutable revision proofs must all be rechecked around Query delivery.
+      await requirePlaybackApproval();
       const readFacts = deps.createFactsReader(config);
       const load = async () => {
         const facts = await readFacts(dashboardId, config.dataSourceKey, subject);
@@ -144,9 +185,10 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
 
       const initial = await load();
       const fenceOperation = createFencedChartOperation(deps.readFence, async () => {
+        await requirePlaybackApproval();
         const current = await load();
         if (current.approval.version !== initial.approval.version) return deny();
-        const scope = scopeOf(current.facts, current.approval.version, config);
+        const scope = chartPublicCountScope(current.facts, current.approval.version, config);
         const reviewBefore = publicPlayback
           ? await deps.readPublicReview(scope, subject) : null;
         if (publicPlayback && !reviewedBeforeQuery(scope, reviewBefore))
@@ -172,7 +214,7 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
             JSON.stringify(lastSaved.config) !== JSON.stringify(saved.config))
           return deny();
         if (!publicPlayback) return projected;
-        const finalScope = scopeOf(final.facts, final.approval.version, config);
+        const finalScope = chartPublicCountScope(final.facts, final.approval.version, config);
         if (JSON.stringify(finalScope) !== JSON.stringify(scope)) return deny();
         const reviewAfter = await deps.readPublicReview(finalScope, subject);
         if (!reviewAfter ||
@@ -185,7 +227,35 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
       });
       const result = await fenceOperation(dashboardId, config.dataSourceKey,
         initial.approval.queryId, initial.approval.datasetId, subject);
-      return result ?? deny();
+      if (!result) return deny();
+      // Existing Query delivery + the revision fence revalidate current
+      // permissions, but do not substitute for the HTTP token's absolute
+      // expiration or a device grant that can be revoked mid-request.
+      // Reject a result that outlives its authority while the audited page
+      // and independent public privacy review were being processed.
+      if ((context === "user" || context === "admin-preview") &&
+          (!Number.isSafeInteger(subject.expiresAt) ||
+            subject.expiresAt! * 1000 <= Date.now())) return deny();
+      if (context === "device") {
+        const finalProof = await subject.verifyDevice?.();
+        if (!finalProof || finalProof.deviceId !== subject.deviceId ||
+            finalProof.userId !== subject.userId ||
+            finalProof.tokenVersion !== subject.tokenVersion)
+          return deny();
+      }
+      // The Widget/Seal version is not a member of the Query revision fence.
+      // Re-read after its final check as well: a concurrent Widget revoke,
+      // reseal or config change must not return stale projected points.
+      const lastWidget = await deps.readSavedWidget(dashboardId, widgetId);
+      if (!lastWidget || lastWidget.widgetType !== "CHART" ||
+          lastWidget.dashboardId !== dashboardId || lastWidget.id !== widgetId ||
+          lastWidget.revision !== saved.revision ||
+          JSON.stringify(lastWidget.config) !== JSON.stringify(saved.config))
+        return deny();
+      // The Dashboard may be disabled or its approval source may change after
+      // Query delivery; the inherited decision is rechecked again here.
+      await requirePlaybackApproval();
+      return result;
     } catch {
       // No SQL, patient identifiers, credentials or internal error detail to
       // clients. Audit failure MUST NOT cause a fallback to unaudited data.

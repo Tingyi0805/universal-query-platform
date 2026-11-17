@@ -5,6 +5,10 @@ import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import sql from "mssql";
 import { workstationPinSchemaSql } from "../modules/auth/workstationPinSchema.js";
+import {chartHistoricalFootprintSql,parseChartHistoricalFootprints}
+  from "./chart928HistoricalFootprint.js";
+import {verifyChartHistoricalExactCatalog}
+  from "./chart928HistoricalExactCatalog.js";
 import { createWorkstationPinState, pinAttemptBuckets } from "../modules/auth/workstationPinState.repository.js";
 
 const migrations = [
@@ -110,6 +114,17 @@ export async function verify927(
     stage = "first-install-catalog-and-existing-rows";
     await pool.request().batch(migration927);
     await pool.request().batch(workstationPinSchemaSql);
+    const footprint927=(await query(chartHistoricalFootprintSql)).recordset;
+    assert.equal(footprint927.find(v=>v.SchemaNumber==="927")?.Assessment,
+      "PRESENT_REQUIRES_EXACT_ATTESTATION");
+    console.log("CHART_927_READONLY_FOOTPRINT_PRESENT_NOT_APPROVED_PASS");
+    const exact927=await verifyChartHistoricalExactCatalog(
+      pool,parseChartHistoricalFootprints(footprint927,[]),
+    );
+    assert.equal(exact927.schema926,"NOT_RUN_FOOTPRINT_INCOMPLETE");
+    assert.equal(exact927.schema927,"EXACT_REVIEWED_CATALOG_MATCH");
+    assert.equal(exact927.approves928,false);
+    console.log("CHART_927_REVIEWED_EXACT_CATALOG_NO_APPLICATION_DML_PASS");
     const restored = (await query(`SELECT WorkstationCode,CredentialVersion,IsActive,PinLoginEnabled,PlatformCode,
       PurposeCode,RetiredAtUtc FROM uqp.SharedWorkstation WHERE Id=1`)).recordset[0];
     assert.deepEqual(restored, original);
@@ -285,6 +300,8 @@ export async function verify927(
     stage = "partial-schema-fail-closed";
     const generationBeforePartial = (await query("SELECT CONVERT(varchar(20),SwitchVersion) AS V FROM uqp.SharedWorkstation WHERE Id=1")).recordset[0].V;
     await query("DROP TABLE uqp.WorkstationPinAttemptBucket");
+    assert.equal((await query(chartHistoricalFootprintSql)).recordset
+      .find(v=>v.SchemaNumber==="927")?.Assessment,"PARTIAL_OR_CONFLICT");
     await assert.rejects(pool.request().batch(migration927));
     assert.equal((await query("SELECT CONVERT(varchar(20),SwitchVersion) AS V FROM uqp.SharedWorkstation WHERE Id=1")).recordset[0].V, generationBeforePartial);
     console.log("PIN_927_SQL_REAL_FRESH_REPEAT_OUTER_ROLLBACK_CATALOG_CONSTRAINT_CAS_PARTIAL_PASS (disposable synthetic database only; full PIN repository concurrency not certified)");

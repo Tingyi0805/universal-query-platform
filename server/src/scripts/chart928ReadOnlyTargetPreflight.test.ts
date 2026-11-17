@@ -1,0 +1,326 @@
+// Issue #89: fails closed without any target DB mutation or private patient data.
+import assert from "node:assert/strict";
+import test from "node:test";
+import {readFile} from "node:fs/promises";
+import type sql from "mssql";
+import {
+  CHART_928_MAY_INSTALL,chart928TargetIdentitySql,
+  chart928ReadonlySourceUrl,validateChart928ReadOnlyTargetInvocation,
+  examineChart925ExactCatalog,examineChart925ConstraintInventory,
+  inspectChart928ReadOnlyTarget,
+  hasReviewableChart928MetadataFootprint,
+} from "./chart928ReadOnlyTargetPreflight.js";
+import {displayCatalogSql,displayDdlUrl} from "../modules/dataset/datasetDisplaySchema.js";
+import {chartHistoricalFootprintSql,chartHistoricalLedgerSql}
+  from "./chart928HistoricalFootprint.js";
+import {deviceLifecycleSchemaSql}
+  from "../modules/dashboard/dashboardDeviceLifecycleSchema.js";
+import {workstationPinSchemaSql} from "../modules/auth/workstationPinSchema.js";
+
+const expected={server:"CI_SQL",database:"UQP_CH_123456789abc",login:"ci_reader"};
+const identity={ServerName:expected.server,DatabaseName:expected.database,
+  OriginalLogin:expected.login,SqlMajor:15};
+const catalogAbsent:Record<string,unknown>[][]=[
+  [],[],[],[],[],[],[{visible:1}],
+];
+const sections=(phase="ABSENT_NOT_AUTHORIZED",present=0,mayInstall=0):Record<string,unknown>[][]=>[
+  [{Section:"00_RELEASE_GATE",TargetDatabase:expected.database,SqlMajor:15,
+    MayInstall928:mayInstall,Assessment:"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED"}],
+  [],
+  [{Section:"02_925_EXACT_CATALOG",Exact925IndependentlyAttested:false}],
+  [],
+  [{Section:"04_928_PHASE",Assessment:phase,Expected:3,Present:present,
+    ChartCanBeEnabled:false}],
+  [],[],[],[],
+];
+function fixture({
+  id=identity,catalog=catalogAbsent,report=sections(),
+  footprint=[
+    {SchemaNumber:"926",Assessment:"ABSENT"},
+    {SchemaNumber:"927",Assessment:"ABSENT"},
+  ],ledger=[],failExact=[],
+}:{
+  id?:Record<string,unknown>;
+  catalog?:Record<string,unknown>[][];
+  report?:Record<string,unknown>[][];
+  footprint?:Record<string,unknown>[];
+  ledger?:Record<string,unknown>[];
+  failExact?:string[];
+}={}){
+  const requests:string[]=[];
+  const pool={request:()=>({query:async(text:string)=>{
+    requests.push(text);
+    if(text===chart928TargetIdentitySql)return {recordset:[id]};
+    if(text===displayCatalogSql)return {recordsets:catalog};
+    if(text.includes("00_RELEASE_GATE"))return {recordsets:report};
+    if(text===chartHistoricalFootprintSql)return {recordset:footprint};
+    if(text===chartHistoricalLedgerSql)return {recordset:ledger};
+    if(text===deviceLifecycleSchemaSql||text===workstationPinSchemaSql){
+      if(failExact.includes(text))throw Error("SYNTHETIC_CATALOG_MISMATCH");
+      return {recordset:[]};
+    }
+    throw Error("UNEXPECTED_SQL");
+  }})} as unknown as sql.ConnectionPool;
+  return {pool,requests};
+}
+test("preflight requires explicit, exact original-login target and never grants installation",()=>{
+  assert.equal(CHART_928_MAY_INSTALL,false);
+  assert.throws(()=>validateChart928ReadOnlyTargetInvocation([] ,expected));
+  assert.throws(()=>validateChart928ReadOnlyTargetInvocation(["apply"],expected));
+  assert.throws(()=>validateChart928ReadOnlyTargetInvocation(["preflight","--confirm"],expected));
+  assert.throws(()=>validateChart928ReadOnlyTargetInvocation(["preflight"],
+    {...expected,login:""}));
+  assert.throws(()=>validateChart928ReadOnlyTargetInvocation(["preflight"],
+    {...expected,database:" DB "}));
+  validateChart928ReadOnlyTargetInvocation(["preflight"],expected);
+});
+test("exact reviewed 925 catalog parser distinguishes absent, partial and invisible",async()=>{
+  const ddl=await readFile(displayDdlUrl,"utf8");
+  assert.deepEqual(examineChart925ExactCatalog(catalogAbsent,ddl),
+    {status:"ABSENT",reason:"925_NOT_INSTALLED"});
+  assert.equal(examineChart925ExactCatalog([
+    [{name:"DatasetPublicDisplayPolicy"}],[],[],[],[],[],[{visible:1}],
+  ],ddl).status,"BLOCKED_MISMATCH");
+  assert.equal(examineChart925ExactCatalog([
+    [],[],[],[],[],[],[{visible:0}],
+  ],ddl).status,"BLOCKED_MISMATCH");
+  assert.equal(examineChart925ExactCatalog([],ddl).status,"BLOCKED_MISMATCH");
+});
+test("925 checked-in source has 16 CHECK/DEFAULT definitions; read-only inventory locates differences",async()=>{
+  const ddl=await readFile(displayDdlUrl,"utf8");
+  const absent=examineChart925ConstraintInventory(catalogAbsent,ddl);
+  assert.equal(absent.expectedCount,16);
+  assert.equal(absent.observedCount,0);
+  assert.equal(absent.missing.length,16);
+  assert.equal(absent.status,"BLOCKED_DIFFERENT_NAMES");
+  assert.equal(absent.unexpected.length,0);
+  const tables=[
+    {name:"DatasetPublicDisplayPolicy"},
+    {name:"DatasetMaskTemplate"},
+    {name:"DatasetMaskTemplateUse"},
+  ];
+  const partial=[
+    tables,[],[
+      {table:"DatasetPublicDisplayPolicy",kind:"DEFAULT",
+        name:"DF_PublicDisplay_Confirmed"},
+      {table:"DatasetMaskTemplate",kind:"CHECK",name:"CK_FAKE_EXTRA"},
+    ],[],[],[],[{visible:1}],
+  ] as Record<string,unknown>[][];
+  const drift=examineChart925ConstraintInventory(partial,ddl);
+  assert.equal(drift.status,"BLOCKED_DIFFERENT_NAMES");
+  assert.equal(drift.observedCount,2);
+  assert.equal(drift.expectedCount,16);
+  assert(drift.missing.includes(
+    "DatasetPublicDisplayPolicy.DEFAULT.DF_PublicDisplay_Updated"));
+  assert(!drift.missing.includes(
+    "DatasetPublicDisplayPolicy.DEFAULT.DF_PublicDisplay_Confirmed"));
+  assert.deepEqual(drift.unexpected,[
+    "DatasetMaskTemplate.CHECK.CK_FAKE_EXTRA",
+  ]);
+  // Matching names alone still MUST NOT imply exact catalog compatibility:
+  // column types, CHECK expressions, foreign keys, indexes, defaults, etc
+  // are independently compared by the reviewed 925 validator.
+  const expectedConstraints=[
+    ...ddl.matchAll(/(?:\bCONSTRAINT\s+)([A-Za-z_][A-Za-z0-9_]*)\s+(CHECK|DEFAULT)\b/gi),
+  ];
+  const expectedRows:Record<string,unknown>[]=[];
+  for(const table of ["DatasetPublicDisplayPolicy",
+                      "DatasetMaskTemplate","DatasetMaskTemplateUse"]){
+    const source=ddl.split(`CREATE TABLE uqp.${table} (`)[1]?.split("\n);")[0];
+    assert(source);
+    for(const m of source.matchAll(/\bCONSTRAINT\s+([A-Za-z_][A-Za-z0-9_]*)\s+(CHECK|DEFAULT)\b/gi))
+      expectedRows.push({table,name:m[1],kind:m[2]!.toUpperCase()});
+  }
+  assert.equal(expectedConstraints.length,16);
+  const nameMatch=[tables,[],expectedRows,[],[],[],[{visible:1}]];
+  const namesOnly=examineChart925ConstraintInventory(nameMatch,ddl);
+  assert.equal(namesOnly.status,"NAMES_MATCH_NOT_EXACT_ATTESTED");
+  assert.equal(namesOnly.observedCount,16);
+  assert.equal(examineChart925ExactCatalog(nameMatch,ddl).status,
+    "BLOCKED_MISMATCH");
+  const invisible=[...nameMatch.slice(0,6),[{visible:0}]];
+  assert.equal(examineChart925ConstraintInventory(invisible,ddl).status,
+    "BLOCKED_CATALOG_UNAVAILABLE");
+  assert.equal(examineChart925ConstraintInventory([],ddl).observedCount,null);
+});
+
+test("wrong target blocks before either catalog SELECT",async()=>{
+  for(const id of [
+    {...identity,OriginalLogin:"other"},
+    {...identity,DatabaseName:"UniversalQueryPlatform"},
+    {...identity,ServerName:"other-sql"},
+    {...identity,SqlMajor:14},
+  ]){
+    const f=fixture({id});
+    await assert.rejects(inspectChart928ReadOnlyTarget(f.pool,expected),
+      /CHART_928_READONLY_TARGET_MISMATCH/);
+    assert.deepEqual(f.requests,[chart928TargetIdentitySql]);
+  }
+});
+test("925 absence and every 928 state remain independently NOT approved",async()=>{
+  const source=await readFile(chart928ReadonlySourceUrl,"utf8");
+  for(const [phase,present] of [
+    ["ABSENT_NOT_AUTHORIZED",0],
+    ["BLOCKED_PARTIAL_OR_CONFLICT",1],
+    ["BLOCKED_PARTIAL_OR_CONFLICT",2],
+    ["PRESENT_REQUIRES_EXACT_ATTESTATION",3],
+  ] as const){
+    const f=fixture({report:sections(phase,present)});
+    const result=await inspectChart928ReadOnlyTarget(f.pool,expected);
+    assert.equal(result.catalog925.status,"ABSENT");
+    assert.equal(result.phase928,phase);
+    assert.equal(result.sidecarsPresent,present);
+    assert.equal(result.schema926.status,"ABSENT");
+    assert.equal(result.schema927.status,"ABSENT");
+    assert.equal(result.schema926.ledger,"NOT_RECORDED");
+    assert.equal(result.schema927.ledger,"NOT_RECORDED");
+    assert.equal(result.schema926.exactAttested,false);
+    assert.equal(result.schema927.exactAttested,false);
+    assert.equal(result.historicalExactCatalog.schema926,
+      "NOT_RUN_FOOTPRINT_INCOMPLETE");
+    assert.equal(result.historicalExactCatalog.schema927,
+      "NOT_RUN_FOOTPRINT_INCOMPLETE");
+    assert.equal(result.schema926.consistency,"COHERENT_NOT_ATTESTED");
+    assert.equal(result.schema927.consistency,"COHERENT_NOT_ATTESTED");
+    assert.equal(hasReviewableChart928MetadataFootprint(result),false);
+    assert.equal(result.mayInstall928,false);
+    assert.equal(result.chartCanBeEnabled,false);
+    assert.equal(result.assessment,"BLOCKED_INDEPENDENT_APPROVAL_REQUIRED");
+    assert.deepEqual(f.requests,
+      [chart928TargetIdentitySql,displayCatalogSql,source,
+       chartHistoricalFootprintSql,chartHistoricalLedgerSql]);
+  }
+});
+test("tampered 928 report cannot self-approve an installation",async()=>{
+  for(const report of [
+    sections("ABSENT_NOT_AUTHORIZED",0,1),
+    sections("ABSENT_NOT_AUTHORIZED",3),
+    sections("PRESENT_REQUIRES_EXACT_ATTESTATION",1),
+    sections("BLOCKED_PARTIAL_OR_CONFLICT",0),
+    sections("BLOCKED_PARTIAL_OR_CONFLICT",3),
+  ]){
+    const f=fixture({report});
+    await assert.rejects(inspectChart928ReadOnlyTarget(f.pool,expected),
+      /CHART_928_READONLY_REPORT_INVALID/);
+  }
+});
+
+test("926/927 ledger probe cannot claim exact adoption or turn on 928",async()=>{
+  const f=fixture();
+  const r=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  assert.equal(r.schema926.exactAttested,false);
+  assert.equal(r.schema927.exactAttested,false);
+  assert.equal(r.historicalExactCatalog.approves928,false);
+  assert.equal(r.chartCanBeEnabled,false);
+  assert.equal(r.mayInstall928,false);
+});
+
+test("CLI inventory signal is not equivalent to SQL Signer/Writer approval",async()=>{
+  const f=fixture();
+  const result=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  const complete={
+    ...result,
+    catalog925:{status:"EXACT_MATCH" as const,reason:"EXACT_SOURCE_MATCH"},
+    historicalExactCatalog:{
+      schema926:"EXACT_REVIEWED_CATALOG_MATCH" as const,
+      schema927:"EXACT_REVIEWED_CATALOG_MATCH" as const,
+      approves928:false as const,
+    },
+    schema926:{...result.schema926,
+      status:"PRESENT_REQUIRES_EXACT_ATTESTATION" as const,
+      ledger:"RECORDED_NOT_ATTESTED" as const,
+      consistency:"COHERENT_NOT_ATTESTED" as const},
+    schema927:{...result.schema927,
+      status:"PRESENT_REQUIRES_EXACT_ATTESTATION" as const,
+      ledger:"RECORDED_NOT_ATTESTED" as const,
+      consistency:"COHERENT_NOT_ATTESTED" as const},
+  };
+  assert.equal(hasReviewableChart928MetadataFootprint(complete),true);
+  // 927 PIN runtime is independent of 928 CHART: no needless 927 install.
+  const pinAbsent={
+    ...complete,
+    historicalExactCatalog:{...complete.historicalExactCatalog,
+      schema927:"NOT_RUN_FOOTPRINT_INCOMPLETE" as const},
+    schema927:{...complete.schema927,status:"ABSENT" as const,
+      ledger:"NOT_RECORDED" as const,
+      consistency:"COHERENT_NOT_ATTESTED" as const},
+  };
+  assert.equal(hasReviewableChart928MetadataFootprint(pinAbsent),true);
+  // Historical 926 catalog is installed and exact, but its Ledger is missing.
+  // Reviewable metadata is not authorization to write a fabricated Ledger row.
+  const missing926Ledger={...pinAbsent,
+    schema926:{...pinAbsent.schema926,
+      ledger:"NOT_RECORDED" as const,
+      consistency:"BLOCKED_LEDGER_CATALOG_CONFLICT" as const}};
+  assert.equal(hasReviewableChart928MetadataFootprint(missing926Ledger),true);
+  assert.equal(missing926Ledger.mayInstall928,false);
+  assert.equal(missing926Ledger.chartCanBeEnabled,false);
+  assert.equal(complete.mayInstall928,false);
+  assert.equal(complete.chartCanBeEnabled,false);
+  for(const bad of [
+    {...pinAbsent,schema927:{...pinAbsent.schema927,
+      ledger:"RECORDED_NOT_ATTESTED" as const}},
+    {...pinAbsent,schema927:{...pinAbsent.schema927,
+      status:"PARTIAL_OR_CONFLICT" as const,
+      consistency:"BLOCKED_PARTIAL_OR_INVISIBLE" as const}},
+    {...missing926Ledger,schema926:{...missing926Ledger.schema926,
+      status:"ABSENT" as const}},
+    {...missing926Ledger,schema926:{...missing926Ledger.schema926,
+      consistency:"COHERENT_NOT_ATTESTED" as const}},
+    {...complete,schema926:{...complete.schema926,status:"ABSENT" as const}},
+    {...complete,schema927:{...complete.schema927,ledger:"NOT_RECORDED" as const}},
+    {...complete,schema926:{...complete.schema926,
+      consistency:"BLOCKED_LEDGER_CATALOG_CONFLICT" as const}},
+    {...complete,schema927:{...complete.schema927,
+      consistency:"BLOCKED_PARTIAL_OR_INVISIBLE" as const}},
+    {...complete,catalog925:{status:"BLOCKED_MISMATCH" as const,reason:"CATALOG_MISMATCH"}},
+    {...complete,historicalExactCatalog:{...complete.historicalExactCatalog,
+      schema926:"BLOCKED_CATALOG_MISMATCH_OR_INVISIBLE" as const}},
+    {...complete,historicalExactCatalog:{...complete.historicalExactCatalog,
+      schema927:"NOT_RUN_FOOTPRINT_INCOMPLETE" as const}},
+    {...complete,phase928:"BLOCKED_PARTIAL_OR_CONFLICT" as const,sidecarsPresent:1},
+    {...complete,phase928:"PRESENT_REQUIRES_EXACT_ATTESTATION" as const,sidecarsPresent:3},
+  ])assert.equal(hasReviewableChart928MetadataFootprint(bad),false);
+});
+
+test("actual reviewed 926/927 verifier SQL is invoked for installed footprints",async()=>{
+  const f=fixture({
+    footprint:[
+      {SchemaNumber:"926",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+      {SchemaNumber:"927",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+    ],
+    ledger:[
+      {FileName:"926_dashboard_device_lifecycle.sql"},
+      {FileName:"927_workstation_pin_runtime.sql"},
+    ],
+  });
+  const r=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  assert.equal(r.historicalExactCatalog.schema926,"EXACT_REVIEWED_CATALOG_MATCH");
+  assert.equal(r.historicalExactCatalog.schema927,"EXACT_REVIEWED_CATALOG_MATCH");
+  assert.equal(r.historicalExactCatalog.approves928,false);
+  assert.equal(r.schema926.exactAttested,false);
+  assert.equal(r.schema927.exactAttested,false);
+  assert.deepEqual(f.requests.slice(-2),[
+    deviceLifecycleSchemaSql,workstationPinSchemaSql,
+  ]);
+  assert.equal(hasReviewableChart928MetadataFootprint(r),false);
+});
+test("exact 927 metadata mismatch cannot accidentally promote 928",async()=>{
+  const f=fixture({
+    footprint:[
+      {SchemaNumber:"926",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+      {SchemaNumber:"927",Assessment:"PRESENT_REQUIRES_EXACT_ATTESTATION"},
+    ],
+    ledger:[
+      {FileName:"926_dashboard_device_lifecycle.sql"},
+      {FileName:"927_workstation_pin_runtime.sql"},
+    ],
+    failExact:[workstationPinSchemaSql],
+  });
+  const r=await inspectChart928ReadOnlyTarget(f.pool,expected);
+  assert.equal(r.historicalExactCatalog.schema926,"EXACT_REVIEWED_CATALOG_MATCH");
+  assert.equal(r.historicalExactCatalog.schema927,
+    "BLOCKED_CATALOG_MISMATCH_OR_INVISIBLE");
+  assert.equal(hasReviewableChart928MetadataFootprint(r),false);
+  assert.equal(r.mayInstall928,false);
+});

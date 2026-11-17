@@ -72,7 +72,7 @@ test("ExcelJS actual UUID conditional formatting, patched tmp cleanup, CSV and s
  const workbook=new ExcelJS.Workbook(),sheet=workbook.addWorksheet("Synthetic");sheet.addRows([["姓名","金額"],["中文,含逗號",12.5]]);sheet.addConditionalFormatting({ref:"B2:B2",rules:[{type:"dataBar",cfvo:[{type:"min"},{type:"max"}],gradient:true,priority:1}]});
  const bytes=await workbook.xlsx.writeBuffer(),read=new ExcelJS.Workbook();const archive=await excelRequire("jszip").loadAsync(bytes);assert.match(await archive.file("xl/worksheets/sheet1.xml").async("string"),/[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-4[0-9A-Fa-f]{3}-[89ABab][0-9A-Fa-f]{3}-[0-9A-Fa-f]{12}/);await read.xlsx.load(bytes as any);assert.equal(read.worksheets[0]!.getCell("A2").value,"中文,含逗號");
  const csv=await workbook.csv.writeBuffer(),csvRead=new ExcelJS.Workbook();await csvRead.csv.read(Readable.from([Buffer.from(csv as any)]));assert.equal(csvRead.worksheets[0]!.getCell("A2").value,"中文,含逗號");
- const filename=path.join(directory,"stream.xlsx"),writer=new ExcelJS.stream.xlsx.WorkbookWriter({filename,useSharedStrings:true});writer.addWorksheet("Stream").addRow(["合成資料",900719925]).commit();await writer.commit();assert((await readFile(filename)).length>100);
+ const filename=path.join(directory,"stream.xlsx"),writer=new ExcelJS.stream.xlsx.WorkbookWriter({filename,useSharedStrings:false});writer.addWorksheet("Stream").addRow(["合成資料",900719925]).commit();await writer.commit();assert((await readFile(filename)).length>100);
  const rows:unknown[]=[];for await(const worksheet of new ExcelJS.stream.xlsx.WorkbookReader(filename,{sharedStrings:"cache",worksheets:"emit"})){for await(const row of worksheet)rows.push(row.values);}assert.equal((rows[0] as any)[1],"合成資料");
 });
 

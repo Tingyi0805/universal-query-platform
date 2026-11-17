@@ -1,4 +1,8 @@
 import {testDatasetDisplay925,testDisplay925CleanCatalog} from "./datasetDisplay925Acceptance.js";
+import {createDormantPlaybackApprovalReader} from "../modules/dashboard/dashboardChartPlaybackApproval.repository.js";
+import {decideChartPlaybackApproval} from "../modules/dashboard/dashboardChartPlaybackApproval.service.js";
+import {planDormantChartCreate} from "../modules/dashboard/dashboardChartAtomicCreate.contract.js";
+import {createDormantSinglePoolChartCreate} from "../modules/dashboard/dashboardChartLocalJwtSqlCreate.js";
 /** GitHub Actions disposable SQL Server 2019 only. Runs all real migrations, never simplified parent tables. */
 import assert from "node:assert/strict";
 import {createDatasetColumnCandidate,readColumnCandidateSnapshot,defaultColumnCandidateDependencies} from "../modules/dataset/datasetColumnCandidate.js";
@@ -34,7 +38,15 @@ async function cli(which:"923"|"924",mode:string,approval=true,extra:Record<stri
     child.on("error",reject);child.on("close",exit=>resolve({exit,out,err}));
   });
 }
-function passed(r:{exit:number|null;out:string},marker:string){check(r.exit===0&&r.out.includes(marker),"CLI_"+marker);}
+function passed(r:{exit:number|null;out:string;err?:string},marker:string){
+  if(r.exit!==0||!r.out.includes(marker)){
+    // CI only: expose the installer diagnostic, never credentials or SQL connection settings.
+    console.error("F2_CLI_ACCEPTANCE_DIAGNOSTIC marker="+marker+" exit="+r.exit+
+      " stdout="+r.out.slice(-1200).replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]")+
+      " stderr="+(r.err??"").slice(-800).replace(/password\s*[:=]\s*\S+/gi,"password=[REDACTED]"));
+  }
+  check(r.exit===0&&r.out.includes(marker),"CLI_"+marker);
+}
 function rejected(r:{exit:number|null;err:string},marker?:string){check(r.exit!==0&&(!marker||r.err.includes(marker)),"CLI_REJECTION_"+(marker??"EXPECTED"));}
 async function catalog(pool:sql.ConnectionPool){
   const r=(await pool.request().query(render924CatalogSql())).recordset[0];
@@ -63,6 +75,9 @@ async function businessSnapshot(pool:sql.ConnectionPool){
 }
 async function main(){
   check(process.env.GITHUB_ACTIONS==="true"&&process.env.UQP_924_CI_EPHEMERAL==="1"&&!!process.env.UQP_924_CI_PASSWORD,"CI_ONLY");
+  // CI selects only the expected major version of its own disposable Docker SQL.
+  // Production connection configuration remains inaccessible to this runner.
+  const expectedMajorVersion=process.env.UQP_924_CI_SQL_MAJOR==="16"?16:15;
   // Fixed loopback target, never reads PLATFORM_DB_* or .env connection settings.
   const config:sql.config={server:"127.0.0.1",port,user:"sa",password:process.env.UQP_924_CI_PASSWORD!,database:"master",
     options:{encrypt:true,trustServerCertificate:true},pool:{min:0,max:4},connectionTimeout:2000,requestTimeout:30000};
@@ -75,14 +90,23 @@ async function main(){
     stage="IDENTITY";
     const identity=(await master.request().query(`SELECT @@SERVERNAME S,DB_NAME() D,ORIGINAL_LOGIN() L,
       CONVERT(nvarchar(128),SERVERPROPERTY(N'MachineName')) M,CONVERT(int,SERVERPROPERTY(N'ProductMajorVersion')) V,DB_ID(N'${db}') Existing`)).recordset[0];
-    check(identity.S===machine&&identity.M===machine&&identity.D==="master"&&identity.L==="sa"&&identity.V===15&&identity.Existing===null,"CI_IDENTITY");
+    check(identity.S===machine&&identity.M===machine&&identity.D==="master"&&identity.L==="sa"&&identity.V===expectedMajorVersion&&identity.Existing===null,"CI_IDENTITY");
     await master.request().batch(`CREATE DATABASE [${db}]; ALTER DATABASE [${db}] SET COMPATIBILITY_LEVEL=150;`);created=true;
     root=await new sql.ConnectionPool({...config,database:db}).connect();
     await root.request().batch("CREATE SCHEMA uqp");
     await root.request().batch("CREATE TABLE uqp.SchemaMigration(FileName NVARCHAR(255) NOT NULL PRIMARY KEY,AppliedAtUtc DATETIME2(0) NOT NULL DEFAULT SYSUTCDATETIME())");
     const folder=new URL("../../../database/migrations/",import.meta.url);
-    const files=(await readdir(folder)).filter(n=>/^\d+_.*\.sql$/i.test(n)).sort();
-    check(files.length===48&&files.at(-1)==="921_datasource_native_parameter_versions.sql","FULL_SOURCE_MANIFEST");
+    // Rebuild only the historical 001-921 baseline before reviewed
+    // 923/924/925 installers. 926/927 have separate isolated CI suites.
+    // Explicitly pin post-baseline migration names: any unknown/new 928
+    // migration must block this test rather than silently be included.
+    const inventory=(await readdir(folder)).filter(n=>/^\d+_.*\.sql$/i.test(n)).sort();
+    const files=inventory.filter(n=>Number(n.slice(0,3))<=921);
+    const later=inventory.filter(n=>Number(n.slice(0,3))>921);
+    check(files.length===48&&files.at(-1)==="921_datasource_native_parameter_versions.sql"&&
+      JSON.stringify(later)===JSON.stringify([
+        "926_dashboard_device_lifecycle.sql","927_workstation_pin_runtime.sql"
+      ]),"FULL_SOURCE_MANIFEST");
     for(const file of files){
       stage="MIGRATION_"+file.slice(0,3);const tx=new sql.Transaction(root);let aborted=false;tx.on("rollback",()=>{aborted=true;});await tx.begin();
       try{
@@ -336,6 +360,116 @@ async function main(){
     console.log("DATASET_PARAMETER_METADATA: REAL_SQL2019_INFERENCE_DESCRIBE_ZERO_ROW_COLUMNS_PERSIST_PARAMETER_CAS_PASS; NO_ACTUAL_VALUES_BOUND_OR_RETURNED");
     stage="DATASET_DISPLAY_925";
     await testDatasetDisplay925(root,app,login);
+    // PR99: run actual frozen 928 + Gate3 approval DDL against this disposable
+    // full-schema SQL Server 2019 DB. Never touches the user's SQL instance.
+    stage="CHART_928_ISOLATED_INSTALL";
+    const chartSql=await readFile(new URL("../../../database/review/928_chart_frozen_and_approval_isolated_test_install.sql.txt",import.meta.url),"utf8");
+    await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_UNMARKED_DB_MUST_FAIL");
+    check((await root.request().query("SELECT OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal")).recordset[0].Seal===null,"CHART_928_UNMARKED_NO_DDL");
+    await root.request().batch("EXEC sys.sp_addextendedproperty @name=N'UQP_CHART_TEST_DISPOSABLE',@value=N'YES'");
+    check(chartSql.includes("CHART_TEST_DISPOSABLE_DB_MARKER_REQUIRED"),"CHART_928_TEST_MARKER_SOURCE");
+    // SQL2019-only witness pins are copied from independent disposable CI
+    // evidence, never from a hospital database or the production review file.
+    check(chartSql.includes("0xDEE5565B983CF83FA8AF4A9E0487DF581BAC22A36825301852FCD6195D4D5572") &&
+      chartSql.includes("0x590373D358AA5E0669D7E237653010FFC6C3050BD55D5A373F5835F42BF3747D"),
+      "CHART_928_ISOLATED_PIN_CONTRACT");
+    try {
+      await root.request().batch(chartSql);
+    } catch (error) {
+      const dbError=error as {number?:number;message?:string;originalError?:{info?:{number?:number;message?:string}}};
+      console.error(`CHART_928_SQL_INSTALL_FAILURE number=${dbError.originalError?.info?.number??dbError.number??0};message=${String(dbError.originalError?.info?.message??dbError.message??"UNKNOWN").slice(0,240)}`);
+      throw error;
+    }
+    const chartCatalog=(await root.request().query(`SELECT
+      OBJECT_ID(N'uqp.DashboardChartWidgetSeal',N'U') Seal,
+      OBJECT_ID(N'uqp.DashboardChartPrivacyReview',N'U') Review,
+      OBJECT_ID(N'uqp.DashboardChartTrustRequest',N'U') TrustRequest,
+      OBJECT_ID(N'uqp.DashboardChartPlaybackApproval',N'U') PlaybackApproval`)).recordset[0];
+    check(Object.values(chartCatalog).every(v=>typeof v==="number"&&v>0),"CHART_928_INSTALLED_CATALOG");
+    // Gate 3: use the real SQL-backed approval reader against installed 928.
+    // With no administrator decision recorded, playback must fail closed.
+    stage="CHART_GATE3_EMPTY_APPROVAL_READ";
+    const approvalReader=createDormantPlaybackApprovalReader(async()=>root!);
+    check(await approvalReader(1,1)===null,"CHART_GATE3_NO_UNRECORDED_APPROVAL");
+    check((await root.request().query("SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C===0,
+      "CHART_GATE3_EMPTY_APPROVAL_CATALOG");
+    console.log("CHART_GATE3_SQL2019_EMPTY_APPROVAL_FAIL_CLOSED_PASS");
+    // Option A must not fabricate a Widget/Seal/Audit receipt when the
+    // database-owned atomic create procedure has not been installed.
+    stage="CHART_OPTION_A_MISSING_PROCEDURE";
+    const chartPlan=planDormantChartCreate({
+      dashboardId:1,profileId:1,actorId:303,tokenVersion:1,
+      requestId:"123e4567-e89b-42d3-a456-426614174000",
+      config:{version:1,chartType:"BAR",dataSourceKey:"PRIMARY",
+        categoryColumn:"Department",valueColumn:"Total",
+        valueMode:"QUERY_RESULT",maxPoints:10,showLegend:false},
+      placement:{x:0,y:0,width:300,height:200},
+    });
+    check(chartPlan!==null,"CHART_OPTION_A_VALID_TEST_PLAN");
+    check((await root.request().query(
+      "SELECT OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P') P")).recordset[0].P===null,
+      "CHART_OPTION_A_PROCEDURE_NOT_INSTALLED");
+    // The dormant Option A gate must reject before even acquiring a pool.
+    let disabledPoolCalls=0;
+    const disabledCreate=createDormantSinglePoolChartCreate({
+      enabled:()=>false,
+      getPool:async()=>{disabledPoolCalls++;return root!;},
+    });
+    check(await disabledCreate(chartPlan)===null&&disabledPoolCalls===0,
+      "CHART_OPTION_A_DISABLED_NO_SQL_POOL_ACQUISITION");
+    const createChart=createDormantSinglePoolChartCreate({
+      enabled:()=>true,getPool:async()=>root!,
+    });
+    check(await createChart(chartPlan)===null,"CHART_OPTION_A_MISSING_PROCEDURE_FAIL_CLOSED");
+    check((await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartWidgetSeal")).recordset[0].C===0,
+      "CHART_OPTION_A_MISSING_PROCEDURE_NO_SEAL");
+    console.log("CHART_OPTION_A_SQL2019_DISABLED_NO_POOL_AND_MISSING_PROCEDURE_FAIL_CLOSED_PASS");
+
+    // Install the actual Option A stored procedure in this disposable CI database
+    // only. The independent 928 base installer remains frozen and unchanged.
+    stage="CHART_OPTION_A_DISPOSABLE_PROCEDURE_INSTALL";
+    const optionASql=await readFile(new URL(
+      "../../../database/review/928_chart_option_a_disposable_create_test_install.fixture.txt",
+      import.meta.url),"utf8");
+    check(optionASql.includes("CHART_A_TEST_DISPOSABLE_MARKER_REQUIRED"),
+      "CHART_OPTION_A_DISPOSABLE_ONLY_INSTALLER");
+    await root.request().batch(optionASql);
+    check((await root.request().query(
+      "SELECT OBJECT_ID(N'uqp.usp_DashboardChartCreate',N'P') P")).recordset[0].P!==null,
+      "CHART_OPTION_A_PROCEDURE_INSTALLED");
+    console.log("CHART_OPTION_A_SQL2019_DISPOSABLE_PROCEDURE_INSTALLED_PASS");
+    // Existing synthetic dashboard is deliberately not a published,
+    // query-scoped authorized CHART source. Creation must remain denied.
+    stage="CHART_OPTION_A_UNAUTHORIZED_SOURCE";
+    check(await createChart(chartPlan)===null,
+      "CHART_OPTION_A_UNAUTHORIZED_SOURCE_DENIED");
+    check((await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartWidgetSeal")).recordset[0].C===0,
+      "CHART_OPTION_A_DENIED_NO_SEAL");
+    console.log("CHART_OPTION_A_SQL2019_UNAUTHORIZED_SOURCE_DENIED_PASS");
+
+    // The real transactional writer must not fabricate an approval or audit
+    // receipt when the requested chart/widget has no verified seal.
+    stage="CHART_GATE3_UNSEALED_WRITE_DENIAL";
+    const beforeDecision=(await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C;
+    const beforeAudit=(await root.request().query("SELECT COUNT(*) C FROM uqp.AuditLog")).recordset[0].C;
+    check(await decideChartPlaybackApproval({
+      dashboardId:1,widgetId:1,actorUserId:303,tokenVersion:1,action:"APPROVE"
+    },async()=>root!)===false,"CHART_GATE3_UNSEALED_APPROVE_DENIED");
+    check(await decideChartPlaybackApproval({
+      dashboardId:1,widgetId:1,actorUserId:303,tokenVersion:1,action:"REVOKE"
+    },async()=>root!)===false,"CHART_GATE3_UNSEALED_REVOKE_DENIED");
+    check((await root.request().query(
+      "SELECT COUNT(*) C FROM uqp.DashboardChartPlaybackApproval")).recordset[0].C===beforeDecision,
+      "CHART_GATE3_DENIAL_NO_APPROVAL_MUTATION");
+    check((await root.request().query("SELECT COUNT(*) C FROM uqp.AuditLog")).recordset[0].C===beforeAudit,
+      "CHART_GATE3_DENIAL_NO_AUDIT_MUTATION");
+    console.log("CHART_GATE3_SQL2019_UNSEALED_WRITES_DENIED_NO_APPROVAL_OR_AUDIT_MUTATION_PASS");
+    stage="CHART_928_REPEAT_GUARD";
+    await assert.rejects(()=>root!.request().batch(chartSql),"CHART_928_REPEAT_MUST_FAIL");
+    console.log("CHART_928_SQL2019_DISPOSABLE_FULL_SCHEMA_INSTALL_AND_REPEAT_GUARD_PASS");
     stage="FINAL_923_924_COMPATIBILITY";
     check(await catalog(root)==="EXACT_MATCH","924_FINAL");
     check((await root.request().query(render923CatalogSql())).recordset[0].CatalogStatus==="EXACT_MATCH","923_CHANGED");

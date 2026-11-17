@@ -171,8 +171,25 @@ export function createIndependentChartSigner(deps:IndependentChartSignerDeps){
       const sqlMac=await deps.signSqlHmac(
         sqlChartIssuerCanonicalScope(sqlScope));
       if(!Buffer.isBuffer(sqlMac)||sqlMac.length!==32)return null;
-      // If the external signer stalls beyond expiry, discard BOTH proofs.
-      if(now()>=expires)return null;
+      // Signing may wait on an external HSM. An account, Query ACL or the
+      // reviewed release gate can be revoked DURING those awaits. Never
+      // release a just-signed receipt under a stale pre-sign decision.
+      // SQL Issuer and Writer still require independent DB-owned checks.
+      if(!deps.approved())return null;
+      const finalSession=await deps.readLiveSession(actorId);
+      if(!finalSession?.isActive||
+         finalSession.tokenVersion!==tokenVersion||
+         !Array.isArray(finalSession.permissions)||
+         !finalSession.permissions.includes("DESIGN_QUERY")||
+         !finalSession.permissions.includes("EXECUTE_QUERY")||
+         !await deps.authorizeChartCreate(
+           actorId,plan.dashboardId,plan.profileId,plan.sourceKey))
+        return null;
+      // Bound the full signing + second authorization round-trip, not
+      // merely the cryptographic calls, to the signed expiry and JWT.
+      const finalTime=now();
+      if(!Number.isSafeInteger(finalTime)||finalTime<issued||
+         finalTime>=expires||finalTime>=tokenExpiresAt)return null;
       return {
         Attestation:{...unsigned,
           Signature:edSignature.toString("base64url")},

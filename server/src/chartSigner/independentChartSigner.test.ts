@@ -40,21 +40,40 @@ function harness(options:{
   live?:IndependentSignerLiveSession|null;
   allowed?:boolean;dbError?:boolean;
   badSignature?:"ED"|"MAC"|"EXPIRED";
+  duringSigning?:"DISABLE_USER"|"REVOKE_TOKEN"|"REMOVE_RBAC"|
+    "REVOKE_QUERY"|"DISABLE_RELEASE"|"SLOW_AUTH_RECHECK"|"DB_ERROR";
 }={}){
   let dbReads=0,scopeChecks=0,edCalls=0,macCalls=0,clock=now;
+  let signingComplete=false;
+  let releaseEnabled=options.approved??true;
   const signer=createIndependentChartSigner({
-    approved:()=>options.approved??true,
+    approved:()=>releaseEnabled,
     keyId:"external-key-01",
     jwtVerificationKey:jwtKey,
     now:()=>clock,
     randomNonce:()=>nonce,
     readLiveSession:async actorId=>{
       dbReads++;assert.equal(actorId,8);
-      if(options.dbError)throw Error("private DB connection failure / PHI");
-      return options.live===undefined?live:options.live;
+      if(options.dbError||
+        (signingComplete&&options.duringSigning==="DB_ERROR"))
+        throw Error("private DB connection failure / PHI");
+      const current=options.live===undefined?live:options.live;
+      if(!current||!signingComplete)return current;
+      if(options.duringSigning==="DISABLE_USER")
+        return {...current,isActive:false};
+      if(options.duringSigning==="REVOKE_TOKEN")
+        return {...current,tokenVersion:current.tokenVersion+1};
+      if(options.duringSigning==="REMOVE_RBAC")
+        return {...current,permissions:["DESIGN_QUERY"]};
+      return current;
     },
     authorizeChartCreate:async(a,d,p,s)=>{
       scopeChecks++;assert.deepEqual([a,d,p,s],[8,7,22,"PRIMARY"]);
+      if(signingComplete&&
+         options.duringSigning==="SLOW_AUTH_RECHECK")
+        clock=now+CHART_SIGNER_MAX_LIFETIME_MS;
+      if(signingComplete&&options.duringSigning==="REVOKE_QUERY")
+        return false;
       return options.allowed??true;
     },
     signEd25519:async bytes=>{
@@ -66,7 +85,10 @@ function harness(options:{
       macCalls++;
       if(options.badSignature==="EXPIRED")clock=now+9_000;
       if(options.badSignature==="MAC")return Buffer.alloc(31);
-      return createHmac("sha256",sqlKey).update(bytes,"utf8").digest();
+      const mac=createHmac("sha256",sqlKey).update(bytes,"utf8").digest();
+      signingComplete=true;
+      if(options.duringSigning==="DISABLE_RELEASE")releaseEnabled=false;
+      return mac;
     },
   });
   return {signer,
@@ -89,7 +111,7 @@ test("independent signer checks original JWT/live RBAC then emits both matching 
   const envelope=await h.signer(token(),raw);
   assert(envelope);
   assert.deepEqual(h.counts(),{
-    dbReads:1,scopeChecks:1,edCalls:1,macCalls:1,
+    dbReads:2,scopeChecks:2,edCalls:1,macCalls:1,
   });
   const plan=planDormantChartCreate({
     ...raw,actorId:8,tokenVersion:3,
@@ -193,4 +215,29 @@ test("replay and durable audit are owned by the SQL Issuer/Writer, never signed 
   assert.equal(value.Attestation.KeyId,"external-key-01");
   assert.equal("WidgetId" in value,false);
   assert.equal("GrantId" in value,false);
+});
+
+test("signer must recheck live account, token, RBAC, Query and release after HSM signing",async()=>{
+  for(const duringSigning of [
+    "DISABLE_USER","REVOKE_TOKEN","REMOVE_RBAC",
+    "REVOKE_QUERY","DISABLE_RELEASE","SLOW_AUTH_RECHECK","DB_ERROR",
+  ] as const){
+    const h=harness({duringSigning});
+    assert.equal(await h.signer(token(),raw),null,duringSigning);
+    const counts=h.counts();
+    assert.equal(counts.edCalls,1,duringSigning);
+    assert.equal(counts.macCalls,1,duringSigning);
+    if(duringSigning==="DISABLE_RELEASE"){
+      assert.equal(counts.dbReads,1);
+      assert.equal(counts.scopeChecks,1);
+    }else if(duringSigning==="DB_ERROR"){
+      assert.equal(counts.dbReads,2);
+      assert.equal(counts.scopeChecks,1);
+    }else{
+      assert.equal(counts.dbReads,2);
+      if(duringSigning==="REVOKE_QUERY"||
+         duringSigning==="SLOW_AUTH_RECHECK")
+        assert.equal(counts.scopeChecks,2);
+    }
+  }
 });

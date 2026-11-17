@@ -89,7 +89,8 @@ BEGIN
     JOIN uqp.RolePermission rp WITH(HOLDLOCK) ON rp.RoleId=r.Id
     JOIN uqp.Permission p WITH(HOLDLOCK) ON p.Id=rp.PermissionId
     WHERE u.Id=@ActorId AND u.IsActive=1
-      AND u.TokenVersion=@TokenVersion AND p.Code=N''DESIGN_QUERY''
+      AND u.TokenVersion=@TokenVersion AND p.Code IN (N''DESIGN_QUERY'',N''EXECUTE_QUERY'')
+    GROUP BY u.Id HAVING COUNT(DISTINCT p.Code)=2
   ) THROW 51928,N''CHART_SIGNED_ISSUER_ACTOR_REVOKED'',1;
   SET @GrantId=NEWID();
   SET @Secret=CRYPT_GEN_RANDOM(32);

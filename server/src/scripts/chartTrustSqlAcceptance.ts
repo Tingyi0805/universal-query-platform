@@ -15,7 +15,7 @@ export async function verifyChartTrustStoreSql(db: sql.ConnectionPool) {
   const exec = (statement: string) => db.request().query(statement);
 
   await exec([
-    "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT NOT NULL PRIMARY KEY,DashboardId BIGINT NOT NULL);",
+    "CREATE TABLE uqp.DashboardDisplayProfile(Id BIGINT NOT NULL PRIMARY KEY,DashboardId BIGINT NOT NULL,ConfigJson NVARCHAR(MAX) NULL DEFAULT(N'{}'));",
     "CREATE TABLE uqp.DashboardWidget(Id BIGINT NOT NULL PRIMARY KEY,ProfileId BIGINT NOT NULL,WidgetType NVARCHAR(30) NOT NULL,SourceKey NVARCHAR(64) NOT NULL,ConfigJson NVARCHAR(MAX) NOT NULL);",
     "CREATE TABLE uqp.DashboardChartWidgetSeal(WidgetId BIGINT NOT NULL PRIMARY KEY REFERENCES uqp.DashboardWidget(Id),ConfigDigest CHAR(64) NOT NULL,IsActive BIT NOT NULL,SealedBy BIGINT NOT NULL,AuditLogId BIGINT NULL,SealRowVersion ROWVERSION NOT NULL);",
     "CREATE TABLE uqp.DashboardChartPrivacyReview(Id BIGINT IDENTITY(1,1) NOT NULL PRIMARY KEY,DashboardId BIGINT NOT NULL,QueryId BIGINT NOT NULL,DatasetId BIGINT NOT NULL,SourceKey NVARCHAR(64) NOT NULL,CategoryColumn NVARCHAR(128) NOT NULL,ValueColumn NVARCHAR(128) NOT NULL,QueryRevision BINARY(8) NOT NULL,DatasetRevision BINARY(8) NOT NULL,PolicyRevision CHAR(64) NOT NULL,Status VARCHAR(20) NOT NULL,MinimumCellCount INT NOT NULL,CategoryPrivacyReviewed BIT NOT NULL,DifferencingRiskReviewed BIT NOT NULL,RequestedByUserId BIGINT NOT NULL DEFAULT(8),RequestedAtUtc DATETIME2(3) NOT NULL DEFAULT(SYSUTCDATETIME()),ReviewerUserId BIGINT NULL,AuditLogId BIGINT NULL,ReviewedAtUtc DATETIME2(3) NULL,ValidUntilUtc DATETIME2(3) NULL,ReviewRowVersion ROWVERSION NOT NULL);",

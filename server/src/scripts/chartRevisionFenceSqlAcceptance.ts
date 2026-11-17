@@ -67,6 +67,25 @@ export async function verifyChartRevisionFenceSql(admin: sql.ConnectionPool, con
   assert.equal(extraInitial?.sourceKey, "EXTRA");
   assert.equal(await load("INJECT;DROP"), null);
 
+  // SQL Server defaults to a case-insensitive collation, but the Chart
+  // source contract is exact-case. Never bind an alternate child identifier
+  // to another source's Query or allow a shadow PRIMARY row to bypass
+  // Dashboard.QueryDefinitionId.
+  stage = "CASE_EXACT_SOURCE_AND_SHADOW_PRIMARY";
+  assert.equal(await load("Extra"), null);
+  assert.equal(await load("extra"), null);
+  assert.equal(await load("Primary"), null);
+  assert.equal(await load("primary"), null);
+  await query("INSERT uqp.DashboardDataSource" +
+    "(Id,DashboardId,SourceKey,DatasetId,QueryDefinitionId,IsEnabled)" +
+    " VALUES(22,7,N'Primary',10,9,1)");
+  assert.equal(await load("PRIMARY"), null);
+  assert.equal(await load("EXTRA"), null);
+  await query("DELETE FROM uqp.DashboardDataSource WHERE Id=22");
+  assert((await load("PRIMARY"))?.version);
+  assert((await load("EXTRA"))?.version);
+  console.log("CHART_FENCE_SQL_EXACT_CASE_SHADOW_PRIMARY_DENY_PASS");
+
   // Actual Dataset rowversion advances even when SQL is restored verbatim.
   await query("UPDATE uqp.Dataset SET SqlText=N'SELECT ROOM AS ROOM, COUNT(*) AS TOTAL FROM OPS2 GROUP BY ROOM' WHERE Id=10");
   stage = "DATASET_ABA";

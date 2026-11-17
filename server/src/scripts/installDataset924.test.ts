@@ -2,7 +2,7 @@ import {test} from "node:test";
 import assert from "node:assert/strict";
 import {readFile,readdir} from "node:fs/promises";
 import {spawnSync} from "node:child_process";
-import {approve924,assess924} from "./installDataset924.js";
+import {approve924,assess924,reviewed924SourceManifest} from "./installDataset924.js";
 import {expected924Catalog,render924CatalogSql,read924Draft} from "../modules/dataset/datasetMetadata924Catalog.js";
 
 test("924 permits absent+unrecorded or exact+recorded only; 923 must remain exact",()=>{
@@ -50,4 +50,19 @@ test("924 Windows wrapper uses separate installer credentials and restores them;
   assert.match(ps,/924_SEPARATE_INSTALLER_LOGIN_REQUIRED_NO_RUNTIME_ELEVATION/);
   assert.match(ps,/ZeroFreeBSTR/);assert.match(ps,/finally/);assert.match(ps,/\$previousDbPassword/);
   assert.doesNotMatch(ps,/Set-Content|Out-File|db:migrate/);
+});
+
+test("924 full-schema source pin accepts only the reviewed 001-921 baseline plus known 926/927 files",async()=>{
+  const files=await readdir(new URL("../../../database/migrations/",import.meta.url));
+  const baseline=reviewed924SourceManifest(files);
+  assert.equal(baseline.length,48);
+  assert.equal(baseline.at(-1),"921_datasource_native_parameter_versions.sql");
+  assert.equal(baseline.some(name=>name.startsWith("926_")||name.startsWith("927_")),false);
+  for(const changed of [
+    files.filter(name=>name!=="926_dashboard_device_lifecycle.sql"),
+    files.filter(name=>name!=="927_workstation_pin_runtime.sql"),
+    [...files,"928_unapproved_chart.sql"],
+    [...files,"925_unreviewed_installer.sql"],
+    [...files,"926_forged_extra.sql"],
+  ])assert.throws(()=>reviewed924SourceManifest(changed),/924_BASELINE_MANIFEST_UNREVIEWED/);
 });

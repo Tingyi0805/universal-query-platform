@@ -5,6 +5,7 @@
 // and the two seal/review catalog tables are intentionally not installed.
 import { createHash, timingSafeEqual } from "node:crypto";
 import sql from "mssql";
+import {chartIsSoftRemoved} from "./dashboardChartLayoutProfile.js";
 import { getPlatformDbPool } from "../../config/database.js";
 import { chartWidgetConfigSchema } from "./dashboardChartWidget.contract.js";
 import type { TrustedSavedChartWidget } from "./dashboardChartDelivery.coordinator.js";
@@ -68,6 +69,7 @@ export function validateSealedChartWidget(
     if (!parsed.success || parsed.data.dataSourceKey !== row.SourceKey) return null;
     return {
       id: widgetId, dashboardId, widgetType: "CHART", revision: rv,
+      sealedByUserId: exactPositive(row.SealedBy)!,
       config: parsed.data,
     };
   } catch { return null; }
@@ -135,7 +137,7 @@ export function createDormantChartTrustReaders(
       const rows = (await pool.request()
         .input("dashboardId", sql.BigInt, dashboardId)
         .input("widgetId", sql.BigInt, widgetId)
-        .query("SELECT w.Id, p.DashboardId, w.WidgetType, w.SourceKey, w.ConfigJson, " +
+        .query("SELECT w.Id, p.DashboardId, p.ConfigJson AS ProfileConfigJson, w.WidgetType, w.SourceKey, w.ConfigJson, " +
           "s.SealRowVersion, s.ConfigDigest, s.IsActive AS SealActive, s.SealedBy, " +
           "CONVERT(bit,CASE WHEN EXISTS(SELECT 1 FROM uqp.AuditLog a WITH(HOLDLOCK) " +
           "WHERE a.Id=s.AuditLogId AND a.UserId=s.SealedBy AND a.IsImportant=1 " +
@@ -149,7 +151,9 @@ export function createDormantChartTrustReaders(
           "JOIN uqp.DashboardChartWidgetSeal s WITH (HOLDLOCK) ON s.WidgetId=w.Id " +
           "WHERE w.Id=@widgetId AND p.DashboardId=@dashboardId " +
           "AND w.WidgetType='CHART' AND s.IsActive=1")).recordset;
-      return rows.length === 1 ? validateSealedChartWidget(rows[0], dashboardId, widgetId) : null;
+      if(rows.length!==1||chartIsSoftRemoved(
+        String(rows[0].ProfileConfigJson??"{}"),widgetId))return null;
+      return validateSealedChartWidget(rows[0],dashboardId,widgetId);
     } catch { return null; }
   };
   const readPublicReview = async (

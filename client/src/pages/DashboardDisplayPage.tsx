@@ -1,4 +1,9 @@
 import { DashboardDrilldownHost } from "../components/DashboardDrilldownHost";
+import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
+import {
+  mayRequestSealedChartProjection,mayRequestSealedDeviceChartProjection,
+  mayRequestSealedUserChartProjection,
+} from "../dashboard/nativeChartPlayback";
 import { LastSuccessfulUpdate } from "../components/LastSuccessfulUpdate";
 import { deliveryTime } from "../dashboard/lastSuccessfulUpdate";
 import { deviceExpiry } from "../dashboard/deviceExpiry";
@@ -52,7 +57,7 @@ type PreviewResult = {
 type LayoutWidget = {
   id: number;
   profileId: number;
-  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
+  widgetType: "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER" | "CHART";
   title: string | null;
   sourceKey: string | null;
   staticText: string | null;
@@ -156,6 +161,8 @@ export function DashboardDisplayPage() {
   },[dashboardId,deviceMode,deviceToken]);
   const { accessToken, user, hasPermission, logout } = useAuth();
   const userRoute = !deviceMode && !queryPreview && !window.location.pathname.startsWith("/designer/");
+  const [serverChartPlaybackAvailable,setServerChartPlaybackAvailable]=useState(false);
+
   const [userMode, setUserMode] = useState<"LEGACY" | "QUERY_ONLY" | null>(null);
   const userSourceExpiry = useRef(new Map<string, number>());
   const userAuthorizationExpiry = useRef<number | null>(null);
@@ -170,6 +177,16 @@ export function DashboardDisplayPage() {
   const pageSnapshotCreatedAt = useRef(0);
   const lastVisibleColumns = useRef<ReportColumn[]>([]);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
+  const hasNativeChart=profiles.some(p=>p.widgets.some(w=>w.widgetType==="CHART"));
+  useEffect(()=>{
+    setServerChartPlaybackAvailable(false);const abort=new AbortController();
+    if(!hasNativeChart)return;
+    if(deviceMode?(!deviceToken):(!userRoute||!accessToken))return;
+    const path=deviceMode?`/dashboards/device/${dashboardId}/charts/v1/capabilities`:`/dashboards/${dashboardId}/charts/v1/test-capabilities`;
+    void apiRequest<{playback:boolean}>(path,{signal:abort.signal,...(deviceMode?{headers:deviceHeaders}:{})},deviceMode?null:accessToken)
+      .then(r=>{if(!abort.signal.aborted)setServerChartPlaybackAvailable(r?.playback===true);}).catch(()=>{});
+    return()=>abort.abort();
+  },[dashboardId,deviceMode,deviceToken,cookieSession,userRoute,accessToken,intendedDeviceId,hasNativeChart]);
   type SupplementalPage = { snapshotExpiresAt?: number; sourceKey: string; refreshSeconds: number; pageSeconds: number; pageSize: number; snapshotId: string; page: number;
     totalPages: number; result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
   const [supplementalPages, setSupplementalPages] = useState<Record<string, SupplementalPage>>({});
@@ -892,6 +909,56 @@ export function DashboardDisplayPage() {
   }, [activeProfile, viewport]);
 
   function renderWidget(widget: LayoutWidget) {
+    if(widget.widgetType === "CHART"){
+      // Public-device and designer preview use different server routes
+      // and credentials; never reinterpret the device token as a JWT.
+      // Both live device CHART gates remain hard-OFF until approved.
+      const expectedDeviceId=Number.isSafeInteger(intendedDeviceId)&&
+        intendedDeviceId>0?intendedDeviceId:null;
+      const authorized=deviceMode
+        ? mayRequestSealedDeviceChartProjection({
+            kioskDeviceId:cookieSession?intendedDeviceId:null,
+            serverPlaybackAvailable:serverChartPlaybackAvailable,
+            widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+            deviceMode,userRoute,queryPreview,activationRequired,
+            previewAuthorized,online,
+            hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+            deviceToken:cookieSession?null:deviceToken,
+            expectedDeviceId,
+          })
+        : userRoute
+          ? mayRequestSealedUserChartProjection({
+              serverPlaybackAvailable:serverChartPlaybackAvailable,
+              widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+              userRoute,deviceMode,queryPreview,userMode,
+              userSessionCurrent:Boolean(accessToken)&&userSession===accessToken,
+              previewAuthorized,online,
+              hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+              accessTokenPresent:Boolean(accessToken),
+              canViewQuery:hasPermission("VIEW_QUERY"),
+              canExecuteQuery:hasPermission("EXECUTE_QUERY"),
+            })
+          : mayRequestSealedChartProjection({
+              widgetType:widget.widgetType,dashboardId,widgetId:widget.id,
+              queryPreview,deviceMode,userRoute,previewAuthorized,online,
+              hasDataWarning:Boolean(dataWarning||layoutWarning||!preview),
+              accessTokenPresent:Boolean(accessToken),
+              canDesignQuery:hasPermission("DESIGN_QUERY"),
+              canExecuteQuery:hasPermission("EXECUTE_QUERY"),
+            });
+      const refreshKey=preview
+        ? `${snapshotReloadKey}:${preview.snapshotId??preview.deliveredAtUtc??""}`
+        : "";
+      return <DashboardSavedChartWidget
+        dashboardId={dashboardId} widgetId={widget.id}
+        authorized={authorized} accessToken={deviceMode?null:accessToken}
+        kioskDeviceId={cookieSession?intendedDeviceId:null}
+        serverPlaybackAvailable={serverChartPlaybackAvailable}
+        deviceMode={deviceMode} userPlayback={userRoute}
+        deviceToken={deviceMode&&!cookieSession?deviceToken:null}
+        expectedDeviceId={deviceMode?expectedDeviceId:null}
+        refreshKey={refreshKey}/>;
+    }
     const sourceKey = typeof widget.config?.dataSourceKey === "string" ? widget.config.dataSourceKey : "PRIMARY";
     const supplemental = sourceKey !== "PRIMARY" ? supplementalPages[sourceKey] : undefined;
     const widgetRows = sourceKey === "PRIMARY" ? pageRows : supplemental?.result.rows ?? [];

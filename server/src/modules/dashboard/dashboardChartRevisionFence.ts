@@ -39,7 +39,9 @@ return async function readChartRevisionFence(
 ): Promise<ChartRevisionFence | null> {
   if (![dashboardId,queryId,datasetId,subject.userId,subject.tokenVersion].every(x =>
       Number.isSafeInteger(x) && x > 0) ||
-      !/^(?:PRIMARY|[A-Za-z][A-Za-z0-9_]{0,63})$/.test(sourceKey))
+      !/^(?:PRIMARY|[A-Za-z][A-Za-z0-9_]{0,63})$/.test(sourceKey) ||
+      // PRIMARY must match exactly, even on case-insensitive SQL targets.
+      (sourceKey.toUpperCase() === "PRIMARY" && sourceKey !== "PRIMARY"))
     return null;
   const context = subject.context ?? (subject.deviceId === undefined ? "designer" : "device");
   if ((context === "device") !== (subject.deviceId !== undefined) ||
@@ -67,15 +69,21 @@ return async function readChartRevisionFence(
         "db.QueryMode, db.IsActive AS DashboardActive " +
         "FROM uqp.Dashboard db WITH (HOLDLOCK) " +
         "LEFT JOIN uqp.DashboardDataSource bs WITH (HOLDLOCK) " +
-        " ON bs.DashboardId=db.Id AND bs.SourceKey=@sourceKey " +
+        " ON bs.DashboardId=db.Id AND @sourceKey<>N'PRIMARY' " +
+        " AND bs.SourceKey COLLATE Latin1_General_100_BIN2 " +
+        " = @sourceKey COLLATE Latin1_General_100_BIN2 " +
         "INNER JOIN uqp.QueryDefinition q WITH (HOLDLOCK) ON q.Id = " +
-        " CASE WHEN @sourceKey='PRIMARY' THEN db.QueryDefinitionId ELSE bs.QueryDefinitionId END " +
+        " CASE WHEN @sourceKey=N'PRIMARY' THEN db.QueryDefinitionId ELSE bs.QueryDefinitionId END " +
         "INNER JOIN uqp.Dataset d WITH (HOLDLOCK) ON d.Id=q.DatasetId " +
         "INNER JOIN uqp.DataSource ds WITH (HOLDLOCK) ON ds.Id=d.DataSourceId " +
         "INNER JOIN uqp.DatasetSensitivePolicyVersion sp WITH (HOLDLOCK) ON sp.DatasetId=d.Id " +
         "LEFT JOIN uqp.DatasetPublicDisplayPolicy pd WITH (HOLDLOCK) ON pd.DatasetId=d.Id " +
         "OUTER APPLY (SELECT MAX(qv.VersionNo) AS QueryVersion FROM uqp.QueryDefinitionVersion qv WITH (HOLDLOCK) WHERE qv.QueryDefinitionId=q.Id) v " +
         "WHERE db.Id=@dashboardId AND q.Id=@queryId AND d.Id=@datasetId " +
+        // An ambiguous primary child binding must never be silently ignored
+        // when the parent QueryDefinitionId is used as the authoritative key.
+        "AND NOT EXISTS (SELECT 1 FROM uqp.DashboardDataSource shadow WITH (HOLDLOCK) " +
+        " WHERE shadow.DashboardId=db.Id AND UPPER(shadow.SourceKey)=N'PRIMARY') " +
         "AND q.IsPublished=1 AND q.IsActive=1 AND q.IsArchived=0 " +
         "AND d.IsActive=1 AND d.IsArchived=0 AND ds.IsActive=1")).recordset;
     const row = rows.length === 1 ? rows[0] : null;

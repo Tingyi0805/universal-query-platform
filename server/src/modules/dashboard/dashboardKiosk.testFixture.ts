@@ -13,7 +13,7 @@ import { auditRequestContext } from "../audit/auditContext.js";
 import { env } from "../../config/env.js";
 export function kioskFixture() {
  const state={SuspendedAtUtc:null as string|null,ReenrollmentRequired:null as boolean|null,revoked:false,expired:false,ipDenied:false,delegationDenied:false,policyDenied:false,auditDenied:false,mode:"QUERY_ONLY",version:4,token:"A".repeat(43),expires:Date.now()+86400000 as number|null,inspected:0,delivered:0,seenIp:"",patientAuditIp:"",requiredIp:null as string|null,proxyClientEndpoint:"198.51.100.8:54321"};
- const config={origin:"https://kiosk.test",key:"a1".repeat(32),enabled:true,trustedProxies:["127.0.0.1","::1"]};
+ const config={origin:"https://kiosk.test",key:"a1".repeat(32),enabled:true,chartTestEnabled:false,trustedProxies:["127.0.0.1","::1"]};
  const app=express();app.use(validateProxyRequest);app.use(express.json());app.post("/test/state",(req,res)=>{Object.assign(state,req.body);res.json({ok:true});});
  app.get("/test/status",(_req,res)=>res.json({delivered:state.delivered,seenIp:state.seenIp,patientAuditIp:state.patientAuditIp}));
  app.use("/api/dashboards",createKioskRouter(()=>config,{

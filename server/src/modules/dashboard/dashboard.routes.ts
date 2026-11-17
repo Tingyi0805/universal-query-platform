@@ -1,7 +1,15 @@
+import {createChartTestManagementRouter} from "./dashboardChartTestManagement.routes.js";
+import {createChartLayoutRouter} from "./dashboardChartLayout.routes.js";
+import {chartAuthorizedTestEnabled,requireChartAuthorizedTest} from "./dashboardChartAuthorizedTest.js";
+import {readDashboardChartPlaybackControl} from "./dashboardChartInheritedPlayback.js";
 import { createDrilldownRouter, validateDrillLayout } from "./dashboardDrilldown.routes.js";
 import { createDeviceEnrollmentService } from "./dashboardDeviceEnrollment.service.js";
 import { createKioskRouter } from "./dashboardKiosk.routes.js";
 import { createUserPlaybackRouter } from "./dashboardUserPlayback.routes.js";
+import {
+  CHART_USER_PROJECTION_HTTP_RELEASE_APPROVED,
+  createChartUserProjectionRouter,
+} from "./dashboardChartUserProjection.routes.js";
 import { createDeviceManagementRouter, legacyDeviceWriteGuard } from "./dashboardDeviceManagement.routes.js";
 import { createDeviceManagementService } from "./dashboardDeviceManagement.service.js";
 import { deviceManagementStore } from "./dashboardDeviceManagement.repository.js";
@@ -16,10 +24,21 @@ import { createQueryModeRouter } from "./dashboardQueryMode.routes.js";
 import { createQueryModeService } from "./dashboardQueryMode.service.js";
 import { queryModeStore, readDashboardQueryMode } from "./dashboardQueryMode.repository.js";
 import { createQueryDeviceRouter } from "./dashboardQueryDevice.routes.js";
+import {
+  CHART_DEVICE_PROJECTION_HTTP_RELEASE_APPROVED,
+  createChartDeviceProjectionRouter,
+} from "./dashboardChartDeviceProjection.routes.js";
 import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
 // Issue #89: production CHART projection adapter remains hard-disabled until
 // sealed Widget, DB 928, trusted aggregate and HTTP release are approved.
+import { CHART_CREATE_HTTP_RELEASE_APPROVED, createChartCreateRouter } from "./dashboardChartCreate.routes.js";
+import {createDormantSinglePoolChartCreate} from "./dashboardChartLocalJwtSqlCreate.js";
+import {getPlatformDbPool} from "../../config/database.js";
+import {
+  CHART_SAVED_READBACK_HTTP_RELEASE_APPROVED,
+  createChartSavedReadbackRouter,
+} from "./dashboardChartSavedReadback.routes.js";
 import {
   CHART_PROJECTION_HTTP_RELEASE_APPROVED,
   createChartProjectionRouter,
@@ -211,9 +230,37 @@ const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPla
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
   execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 
+// The existing SQL repositories and audited Query delivery are shared by
+// the two separate, permanently disabled designer and device coordinators.
+// Public-device authorization MUST use its own Token/IP and privacy gate.
+const chartTrustReaders = createDormantChartTrustReaders();
+const chartProjectionFor = (enabled:()=>boolean) => createDormantChartCoordinator({
+  enabled,
+  readSavedWidget: chartTrustReaders.readSavedWidget,
+  createFactsReader: createDormantSqlChartFactsReader,
+  auditedPage: queryExecution,
+  readFence: readChartRevisionFence,
+  readPublicReview: chartTrustReaders.readPublicReview,
+  readDashboardPlaybackControl: readDashboardChartPlaybackControl,
+});
+const trustedChartProjection = chartProjectionFor(
+  () => CHART_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled());
+const trustedDeviceChartProjection = chartProjectionFor(
+  () => CHART_DEVICE_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled());
+const trustedUserChartProjection = chartProjectionFor(
+  () => CHART_USER_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled());
+
 const deviceEnrollment = createDeviceEnrollmentService(deviceManagementStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT && env.DASHBOARD_QUERY_DEVICE_PLAYBACK);
 export const dashboardRouter = Router();
-dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect, enroll: deviceEnrollment.enroll}));
+// Test activation comes from a server-owned, expiring exact-target file, NEVER HTTP data.
+// Outside test mode, original immutable production switches still decide availability.
+dashboardRouter.use(async(req,res,next)=>{
+ const match=/^\/(?:device\/)?([1-9][0-9]*)\/(?:charts\/v1|playback\/v1\/charts)(?:\/|$)/.exec(req.path);
+ if(!match||!chartAuthorizedTestEnabled()){next();return;}
+ try{await requireChartAuthorizedTest(Number(match[1]));next();}
+ catch{res.setHeader("Cache-Control","no-store");res.status(404).json({error:{code:"CHART_NOT_AVAILABLE"}});}
+});
+dashboardRouter.use(createKioskRouter(() => ({origin: env.DASHBOARD_PUBLIC_CLIENT_ORIGIN, key: env.DASHBOARD_KIOSK_COOKIE_KEY, enabled: env.DASHBOARD_QUERY_DEVICE_PLAYBACK, chartTestEnabled:chartAuthorizedTestEnabled(), trustedProxies: env.TRUST_PROXY_ENABLED ? env.TRUSTED_PROXY_ADDRESSES : []}), {check: checkDashboardDisplayDevice, mode: readDashboardQueryMode, inspect: queryExecution.inspect, enroll: deviceEnrollment.enroll}));
 
 dashboardRouter.get("/device/:id/layout", async (req, res, next) => {
   try {
@@ -311,25 +358,72 @@ dashboardRouter.use(createDashboardDevicePageRouter({ getQueryAccessRevision, ch
   getDataset, getDatasetSensitivitySnapshot: getDashboardSensitivitySnapshot, getDashboardLayout, listDashboardDataSources, executeSavedDataset,
   auditPatientListIfConfigured: auditDashboardPatientList, listReportColumns, listDatasetParameters, getDataSourcePlaybackState, legacySourceIsQueryBound, getApprovalEvidence: getDashboardApprovalEvidence }));
 
+// Device CHART projection is a *separate* pre-JWT route: it never accepts a
+// designer's JWT as device authority. Its gate is hard OFF until reviewed.
+dashboardRouter.use(createChartDeviceProjectionRouter({
+  approved: () => CHART_DEVICE_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled(),
+  mode: readDashboardQueryMode,
+  checkDevice: checkDashboardDisplayDevice,
+  project: async(...args)=>{await requireChartAuthorizedTest(args[0]);const r=await trustedDeviceChartProjection(...args);await requireChartAuthorizedTest(args[0]);return r;},
+}));
+// Read-only device capability: no JWT/cookie substitution; actual projection still rechecks Token/IP/mode/privacy.
+dashboardRouter.get("/device/:id/charts/v1/capabilities",async(req,res)=>{
+ res.setHeader("Cache-Control","no-store");
+ if(!chartAuthorizedTestEnabled()){res.json({playback:false});return;}
+ try{const d=Number(req.params.id),token=req.header("X-Dashboard-Device-Token")??"";
+  if(!/^[A-Za-z0-9_-]{43}$/.test(token)){res.json({playback:false});return;}
+  const v=await checkDashboardDisplayDevice(d,token,getRequestSourceIp(req));
+  res.json({playback:v.status==="VALID"});
+ }catch{res.json({playback:false});}
+});
 dashboardRouter.use(authenticateJwt);
+dashboardRouter.use(createChartTestManagementRouter());
+// Authorized test CHART layout edits share existing Dashboard security boundary.
+dashboardRouter.use(createChartLayoutRouter());
 dashboardRouter.use(createDrilldownRouter());
 dashboardRouter.use("/:id/query-sources/v1/layout", requirePermission("DESIGN_QUERY"), validateDrillLayout);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
-// Real server repositories and audited Query-only delivery are bound here.
-// Both release gates remain false: no CHART SQL reads, live data or DML occur.
-const chartTrustReaders = createDormantChartTrustReaders();
-const trustedChartProjection = createDormantChartCoordinator({
-  enabled: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
-  readSavedWidget: chartTrustReaders.readSavedWidget,
-  createFactsReader: createDormantSqlChartFactsReader,
-  auditedPage: queryExecution,
-  readFence: readChartRevisionFence,
-  readPublicReview: chartTrustReaders.readPublicReview,
-});
 dashboardRouter.use(createChartProjectionRouter({
-  approved: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED,
-  project: trustedChartProjection,
+  approved: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled(),
+  project: async(...args)=>{await requireChartAuthorizedTest(args[0]);const r=await trustedChartProjection(...args);await requireChartAuthorizedTest(args[0]);return r;},
+}));
+// Public user CHART playback is a distinct, VIEW_QUERY/EXECUTE_QUERY-only
+// route. The user release gate remains compiled OFF, separate from designer.
+dashboardRouter.use(createChartUserProjectionRouter({
+  approved: () => CHART_USER_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled(),
+  readSession: getTokenSessionState,
+  project: async(...args)=>{await requireChartAuthorizedTest(args[0]);const r=await trustedUserChartProjection(...args);await requireChartAuthorizedTest(args[0]);return r;},
+}));
+// Option A: current UQP LOCAL JWT is the authenticated actor authority.
+// The dedicated SQL Writer adapter is wired by dependency, but BOTH the
+// HTTP and Writer hard release switches are OFF. There is no signer/Issuer,
+// no JWT transfer to SQL and no SQL connection until explicitly approved.
+// The planned Writer stored procedure must atomically recheck all live RBAC,
+// TokenVersion, Query/Dataset versions, replay and audit on the SQL side.
+const chartLocalJwtCreate=createDormantSinglePoolChartCreate({
+  // Option A: retain one existing UQP SQL login and the verified JWT actor.
+  // Never activate until the DB-owned procedure has been accepted in Gate 3.
+  enabled:chartAuthorizedTestEnabled,
+  getPool:getPlatformDbPool,
+});
+dashboardRouter.use(createChartCreateRouter({
+  approved: () => CHART_CREATE_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled(),
+  create: async (plan) => {
+    // Do NOT forward the original Bearer to SQL or a second service.
+    await requireChartAuthorizedTest(plan.dashboardId);
+    const receipt=await chartLocalJwtCreate(plan);
+    if(!receipt)throw Error("CHART_LOCAL_JWT_WRITER_NOT_RELEASED");
+    return receipt;
+  },
+}));
+// The dedicated author-only persisted Widget+Seal readback is separate from
+// public projection and requires a DB-verified original designer JWT.
+// Release stays independently compiled OFF.
+dashboardRouter.use(createChartSavedReadbackRouter({
+  approved: () => CHART_SAVED_READBACK_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled(),
+  readSavedWidget: chartTrustReaders.readSavedWidget,
+  readSession: getTokenSessionState,
 }));
 dashboardRouter.use(createQuerySourceExecutionRouter(queryExecution));
 dashboardRouter.use(createUserPlaybackRouter(queryExecution, { mode: readUserPlaybackMode, dashboard: getDashboard, layout: getDashboardLayout, reportColumns: listReportColumns }));

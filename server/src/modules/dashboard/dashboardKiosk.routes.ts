@@ -6,7 +6,7 @@ import { z } from "zod";
 import { getClientIp, requestHost, requestNetwork } from "../../utils/clientIp.js";
 import type { ExecutionSubject } from "./dashboardQuerySourceExecution.js";
 
-type Configuration = { origin?: string; key?: string; enabled: boolean; trustedProxies: string[] };
+type Configuration = { origin?: string; key?: string; enabled: boolean; chartTestEnabled?:boolean; trustedProxies: string[] };
 type Dependencies = {
   enroll?: ReturnType<typeof import("./dashboardDeviceEnrollment.service.js").createDeviceEnrollmentService>["enroll"];
   check: typeof import("./dashboardDevice.repository.js").checkDashboardDisplayDevice;
@@ -155,7 +155,9 @@ export function createKioskRouter(configuration: () => Configuration, deps: Depe
     try {
       const codec = secure(req); trusted = true;
       const dashboardId = idSchema.parse(req.params.id); deviceId = idSchema.parse(req.header("x-uqp-device-id"));
-      if (req.header("x-dashboard-device-token") || !(req.method === "POST" && /^\/(?:data-sources\/[A-Za-z][A-Za-z0-9_]{0,63}\/)?page$/.test(req.path) || req.method === "GET" && req.path === "/layout")) throw new Error("KIOSK_UNAUTHORIZED");
+      const chartCapability=req.method==="GET"&&req.path==="/charts/v1/capabilities";
+      const chartProjection=configuration().chartTestEnabled===true&&req.method==="POST"&&/^\/charts\/v1\/[1-9][0-9]{0,14}\/projection$/.test(req.path);
+      if (req.header("x-dashboard-device-token") || !(chartCapability || chartProjection || req.method === "POST" && /^\/(?:data-sources\/[A-Za-z][A-Za-z0-9_]{0,63}\/)?page$/.test(req.path) || req.method === "GET" && req.path === "/layout")) throw new Error("KIOSK_UNAUTHORIZED");
       const grant = codec.open(cookie(req,"session",deviceId),"session",dashboardId,deviceId,true);
       proven=grant;
       res.on("finish",()=>{if(res.statusCode>=400)purgeDashboardDeviceSnapshots(dashboardId,deviceId!);});

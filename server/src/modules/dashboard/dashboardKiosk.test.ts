@@ -117,3 +117,18 @@ test("D2-A pre-suspend persistent and session cookies never recover after restor
  assert.equal((await f.request("kiosk/session",{deviceId:7},{cookie:jar})).status,401);
  assert.equal(f.state.delivered,0);
 });
+
+test("cookie CHART transport permits only capability and authorized test projection, retaining Origin/device checks",async t=>{
+ const f=await setup(t),jar=cookies(await f.enroll());let deliveries=0;
+ f.app.get("/api/dashboards/device/1/charts/v1/capabilities",(req,res)=>res.json({cookieVerified:req.header("x-dashboard-device-token")===f.state.token}));
+ f.app.post("/api/dashboards/device/1/charts/v1/88/projection",(req,res)=>{deliveries++;res.json({cookieVerified:req.header("x-dashboard-device-token")===f.state.token});});
+ const headers={cookie:jar,"x-uqp-device-id":"7"};
+ assert.equal((await (await f.request("charts/v1/capabilities",undefined,headers,"GET")).json()).cookieVerified,true);
+ assert.equal((await f.request("charts/v1/88/projection",{},headers)).status,401);assert.equal(deliveries,0);
+ f.config.chartTestEnabled=true;
+ assert.equal((await (await f.request("charts/v1/88/projection",{},headers)).json()).cookieVerified,true);assert.equal(deliveries,1);
+ for(const extra of [{origin:"https://evil.test"},{"x-uqp-device-id":"8"},{"x-dashboard-device-token":f.state.token}] as Record<string,string>[])
+  assert.equal((await f.request("charts/v1/88/projection",{},{...headers,...extra})).status,401);
+ assert.equal((await f.request("charts/v1/88/privacy-review",{},headers)).status,401);
+ f.state.revoked=true;assert.equal((await f.request("charts/v1/88/projection",{},headers)).status,401);assert.equal(deliveries,1);
+});

@@ -1,3 +1,12 @@
+import {newNativeChartRequestId,canCreateChartOnActivatedDashboard} from "../dashboard/nativeChartCreate";
+import {DashboardChartLayoutControls,type ChartLayoutGeometry} from "../components/DashboardChartLayoutControls";
+import {DashboardChartPrivacySummary} from "../components/DashboardChartPrivacySummary";
+import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
+import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
+  hasCreatedSealedChartInLayout,confirmsNativeChartSavedReadback} from "../dashboard/nativeChartCreate";
+import type {ChartDraft} from "../dashboard/chartDraft";
+import { mayRequestSealedChartProjection } from "../dashboard/nativeChartPlayback";
+import { DashboardSavedChartWidget } from "../components/DashboardSavedChartWidget";
 import { DashboardChartDraftEditor } from "../components/DashboardChartDraftEditor";
 import { ChartPlacementNumberInput } from "../components/ChartPlacementNumberInput";
 import { DashboardDrilldownEditor } from "../components/DashboardDrilldownEditor";
@@ -44,7 +53,7 @@ type PreviewResult = {
 type SupplementalSource = { sourceKey: string; refreshSeconds: number; isEnabled: boolean; queryDefinitionId: number | null };
 type SupplementalPreview = { result: { columns: { name: string }[]; rows: Record<string, unknown>[] } };
 
-type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER";
+type WidgetType = "TEXT" | "PARAMETER" | "FIELD" | "CLOCK" | "PAGE_INFO" | "COUNTDOWN" | "TABLE" | "CONTAINER" | "CHART";
 
 type LayoutWidget = {
   id?: number | null;
@@ -61,6 +70,7 @@ type LayoutWidget = {
   alignment: "LEFT" | "CENTER" | "RIGHT";
   config: Record<string, unknown>;
   sortOrder: number;
+  chartLayoutRevision?:string;
 };
 
 type LayoutProfile = {
@@ -92,6 +102,7 @@ const widgetLabels: Record<WidgetType, string> = {
   COUNTDOWN: "換頁倒數",
   TABLE: "資料表格",
   CONTAINER: "區塊容器",
+  CHART: "受控圖表（唯讀）",
 };
 
 const fontOptions = [
@@ -176,11 +187,55 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const activeRef=useRef(active);activeRef.current=active;
   const previewRead=useRef(0),previewRequest=useRef<AbortController|null>(null);
   const [savedProfiles,setSavedProfiles]=useState<string|null>(null);
-  const { accessToken } = useAuth();
+  // Preserve the loaded trust boundary even if a profile is removed locally.
+  const [loadedSealedChartPresent,setLoadedSealedChartPresent]=useState(false);
+  const { accessToken, hasPermission, user } = useAuth();
+  const [chartOnline, setChartOnline] = useState(() => navigator.onLine);
+  const [nativeChartCreateCapable,setNativeChartCreateCapable]=useState(false);
+  const [chartTargetReady,setChartTargetReady]=useState(false);
+  // Editing an already-sealed CHART is NOT the same action as creating a
+  // new CHART: source binding/conversion rules must not block safe removal.
+  type LayoutManageReason="READY"|"TEST_AUTHORIZATION_INACTIVE"|
+    "TEST_TARGET_NOT_READY"|"PERMISSION_DENIED"|
+    "DASHBOARD_QUERY_ONLY_REQUIRED"|"UNAVAILABLE";
+  const [chartLayoutCapability,setChartLayoutCapability]=useState<{
+    canManage:boolean;reason:LayoutManageReason;
+  }|null>(null);
+  const [nativeChartCreateBusy,setNativeChartCreateBusy]=useState(false);
+  const nativeChartCreateInFlight=useRef(false);
+  const [layoutWriteRequiresReload,setLayoutWriteRequiresReload]=useState(false);
+  // After an ambiguous POST, prohibit a second request with a fresh UUID
+  // until the operator explicitly reloads server-authoritative Widget state.
+  const [chartCreateMustReload,setChartCreateMustReload]=useState(false);
+  useEffect(()=>{
+    setNativeChartCreateCapable(false);
+    if(!active||!accessToken||
+      !Number.isSafeInteger(dashboardId)||dashboardId<=0)return;
+    let stopped=false;
+    void apiRequest<{canCreate:boolean}>(
+      `/dashboards/${dashboardId}/charts/v1/capabilities`,{},accessToken)
+      .then(value=>{
+        if(!stopped&&value!==null&&
+          Object.keys(value).sort().join("|")==="canCreate"&&
+          value.canCreate===true)setNativeChartCreateCapable(true);
+      }).catch(()=>{if(!stopped)setNativeChartCreateCapable(false);});
+    return ()=>{stopped=true;};
+  },[active,accessToken,dashboardId]);
+  useEffect(() => {
+    const update = () => setChartOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
 
   const [drillPending,setDrillPending]=useState(false);
   const [rootQueryId,setRootQueryId]=useState(0);
   const [profiles, setProfiles] = useState<LayoutProfile[]>([]);
+  const profilesLatestRef=useRef(profiles);
+  profilesLatestRef.current=profiles;
   const [activeProfileKey, setActiveProfileKey] = useState("");
   const [selectedWidgetKey, setSelectedWidgetKey] = useState("");
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -248,10 +303,11 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     try {
       configuration??=trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`,{signal:controller.signal},accessToken));
       const supplemental=configuration.sources.filter(source=>source.isEnabled&&source.queryDefinitionId!==null);
-      const primary=await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/page`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)
+      const previewRoute=configuration.isActive===true?"preview":"page";
+      const primary=await apiRequest<PreviewResult>(`/dashboards/${dashboardId}/query-sources/v1/PRIMARY/${previewRoute}`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)
         .then(value=>({...value,reportColumns:[],dashboard:{id:dashboardId,name:configuration!.presentation?.name??"Query-only 設計預覽",code:"",parameters:configuration!.primary.parameters??{},pageSize:configuration!.primary.pageSize,pageSeconds:configuration!.primary.pageSeconds}}))
         .catch(error=>{failures.push(sourcePreviewFailure("PRIMARY",error));return null;});
-      const sources=await Promise.allSettled(supplemental.map(async source=>({key:source.sourceKey,preview:await apiRequest<SupplementalPreview>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/page`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)})));
+      const sources=await Promise.allSettled(supplemental.map(async source=>({key:source.sourceKey,preview:await apiRequest<SupplementalPreview>(`/dashboards/${dashboardId}/query-sources/v1/${encodeURIComponent(source.sourceKey)}/${previewRoute}`,{method:"POST",signal:controller.signal,body:JSON.stringify({page:1})},accessToken)})));
       if(read!==previewRead.current||!activeRef.current)return;
       sources.forEach((result,index)=>{if(result.status==="rejected")failures.push(sourcePreviewFailure(supplemental[index]!.sourceKey,result.reason));});
       setPreview(primary);setSupplementalPreviews(Object.fromEntries(sources.filter((r):r is PromiseFulfilledResult<{key:string;preview:SupplementalPreview}>=>r.status==="fulfilled").map(r=>[r.value.key,r.value.preview])));
@@ -272,13 +328,18 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       // Bind the saved layout to its version using a bracketed read. Reading a
       // newer version after an older layout alone could authorize a stale overwrite.
       setSourceVersion(undefined);
+      setChartTargetReady(false);
+      setChartLayoutCapability(null);
       let configuration: QuerySourceConfiguration | null = null;
       try { configuration = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken)); }
       catch (error) { failures.push(dashboardOperationError(error)); }
       const layoutResult = await apiRequest<{ profiles: Array<Omit<LayoutProfile, "clientKey" | "widgets"> & { widgets: Omit<LayoutWidget, "clientKey">[] }> }>(`/dashboards/${dashboardId}/layout`, {}, accessToken);
       if (sequence !== loadSequence.current) return;
       const loadedProfiles = layoutResult.profiles.map(withClientKeys);
+      setLoadedSealedChartPresent(hasSealedChartWidgets(loadedProfiles));
       setSavedProfiles(JSON.stringify(loadedProfiles));setProfiles(loadedProfiles);
+      setLayoutWriteRequiresReload(false);
+      setChartCreateMustReload(false);
       setActiveProfileKey(loadedProfiles.find(profile => profile.isDefault)?.clientKey ?? loadedProfiles[0]?.clientKey ?? "");
       if (configuration) {
         setRootQueryId(configuration.primary.queryDefinitionId ?? 0);
@@ -286,8 +347,25 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
         if (sequence !== loadSequence.current) return;
         if (after.version !== configuration.version) throw Object.assign(new Error(), { code: "QUERY_SOURCE_VERSION_CONFLICT" });
         setSourceVersion(configuration.editable && !configuration.primary.requiresConversion && configuration.sources.every(source => source.queryDefinitionId !== null) ? configuration.version : undefined);
-        if (!configuration.editable) failures.push("此 Dashboard 仍啟用或版本不可寫；僅供查看，須安全停用後重新載入。");
+        setChartTargetReady(canCreateChartOnActivatedDashboard(configuration));
+        if (!configuration.editable) setNotice("此 Dashboard 已啟用：一般版型僅供查看；受控 CHART 可新增至已保存版型。其他版面修改仍需先安全停用。");
       }
+      // Separate read-only availability query. The SQL mutation still
+      // revalidates all verified-JWT, Test, Seal and Audit requirements.
+      try{
+        const capability=await apiRequest<{
+          canManage:boolean;reason:LayoutManageReason;
+        }>(`/dashboards/${dashboardId}/charts/v1/layout-capabilities`,{},accessToken);
+        if(sequence!==loadSequence.current)return;
+        if(capability&&
+          Object.keys(capability).sort().join("|")==="canManage|reason"&&
+          typeof capability.canManage==="boolean"&&
+          ["READY","TEST_AUTHORIZATION_INACTIVE","TEST_TARGET_NOT_READY",
+           "PERMISSION_DENIED","DASHBOARD_QUERY_ONLY_REQUIRED","UNAVAILABLE"]
+            .includes(capability.reason)&&
+          (capability.canManage===(capability.reason==="READY")))
+          setChartLayoutCapability(capability);
+      }catch{/* A missing/failed capability never enables any write. */}
       const supplemental: SupplementalSource[] = configuration?.sources.map(source => ({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled), queryDefinitionId: source.queryDefinitionId })) ?? [];
       setSupplementalSources(supplemental);
       if(failures.length)setError(failures.join("\n"));
@@ -302,7 +380,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   useEffect(() => { setProfiles([]); setActiveProfileKey(""); setSelectedWidgetKey(""); void load(); return () => { loadSequence.current++;++previewRead.current;previewRequest.current?.abort(); }; }, [load]);
   useEffect(() => {
     const changed = (event: Event) => { const detail = (event as CustomEvent).detail;
-      if (detail?.dashboardId === dashboardId && detail.origin !== "layout") { setSourceVersion(undefined); setError("設定已變更；版型草稿保留，請先另行保存，再重新載入版型與版本。禁止自動覆寫。"); }
+      if (detail?.dashboardId === dashboardId && detail.origin !== "layout") { setSourceVersion(undefined); setChartTargetReady(false); setError("設定已變更；版型草稿保留，請先另行保存，再重新載入版型與版本。禁止自動覆寫。"); }
     };
     window.addEventListener("uqp.dashboard.configuration.changed", changed);
     return () => window.removeEventListener("uqp.dashboard.configuration.changed", changed);
@@ -479,7 +557,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       : {
           ...profile,
           config: { ...profile.config, ...patch },
-          widgets: profile.widgets.map((widget) => ({
+          widgets: profile.widgets.map((widget) => widget.widgetType === "CHART" ? widget : ({
             ...widget,
             fontSize: patch.fontSize ?? widget.fontSize,
             config: {
@@ -493,7 +571,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function addWidget(widgetType: WidgetType) {
-    if (!activeProfile) return;
+    if (!activeProfile || widgetType === "CHART") return;
 
     const defaults: Record<WidgetType, Pick<LayoutWidget,
       "width" | "height" | "fontSize" | "title" | "staticText">> = {
@@ -505,6 +583,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       COUNTDOWN: { width: 420, height: 70, fontSize: 28, title: "換頁倒數", staticText: null },
       TABLE: { width: 1000, height: 520, fontSize: 36, title: null, staticText: null },
       CONTAINER: { width: 700, height: 260, fontSize: 24, title: "區塊", staticText: null },
+      CHART: { width: 620, height: 360, fontSize: 20, title: "圖表", staticText: null },
     };
 
     const preset = defaults[widgetType];
@@ -551,7 +630,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function updateSelectedWidget(patch: Partial<LayoutWidget>) {
-    if (!activeProfile || !selectedWidget) return;
+    if (!activeProfile || !selectedWidget || selectedWidget.widgetType === "CHART") return;
 
     setProfiles((current) => current.map((profile) => {
       if (profile.clientKey !== activeProfile.clientKey) return profile;
@@ -573,7 +652,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function deleteSelectedWidget() {
-    if (!activeProfile || !selectedWidget) return;
+    if (!activeProfile || !selectedWidget || selectedWidget.widgetType === "CHART") return;
     setProfiles((current) => current.map((profile) =>
       profile.clientKey === activeProfile.clientKey
         ? { ...profile, widgets: profile.widgets.filter((widget) => widget.clientKey !== selectedWidget.clientKey) }
@@ -584,6 +663,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
   function startDrag(event: ReactPointerEvent, widget: LayoutWidget) {
     if (event.button !== 0) return;
+    if (widget.widgetType === "CHART") {
+      setSelectedWidgetKey(widget.clientKey);
+      return;
+    }
     event.preventDefault();
     setSelectedWidgetKey(widget.clientKey);
     setDrag({
@@ -596,6 +679,23 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   function renderWidget(widget: LayoutWidget) {
+    if (widget.widgetType === "CHART") {
+      // Only a stored positive Widget ID may be projected; ConfigJson, raw
+      // Query rows and local draft state are never used as chart data.
+      const allowed = mayRequestSealedChartProjection({
+        widgetType: widget.widgetType,
+        dashboardId, widgetId: widget.id ?? 0,
+        queryPreview: true, deviceMode: false, userRoute: false,
+        previewAuthorized: active && !embedded && sourceVersion !== undefined && preview !== null,
+        online: chartOnline, hasDataWarning: Boolean(error),
+        accessTokenPresent: Boolean(accessToken),
+        canDesignQuery: hasPermission("DESIGN_QUERY"),
+        canExecuteQuery: hasPermission("EXECUTE_QUERY"),
+      });
+      return <DashboardSavedChartWidget dashboardId={dashboardId}
+        widgetId={widget.id ?? 0} authorized={allowed}
+        accessToken={accessToken} refreshKey={sourceVersion ?? ""}/>;
+    }
     const selectedSource = String(widget.config?.dataSourceKey ?? "PRIMARY");
     const sourcePreview = selectedSource === "PRIMARY" ? preview : supplementalPreviews[selectedSource];
     const widgetColumns = selectedSource === "PRIMARY" ? visibleColumns
@@ -677,13 +777,142 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     );
   }
 
+  const chartSaveBlocked = loadedSealedChartPresent || hasSealedChartWidgets(profiles);
+  const chartLayoutUnavailableReason=chartLayoutCapability===null
+    ?"無法讀取 CHART 版面操作授權，請重新載入版型。"
+    :chartLayoutCapability.reason==="TEST_AUTHORIZATION_INACTIVE"
+      ?"CHART 測試授權未啟用或已到期；請確認測試授權檔期限及 Node 測試環境。"
+    :chartLayoutCapability.reason==="TEST_TARGET_NOT_READY"
+      ?"CHART 測試環境或 SQL 928 保護身分尚未通過驗證。"
+    :chartLayoutCapability.reason==="DASHBOARD_QUERY_ONLY_REQUIRED"
+      ?"此 Dashboard 目前未啟用 Query-only；請先確認現有 Dashboard 狀態。"
+    :chartLayoutCapability.reason==="PERMISSION_DENIED"
+      ?"目前帳號未通過即時設計與執行權限驗證，請確認登入狀態。"
+    :"CHART 版面操作暫時不可用；請重新載入後核對服務。";
+  const nativeChartCreateAllowed=nativeChartCreateCapable &&
+    !chartCreateMustReload &&
+    !nativeChartCreateBusy && !saving && active &&
+    Boolean(activeProfile?.id && Number.isSafeInteger(activeProfile.id)) &&
+    chartTargetReady && !layoutWriteRequiresReload &&
+    savedProfiles!==null && JSON.stringify(profiles)===savedProfiles &&
+    hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY");
+  const chartCreateBlockedReason=chartCreateMustReload
+    ?"上一筆 CHART 建立結果未確認；請先重新載入版型核對，避免重複建立。"
+    :!nativeChartCreateCapable
+    ?"正式 CHART 建立服務尚未核准，現有草稿僅用於合成資料示意。"
+    :!chartTargetReady
+      ?"請先保存停用草稿版型，再至裝置管理啟用 Query-only。受控 CHART 僅能新增至已啟用、已儲存的版型；一般版面編輯仍須停用。"
+    :layoutWriteRequiresReload
+      ?"此版型最近曾以舊版方式儲存；請重新載入，以取得最新的 Profile ID。"
+      :savedProfiles===null||JSON.stringify(profiles)!==savedProfiles
+        ?"版型有尚未儲存的修改；請先儲存，再重新載入版型。"
+        :"必須具備設計與執行權限、有效來源版本以及已儲存的版型，才能新增受控 CHART.";
   const unavailableReferences = [...new Set(profiles.flatMap(profile => profile.widgets
     .filter(widget => widget.widgetType === "FIELD" || widget.widgetType === "TABLE")
     .map(widget => String(widget.config.dataSourceKey ?? "PRIMARY")))
     .filter(key => key !== "PRIMARY" && !supplementalSources.some(source => source.sourceKey === key && source.isEnabled && source.queryDefinitionId !== null)))];
 
+  async function createNativeChart(draft:ChartDraft):Promise<void>{
+    if(nativeChartCreateInFlight.current||!activeProfile)return;
+    if(!nativeChartCreateAllowed){
+      setError(chartCreateBlockedReason);return;
+    }
+    const profileId=activeProfile.id??0;
+    const request=buildNativeChartCreateBody(draft,{
+      dashboardId,profileId,
+      canvasWidth:activeProfile.canvasWidth,canvasHeight:activeProfile.canvasHeight,
+      allowedSources:["PRIMARY",...supplementalSources.filter(s=>
+        s.isEnabled&&s.queryDefinitionId!==null).map(s=>s.sourceKey)],
+      canCreate:nativeChartCreateCapable,
+      hasDesignPermission:hasPermission("DESIGN_QUERY"),
+      hasExecutePermission:hasPermission("EXECUTE_QUERY"),
+      hasSourceVersion:chartTargetReady,
+      layoutUnmodified:savedProfiles!==null&&JSON.stringify(profiles)===savedProfiles,
+      profileIdsCurrent:!layoutWriteRequiresReload,
+    },newNativeChartRequestId());
+    if(!request){setError("圖表設定、來源或版型狀態不符合正式新增條件。");return;}
+    nativeChartCreateInFlight.current=true;
+    setNativeChartCreateBusy(true);setError("");setNotice("");
+    const sequence=loadSequence.current;
+    try{
+      const value=await apiRequest<unknown>(
+        `/dashboards/${dashboardId}/charts/v1`,
+        {method:"POST",body:JSON.stringify(request)},accessToken);
+      const receipt=parseNativeChartCreateReceipt(value);
+      if(!receipt)throw Error("CHART_CREATE_RECEIPT_INVALID");
+      // The public/layout API intentionally strips ConfigJson and seal
+      // evidence. A fresh designer-only sealed DB readback must independently
+      // match the exact Writer receipt/config before the layout check.
+      const sealReadback=await apiRequest<unknown>(
+        `/dashboards/${dashboardId}/charts/v1/${receipt.widgetId}/readback`,
+        {},accessToken);
+      if(!confirmsNativeChartSavedReadback(
+        sealReadback,receipt,request.config))
+        throw Error("CHART_SEAL_READBACK_NOT_CONFIRMED");
+      const readback=await apiRequest<unknown>(
+        `/dashboards/${dashboardId}/layout`,{},accessToken);
+      if(!hasCreatedSealedChartInLayout(readback,profileId,
+        receipt.widgetId,request.placement))
+        throw Error("CHART_READBACK_NOT_CONFIRMED");
+      if(sequence!==loadSequence.current||
+        JSON.stringify(profilesLatestRef.current)!==savedProfiles){
+        setChartCreateMustReload(true);
+        setError("圖表建立的伺服器版型已確認，但設計狀態在傳送期間變更；請先保存其他草稿，再手動重新載入。");
+        return;
+      }
+      await load();
+      setNotice("已確認伺服器儲存 CHART，並重新載入版型。現有舊版儲存 API 不可覆寫受控圖表。");
+    }catch{
+      // Unknown POST outcome must never be auto-retried; a sealed Chart
+      // may already have committed with the same requestId in SQL.
+      setChartCreateMustReload(true);
+      setError("正式 CHART 建立未獲確認或服務尚未開放。請先重新載入版型查核，不要直接重複提交。");
+    }finally{
+      nativeChartCreateInFlight.current=false;
+      setNativeChartCreateBusy(false);
+    }
+  }
+
+
+  async function changeChartLayout(action:"MOVE"|"HIDE",geometry:ChartLayoutGeometry,expectedVersion:string):Promise<void>{
+    if(!selectedWidget||selectedWidget.widgetType!=="CHART"||
+      !Number.isSafeInteger(selectedWidget.id)||!activeProfile?.id||
+      chartLayoutCapability?.canManage!==true||
+      !hasPermission("DESIGN_QUERY")||!hasPermission("EXECUTE_QUERY")||
+      savedProfiles===null||JSON.stringify(profiles)!==savedProfiles||
+      nativeChartCreateBusy||!active||
+      expectedVersion!==selectedWidget.chartLayoutRevision||
+      !/^[a-f0-9]{64}$/.test(expectedVersion))
+      throw Error("CHART_LAYOUT_NOT_READY");
+    const widgetId=selectedWidget.id!;
+    setError("");setNotice("");
+    try{
+      const result=await apiRequest<{widgetId:number;revision:string;removed:boolean}>(
+        `/dashboards/${dashboardId}/charts/v1/${widgetId}/layout`,
+        {method:"POST",body:JSON.stringify({
+          action,...geometry,expectedVersion,requestId:newNativeChartRequestId(),
+        })},accessToken);
+      if(result?.widgetId!==widgetId||
+        !/^[a-f0-9]{64}$/.test(result.revision)||
+        result.revision===expectedVersion||
+        result.removed!==(action==="HIDE"))
+        throw Error("CHART_LAYOUT_RECEIPT_INVALID");
+      await load();
+      setNotice(action==="HIDE"?
+        "已從此版型移除 CHART；原始 Seal、核准紀錄及稽核保留。":
+        "CHART 位置與尺寸已儲存並重新載入。");
+    }catch(error){
+      setError("受控圖表版型修改尚未獲確認，請重新載入版型核對，避免重複操作。");
+      throw error;
+    }
+  }
+
   async function saveLayout() {
-    if (saving) return;
+    if (saving || nativeChartCreateInFlight.current) return;
+    if (loadedSealedChartPresent || hasSealedChartWidgets(profiles)) {
+      setError("載入時曾存在受控 CHART；舊版儲存 API 不支援安全寫入，即使在草稿中刪除版型也不可覆寫。");
+      return;
+    }
     if(drillPending){setError("下鑽設定尚未完成，請加入層級或取消新增。");return;}
     for(const profile of profiles) {
       const g=profile.config.interactiveDrilldown as DrillGraph|undefined;
@@ -706,7 +935,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       const result = await apiRequest<{ version: string }>(`/dashboards/${dashboardId}/query-sources/v1/layout`, { method: "PUT", body: JSON.stringify({ ...payload, expectedVersion: sourceVersion }) }, accessToken);
       if (sequence !== loadSequence.current) return;
       if (!/^[a-f0-9]{64}$/.test(result.version)) throw new Error("RESPONSE_INVALID");
-      setSavedProfiles(JSON.stringify(profiles));setSourceVersion(result.version); setNotice("Dashboard 版面已儲存。");
+      setSavedProfiles(JSON.stringify(profiles));setSourceVersion(result.version);
+      // Legacy PUT recreates profiles: locally retained IDs are now stale.
+      setLayoutWriteRequiresReload(true);
+      setNotice("Dashboard 版面已儲存。");
       window.dispatchEvent(new CustomEvent("uqp.dashboard.configuration.changed", { detail: { dashboardId, origin: "layout" } }));
     } catch (e) {
       setSourceVersion(undefined); setError(managementError(e));
@@ -723,7 +955,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
     <p>與版面設計共用版型草稿；儲存會保留並提交整份版型。</p>
     <label>時間顯示版型<select aria-label="時間顯示版型" value={activeProfileKey} onChange={e=>setActiveProfileKey(e.target.value)}>{profiles.map(p=><option key={p.clientKey} value={p.clientKey}>{p.name}</option>)}</select></label>
     <div className="dashboard-editor-form">{updateControls}</div>
-    <button type="button" disabled={saving||sourceVersion===undefined||unavailableReferences.length>0} onClick={()=>void saveLayout()}>儲存版面</button>
+    <button type="button" disabled={saving||nativeChartCreateBusy||sourceVersion===undefined||unavailableReferences.length>0||chartSaveBlocked} onClick={()=>void saveLayout()}>儲存版面</button>
     <button type="button" disabled={saving} onClick={()=>{if(window.confirm("重新載入會取代未儲存的版型草稿，確定繼續？"))void load();}}>重新載入版型與版本</button>
     {!active&&error&&<p role="alert">{error}</p>}{!active&&notice&&<p role="status">{notice}</p>}
   </section>,playbackTarget);
@@ -757,7 +989,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
             </button>
           )}
           <button type="button" disabled={saving} onClick={() => { if (window.confirm("重新載入會取代未儲存的版型草稿；請先另行保存。確定重新載入？")) void load(); }}>重新載入版型與版本</button>
-          <button className="primary-button" type="button" disabled={saving || sourceVersion === undefined || unavailableReferences.length > 0} onClick={() => void saveLayout()}>
+          <button className="primary-button" type="button" disabled={saving || nativeChartCreateBusy || sourceVersion === undefined || unavailableReferences.length > 0 || chartSaveBlocked} onClick={() => void saveLayout()}>
             {saving ? "儲存中…" : "儲存版面"}
           </button>
         </div>
@@ -765,6 +997,11 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
       {(!embedded||active)&&error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
       {(!embedded||active)&&notice && <section className="notice">{notice}</section>}
+
+      {chartSaveBlocked && <p role="alert">此 Dashboard 已載入受控 CHART：舊版整頁儲存 API 不可覆寫受控圖表。CHART 位置、大小及移除請使用右側專用設定。</p>}
+      {!embedded&&active&&loadedSealedChartPresent&&hasPermission("MANAGE_USERS")&&
+        <DashboardChartPrivacySummary dashboardId={dashboardId}
+          accessToken={accessToken} actorUserId={user?.id??null}/>}
 
       {unavailableReferences.length > 0 && <p role="alert">Widget 引用來源不可用：{unavailableReferences.join("、")}。既有引用保留，請修正來源或明確變更 Widget；禁止儲存。</p>}
       <p>版型僅透過新版版本化 API 儲存；載入與預覽不會儲存。停用或 pending 來源不能新增引用，既有引用會保留並由後端拒絕不安全儲存。</p>
@@ -878,7 +1115,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
 
           <h2>新增 Widget</h2>
           <div className="layout-widget-toolbox">
-            {(Object.keys(widgetLabels) as WidgetType[]).map((type) => (
+            {(Object.keys(widgetLabels) as WidgetType[]).filter(type => type !== "CHART").map((type) => (
               <button key={type} type="button" onClick={() => addWidget(type)}>
                 ＋ {widgetLabels[type]}
               </button>
@@ -889,6 +1126,10 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
             canvasWidth={activeProfile.canvasWidth}
             canvasHeight={activeProfile.canvasHeight}
             sourceKeys={supplementalSources.filter(s=>s.isEnabled&&s.queryDefinitionId!==null).map(s=>s.sourceKey)}
+            onCreate={createNativeChart}
+            nativeCreateAvailable={nativeChartCreateAllowed}
+            createBusy={nativeChartCreateBusy}
+            createBlockedReason={chartCreateBlockedReason}
           />}
         </aside>
 
@@ -949,7 +1190,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                     {[...activeProfile.widgets].sort((a,b) => a.sortOrder-b.sortOrder).map((widget) => (
                       <div
                         key={widget.clientKey}
-                        className={`layout-widget ${selectedWidgetKey === widget.clientKey ? "selected" : ""}`}
+                        className={`layout-widget ${widget.widgetType === "CHART" ? "layout-widget-readonly" : ""} ${selectedWidgetKey === widget.clientKey ? "selected" : ""}`}
                         style={{
                           left: widget.x,
                           top: widget.y,
@@ -977,7 +1218,26 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
           <h2>Widget 屬性</h2>
           {!selectedWidget && <p className="layout-hint">選取畫布上的 Widget 後即可調整。</p>}
 
-          {selectedWidget && (
+          {selectedWidget?.widgetType === "CHART" && activeProfile && (
+            <DashboardChartLayoutControls
+              key={`${selectedWidget.id}:${selectedWidget.chartLayoutRevision??"no-version"}`}
+              placement={{x:selectedWidget.x,y:selectedWidget.y,
+                width:selectedWidget.width,height:selectedWidget.height,
+                sortOrder:selectedWidget.sortOrder}}
+              version={selectedWidget.chartLayoutRevision??""}
+              canvasWidth={activeProfile.canvasWidth}
+              canvasHeight={activeProfile.canvasHeight}
+              enabled={chartLayoutCapability?.canManage===true&&
+                !nativeChartCreateBusy&&!saving&&!layoutWriteRequiresReload&&active&&
+                savedProfiles!==null&&JSON.stringify(profiles)===savedProfiles&&
+                /^[a-f0-9]{64}$/.test(selectedWidget.chartLayoutRevision??"")&&
+                hasPermission("DESIGN_QUERY")&&hasPermission("EXECUTE_QUERY")}
+              disabledReason={chartLayoutUnavailableReason}
+              onCommit={changeChartLayout}/>
+          )}
+          {selectedWidget?.widgetType === "CHART" && <p role="status">CHART 啟用、停用與播放沿用 Dashboard；不需逐張核准。公開統計仍須符合資料來源的公開顯示授權、小樣本保護及稽核規則。</p>}
+          {selectedWidget?.widgetType === "CHART" && <p role="status">受控 CHART 的資料與 Seal 維持唯讀；位置、大小與移除請使用專用設定，不經舊版儲存版面。</p>}
+          {selectedWidget && selectedWidget.widgetType !== "CHART" && (
             <div className="layout-inspector-form">
               <strong>{widgetLabels[selectedWidget.widgetType]}</strong>
 
