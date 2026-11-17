@@ -58,7 +58,7 @@ QueryRuntime/階層採原WorkstationIdentity取消與generation fence；登入/�
 工作站跨分頁clear只可清資料；在舊JWT Query頁收到PIN身分廣播會登出，重新登入不恢復子層。React StrictMode不重複建立/稽核主層context。
 原Dashboard公共播放、Dataset遮蔽、Query/Excel授權及PIN路由未改；原QueryRuntime資料交付仍走舊服務。新增apiDownload取消參數為選填，舊呼叫介面相容。
 
-## 必要SQL：929審查草稿，未安裝
+## 必要SQL：929審查來源，僅隔離CI安裝，未安裝至使用者環境
 
 Inventory基準Runner已至927；923/924/925為既有專用草稿，928由CHART佔用。新增僅
 `database/review/929_query_hierarchy.sql.txt`，不在Runner目錄、不寫SchemaMigration、不授權、不改舊資料。
@@ -67,7 +67,7 @@ Inventory基準Runner已至927；923/924/925為既有專用草稿，928由CHART�
 Runtime做可見性、欄位型別／PK／FK trust／CHECK／default／額外trigger檢查；不把Mock稱為實際Catalog EXACT_MATCH。
 
 實際安裝前：管理員/DBA先核對當時inventory及明確測試Instance/DB，驗證備份與回復，審閱草稿，在自有交易執行並唯讀核對Catalog；失敗完整rollback。
-本PR**不提供自動安裝器、不執行DDL**。Runtime需原UQP讀取/稽核權限，加新表SELECT/INSERT/UPDATE與必要VIEW DEFINITION；DDL權限僅安裝者，不要求sa/db_owner/VIEW SERVER STATE。
+本PR**不提供使用者環境自動安裝器、不在使用者資料庫執行DDL**；下列受控CI只在新建可銷毀DB安裝。Runtime需原UQP讀取/稽核權限，加新表SELECT/INSERT/UPDATE與必要VIEW DEFINITION；DDL權限僅安裝者，不要求sa/db_owner/VIEW SERVER STATE。
 SQL Server與Oracle來源帳號維持既有最小唯讀權限，不接正式HIS驗收。
 
 ## 本次驗證／CI邊界及實機條件
@@ -77,7 +77,7 @@ SQL Server與Oracle來源帳號維持既有最小唯讀權限，不接正式HIS�
 專屬branch只跑針對性CI；source guard鎖定846483f已成功基準，禁止修改927、PIN/Policy/Compiler核心及lockfiles。
 其他分支原CI不變；本分支不重跑不相關SQL/Windows全量或封裝，不把原workflow的有意SKIPPED稱為新實測PASS。
 
-實機 NOT_RUN：929實際DDL/Catalog、受限帳號交易、SQL2019及Oracle來源分頁/COUNT/排序唯一性/索引、雙連線CAS/撤權/1205/1222/rollback/斷線commit unknown、真HMAC/AuditArchive交易及IIS多程序故障。
+f9ac203基準時上述實機均NOT_RUN；本次SQL2019已取得下列真實CI證據。仍NOT_RUN：Oracle11g/THICK、Windows/IIS多程序、實際部署環境的來源索引/執行計畫/負載、929人工安裝與備份回復。不得把這些條件算為本次PASS。
 只在獨立合成環境經核准執行；禁止現有共用正式DB或C:\UQP。需驗證頁曝光與子層遮蔽符合實際資料擁有者設定，不能以姓名/病歷號判定安全。
 
 結論：可審查、可用Fixture驗收的第二階段功能候選；不是整體實機驗收完成，也不是部署許可。
@@ -87,4 +87,30 @@ PIN多層／患者低保證存取、隱藏鍵映射、不相容SQL、正式資�
 
 新增專屬`Query Hierarchy 929 SQL2019 acceptance` workflow，只在GitHub-hosted runner新建SQL2019容器及帶run marker的可銷毀合成DB。固定loopback與identity檢查，非現有Docker socket或醫院DB。安裝全部50份真baseline來源；不安裝CHART928、不改927／928契約。各案預設NOT_RUN，真assertion後才PASS；失敗artifact保留去敏report。執行方法及A–F範圍見`tools/sqlserver-acceptance/hierarchy-929/README.md`。
 
-修正影響分頁與context witness，僅重驗受影響15個案例及Server typecheck/build；不重跑已通過140/18/23。Runtime/PIN開關與患者政策不變。實際SQL結果以新workflow及其report artifact為準，尚未執行／未取得結果不算PASS。Oracle11g/THICK無合格環境為NOT_RUN。Windows/IIS與多worker仍需另外的實機條件，不能因SQL CI通過就直接覆蓋C:\UQP。
+修正影響分頁、context witness、Config鎖定及PAGE稽核識別字；最終重驗受影響27個案例及Server typecheck/build。首輪舊workflow因PR整體diff曾自動觸發一次，已修正為相對f9ac203判斷新增變更；後續不重跑原140/18/23。Runtime/PIN開關與患者政策不變。實際SQL結果以新workflow及其report artifact為準，尚未執行／未取得結果不算PASS。Oracle11g/THICK無合格環境為NOT_RUN。Windows/IIS與多worker仍需另外的實機條件，不能因SQL CI通過就直接覆蓋C:\UQP。
+
+### 已取得的SQL2019證據（2026-11-17，台北時間16:30–16:31）
+
+- 實際程式SHA：`85941f21637f2fa169f339dcb2d72306d7bdda55`。
+- [真SQL CI #4](https://github.com/Tingyi0805/universal-query-platform/actions/runs/44047200088)：Success；Server typecheck/build、受影響27/27通過。
+- 環境：GitHub-hosted Ubuntu新runner、獨立`uqp929-ci` SQL Server2019 Developer容器、Engine15.x、Compatibility150；新建`UQP929_DISPOSABLE_SYNTHETIC`，結束後已銷毀。完整實際ProductVersion/Edition與50份baseline來源hash保存於report.json。
+- 固定Image digest：`mcr.microsoft.com/mssql/server@sha256:debdc21628cddd1a4433371c601c8dee9bad3533ae8b18fe9dc8c5596368b10d`。
+- [去敏Artifact](https://github.com/Tingyi0805/universal-query-platform/actions/runs/44047200088/artifacts/14311204067)：`hierarchy-929-SQL2019-44047200088-1`，SHA256 `40b80d9b8feab140d449e3aa9f3f44be11e6f9135e7ba858779e1076f21d819f`，保存至2026-12-01；不含SQL原文、資料列、PIN、Credential或HMAC key。
+
+|範圍|實際結果|證據內容|
+|---|---|---|
+|環境／真baseline|2 PASS|實際identity/Engine核對、全部50份001–921/926/927原始Migration；沒有替代父表|
+|A|6 PASS|owner交易必要、DDL rollback、安裝Catalog、repeat拒絕、缺FK／額外欄位拒絕且還原|
+|B|6 PASS|非dbo受限帳號成功CAS寫入；無db_owner/sysadmin/VIEW SERVER STATE；DDL/DELETE/帳號密碼/角色/直接來源讀寫/metadata visibility越權拒絕|
+|C|8 PASS|並行CAS一勝、ACL/TokenVersion撤銷、真1222與1205、Audit/final validation rollback、真TDS COMMIT已送達但ACK攔截斷線仍拒絕成功且不重試|
+|D|9 PASS|COUNT/OFFSET/FETCH、bind、empty metadata、非唯一排序拒絕、插入漂移、等COUNT換鍵、非鍵值變更、ABA恢復語意、真編譯SQL來源交易barrier擋住另一連線INSERT|
+|E|6 PASS|兩層Query ACL、CUSTOM/FULL/OMIT、真患者PAGE HMAC/subject/page number、未確認政策拒絕、指定SQL229稽核故障禁止交付、既有archive函式保存receipt關聯|
+|F|1 NOT_RUN|無合格Oracle11g/THICK環境；階層交付仍BLOCKED|
+
+合計37 PASS、0 FAIL、1 NOT_RUN。先前失敗run保留，不當作通過證據。沒有Mock計入上述SQL案例。C_COMMIT_UNKNOWN使用真SQL已commit、TDS回應被測試proxy丟棄的情境，不是包裝commit()假造成功。
+
+必要最小修正：COUNT/witness/page同一來源交易且拒絕漂移；空JSON使用明確[]；每個受保護RPC同批SET LOCK_TIMEOUT/XACT_ABORT（獨立SET RPC會失效）；已由SQL自動rollback時不重複rollback掩蓋原錯誤；患者稽核INSERT只將保留字RowCount改成[RowCount]，其他稽核程式不改，scope檢查鎖定此單一差異。
+
+B帳號只證明929功能及live JWT重驗所需的最小權限，**不是**完整UQP登入/使用者管理/匯出/維護帳號的權限清單。Archive另以隔離CI migrator執行既有maintenance函式；未授予feature帳號DELETE或封存管理能力。不得直接用此測試帳號取代現有UQP登入DB帳號。
+
+可開始準備**SQL Server限定**的Windows合成測試交付；本次沒有製作ZIP，不可直接覆蓋C:\UQP。仍需人工核准929目標/備份/回復、Windows Node24/IIS與真來源受限帳號的UI驗收。Oracle、PIN多層、正式Source Fence及SQL_LOCK_VERIFIED不解鎖；不合併、不部署。

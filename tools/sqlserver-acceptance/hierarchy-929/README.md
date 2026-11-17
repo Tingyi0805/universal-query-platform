@@ -20,3 +20,5 @@ A：受控DDL/rollback/repeat/partial/catalog；B：最小權限及越權／visi
 錯誤後僅清理擁有正確ExtendedProperty的這一個新DB；容器清理需名稱及run label完全匹配。沒有docker prune、volumes/network刪除或其他容器操作。不操作本機Docker socket。
 
 合格環境必須實際跑完A–E，並審查artifact；NOT_RUN不能算PASS。此CI不代替Windows/IIS、多worker及醫院來源實測，不解鎖PIN或正式部署。SQL_LOCK_VERIFIED不予發放。
+
+已執行證據：CI [44047200088](https://github.com/Tingyi0805/universal-query-platform/actions/runs/44047200088)，來源SHA85941f21637f2fa169f339dcb2d72306d7bdda55，37 PASS/0 FAIL/Oracle 1 NOT_RUN；詳細矩陣見docs/mobile-query-phase2.md。B帳號不是完整UQP登入或管理帳號權限清單；封存由獨立CI維護身份測試，不能將DELETE授給feature帳號。
