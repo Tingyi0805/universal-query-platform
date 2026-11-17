@@ -4,7 +4,6 @@ on:
     # 929 uses the dedicated real-SQL workflow; do not repeat successful 140/18/23.
     paths-ignore:
       - '.github/workflows/query-hierarchy-929.yml'
-      - '.github/workflows/mobile-query-phase2.yml'
       - 'tools/sqlserver-acceptance/hierarchy-929/**'
       - 'tools/validate-mobile-query-phase2-scope.mjs'
       - 'server/src/scripts/queryHierarchy929*'
@@ -106,3 +105,182 @@ jobs:
       - name: Mobile hierarchy, unchanged Date controls and existing PIN isolation browser regression
         working-directory: client
         run: npx playwright test e2e/query-hierarchy.spec.ts e2e/query-date-formats.spec.ts e2e/workstation-pin-runtime.spec.ts --reporter=line
+
+  phase2-windows-test-package:
+    # Tested PR100 source; no database connection, migration, secrets or installation.
+    if: github.event_name == 'pull_request' && github.head_ref == 'feature/mobile-hierarchical-query-phase2-20261117'
+    runs-on: windows-2022
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          architecture: x64
+      - name: Freeze source and security scope
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = '2507da8a3f49825e1ed1e7172d8f56ada1d5a110'
+          git merge-base --is-ancestor $base HEAD
+          if ($LASTEXITCODE) { throw 'PR100_BASELINE_MISMATCH' }
+          $changes = @(git diff --name-only $base HEAD | Where-Object { $_.Trim() })
+          if ($changes.Count -ne 1 -or $changes[0] -ne '.github/workflows/mobile-query-phase2.yml') { throw 'PR100_CODE_CHANGED_AFTER_ACCEPTANCE' }
+          node tools/validate-mobile-query-phase2-scope.mjs
+          if ($LASTEXITCODE) { throw 'PR100_SCOPE_GUARD_FAILED' }
+          $runtime = node -p 'process.platform+":"+process.arch+":"+process.version+":"+process.versions.modules'
+          if ($runtime -ne 'win32:x64:v24.22.1:137') { throw 'PR100_NODE_ABI_MISMATCH' }
+      - name: Build Windows production server runtime
+        working-directory: server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm install --global npm@12.2.1
+          if ($LASTEXITCODE) { throw 'NPM_VERSION_FAILED' }
+          npm ci
+          if ($LASTEXITCODE) { throw 'SERVER_NPM_CI_FAILED' }
+          npm run build
+          if ($LASTEXITCODE) { throw 'SERVER_BUILD_FAILED' }
+          npm prune --omit=dev
+          if ($LASTEXITCODE) { throw 'SERVER_PRUNE_FAILED' }
+          node -e "for(const p of ['mssql','oracledb','odbc']){require(p);console.log(p+':WIN_NATIVE_LOAD_PASS')}"
+          if ($LASTEXITCODE) { throw 'NATIVE_MODULES_INVALID' }
+      - name: Build React client
+        working-directory: client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE) { throw 'CLIENT_NPM_CI_FAILED' }
+          npm run build
+          if ($LASTEXITCODE) { throw 'CLIENT_BUILD_FAILED' }
+      - name: Assemble test bundle; no .env or automatic SQL execution
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = 'uqp-pr100-test'
+          New-Item -ItemType Directory -Force "$pkg/server","$pkg/client","$pkg/database/review","$pkg/docs" | Out-Null
+          Copy-Item 'server/dist' "$pkg/server/dist" -Recurse
+          Copy-Item 'server/node_modules' "$pkg/server/node_modules" -Recurse
+          Copy-Item 'server/package.json' "$pkg/server/package.json"
+          Copy-Item 'server/package-lock.json' "$pkg/server/package-lock.json"
+          Copy-Item 'client/dist' "$pkg/client/dist" -Recurse
+          Copy-Item 'database/review/929_query_hierarchy.sql.txt' "$pkg/database/review/929_query_hierarchy.sql.txt"
+          Copy-Item 'docs/mobile-query-phase2.md' "$pkg/docs/mobile-query-phase2.md"
+          $commit = (git rev-parse HEAD).Trim()
+          [ordered]@{
+            kind='PR100_SQLSERVER_WINDOWS_TEST_ONLY'
+            commit=$commit
+            accepted_code='85941f21637f2fa169f339dcb2d72306d7bdda55'
+            windows_runtime='win32-x64-node-v24.22.1-abi137'
+            sql2019_ci='https://github.com/Tingyi0805/universal-query-platform/actions/runs/44047200088'
+            migration929='REVIEW_ONLY_NOT_INSTALLED'
+            pin_hierarchy='DISABLED'
+            chart='NOT_INCLUDED'
+            deployment='NONE'
+          } | ConvertTo-Json | Set-Content "$pkg/test-manifest.json" -Encoding utf8
+          @'
+          PR #100 — SQL Server Windows local synthetic TEST ONLY
+          Never extract into C:\UQP or any existing installed folder.
+
+          1. Unzip into NEW EMPTY folder C:\UQP_PR100_Test.
+          2. Use a DIFFERENT, isolated synthetic SQL Server database. Never reuse
+             hospital/production DB or a test .env pointing to a production DB.
+             Check accepted baseline 927. Review/backup/manually apply 929 in an
+             explicit owner transaction, then verify Catalog in that isolated DB.
+             SQL file: database/review/929_query_hierarchy.sql.txt.
+             If no isolated synthetic DB is available, STOP; do not start UQP.
+          3. Create a NEW server\.env using test-only credentials and fresh
+             JWT_SECRET/DATASOURCE_ENCRYPTION_KEY. Do NOT copy C:\UQP\.env.
+             NODE_ENV=development
+             PORT=3210
+             LISTEN_HOST=127.0.0.1
+             CLIENT_ORIGIN=http://127.0.0.1:5180
+             TRUST_PROXY_ENABLED=false
+             WORKSTATION_PIN_RUNTIME=false
+             Add PLATFORM_DB_* credentials for the disposable DB. Seed only
+             synthetic Users/Roles, Published Queries, Dataset and source rows.
+          4. In PowerShell window 1:
+                cd C:\UQP_PR100_Test\server
+                node dist\server.js
+          5. In PowerShell window 2:
+                cd C:\UQP_PR100_Test
+                node test-host.mjs
+          6. On that SAME Windows PC visit http://127.0.0.1:5180 .
+             Verify Query Publisher hierarchy; row/column/more; page/panel/modal;
+             saved parameters, SQL Server paging, back, masking and audit.
+          7. This localhost host is NOT an IIS/HTTPS or remote phone validation.
+             Oracle11g, PIN hierarchy and Source Fence remain BLOCKED/NOT_RUN.
+          This ZIP excludes .env, credentials, patient data and any installer.
+          '@ | Set-Content "$pkg/README-TEST.txt" -Encoding utf8
+          @'
+          import {createServer,request} from 'node:http';
+          import {readFile,stat} from 'node:fs/promises';
+          import {resolve,extname,sep} from 'node:path';
+          import {fileURLToPath} from 'node:url';
+          const host='127.0.0.1',port=5180,apiPort=3210;
+          const dist=resolve(fileURLToPath(new URL('./client/dist/',import.meta.url)));
+          const mime={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8',
+            '.css':'text/css; charset=utf-8','.json':'application/json',
+            '.svg':'image/svg+xml','.png':'image/png','.ico':'image/x-icon',
+            '.woff2':'font/woff2'};
+          const fail=(res,status,message)=>{res.writeHead(status,{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'});res.end(message);};
+          createServer(async(req,res)=>{
+            if(!['127.0.0.1:5180','localhost:5180'].includes(req.headers.host))return fail(res,400,'Bad Host');
+            let url;try{url=new URL(req.url??'/','http://127.0.0.1:5180');}catch{return fail(res,400,'Bad URL');}
+            if(url.pathname==='/api'||url.pathname.startsWith('/api/')){
+              const h={...req.headers};
+              for(const k of ['host','connection','forwarded','x-forwarded-for','x-forwarded-host','x-forwarded-proto','proxy-connection'])delete h[k];
+              const upstream=request({hostname:host,port:apiPort,path:url.pathname+url.search,method:req.method,
+                headers:{...h,host:'127.0.0.1:3210'}},reply=>{
+                const rh={...reply.headers};delete rh.connection;
+                res.writeHead(reply.statusCode??502,rh);reply.pipe(res);
+              });
+              upstream.on('error',()=>{if(!res.headersSent)fail(res,502,'Local API unavailable');else res.destroy();});
+              req.pipe(upstream);return;
+            }
+            if(req.method!=='GET'&&req.method!=='HEAD')return fail(res,405,'Method not allowed');
+            let decoded;try{decoded=decodeURIComponent(url.pathname);}catch{return fail(res,400,'Bad path');}
+            if(decoded.includes('\\')||decoded.includes('\0'))return fail(res,400,'Bad path');
+            const file=resolve(dist,'.'+decoded);
+            if(file!==dist&&!file.startsWith(dist+sep))return fail(res,403,'Forbidden');
+            try{
+              const info=await stat(file).catch(()=>null);
+              const target=info?.isFile()?file:(!extname(decoded)?resolve(dist,'index.html'):null);
+              if(!target)return fail(res,404,'Not found');
+              const body=await readFile(target);
+              res.writeHead(200,{'Content-Type':mime[extname(target)]??'application/octet-stream',
+                'Content-Length':body.length,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+              res.end(req.method==='HEAD'?undefined:body);
+            }catch{return fail(res,500,'Static host error');}
+          }).listen(port,host,()=>console.log('PR100 LOCAL TEST: http://127.0.0.1:5180'));
+          '@ | Set-Content "$pkg/test-host.mjs" -Encoding utf8
+          $bad = @(Get-ChildItem $pkg -Recurse -File | Where-Object { $_.Name -match '^\.env($|\.)' -or $_.Extension -in @('.pfx','.pem','.key') })
+          if ($bad.Count) { throw 'SECRET_FILE_IN_TEST_BUNDLE' }
+          $all = @(Get-ChildItem $pkg -Recurse -File | Sort-Object FullName)
+          if ($all.Count -lt 100) { throw 'TEST_BUNDLE_MISSING_FILES' }
+          $base = (Resolve-Path $pkg).Path
+          $lines = foreach($f in $all) {
+            $rel = $f.FullName.Substring($base.Length+1).Replace('\','/')
+            $hash = (Get-FileHash $f.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $rel"
+          }
+          [IO.File]::WriteAllLines((Join-Path $base 'SHA256SUMS.txt'),[string[]]$lines,[Text.UTF8Encoding]::new($false))
+          $zip = "UQP-PR100-$($commit.Substring(0,8))-Win-x64-Node24-TEST.zip"
+          Compress-Archive -Path "$pkg/*" -DestinationPath $zip -CompressionLevel Fastest
+          if (!(Test-Path $zip)) { throw 'TEST_ZIP_MISSING' }
+          $sum = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$sum  $zip" | Set-Content "$zip.sha256" -Encoding ascii
+          Write-Host "PR100_WINDOWS_TEST_PACKAGE_READY:$zip:files=$($all.Count):sha256=$sum"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr100-sqlserver-windows-node24-test
+          path: |
+            UQP-PR100-*-Win-x64-Node24-TEST.zip
+            UQP-PR100-*-Win-x64-Node24-TEST.zip.sha256
+          retention-days: 14
+          if-no-files-found: error
