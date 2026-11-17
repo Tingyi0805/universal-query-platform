@@ -27,6 +27,38 @@ const change=z.object({
  requestId:z.uuid(),
 }).strict();
 export type ChartLayoutChange=z.infer<typeof change>;
+export type ChartLayoutAvailability=Readonly<{
+ canManage:boolean;reason:"READY"|"TEST_AUTHORIZATION_INACTIVE"|
+ "TEST_TARGET_NOT_READY"|"PERMISSION_DENIED"|
+ "DASHBOARD_QUERY_ONLY_REQUIRED"|"UNAVAILABLE";
+}>;
+const unavailable=(reason:Exclude<ChartLayoutAvailability["reason"],"READY">):ChartLayoutAvailability=>
+ ({canManage:false,reason});
+/** Read-only hint. A positive result is NOT POST authorization:
+ * writeChartLayout always rechecks session, Dashboard, Seal and Audit.
+ */
+export async function inspectChartLayoutAvailability(input:{
+ dashboardId:number;actorId:number;tokenVersion:number;
+}):Promise<ChartLayoutAvailability>{
+ const {dashboardId,actorId,tokenVersion}=input;
+ if(![dashboardId,actorId,tokenVersion].every(n=>Number.isSafeInteger(n)&&n>0))
+  return unavailable("PERMISSION_DENIED");
+ try{
+  const session=await getTokenSessionState(actorId);
+  if(!session?.isActive||session.tokenVersion!==tokenVersion||
+    !session.permissions.includes("DESIGN_QUERY")||
+    !session.permissions.includes("EXECUTE_QUERY"))
+    return unavailable("PERMISSION_DENIED");
+  const pool=await getPlatformDbPool();
+  if(!pool)return unavailable("UNAVAILABLE");
+  const rows=(await pool.request().input("dashboardId",sql.BigInt,dashboardId).query(
+   "SELECT IsActive,QueryMode FROM uqp.Dashboard WHERE Id=@dashboardId")).recordset;
+  if(rows.length!==1||rows[0].IsActive!==true||
+    rows[0].QueryMode!=="QUERY_ONLY")
+    return unavailable("DASHBOARD_QUERY_ONLY_REQUIRED");
+  return {canManage:true,reason:"READY"};
+ }catch{return unavailable("UNAVAILABLE");}
+}
 export class ChartLayoutError extends Error{
  constructor(readonly code:string,readonly status:number=409){super(code);}
 }
@@ -34,6 +66,7 @@ const deny=(code:string,status=409):never=>{throw new ChartLayoutError(code,stat
 export type ChartLayoutChangeDeps={
  enabled:()=>boolean;
  requireTest:typeof requireChartAuthorizedTest;
+ inspect:typeof inspectChartLayoutAvailability;
  write:(input:{dashboardId:number;widgetId:number;actorId:number;
    tokenVersion:number;change:ChartLayoutChange})=>Promise<{
    widgetId:number;revision:string;removed:boolean;
@@ -126,9 +159,30 @@ export async function writeChartLayout(input:{
 export function createChartLayoutRouter(override:Partial<ChartLayoutChangeDeps>={}){
  const deps:ChartLayoutChangeDeps={
   enabled:()=>CHART_LAYOUT_HTTP_RELEASE_APPROVED||chartAuthorizedTestEnabled(),
-  requireTest:requireChartAuthorizedTest,write:writeChartLayout,...override,
+  requireTest:requireChartAuthorizedTest,inspect:inspectChartLayoutAvailability,
+  write:writeChartLayout,...override,
  };
  const router=Router();
+ // Independent of create-only /charts/v1/capabilities.
+ // Returns a coarse reason, never SQL/user secrets or test-target identity.
+ router.get("/:id/charts/v1/layout-capabilities",async(req,res)=>{
+  res.setHeader("Cache-Control","no-store, max-age=0");
+  const dashboard=id.safeParse(req.params.id);
+  if(!dashboard.success||Object.keys(req.query).length!==0){
+   res.status(400).json({error:{code:"VALIDATION_ERROR"}});return;
+  }
+  if(!deps.enabled()){res.json(unavailable("TEST_AUTHORIZATION_INACTIVE"));return;}
+  const actor=readVerifiedChartExecuteActor(req);
+  if(!actor){res.json(unavailable("PERMISSION_DENIED"));return;}
+  try{await deps.requireTest(dashboard.data);}
+  catch{res.json(unavailable("TEST_TARGET_NOT_READY"));return;}
+  const result=await deps.inspect({dashboardId:dashboard.data,
+   actorId:actor.userId,tokenVersion:actor.tokenVersion});
+  if(!deps.enabled()){res.json(unavailable("TEST_AUTHORIZATION_INACTIVE"));return;}
+  try{await deps.requireTest(dashboard.data);}
+  catch{res.json(unavailable("TEST_TARGET_NOT_READY"));return;}
+  res.json(result);
+ });
  router.post("/:id/charts/v1/:widgetId/layout",async(req,res)=>{
   res.setHeader("Cache-Control","no-store");
   if(!deps.enabled()){res.status(404).json({error:{code:"CHART_NOT_AVAILABLE"}});return;}

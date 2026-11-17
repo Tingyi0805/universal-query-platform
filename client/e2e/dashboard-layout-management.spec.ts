@@ -4,7 +4,7 @@ async function setup(page: Page,manage=false) {
   const state = { revision: 1, conflict: false, disabled: false, race: false, pending: false, sourceEnabled: true, missingVersion: false, writes: [] as any[], legacy: [] as string[],
     chartProjectionCalls: [] as {method:string;body:string|null;authorization:string|null}[],
     chartProjectionRevoked: false,
-    chartCreateAllowed:false,chartActivated:false,chartCreateCalls:[] as unknown[],
+    chartCreateAllowed:false,chartLayoutAllowed:false,chartActivated:false,chartCreateCalls:[] as unknown[],
     chartCreateReject:false,
     chartSavedConfig:null as Record<string,unknown>|null,
     chartReadbackCalls:[] as {method:string;authorization:string|null}[],
@@ -21,6 +21,12 @@ async function setup(page: Page,manage=false) {
   await page.route(url => url.pathname.startsWith("/api/"), async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path.endsWith("/configuration")) { await route.fulfill(state.disabled ? { status: 404, json: { error: { code: "QUERY_SOURCE_MANAGEMENT_DISABLED", message: "SQL private synthetic" } } } : { json: config() }); return; }
+    if (path === "/api/dashboards/1/charts/v1/layout-capabilities") {
+      await route.fulfill({json:{
+        canManage:state.chartLayoutAllowed,
+        reason:state.chartLayoutAllowed?"READY":"TEST_AUTHORIZATION_INACTIVE"
+      }});return;
+    }
     if (path === "/api/dashboards/1/charts/v1/capabilities") {
       await route.fulfill({json:{canCreate:state.chartCreateAllowed}});return;
     }
@@ -468,9 +474,9 @@ test("ambiguous native CREATE cannot issue another UUID before server reload",as
 });
 
 
-test("CHART removal writes only dedicated authenticated layout operation, never legacy layout save",async({page})=>{
+test("CHART removal works with independent layout capability even when creation is unavailable",async({page})=>{
  const state=await setup(page,true);
- state.chartActivated=true;state.chartCreateAllowed=true;
+ state.chartActivated=true;state.chartCreateAllowed=false;state.chartLayoutAllowed=true;
  (state.profiles[0]!.widgets as unknown as Array<Record<string,unknown>>).push({
   ...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",title:"受控統計",
   x:1200,y:400,width:450,height:300,
@@ -492,6 +498,8 @@ test("CHART removal writes only dedicated authenticated layout operation, never 
  });
  await page.goto("/designer/dashboards/1/layout");
  await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
+ // No new CHART creation gate: editing a sealed Widget is independently granted.
+ await expect(page.getByRole("button",{name:"從此版型移除 CHART"})).toBeEnabled();
  page.once("dialog",dialog=>void dialog.accept());
  await page.getByRole("button",{name:"從此版型移除 CHART"}).click();
  await expect(page.getByText(/已從此版型移除 CHART/)).toBeVisible();
@@ -559,5 +567,20 @@ test("Dashboard-wide public statistics panel groups shared CHART reviews without
  await expect(panel.getByText(/已提出審查申請/)).toBeVisible();
  expect(requests).toHaveLength(1);
  expect(requests[0]?.action).toBe("REQUEST");
+ expect(state.writes).toHaveLength(0);
+});
+
+test("CHART layout unavailable reason identifies expired test authorization without issuing any write",async({page})=>{
+ const state=await setup(page,true);
+ state.chartActivated=true;state.chartCreateAllowed=false;state.chartLayoutAllowed=false;
+ (state.profiles[0]!.widgets as unknown as Array<Record<string,unknown>>).push({
+  ...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",title:"受控統計",
+  x:80,y:80,width:600,height:360,chartLayoutRevision:"a".repeat(64),
+  staticText:null,config:{}
+ });
+ await page.goto("/designer/dashboards/1/layout");
+ await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
+ await expect(page.getByRole("button",{name:"從此版型移除 CHART"})).toBeDisabled();
+ await expect(page.getByText(/CHART 測試授權未啟用或已到期/)).toBeVisible();
  expect(state.writes).toHaveLength(0);
 });

@@ -3,9 +3,9 @@ import {ChartPlacementNumberInput} from "./ChartPlacementNumberInput";
 export type ChartLayoutGeometry={
  x:number;y:number;width:number;height:number;sortOrder:number;
 };
-export function DashboardChartLayoutControls({placement,version,canvasWidth,canvasHeight,enabled,onCommit}:{
+export function DashboardChartLayoutControls({placement,version,canvasWidth,canvasHeight,enabled,disabledReason,onCommit}:{
  placement:ChartLayoutGeometry;version:string;
- canvasWidth:number;canvasHeight:number;enabled:boolean;
+ canvasWidth:number;canvasHeight:number;enabled:boolean;disabledReason?:string;
  onCommit:(action:"MOVE"|"HIDE",geometry:ChartLayoutGeometry,version:string)=>Promise<void>;
 }){
  const [draft,setDraft]=useState<ChartLayoutGeometry>(placement);
@@ -16,11 +16,11 @@ export function DashboardChartLayoutControls({placement,version,canvasWidth,canv
   draft.x+draft.width<=canvasWidth&&draft.y+draft.height<=canvasHeight&&
   draft.sortOrder>=0&&draft.sortOrder<=1000000;
  const submit=async(action:"MOVE"|"HIDE")=>{
-  if(busy||blocked||!enabled||!valid)return;
+  if(busy||blocked||!enabled||(action==="MOVE"&&!valid))return;
   if(action==="HIDE"&&!window.confirm(
     "確定從目前版型移除這張 CHART？將保留原始 Seal 與稽核紀錄，不能透過舊版儲存功能恢復。"))return;
   setBusy(true);
-  try{await onCommit(action,draft,version);}catch{setBlocked(true);}
+  try{await onCommit(action,action==="HIDE"?placement:draft,version);}catch{setBlocked(true);}
   finally{setBusy(false);}
  };
  return <section className="notice" aria-label="受控圖表位置與移除">
@@ -38,6 +38,6 @@ export function DashboardChartLayoutControls({placement,version,canvasWidth,canv
   <button type="button" className="danger-button" disabled={!enabled||busy||blocked}
    onClick={()=>void submit("HIDE")}>從此版型移除 CHART</button>
   {blocked&&<p role="alert">操作結果尚未確認；請重新載入版型後再執行，避免重複操作。</p>}
-  {!enabled&&<p>只有已啟用 Query-only、具備設計及執行權限且版型未修改時，才可調整受控 CHART。</p>}
+  {!enabled&&<p role="status">{disabledReason??"目前 CHART 版面操作條件尚未通過，請重新載入確認。"}</p>}
  </section>;
 }

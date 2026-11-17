@@ -193,6 +193,14 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [chartOnline, setChartOnline] = useState(() => navigator.onLine);
   const [nativeChartCreateCapable,setNativeChartCreateCapable]=useState(false);
   const [chartTargetReady,setChartTargetReady]=useState(false);
+  // Editing an already-sealed CHART is NOT the same action as creating a
+  // new CHART: source binding/conversion rules must not block safe removal.
+  type LayoutManageReason="READY"|"TEST_AUTHORIZATION_INACTIVE"|
+    "TEST_TARGET_NOT_READY"|"PERMISSION_DENIED"|
+    "DASHBOARD_QUERY_ONLY_REQUIRED"|"UNAVAILABLE";
+  const [chartLayoutCapability,setChartLayoutCapability]=useState<{
+    canManage:boolean;reason:LayoutManageReason;
+  }|null>(null);
   const [nativeChartCreateBusy,setNativeChartCreateBusy]=useState(false);
   const nativeChartCreateInFlight=useRef(false);
   const [layoutWriteRequiresReload,setLayoutWriteRequiresReload]=useState(false);
@@ -321,6 +329,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       // newer version after an older layout alone could authorize a stale overwrite.
       setSourceVersion(undefined);
       setChartTargetReady(false);
+      setChartLayoutCapability(null);
       let configuration: QuerySourceConfiguration | null = null;
       try { configuration = trustedConfiguration(await apiRequest<QuerySourceConfiguration>(`/dashboards/${dashboardId}/query-sources/v1/configuration`, {}, accessToken)); }
       catch (error) { failures.push(dashboardOperationError(error)); }
@@ -341,6 +350,22 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
         setChartTargetReady(canCreateChartOnActivatedDashboard(configuration));
         if (!configuration.editable) setNotice("此 Dashboard 已啟用：一般版型僅供查看；受控 CHART 可新增至已保存版型。其他版面修改仍需先安全停用。");
       }
+      // Separate read-only availability query. The SQL mutation still
+      // revalidates all verified-JWT, Test, Seal and Audit requirements.
+      try{
+        const capability=await apiRequest<{
+          canManage:boolean;reason:LayoutManageReason;
+        }>(`/dashboards/${dashboardId}/charts/v1/layout-capabilities`,{},accessToken);
+        if(sequence!==loadSequence.current)return;
+        if(capability&&
+          Object.keys(capability).sort().join("|")==="canManage|reason"&&
+          typeof capability.canManage==="boolean"&&
+          ["READY","TEST_AUTHORIZATION_INACTIVE","TEST_TARGET_NOT_READY",
+           "PERMISSION_DENIED","DASHBOARD_QUERY_ONLY_REQUIRED","UNAVAILABLE"]
+            .includes(capability.reason)&&
+          (capability.canManage===(capability.reason==="READY")))
+          setChartLayoutCapability(capability);
+      }catch{/* A missing/failed capability never enables any write. */}
       const supplemental: SupplementalSource[] = configuration?.sources.map(source => ({ sourceKey: source.sourceKey, refreshSeconds: source.refreshSeconds, isEnabled: Boolean(source.isEnabled), queryDefinitionId: source.queryDefinitionId })) ?? [];
       setSupplementalSources(supplemental);
       if(failures.length)setError(failures.join("\n"));
@@ -753,6 +778,17 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   }
 
   const chartSaveBlocked = loadedSealedChartPresent || hasSealedChartWidgets(profiles);
+  const chartLayoutUnavailableReason=chartLayoutCapability===null
+    ?"無法讀取 CHART 版面操作授權，請重新載入版型。"
+    :chartLayoutCapability.reason==="TEST_AUTHORIZATION_INACTIVE"
+      ?"CHART 測試授權未啟用或已到期；請確認測試授權檔期限及 Node 測試環境。"
+    :chartLayoutCapability.reason==="TEST_TARGET_NOT_READY"
+      ?"CHART 測試環境或 SQL 928 保護身分尚未通過驗證。"
+    :chartLayoutCapability.reason==="DASHBOARD_QUERY_ONLY_REQUIRED"
+      ?"此 Dashboard 目前未啟用 Query-only；請先確認現有 Dashboard 狀態。"
+    :chartLayoutCapability.reason==="PERMISSION_DENIED"
+      ?"目前帳號未通過即時設計與執行權限驗證，請確認登入狀態。"
+    :"CHART 版面操作暫時不可用；請重新載入後核對服務。";
   const nativeChartCreateAllowed=nativeChartCreateCapable &&
     !chartCreateMustReload &&
     !nativeChartCreateBusy && !saving && active &&
@@ -841,7 +877,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   async function changeChartLayout(action:"MOVE"|"HIDE",geometry:ChartLayoutGeometry,expectedVersion:string):Promise<void>{
     if(!selectedWidget||selectedWidget.widgetType!=="CHART"||
       !Number.isSafeInteger(selectedWidget.id)||!activeProfile?.id||
-      !nativeChartCreateCapable||!chartTargetReady||
+      chartLayoutCapability?.canManage!==true||
       !hasPermission("DESIGN_QUERY")||!hasPermission("EXECUTE_QUERY")||
       savedProfiles===null||JSON.stringify(profiles)!==savedProfiles||
       nativeChartCreateBusy||!active||
@@ -1191,11 +1227,12 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
               version={selectedWidget.chartLayoutRevision??""}
               canvasWidth={activeProfile.canvasWidth}
               canvasHeight={activeProfile.canvasHeight}
-              enabled={nativeChartCreateCapable&&chartTargetReady&&
-                !nativeChartCreateBusy&&active&&
+              enabled={chartLayoutCapability?.canManage===true&&
+                !nativeChartCreateBusy&&!saving&&!layoutWriteRequiresReload&&active&&
                 savedProfiles!==null&&JSON.stringify(profiles)===savedProfiles&&
                 /^[a-f0-9]{64}$/.test(selectedWidget.chartLayoutRevision??"")&&
                 hasPermission("DESIGN_QUERY")&&hasPermission("EXECUTE_QUERY")}
+              disabledReason={chartLayoutUnavailableReason}
               onCommit={changeChartLayout}/>
           )}
           {selectedWidget?.widgetType === "CHART" && <p role="status">CHART 啟用、停用與播放沿用 Dashboard；不需逐張核准。公開統計仍須符合資料來源的公開顯示授權、小樣本保護及稽核規則。</p>}
