@@ -14,6 +14,14 @@ async function fixture(t:import("node:test").TestContext){
   readAdmin:()=>state.admin?{userId:8,tokenVersion:2}:null,
   readPlayback:()=>state.viewer?{userId:8,tokenVersion:2,expiresAt:2000000000,originalBearerHeader:"Bearer synthetic"}:null,
   status:async()=>{state.reads++;return status;},
+  summary:async(d,actor)=>{state.reads++;assert.equal(d,7);
+   assert.equal(actor.userId,8);assert.equal(actor.tokenVersion,2);
+   assert.match(actor.tokenHash,/^[a-f0-9]{64}$/);
+   return {dashboardId:7,dashboardEnabled:true,items:[
+    {widgetId:88,sourceKey:"PRIMARY",categoryColumn:"ROOM",valueColumn:"TOTAL",
+     review:null,currentApproval:false}
+   ]};
+  },
   applyDecision:async(d,w,body,actor)=>{assert.equal(d,7);assert.equal(w,88);assert.deepEqual(actor,{userId:8,tokenVersion:2});
    state.writes++;if(state.fail)throw Error("PRIVATE_SQL_OR_SECRET");assert(!("scope" in body));},
  }));
@@ -56,4 +64,25 @@ test("target denial and decision failure are fail-closed, scrub errors and never
  assert.equal((await f.call("88/privacy-review",{action:"REQUEST",requestId:crypto.randomUUID()})).status,409);assert.equal(f.state.writes,0);
  f.state.target=true;f.state.fail=true;const r=await f.call("88/privacy-review",{action:"REQUEST",requestId:crypto.randomUUID()});
  assert.equal(r.status,409);assert(!JSON.stringify(await r.json()).includes("PRIVATE"));assert.equal(f.state.writes,1);assert.equal(f.state.reads,0);
+});
+
+test("Dashboard-level privacy summary lists one trusted source without issuing playback approvals",async t=>{
+ const f=await fixture(t);
+ const r=await f.call("privacy-summary");
+ assert.equal(r.status,200);
+ assert.match(r.headers.get("cache-control")??"",/no-store/);
+ assert.deepEqual(await r.json(),{
+  dashboardId:7,dashboardEnabled:true,items:[
+   {widgetId:88,sourceKey:"PRIMARY",categoryColumn:"ROOM",valueColumn:"TOTAL",
+    review:null,currentApproval:false}
+  ]
+ });
+ assert.equal(f.state.reads,1);assert.equal(f.state.writes,0);
+ f.state.admin=false;
+ assert.equal((await f.call("privacy-summary")).status,403);
+ f.state.admin=true;f.state.viewer=false;
+ assert.equal((await f.call("privacy-summary")).status,403);
+ f.state.viewer=true;f.state.target=false;
+ assert.equal((await f.call("privacy-summary")).status,503);
+ assert.equal(f.state.writes,0);assert.equal(f.state.reads,1);
 });

@@ -14,6 +14,7 @@ import {createVersionBoundCountProofReader} from "./dashboardChartSqlAggregate.r
 import {chartPublicCountScope} from "./dashboardChartDelivery.coordinator.js";
 import {evaluateServerChartApproval} from "./dashboardChartApproval.policy.js";
 import {datasetPublicDisplayRepository} from "../dataset/datasetPublicDisplay.repository.js";
+import {listDashboardChartPrivacySummary} from "./dashboardChartPrivacySummary.js";
 // Only the existing verified JWT proof and server-owned saved configuration select scope.
 const id=z.coerce.number().int().positive().safe();
 const decision=z.discriminatedUnion("action",[
@@ -74,13 +75,30 @@ async function applyPrivacyDecision(d:number,w:number,body:z.infer<typeof decisi
    else await writers.revokeReview({...body,dashboardId:d,id:body.reviewId,actor});
  }
 const defaults={enabled:chartAuthorizedTestEnabled,requireTest:requireChartAuthorizedTest,
- readAdmin:readVerifiedChartAdminActor,readPlayback:readVerifiedChartPlaybackActor,status,applyDecision:applyPrivacyDecision};
+ readAdmin:readVerifiedChartAdminActor,readPlayback:readVerifiedChartPlaybackActor,status,applyDecision:applyPrivacyDecision,summary:listDashboardChartPrivacySummary};
 export function createChartTestManagementRouter(overrides:Partial<typeof defaults>={}){
  const deps={...defaults,...overrides};
  const router=Router();
  router.get("/:id/charts/v1/test-capabilities",(req,res)=>{
   res.setHeader("Cache-Control","no-store");const a=deps.readPlayback(req);
   res.json({playback:deps.enabled()&&a!==null});
+ });
+ // One read-only management screen per Dashboard. Reuses existing reviewed
+ // SQL scope and audit: no browser flags can approve or revoke statistics.
+ router.get("/:id/charts/v1/privacy-summary",async(req,res)=>{
+  res.setHeader("Cache-Control","no-store, max-age=0");
+  if(!deps.enabled()){res.status(404).json({error:{code:"CHART_NOT_AVAILABLE"}});return;}
+  try{
+   const admin=deps.readAdmin(req),verified=deps.readPlayback(req);
+   if(!admin||!verified){res.sendStatus(403);return;}
+   const d=id.parse(req.params.id);
+   await deps.requireTest(d);
+   const tokenHash=createHash("sha256").update(verified.originalBearerHeader.slice(7)).digest("hex");
+   const result=await deps.summary(d,{userId:admin.userId,
+     tokenVersion:admin.tokenVersion,tokenHash});
+   await deps.requireTest(d);
+   res.json(result);
+  }catch{res.status(503).json({error:{code:"CHART_PRIVACY_SUMMARY_UNAVAILABLE"}});}
  });
  router.get("/:id/charts/v1/:widgetId/status",async(req,res)=>{
   res.setHeader("Cache-Control","no-store");

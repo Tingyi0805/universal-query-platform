@@ -522,3 +522,42 @@ test("sealed CHART controls inherit Dashboard management without per-widget appr
  expect(legacyChartApprovalCalls).toBe(0);
  expect(state.writes).toHaveLength(0);
 });
+
+test("Dashboard-wide public statistics panel groups shared CHART reviews without adding playback approval buttons",async({page})=>{
+ const state=await setup(page,true);
+ state.chartActivated=true;state.chartCreateAllowed=true;
+ for(const id of [88,89]){
+  (state.profiles[0]!.widgets as unknown as Array<Record<string,unknown>>).push({
+   ...state.profiles[0]!.widgets[0]!,id,widgetType:"CHART",title:`受控統計${id}`,
+   x:id===88?1100:1200,y:id===88?200:540,width:400,height:280,
+   chartLayoutRevision:"a".repeat(64),staticText:null,config:{}
+  });
+ }
+ const requests:Record<string,unknown>[]=[];
+ let reviewed=false;
+ await page.route("**/api/dashboards/1/charts/v1/privacy-summary",route=>
+  route.fulfill({json:{dashboardId:1,dashboardEnabled:true,items:[
+   {widgetId:88,sourceKey:"PRIMARY",categoryColumn:"ROOM",valueColumn:"TOTAL",
+    currentApproval:reviewed,review:reviewed?{
+     id:3,status:"REQUESTED",revision:"b".repeat(16),requestedBy:2
+    }:null}
+  ]}}));
+ await page.route("**/api/dashboards/1/charts/v1/88/privacy-review",async route=>{
+  const body=route.request().postDataJSON() as Record<string,unknown>;
+  requests.push(body);reviewed=true;
+  await route.fulfill({json:{sealed:true,revision:"a".repeat(16),privacyReview:{
+   id:3,status:"REQUESTED",revision:"b".repeat(16),requestedBy:2
+  }}});
+ });
+ await page.goto("/designer/dashboards/1/layout");
+ const panel=page.getByLabel("Dashboard 公開統計資料審查");
+ await expect(panel).toBeVisible();
+ await panel.locator("summary").click();
+ await expect(panel.getByText(/來源：PRIMARY/)).toHaveCount(1);
+ await expect(panel.getByRole("button",{name:"核准此版本圖表播放"})).toHaveCount(0);
+ await panel.getByRole("button",{name:"申請此統計來源的公開顯示審查"}).click();
+ await expect(panel.getByText(/已提出審查申請/)).toBeVisible();
+ expect(requests).toHaveLength(1);
+ expect(requests[0]?.action).toBe("REQUEST");
+ expect(state.writes).toHaveLength(0);
+});

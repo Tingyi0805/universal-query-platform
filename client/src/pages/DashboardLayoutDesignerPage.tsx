@@ -1,5 +1,6 @@
 import {newNativeChartRequestId,canCreateChartOnActivatedDashboard} from "../dashboard/nativeChartCreate";
 import {DashboardChartLayoutControls,type ChartLayoutGeometry} from "../components/DashboardChartLayoutControls";
+import {DashboardChartPrivacySummary} from "../components/DashboardChartPrivacySummary";
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
   hasCreatedSealedChartInLayout,confirmsNativeChartSavedReadback} from "../dashboard/nativeChartCreate";
@@ -188,7 +189,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
   const [savedProfiles,setSavedProfiles]=useState<string|null>(null);
   // Preserve the loaded trust boundary even if a profile is removed locally.
   const [loadedSealedChartPresent,setLoadedSealedChartPresent]=useState(false);
-  const { accessToken, hasPermission } = useAuth();
+  const { accessToken, hasPermission, user } = useAuth();
   const [chartOnline, setChartOnline] = useState(() => navigator.onLine);
   const [nativeChartCreateCapable,setNativeChartCreateCapable]=useState(false);
   const [chartTargetReady,setChartTargetReady]=useState(false);
@@ -961,7 +962,11 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
       {(!embedded||active)&&error && <section className="form-error">{error}<SecurityManagementLinks dashboardId={dashboardId} /></section>}
       {(!embedded||active)&&notice && <section className="notice">{notice}</section>}
 
-      {chartSaveBlocked && <p role="alert">此 Dashboard 的已載入版型曾包含受控 CHART：目前僅允許安全檢視，即使先刪除該版型也不允許經舊版 API 覆寫。待專用 CHART 儲存 API 通過獨立驗收後才可編輯。</p>}
+      {chartSaveBlocked && <p role="alert">此 Dashboard 已載入受控 CHART：舊版整頁儲存 API 不可覆寫受控圖表。CHART 位置、大小及移除請使用右側專用設定。</p>}
+      {!embedded&&active&&loadedSealedChartPresent&&hasPermission("MANAGE_USERS")&&
+        <DashboardChartPrivacySummary dashboardId={dashboardId}
+          accessToken={accessToken} actorUserId={user?.id??null}/>}
+
       {unavailableReferences.length > 0 && <p role="alert">Widget 引用來源不可用：{unavailableReferences.join("、")}。既有引用保留，請修正來源或明確變更 Widget；禁止儲存。</p>}
       <p>版型僅透過新版版本化 API 儲存；載入與預覽不會儲存。停用或 pending 來源不能新增引用，既有引用會保留並由後端拒絕不安全儲存。</p>
       {supplementalSources.filter(source => !source.isEnabled || source.queryDefinitionId === null).map(source => <p role="status" key={source.sourceKey}>來源 {source.sourceKey}：{!source.isEnabled ? "已停用" : "pending，尚未選 Query"}；請先處理來源，再確認 Widget 引用。</p>)}
