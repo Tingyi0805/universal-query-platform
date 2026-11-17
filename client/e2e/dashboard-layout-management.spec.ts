@@ -501,21 +501,24 @@ test("CHART removal writes only dedicated authenticated layout operation, never 
  expect(state.writes).toHaveLength(0);
  expect(state.legacy).toHaveLength(0);
 });
-test("sealed CHART admin UI requests audited exact-version decisions and requires valid server readback",async({page})=>{
- const state=await setup(page,true),decisions:{path:string;body:unknown}[]=[];
- (state.profiles[0]!.widgets as unknown[]).push({...state.profiles[0]!.widgets[0],id:88,widgetType:"CHART",title:"受控統計",x:1200,y:400,width:450,height:300,staticText:null,config:{}});
- let playback="UNCONFIRMED",broken=false;
- await page.route("**/api/dashboards/1/charts/v1/88/status",route=>route.fulfill({json:broken?{}:{sealed:true,revision:"1".repeat(16),playbackStatus:playback,privacyReview:null}}));
- await page.route("**/api/dashboards/1/charts/v1/88/playback-approval",async route=>{
-  const body=route.request().postDataJSON();decisions.push({path:new URL(route.request().url()).pathname,body});
-  expect(route.request().headers().authorization).toBe("Bearer synthetic");
-  playback=body.action==="APPROVE"?"APPROVED":"REVOKED";await route.fulfill({json:{status:playback}});
+test("sealed CHART controls inherit Dashboard management without per-widget approval UI",async({page})=>{
+ const state=await setup(page,true);
+ state.chartActivated=true;state.chartCreateAllowed=true;
+ (state.profiles[0]!.widgets as unknown[]).push({...state.profiles[0]!.widgets[0],
+  id:88,widgetType:"CHART",title:"受控統計",x:1200,y:400,width:450,height:300,
+  chartLayoutRevision:"a".repeat(64),staticText:null,config:{}});
+ let legacyChartApprovalCalls=0;
+ await page.route(/\/charts\/v1\/88\/(?:status|playback-approval|privacy-review)$/,route=>{
+  legacyChartApprovalCalls++;
+  return route.fulfill({status:500,json:{error:{code:"LEGACY_CHART_APPROVAL_REJECTED"}}});
  });
- await page.goto("/designer/dashboards/1/layout");await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
- await page.getByRole("button",{name:"核准此版本圖表播放",exact:true}).click();
- await expect(page.getByText(/播放：APPROVED/)).toBeVisible();
- await page.getByRole("button",{name:"撤銷圖表播放",exact:true}).click();await expect(page.getByText(/播放：REVOKED/)).toBeVisible();
- expect(decisions.map(x=>x.body)).toEqual([{action:"APPROVE"},{action:"REVOKE"}]);expect(state.writes).toHaveLength(0);
- broken=true;await page.getByRole("button",{name:"重新載入圖表核准"}).click();
- await expect(page.getByText(/核准狀態無法驗證/)).toBeVisible();await expect(page.getByRole("button",{name:"核准此版本圖表播放",exact:true})).toHaveCount(0);
+ await page.goto("/designer/dashboards/1/layout");
+ await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
+ await expect(page.getByText(/CHART 啟用、停用與播放沿用 Dashboard/)).toBeVisible();
+ await expect(page.getByRole("button",{name:"核准此版本圖表播放"})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"撤銷圖表播放"})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"申請公開彙總審查"})).toHaveCount(0);
+ await expect(page.getByRole("button",{name:"從此版型移除 CHART"})).toBeVisible();
+ expect(legacyChartApprovalCalls).toBe(0);
+ expect(state.writes).toHaveLength(0);
 });
