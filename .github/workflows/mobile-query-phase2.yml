@@ -130,6 +130,11 @@ jobs:
           if ($LASTEXITCODE) { throw 'PR100_BASELINE_MISMATCH' }
           $changes = @(git diff --name-only $base HEAD | Where-Object { $_.Trim() })
           if ($changes.Count -ne 1 -or $changes[0] -ne '.github/workflows/mobile-query-phase2.yml') { throw 'PR100_CODE_CHANGED_AFTER_ACCEPTANCE' }
+          # Windows checkout can turn LF into CRLF; keep exact code semantics while
+          # giving the existing diff guard the same LF bytes as git show.
+          $auditPath = (Resolve-Path 'server/src/modules/audit/patientDisclosure.repository.ts').Path
+          $auditText = [IO.File]::ReadAllText($auditPath)
+          [IO.File]::WriteAllText($auditPath, $auditText.Replace("`r`n", "`n"), [Text.UTF8Encoding]::new($false))
           node tools/validate-mobile-query-phase2-scope.mjs
           if ($LASTEXITCODE) { throw 'PR100_SCOPE_GUARD_FAILED' }
           $runtime = node -p 'process.platform+":"+process.arch+":"+process.version+":"+process.versions.modules'
