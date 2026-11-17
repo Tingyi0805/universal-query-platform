@@ -41,7 +41,7 @@ Context固定120秒、不滑動續期、最多100個、每個2MB/總20MB。只�
 
 `datasetPaging.service.ts` 只讀已儲存 SQL，沿用 assertSelectOnlySql、runtimeParameterDefinitions、coerceRuntimeParameters、compileQuery、原Adapter與Driver bind。
 SQL Server使用綁定OFFSET/FETCH；Oracle使用ROW_NUMBER範圍（兼容11.2語法，11g仍須正確Thick Client，實機未驗證）。
-929驗收修訂：SQL Server的COUNT、唯一排序檢查、有限排序鍵witness及頁查詢共用一個SERIALIZABLE來源交易；只抓該頁原始資料，不先抓整批再slice。保留Dataset.maxRows、timeout及明確capped提示；COUNT BIGINT字串不經不安全Number。
+929驗收修訂：SQL Server的COUNT、唯一排序檢查、有限排序結果witness及頁查詢共用一個SERIALIZABLE來源交易；只抓該頁原始資料，不先抓整批再slice。保留Dataset.maxRows、timeout及明確capped提示；COUNT BIGINT字串不經不安全Number。
 搜尋值、頁數、offset/limit均綁定；欄位只從保存設定和當前NONE政策取得，支援安全Unicode別名。內部Oracle順位欄位不交付。
 
 每頁只對**實際頁raw rows**執行既有患者HMAC／PAGE disclosure，然後套Dataset遮蔽/OMIT，再投影本層可見欄位。
@@ -49,7 +49,7 @@ QUERY_EXECUTE start/final Audit沿用原finalizeDeliveryAudit；患者metadata�
 Patient／一般Audit、SQL、CAS、DB或最終驗權失敗不得交付；設定Writer未知commit不盲目重試。既有Audit Number receipt不安全時拒絕，不String(Number)修復。
 
 限制：只支援可安全包裝的單一SELECT。CTE、既存ORDER BY/OFFSET/FETCH、注釋、多敘述、未知dialect及不支援型別拒絕，不猜測改寫。
-來源交易只涵蓋本頁，不持有跨HTTP交易；相同搜尋／排序後續頁及返回父層必須符合原COUNT及ordered-key witness，漂移時停止並清context。重複的設定排序鍵在SQL分組檢查時拒絕。witness最多涵蓋Dataset上限+1個排序鍵，不傳瀏覽器；不是mutation epoch、外部DDL fence或SQL_LOCK_VERIFIED。來源值完全A→B→A恢復可相同，不宣稱偵測歷史世代。Oracle未具此來源交易證據，階層交付維持BLOCKED；原單層流程不變。
+來源交易只涵蓋本頁，不持有跨HTTP交易；相同搜尋／排序後續頁及返回父層必須符合原COUNT及ordered-result witness，漂移時停止並清context。重複的設定排序鍵在SQL分組檢查時拒絕。witness最多涵蓋Dataset上限+1筆排序後資料，不傳瀏覽器；不是mutation epoch、外部DDL fence或SQL_LOCK_VERIFIED。來源值完全A→B→A恢復可相同，不宣稱偵測歷史世代。Oracle未具此來源交易證據，階層交付維持BLOCKED；原單層流程不變。
 
 ## PIN、清除及舊功能
 

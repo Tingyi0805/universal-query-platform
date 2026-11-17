@@ -10,9 +10,9 @@ async function mock(run:(f:Awaited<ReturnType<typeof setup>>)=>Promise<void>){
 }
 async function setup(){
  const state={previous:"MISSING",next:"2".repeat(16),fail:"",admin:true,commits:0,rollbacks:0,writes:0,audits:0,validations:0,params:[] as Record<string,unknown>[],statements:[] as string[],isolation:0};
- class Tx{async begin(level:number){state.isolation=level;}async commit(){state.commits++;if(state.fail==="commit")throw Error("PRIVATE_COMMIT");}async rollback(){state.rollbacks++;if(state.fail==="rollback")throw Error("PRIVATE_ROLLBACK");}}
+ class Tx{on(){return this;}async begin(level:number){state.isolation=level;}async commit(){state.commits++;if(state.fail==="commit")throw Error("PRIVATE_COMMIT");}async rollback(){state.rollbacks++;if(state.fail==="rollback")throw Error("PRIVATE_ROLLBACK");}}
  class Request{p:Record<string,unknown>={};constructor(readonly tx?:unknown){} input(n:string,_t:unknown,v:unknown){this.p[n]=v;return this;}async query(text:string){
-  state.statements.push(text);state.params.push(this.p);if(text===hierarchyCatalogSql&&state.fail==="schema")throw Error("PRIVATE_PARTIAL");
+  state.statements.push(text);state.params.push(this.p);text=text.replace(/^SET XACT_ABORT ON; SET LOCK_TIMEOUT 5000;\n/,"");if(text===hierarchyCatalogSql&&state.fail==="schema")throw Error("PRIVATE_PARTIAL");
   if(text.includes("SELECT u.Id"))return {recordset:state.admin?[{Id:8}]:[]};
   if(text.includes("SELECT ConfigRowVersion"))return {recordset:state.previous==="MISSING"?[]:[{ConfigRowVersion:Buffer.from(state.previous,"hex")}]};
   if(text.includes("OUTPUT inserted.ConfigRowVersion")){state.writes++;if(state.fail==="dml"||state.fail==="rollback")throw Error("PRIVATE_DML");return {recordset:state.fail==="cas"?[]:[{Revision:Buffer.from(state.next,"hex")}]};}
@@ -28,6 +28,7 @@ test("configuration CAS, server-derived bindings and mandatory Audit share one S
  const r=await f.repo.save(1,graph(),"MISSING",f.identity,f.validate);assert.equal(r.revision,f.state.next);
  assert.deepEqual([f.state.commits,f.state.rollbacks,f.state.writes,f.state.audits,f.state.validations],[1,0,1,1,2]);assert.equal(f.state.isolation,sql.ISOLATION_LEVEL.SERIALIZABLE);
  assert(f.state.statements.some(s=>s.includes("UPDLOCK,HOLDLOCK")));assert(f.state.statements.some(s=>s.includes("SET XACT_ABORT ON")));
+ for(const statement of f.state.statements.filter(s=>s.includes("UPDLOCK,HOLDLOCK")||s.includes("OUTPUT inserted.ConfigRowVersion")))assert.match(statement,/^SET XACT_ABORT ON; SET LOCK_TIMEOUT 5000;\n/);
  assert(f.state.params.some(p=>typeof p.graph==="string"&&JSON.parse(p.graph).version===1));assert(f.state.params.some(p=>typeof p.bindings==="string"));
 }));
 test("stale expected revision refuses before any configuration or Audit write",async()=>mock(async f=>{

@@ -15,7 +15,7 @@
 
 A：受控DDL/rollback/repeat/partial/catalog；B：最小權限及越權／visibility拒絕；C：真連線CAS、撤權、1205/1222、Audit與版本rollback、TDS commit ACK loss；D：COUNT/OFFSET/FETCH、bind、empty、nonunique、drift、ABA、range；E：真Query ACL／Dataset遮蔽／患者PAGE HMAC／Audit保存；F：沒有獨立Oracle11g+THICK，NOT_RUN。
 
-排序鍵必須在SQL判定唯一；本次SQL Server分頁將COUNT／key witness／page置於同一SERIALIZABLE來源交易，並於後續相同搜尋/排序的頁／返回父層比對原witness。只返回該頁，不快取全部資料列；witness在DB計算、僅留伺服器，不交給瀏覽器。資料新增／刪除／鍵或排序值變動致witness不符時整筆拒絕並清context，不能默默重複／漏頁。改變搜尋／排序視為使用者明示的新結果集；不宣稱witness是mutation epoch或Source DDL fence，A→B→A完全恢復不產生假版本證明。Oracle尚無此交易證據，階層交付保持BLOCKED；既有單層Oracle流程不變。
+排序鍵必須在SQL判定唯一；本次SQL Server分頁將COUNT／key witness／page置於同一SERIALIZABLE來源交易，並於後續相同搜尋/排序的頁／返回父層比對原witness。只返回該頁，不快取全部資料列；witness對上限+1筆排序後完整內容在DB計算、僅留伺服器，不交給瀏覽器。資料新增／刪除／鍵或排序值變動致witness不符時整筆拒絕並清context，不能默默重複／漏頁。改變搜尋／排序視為使用者明示的新結果集；不宣稱witness是mutation epoch或Source DDL fence，A→B→A完全恢復不產生假版本證明。Oracle尚無此交易證據，階層交付保持BLOCKED；既有單層Oracle流程不變。
 
 錯誤後僅清理擁有正確ExtendedProperty的這一個新DB；容器清理需名稱及run label完全匹配。沒有docker prune、volumes/network刪除或其他容器操作。不操作本機Docker socket。
 

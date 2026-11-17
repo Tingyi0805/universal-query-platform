@@ -41,6 +41,9 @@ IF NOT EXISTS(SELECT 1 FROM @checks WHERE Definition=N'isjsongraphjson=1anddatal
  THROW 51929,'HIERARCHY_SCHEMA_MISMATCH',1;`;
 
 const rev=(v:unknown)=>Buffer.isBuffer(v)&&v.length===8?v.toString("hex"):null;
+// Request.query uses sp_executesql: SET options in a previous RPC are not an
+// owner-wide guarantee. Put them in the SAME batch as every protected statement.
+const ownedSql=(text:string)=>"SET XACT_ABORT ON; SET LOCK_TIMEOUT 5000;\n"+text;
 export const hierarchyRepositoryDependencies={getPool:getPlatformDbPool,audit:writeAuditEvent};
 export function createQueryHierarchyRepository(deps=hierarchyRepositoryDependencies){
  async function pool(){const p=await deps.getPool();if(!p)throw new QueryDeliveryError("HIERARCHY_SCHEMA_REQUIRED",503);return p;}
@@ -56,27 +59,29 @@ export function createQueryHierarchyRepository(deps=hierarchyRepositoryDependenc
  async function requireAdmin(identity:HierarchyIdentity,tx?:sql.Transaction){
   const actor=await identity(tx);if(actor.pinSession||!actor.permissions.includes("PUBLISH_QUERY"))throw new QueryDeliveryError("FORBIDDEN",403);
   const request=tx?new sql.Request(tx):(await pool()).request();
-  const rows=(await request.input("actor",sql.BigInt,actor.userId).query(`SELECT u.Id FROM uqp.AppUser u WITH(HOLDLOCK)
+  const adminSql=`SELECT u.Id FROM uqp.AppUser u WITH(HOLDLOCK)
    WHERE u.Id=@actor AND u.IsActive=1 AND EXISTS(SELECT 1 FROM uqp.UserRole ur WITH(HOLDLOCK)
-   JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId WHERE ur.UserId=u.Id AND r.Code=N'SYSTEM_ADMIN' AND r.IsActive=1)`)).recordset;
+   JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId WHERE ur.UserId=u.Id AND r.Code=N'SYSTEM_ADMIN' AND r.IsActive=1)`;
+  const rows=(await request.input("actor",sql.BigInt,actor.userId).query(tx?ownedSql(adminSql):adminSql)).recordset;
   if(rows.length!==1)throw new QueryDeliveryError("FORBIDDEN",403);return actor;
  }
  async function save(root:number,graph:HierarchyGraph,expected:string,identity:HierarchyIdentity,validate:(tx:sql.Transaction)=>Promise<Record<string,string>>){
-  const p=await pool(),tx=new sql.Transaction(p);let committing=false;
+  const p=await pool(),tx=new sql.Transaction(p);let committing=false,rolledBack=false;
+  tx.on("rollback",()=>{rolledBack=true;});
   try{await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);await new sql.Request(tx).query("SET XACT_ABORT ON; SET LOCK_TIMEOUT 5000;");
-   await new sql.Request(tx).query(hierarchyCatalogSql);const actor=await requireAdmin(identity,tx);
-   const before=(await new sql.Request(tx).input("root",sql.BigInt,root).query("SELECT ConfigRowVersion FROM uqp.QueryHierarchyConfiguration WITH(UPDLOCK,HOLDLOCK) WHERE RootQueryId=@root")).recordset;
+   await new sql.Request(tx).query(ownedSql(hierarchyCatalogSql));const actor=await requireAdmin(identity,tx);
+   const before=(await new sql.Request(tx).input("root",sql.BigInt,root).query(ownedSql("SELECT ConfigRowVersion FROM uqp.QueryHierarchyConfiguration WITH(UPDLOCK,HOLDLOCK) WHERE RootQueryId=@root"))).recordset;
    if((before.length?rev(before[0].ConfigRowVersion):"MISSING")!==expected)throw new QueryDeliveryError("HIERARCHY_CAS_CONFLICT");
    const bindings=await validate(tx);
    const audit=await deps.audit({eventType:"QUERY_HIERARCHY_UPDATED",userId:actor.userId,queryDefinitionId:root,status:"SUCCESS",parameters:{nodeCount:graph.nodes.length,edgeCount:graph.edges.length}},tx);
    if(!Number.isSafeInteger(audit)||audit<=0)throw new QueryDeliveryError("QUERY_AUDIT_REQUIRED",503);
    const request=new sql.Request(tx).input("root",sql.BigInt,root).input("graph",sql.NVarChar(sql.MAX),JSON.stringify(graph)).input("bindings",sql.NVarChar(sql.MAX),JSON.stringify(bindings)).input("actor",sql.BigInt,actor.userId).input("audit",sql.BigInt,audit);
-   const output=before.length?await request.input("expected",sql.Binary,Buffer.from(expected,"hex")).query(`UPDATE uqp.QueryHierarchyConfiguration SET GraphJson=@graph,BindingJson=@bindings,UpdatedByUserId=@actor,AuditLogId=@audit,UpdatedAtUtc=SYSUTCDATETIME()
-    OUTPUT inserted.ConfigRowVersion Revision WHERE RootQueryId=@root AND ConfigRowVersion=@expected`):await request.query(`INSERT uqp.QueryHierarchyConfiguration(RootQueryId,GraphJson,BindingJson,UpdatedByUserId,AuditLogId) OUTPUT inserted.ConfigRowVersion Revision VALUES(@root,@graph,@bindings,@actor,@audit)`);
+   const output=before.length?await request.input("expected",sql.Binary,Buffer.from(expected,"hex")).query(ownedSql(`UPDATE uqp.QueryHierarchyConfiguration SET GraphJson=@graph,BindingJson=@bindings,UpdatedByUserId=@actor,AuditLogId=@audit,UpdatedAtUtc=SYSUTCDATETIME()
+    OUTPUT inserted.ConfigRowVersion Revision WHERE RootQueryId=@root AND ConfigRowVersion=@expected`)):await request.query(ownedSql(`INSERT uqp.QueryHierarchyConfiguration(RootQueryId,GraphJson,BindingJson,UpdatedByUserId,AuditLogId) OUTPUT inserted.ConfigRowVersion Revision VALUES(@root,@graph,@bindings,@actor,@audit)`));
    const revision=output.recordset.length===1?rev(output.recordset[0].Revision):null;if(!revision)throw new QueryDeliveryError("HIERARCHY_CAS_CONFLICT");
    if(JSON.stringify(await validate(tx))!==JSON.stringify(bindings))throw new QueryDeliveryError("HIERARCHY_BINDING_CHANGED");await requireAdmin(identity,tx);committing=true;await tx.commit();return {revision};
   }catch(e){if(committing)throw new QueryDeliveryError("HIERARCHY_COMMIT_UNKNOWN_DO_NOT_RETRY",503);
-   try{await tx.rollback();}catch{throw new QueryDeliveryError("HIERARCHY_ROLLBACK_UNKNOWN",503);}throw e;}
+   if(!rolledBack)try{await tx.rollback();}catch{throw new QueryDeliveryError("HIERARCHY_ROLLBACK_UNKNOWN",503);}throw e;}
  }
  return {read,save,requireAdmin};
 }

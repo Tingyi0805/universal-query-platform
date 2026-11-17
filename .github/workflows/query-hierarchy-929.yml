@@ -27,13 +27,15 @@ jobs:
           node-version: 24.22.1
       - run: node tools/validate-mobile-query-phase2-scope.mjs
       - run: npm install --global npm@12.2.1
-      - run: npm ci --ignore-scripts
+      - name: Existing native adapter prerequisites (factory imports ODBC)
+        run: sudo apt-get update -qq && sudo apt-get install -y unixodbc-dev
+      - run: npm ci
         working-directory: server
       - run: npm run typecheck && npm run build
         working-directory: server
       - name: Only affected paging regression (reuse prior 140/18/23 evidence)
         working-directory: server
-        run: node --import tsx --test src/modules/dataset/datasetPaging.service.test.ts src/modules/queryDefinition/queryHierarchy.paging.test.ts
+        run: node --import tsx --test src/modules/dataset/datasetPaging.service.test.ts src/modules/queryDefinition/queryHierarchy.paging.test.ts src/modules/queryDefinition/queryHierarchy.repository.test.ts
       - name: New disposable SQL Server 2019 instance; no host SQL secrets
         shell: bash
         run: |
