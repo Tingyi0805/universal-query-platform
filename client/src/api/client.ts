@@ -53,6 +53,7 @@ export async function apiDownload(
   path: string,
   body: unknown,
   accessToken?: string | null,
+  options: {signal?:AbortSignal;authIdentityIsCurrent?:()=>boolean} = {},
 ): Promise<{ blob: Blob; filename: string }> {
   const headers = new Headers({ "Content-Type": "application/json" });
   if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
@@ -60,12 +61,14 @@ export async function apiDownload(
   const response = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers,
+    signal:options.signal,
+    cache:"no-store",
     body: JSON.stringify(body),
   });
 
   if (!response.ok) {
     const errorBody = await response.json().catch(() => ({})) as ApiError;
-    notifyAuthInvalid(errorBody.error?.code);
+    if(options.authIdentityIsCurrent?.()!==false)notifyAuthInvalid(errorBody.error?.code);
     const error = new Error(errorBody.error?.message ?? "下載失敗。");
     Object.assign(error, { code: errorBody.error?.code, status: response.status });
     throw error;

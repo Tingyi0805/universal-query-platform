@@ -1,3 +1,4 @@
+import {QueryHierarchyEditor} from "../queryHierarchy/QueryHierarchyEditor";
 import { useCallback, useEffect, useState, type ComponentType, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -698,6 +699,8 @@ export function QueryPublisherPage() {
               )}
             </div>
           </form>
+
+          {form.id && form.isPublished && !form.isArchived && canPublish && <QueryHierarchyEditor key={form.id} queryId={form.id}/>}
 
           {form.id && (
             <VersionHistoryPanel

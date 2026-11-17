@@ -1,0 +1,29 @@
+-- REVIEW DRAFT ONLY. Not scanned by db:migrate; no automatic installation.
+-- 928 is reserved for CHART and is NOT a prerequisite. No existing data or grants.
+-- An approved installer must own the transaction and verify the exact target first.
+SET XACT_ABORT ON;
+IF @@TRANCOUNT<>1 THROW 51929,'HIERARCHY_OWNED_INSTALL_TRANSACTION_REQUIRED',1;
+IF OBJECT_ID(N'uqp.QueryDefinition',N'U') IS NULL OR OBJECT_ID(N'uqp.AppUser',N'U') IS NULL
+ OR OBJECT_ID(N'uqp.AuditLog',N'U') IS NULL OR OBJECT_ID(N'uqp.QueryDefinitionVersion',N'U') IS NULL
+ OR COL_LENGTH(N'uqp.Dataset',N'DefinitionRowVersion') IS NULL
+ OR COL_LENGTH(N'uqp.DataSource',N'ConfigurationRowVersion') IS NULL
+ THROW 51929,'HIERARCHY_BASELINE_REQUIRED',1;
+IF OBJECT_ID(N'uqp.QueryHierarchyConfiguration') IS NOT NULL
+ THROW 51929,'HIERARCHY_ALREADY_PRESENT_REQUIRES_EXACT_REVIEW',1;
+CREATE TABLE uqp.QueryHierarchyConfiguration (
+ RootQueryId BIGINT NOT NULL CONSTRAINT PK_QueryHierarchyConfiguration PRIMARY KEY,
+ GraphJson NVARCHAR(MAX) NOT NULL,
+ BindingJson NVARCHAR(MAX) NOT NULL,
+ UpdatedByUserId BIGINT NOT NULL,
+ UpdatedAtUtc DATETIME2(3) NOT NULL CONSTRAINT DF_QueryHierarchy_Updated DEFAULT SYSUTCDATETIME(),
+ AuditLogId BIGINT NOT NULL,
+ ConfigRowVersion ROWVERSION NOT NULL,
+ CONSTRAINT FK_QueryHierarchy_Query FOREIGN KEY(RootQueryId) REFERENCES uqp.QueryDefinition(Id) ON DELETE NO ACTION,
+ CONSTRAINT FK_QueryHierarchy_Actor FOREIGN KEY(UpdatedByUserId) REFERENCES uqp.AppUser(Id) ON DELETE NO ACTION,
+ CONSTRAINT CK_QueryHierarchy_Json CHECK(ISJSON(GraphJson)=1 AND DATALENGTH(GraphJson)<=65536),
+ CONSTRAINT CK_QueryHierarchy_Bindings CHECK(ISJSON(BindingJson)=1 AND DATALENGTH(BindingJson)<=16384),
+ CONSTRAINT CK_QueryHierarchy_Ids CHECK(RootQueryId>0 AND UpdatedByUserId>0 AND AuditLogId>0)
+);
+-- Audit receipt intentionally has no online AuditLog FK: archive/retention must work.
+-- Root FK prevents silently deleting a configured root. Remove configuration via a
+-- separately reviewed operation or leave the Query archived. Do not cascade history.

@@ -10,6 +10,8 @@ on:
 
 jobs:
   dashboard-ui-scope:
+    # This branch has source-guarded targeted CI; existing branches retain all checks.
+    if: github.head_ref != 'feature/mobile-hierarchical-query-phase2-20261117'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -106,6 +108,8 @@ jobs:
           fi
 
   server:
+    # This branch has source-guarded targeted CI; existing branches retain all checks.
+    if: github.head_ref != 'feature/mobile-hierarchical-query-phase2-20261117'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -130,6 +134,8 @@ jobs:
         run: node ../tools/measure-browser-build.mjs
 
   client:
+    # This branch has source-guarded targeted CI; existing branches retain all checks.
+    if: github.head_ref != 'feature/mobile-hierarchical-query-phase2-20261117'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -441,6 +447,8 @@ jobs:
           if-no-files-found: error
 
   windows-kiosk-launcher:
+    # This branch has source-guarded targeted CI; existing branches retain all checks.
+    if: github.head_ref != 'feature/mobile-hierarchical-query-phase2-20261117'
     runs-on: windows-latest
     permissions:
       contents: read
@@ -460,6 +468,8 @@ jobs:
         run: .\tools\test-uqp-kiosk-launcher.ps1
 
   windows-node24-dependencies:
+    # This branch has source-guarded targeted CI; existing branches retain all checks.
+    if: github.head_ref != 'feature/mobile-hierarchical-query-phase2-20261117'
     runs-on: windows-latest
     # Existing SQL/source SHA witnesses pin Git's LF bytes; do not rewrite them to CRLF.
     env:

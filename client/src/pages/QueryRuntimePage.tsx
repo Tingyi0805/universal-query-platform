@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import {WorkstationIdentity} from "../security/workstationIdentity";
+import {QueryHierarchyLauncher} from "../queryHierarchy/QueryHierarchyWorkspace";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiDownload, apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
@@ -302,8 +304,13 @@ function buildGroupedRows(
 
 export function QueryRuntimePage() {
   const { id } = useParams();
-  const { accessToken } = useAuth();
+  const { accessToken,logout } = useAuth();
+  const workstationLogout=useRef(logout);workstationLogout.current=logout;
   const queryId = Number(id);
+  const requestFence=useRef(new WorkstationIdentity()),generation=useRef(0);
+  const identityKey=`${queryId}|${accessToken}`,liveIdentity=useRef(identityKey);liveIdentity.current=identityKey;
+  const current=(epoch:number)=>epoch===generation.current&&liveIdentity.current===identityKey;
+
 
   const [query, setQuery] = useState<Query | null>(null);
   const [parameters, setParameters] = useState<Parameter[]>([]);
@@ -322,14 +329,17 @@ export function QueryRuntimePage() {
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
+    const epoch=++generation.current;requestFence.current.clear();
+    setResult(null);setValues({});setParameters([]);setOptions({});
     setLoading(true);
     setError("");
     try {
-      const detail = await apiRequest<{
+      const detail = await requestFence.current.run(signal=>apiRequest<{
         query: Query;
         parameters: Parameter[];
         reportColumns: ReportColumn[];
-      }>(`/queries/${queryId}`, {}, accessToken);
+      }>(`/queries/${queryId}`, {signal}, accessToken,()=>current(epoch)));
+      if(!current(epoch))return;
 
       setQuery(detail.query);
       setParameters(detail.parameters);
@@ -348,23 +358,32 @@ export function QueryRuntimePage() {
       );
 
       const loadedOptions = await Promise.all(optionParameters.map(async (parameter) => {
-        const response = await apiRequest<{ options: Option[] }>(
+        const response = await requestFence.current.run(signal=>apiRequest<{ options: Option[] }>(
           `/queries/${queryId}/parameters/${parameter.name}/options`,
-          {},
-          accessToken,
-        );
+          {signal},
+          accessToken,()=>current(epoch),
+        ));
         return [parameter.name, response.options] as const;
       }));
 
-      setOptions(Object.fromEntries(loadedOptions));
+      if(current(epoch))setOptions(Object.fromEntries(loadedOptions));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "載入查詢失敗。");
+      if(current(epoch))setError(e instanceof Error ? e.message : "載入查詢失敗。");
     } finally {
-      setLoading(false);
+      if(current(epoch))setLoading(false);
     }
   }, [accessToken, queryId]);
 
   useEffect(() => { if (Number.isFinite(queryId)) void load(); }, [load, queryId]);
+  useEffect(()=>{
+    const purge=()=>{generation.current++;requestFence.current.clear();setResult(null);setValues({});setParameters([]);setOptions({});setQuery(null);setColumnFilters({});setResultSort(null);setResultPage(1);setHiddenColumns(new Set());setColumnPickerOpen(false);setRunning(false);setLoading(false);setError("資料已清除，請重新開啟主層查詢。");};
+    const hidden=()=>{if(document.hidden)purge();};
+    const channel=typeof BroadcastChannel!=="undefined"?new BroadcastChannel("uqp-workstation-identity"):null;
+    if(channel)channel.onmessage=()=>workstationLogout.current();
+    window.addEventListener("uqp-interactive-clear",purge);window.addEventListener("offline",purge);window.addEventListener("pagehide",purge);document.addEventListener("visibilitychange",hidden);
+    return()=>{generation.current++;requestFence.current.clear();channel?.close();window.removeEventListener("uqp-interactive-clear",purge);window.removeEventListener("offline",purge);window.removeEventListener("pagehide",purge);document.removeEventListener("visibilitychange",hidden);};
+  },[accessToken,queryId]);
+
 
   useEffect(() => {
     setHiddenColumns(new Set<string>());
@@ -540,13 +559,14 @@ export function QueryRuntimePage() {
     if (!query?.canExport) return;
 
     setError("");
+    const epoch=generation.current;
     try {
-      const download = await apiDownload(
+      const download = await requestFence.current.run(signal=>apiDownload(
         `/queries/${queryId}/export/${format}`,
         { values },
-        accessToken,
-      );
-
+        accessToken,{signal,authIdentityIsCurrent:()=>current(epoch)},
+      ));
+      if(!current(epoch))return;
       const url = URL.createObjectURL(download.blob);
       const anchor = document.createElement("a");
       anchor.href = url;
@@ -557,7 +577,7 @@ export function QueryRuntimePage() {
       URL.revokeObjectURL(url);
     } catch (e) {
       const fallback = format === "excel" ? "Excel 匯出失敗。" : "CSV 匯出失敗。";
-      setError(e instanceof Error ? e.message : fallback);
+      if(current(epoch))setError(e instanceof Error ? e.message : fallback);
     }
   }
 
@@ -565,24 +585,26 @@ export function QueryRuntimePage() {
     event.preventDefault();
     if (!query?.canExecute) return;
 
+    window.dispatchEvent(new Event("uqp-hierarchy-close"));
+    const epoch=++generation.current;requestFence.current.clear();
     setRunning(true);
     setError("");
     setResult(null);
     clearResultView();
     try {
-      const response = await apiRequest<{ result: QueryResult }>(
+      const response = await requestFence.current.run(signal=>apiRequest<{ result: QueryResult }>(
         `/queries/${queryId}/execute`,
         {
-          method: "POST",
+          method: "POST",signal,
           body: JSON.stringify({ values }),
         },
-        accessToken,
-      );
-      setResult(response.result);
+        accessToken,()=>current(epoch),
+      ));
+      if(current(epoch))setResult(response.result);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "執行查詢失敗。");
+      if(current(epoch))setError(e instanceof Error ? e.message : "執行查詢失敗。");
     } finally {
-      setRunning(false);
+      if(current(epoch))setRunning(false);
     }
   }
 
@@ -687,6 +709,8 @@ export function QueryRuntimePage() {
           }}>清除</button>
         </div>
       </form>
+
+      {query&&<QueryHierarchyLauncher key={queryId} queryId={queryId} values={values} accessToken={accessToken} onStart={()=>{generation.current++;requestFence.current.clear();setResult(null);setRunning(false);}}/>}
 
       {result && (
         <section className="runtime-result">
