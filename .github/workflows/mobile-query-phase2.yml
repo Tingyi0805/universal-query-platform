@@ -1,0 +1,64 @@
+name: Mobile Query Phase 2
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  phase2-server:
+    if: github.head_ref == 'feature/mobile-hierarchical-query-phase2-20261117' || github.ref_name == 'feature/mobile-hierarchical-query-phase2-20261117'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+      - run: node tools/validate-mobile-query-phase2-scope.mjs
+      - run: npm install --global npm@12.2.1
+      - run: npm ci --ignore-scripts
+        working-directory: server
+      - name: Hierarchy, real QueryDelivery masking/audit and existing PIN assurance regression (synthetic only)
+        working-directory: server
+        run: >-
+          node --import tsx --test --test-concurrency=1
+          src/modules/dataset/datasetPaging.service.test.ts
+          src/modules/queryDefinition/queryHierarchy*.test.ts
+          src/modules/queryDefinition/queryDelivery.routes.test.ts
+          src/modules/queryDefinition/pinQueryPolicy.test.ts
+          src/modules/auth/workstationQuery.routes.test.ts
+          src/modules/auth/workstationPin.routes.test.ts
+          src/modules/auth/workstationSession.repository.test.ts
+      - run: npm run typecheck && npm run build
+        working-directory: server
+  phase2-client:
+    if: github.head_ref == 'feature/mobile-hierarchical-query-phase2-20261117' || github.ref_name == 'feature/mobile-hierarchical-query-phase2-20261117'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+      - run: node tools/validate-mobile-query-phase2-scope.mjs
+      - run: npm install --global npm@12.2.1
+      - run: npm ci
+        working-directory: client
+      - name: Existing identity fence and request security unit tests
+        working-directory: client
+        run: node --import tsx --test --experimental-test-isolation=none src/security/*.test.ts
+      - run: npm run typecheck && npm run build
+        working-directory: client
+      - run: npx playwright install --with-deps chromium
+        working-directory: client
+      - name: Mobile hierarchy, unchanged Date controls and existing PIN isolation browser regression
+        working-directory: client
+        run: npx playwright test e2e/query-hierarchy.spec.ts e2e/query-date-formats.spec.ts e2e/workstation-pin-runtime.spec.ts --reporter=line
