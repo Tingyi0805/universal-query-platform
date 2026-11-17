@@ -18,7 +18,7 @@ export function hierarchyFixture(){
   store:{...hierarchyServiceDependencies.store,read:async(_root:number)=>({graph:structuredClone(state.graph),revision:state.revision,bindings:pinned??(pinned=await service.bindingEvidence(1,state.graph,identity))})},
   parameters:async(datasetId:number)=>datasetId===1?[]:[{name:"KEY",dataType:state.parameterType,controlType:state.parameterType==="NUMBER"?"NUMBER":"TEXT",isRequired:true}] as any,
   revision:async()=>`${state.definition}:${state.configuration}:${state.queryRevision}`,
-  page:async(c:any,values:Record<string,unknown>,plan:any)=>{state.pages.push({queryId:c.query.id,values,plan});await state.hold?.();if(state.dbFail)throw Error("PRIVATE_SQL");state.afterPage?.();return {result:{columns:[{name:"ID"},{name:"NAME"}],rows:[{ID:c.query.id===1?state.parentKey:values.KEY,NAME:"王○"}],rowCount:1,truncated:false,elapsedMs:1},
+  page:async(c:any,values:Record<string,unknown>,plan:any)=>{state.pages.push({queryId:c.query.id,values,plan});await state.hold?.();if(state.dbFail)throw Error("PRIVATE_SQL");state.afterPage?.();return {sourceWitness:"4:"+"f".repeat(64),result:{columns:[{name:"ID"},{name:"NAME"}],rows:[{ID:c.query.id===1?state.parentKey:values.KEY,NAME:"王○"}],rowCount:1,truncated:false,elapsedMs:1},
    pagination:{page:plan.page,pageSize:plan.pageSize,totalRows:4,totalPages:Math.ceil(4/plan.pageSize),capped:false},reportColumns:c.reports,disclosureId:91};},
   startAudit:async()=>{state.starts++;return 80;},finalizeDeliveryAudit:async(_id:number,_stats:unknown,validate:any)=>{await validate();if(state.auditFail)throw Error("PRIVATE_AUDIT");state.successes++;},completeAuditFailure:async()=>{state.failures++;},
  };

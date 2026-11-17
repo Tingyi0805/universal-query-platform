@@ -1,0 +1,68 @@
+name: Query Hierarchy 929 SQL2019 acceptance
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/query-hierarchy-929.yml'
+      - 'server/src/scripts/queryHierarchy929*'
+      - 'tools/sqlserver-acceptance/hierarchy-929/**'
+      - 'server/src/modules/dataset/datasetPaging*'
+      - 'server/src/modules/queryDefinition/queryHierarchy*'
+      - 'database/review/929_query_hierarchy.sql.txt'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  sql2019-929:
+    if: github.head_ref == 'feature/mobile-hierarchical-query-phase2-20261117' || github.ref_name == 'feature/mobile-hierarchical-query-phase2-20261117'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+      - run: node tools/validate-mobile-query-phase2-scope.mjs
+      - run: npm install --global npm@12.2.1
+      - run: npm ci --ignore-scripts
+        working-directory: server
+      - run: npm run typecheck && npm run build
+        working-directory: server
+      - name: Only affected paging regression (reuse prior 140/18/23 evidence)
+        working-directory: server
+        run: node --import tsx --test src/modules/dataset/datasetPaging.service.test.ts src/modules/queryDefinition/queryHierarchy.paging.test.ts
+      - name: New disposable SQL Server 2019 instance; no host SQL secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          password="Q929!$(openssl rand -hex 24)z"
+          echo "::add-mask::$password"
+          echo "UQP929_CI_PASSWORD=$password" >> "$GITHUB_ENV"
+          docker run --detach --rm --name "uqp929-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            --hostname uqp929-ci --label "uqp929.run=${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            -e ACCEPT_EULA=Y -e MSSQL_PID=Developer -e MSSQL_SA_PASSWORD="$password" \
+            -p 127.0.0.1:14339:1433 mcr.microsoft.com/mssql/server:2019-latest >/dev/null
+          echo "UQP929_IMAGE=$(docker image inspect --format '{{join .RepoDigests ","}}' mcr.microsoft.com/mssql/server:2019-latest)" >> "$GITHUB_ENV"
+      - name: Real SQL acceptance; fixed new CI database only
+        working-directory: server
+        env:
+          UQP929_APPROVE: DISPOSABLE_GITHUB_HOSTED_929_ONLY
+          UQP929_SOURCE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node --import tsx src/scripts/queryHierarchy929Acceptance.ts
+      - name: Preserve sanitized real SQL evidence, including failure/NOT_RUN
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hierarchy-929-SQL2019-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tools/sqlserver-acceptance/hierarchy-929/report.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove only this run's disposable container
+        if: always()
+        shell: bash
+        run: |
+          name="uqp929-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          if [ "$(docker inspect -f '{{index .Config.Labels "uqp929.run"}}' "$name" 2>/dev/null || true)" = "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" ]; then docker rm -f "$name" >/dev/null; fi

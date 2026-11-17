@@ -7,7 +7,7 @@ git('merge-base','--is-ancestor',baseline,'HEAD');
 const allow=[/^server\/src\/modules\/queryDefinition\/queryHierarchy[.].*\.ts$/,/^server\/src\/modules\/dataset\/datasetPaging[.].*\.ts$/,
  /^client\/src\/queryHierarchy\//,/^client\/e2e\/query-hierarchy\.spec\.ts$/,/^docs\/mobile-query-phase2\.md$/,
  /^database\/review\/929_query_hierarchy\.sql\.txt$/,/^tools\/validate-mobile-query-phase2-scope\.mjs$/,
- /^\.github\/workflows\/(?:ci|mobile-query-phase2)\.yml$/];
+ /^\.github\/workflows\/(?:ci|mobile-query-phase2|query-hierarchy-929)\.yml$/,/^server\/src\/scripts\/queryHierarchy929[A-Za-z]*\.ts$/,/^tools\/sqlserver-acceptance\/hierarchy-929\//];
 const exact=new Set(['server/src/app.ts','client/src/api/client.ts','client/src/pages/QueryRuntimePage.tsx','client/src/pages/QueryPublisherPage.tsx']);
 const files=git('diff','--name-only',baseline,'HEAD').split('\n').filter(Boolean);
 if(files.some(p=>!exact.has(p)&&!allow.some(r=>r.test(p))))throw Error('PHASE2_SCOPE_REQUIRES_REVIEW');

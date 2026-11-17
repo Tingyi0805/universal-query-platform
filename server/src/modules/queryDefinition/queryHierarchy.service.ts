@@ -13,7 +13,7 @@ const hash=(x:unknown)=>createHash("sha256").update(JSON.stringify(x)).digest("h
 const opaque=()=>randomBytes(32).toString("base64url");
 export const hierarchyServiceDependencies={delivery:createQueryDelivery(),transactionDelivery:createHierarchyMetadataDelivery,parameters:listDatasetParameters,revision:readHierarchyQueryRevision,
  store:queryHierarchyRepository,page:createHierarchyPageDelivery(),startAudit,finalizeDeliveryAudit,completeAuditFailure,now:Date.now};
-type Frame={node:string;values:Record<string,unknown>;controls:HierarchyPage};
+type Frame={node:string;values:Record<string,unknown>;controls:HierarchyPage;witness?:{controls:string;source:string}};
 type Context={root:number;owner:string;savedRevision:string;graph:HierarchyGraph;expires:number;stack:Frame[];rows:Map<string,Record<string,unknown>>;
  bindings:Record<string,string>;evidence:Map<string,string>;busy:boolean;bytes:number};
 type Meta={ipAddress:string|null;userAgent:string|null};
@@ -71,7 +71,11 @@ export function createQueryHierarchyService(deps=hierarchyServiceDependencies){
    const sort=frame.controls.sort?{column:select(frame.controls.sort.column),direction:frame.controls.sort.direction}:null;
    audit=await deps.startAudit({eventType:"QUERY_EXECUTE",userId:state.c.actor.userId,queryDefinitionId:state.c.query.id,datasetId:state.c.query.datasetId,parameters:null,...meta});
    if(!audit||!Number.isSafeInteger(audit)||audit<=0)throw new QueryDeliveryError("QUERY_AUDIT_REQUIRED",503);
-   const output=await deps.page(state.c,frame.values,{...frame.controls,pageSize:node.pageSize,orderBy:node.orderBy,search,sort});
+   const controlKey=hash([search,sort]),expectedWitness=frame.witness?.controls===controlKey?frame.witness.source:undefined;
+   const output=await deps.page(state.c,frame.values,{...frame.controls,pageSize:node.pageSize,orderBy:node.orderBy,search,sort,expectedWitness});
+   if(typeof output.sourceWitness!=="string"||!/^(0|[1-9][0-9]*):[a-f0-9]{64}$/.test(output.sourceWitness))throw new QueryDeliveryError("HIERARCHY_PAGING_WITNESS_REQUIRED",503);
+   if(expectedWitness&&expectedWitness!==output.sourceWitness)throw new QueryDeliveryError("HIERARCHY_SOURCE_PAGE_CHANGED");
+   stack=stack.map((f,i)=>i===stack.length-1?{...f,witness:{controls:controlKey,source:output.sourceWitness!}}:f);
    const visible=new Set(state.columns.map(r=>r.columnName));
    const result={...output.result,columns:output.result.columns.filter(col=>visible.has(col.name)),rows:output.result.rows.map(row=>Object.fromEntries(Object.entries(row).filter(([k])=>visible.has(k))))};
    const refs=new Map<string,Record<string,unknown>>(),fields=new Set(c.graph.edges.filter(e=>e.from===node.id).flatMap(e=>e.bindings.map(b=>b.field)));

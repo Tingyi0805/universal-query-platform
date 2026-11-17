@@ -15,7 +15,7 @@ export function createHierarchyPageDelivery(deps=hierarchyPageDependencies){retu
  await context.revalidate();
  const safe=applyDatasetDeliveryPolicy({policy:context.snapshot.policy,columns:raw.result.columns,rows:raw.result.rows});
  const result={...raw.result,columns:safe.columns,rows:safe.rows};
- return {result,pagination:raw.pagination,reportColumns:deliveryReportColumns(context.snapshot.policy,context.reports,result),disclosureId};
+ return {result,pagination:raw.pagination,sourceWitness:raw.sourceWitness,reportColumns:deliveryReportColumns(context.snapshot.policy,context.reports,result),disclosureId};
 };}
 
 /** Metadata reads that acquire UPDLOCK (patient contract) MUST reuse the owner

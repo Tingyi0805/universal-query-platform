@@ -23,6 +23,7 @@ async function fixture(countValue:unknown=45,cap=100,type:"SQLSERVER"|"ORACLE"="
   getDataset:async()=>({id:1,dataSourceId:2,sqlText:"SELECT ID, NAME FROM Visits",isActive:true,isArchived:false,maxRows:cap,queryTimeoutSec:5}) as any,
   getDataSourceConfig:async()=>({type,isActive:true,queryTimeoutSec:5}) as any,listDatasetParameters:async()=>[],
   createAdapter:async()=>({testConnection:async()=>({ok:true,message:"synthetic"}),executeQuery:async(_config,input)=>{calls.push(input);
+   if(type==="SQLSERVER")return {columns:[{name:"ID"},{name:"NAME"},{name:"UQP_HP_TOTAL"},{name:"UQP_HP_WITNESS"},{name:"UQP_HP_HAS_ROW"}],rows:Array.from({length:countValue===0?1:Number(input.binds.UQP_HP_LIMIT)},(_,i)=>({ID:countValue===0?null:11+i,NAME:countValue===0?null:"合成",UQP_HP_TOTAL:typeof countValue==="number"&&!Number.isSafeInteger(countValue)?countValue:String(countValue),UQP_HP_WITNESS:"f".repeat(64),UQP_HP_HAS_ROW:countValue===0?null:1})),truncated:invalid,rowCount:1,elapsedMs:1};
    const isCount=input.sql.includes(" AS UQP_HP_TOTAL");
    return {columns:[{name:"ID"},{name:"NAME"},...(type==="ORACLE"?[{name:"UQP_HP_ROW_NUMBER"}]:[])],rows:isCount?[{UQP_HP_TOTAL:countValue}]:countValue===0?[]:invalid?Array.from({length:11},()=>({ID:1,NAME:"x"})):[{ID:11,NAME:"合成",...(type==="ORACLE"?{UQP_HP_ROW_NUMBER:11}:{})}],truncated:invalid&&!isCount,rowCount:1,elapsedMs:1};}}),
  });
@@ -30,8 +31,8 @@ async function fixture(countValue:unknown=45,cap=100,type:"SQLSERVER"|"ORACLE"="
 }
 test("only requested DB page is fetched; never materializes the complete dataset",async()=>{
  const f=await fixture();const result=await f.pager(1,{}, {...plan,search:null,sort:null});
- assert.deepEqual(result.pagination,{page:2,pageSize:10,totalRows:45,totalPages:5,capped:false});assert.equal(f.calls.length,2);
- assert.equal(f.calls[1]!.binds.UQP_HP_OFFSET,10);assert.equal(f.calls[1]!.binds.UQP_HP_LIMIT,10);assert.equal(f.calls[1]!.maxRows,10);
+ assert.deepEqual(result.pagination,{page:2,pageSize:10,totalRows:45,totalPages:5,capped:false});assert.equal(f.calls.length,1);
+ assert.equal(f.calls[0]!.binds.UQP_HP_OFFSET,10);assert.equal(f.calls[0]!.binds.UQP_HP_LIMIT,10);assert.equal(f.calls[0]!.maxRows,10);
 });
 test("Oracle internal paging ordinal is stripped from both metadata and delivered values",async()=>{
  const f=await fixture("45",100,"ORACLE"),r=await f.pager(1,{}, {...plan,search:null,sort:null});
@@ -41,7 +42,7 @@ test("Oracle internal paging ordinal is stripped from both metadata and delivere
 });
 test("Dataset maxRows is preserved, large COUNT stays exact and empty results still have column metadata",async()=>{
  const f=await fixture("9007199254740993",15),r=await f.pager(1,{}, {...plan,search:null,sort:null});
- assert.equal(r.pagination.capped,true);assert.equal(r.pagination.totalRows,15);assert.equal(f.calls[1]!.maxRows,5);
+ assert.equal(r.pagination.capped,true);assert.equal(r.pagination.totalRows,15);assert.equal(f.calls[0]!.maxRows,5);
  const empty=await fixture(0);const z=await empty.pager(1,{}, {...plan,page:1,search:null,sort:null});assert.equal(z.pagination.totalPages,1);assert.equal(z.result.columns.length,2);
 });
 test("unsafe COUNT Number, unknown parameters, out-of-range page and truncated DB page fail closed",async()=>{

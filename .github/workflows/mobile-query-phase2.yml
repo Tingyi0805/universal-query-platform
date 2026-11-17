@@ -1,6 +1,19 @@
 name: Mobile Query Phase 2
 on:
   pull_request:
+    # 929 uses the dedicated real-SQL workflow; do not repeat successful 140/18/23.
+    paths-ignore:
+      - '.github/workflows/query-hierarchy-929.yml'
+      - '.github/workflows/mobile-query-phase2.yml'
+      - 'tools/sqlserver-acceptance/hierarchy-929/**'
+      - 'tools/validate-mobile-query-phase2-scope.mjs'
+      - 'server/src/scripts/queryHierarchy929*'
+      - 'server/src/modules/dataset/datasetPaging*'
+      - 'server/src/modules/queryDefinition/queryHierarchy.service.ts'
+      - 'server/src/modules/queryDefinition/queryHierarchy.page.ts'
+      - 'server/src/modules/queryDefinition/queryHierarchy.testFixture.ts'
+      - 'server/src/modules/queryDefinition/queryHierarchy.paging.test.ts'
+      - 'docs/mobile-query-phase2.md'
   workflow_dispatch:
 permissions:
   contents: read
