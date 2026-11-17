@@ -31,6 +31,34 @@ Gate 3 must review and document the actual existing UQP SQL principal, its effec
 
 The four existing gates are unchanged. Gate 2 SQL source review and Gate 3 shared-principal compatibility remain pending; no new account, test phase, deployment, or repeat of prior 926/Stage 18 acceptance is requested.
 
+## Owner's revised business operation decision — 2026-11-17 (PR #99)
+
+The owner has revised the 2026-11-14 per-widget playback UX decision:
+**CHART enable/disable, ordinary playback and revocation are managed by the
+existing Dashboard Query-only activation and device control**, not a second
+operator approval/revocation form for every chart. Position, size and
+removal remain independent audited layout-only operations; 928 Widget,
+Seal and their original Audit records remain unchanged.
+
+- Existing verified JWT, live Query permissions, Dataset classification and
+  public-display grants, Token/IP restrictions, audit, revocation and revision
+  fences remain mandatory. A Dashboard becoming active is not a reason to
+  disclose otherwise blocked patient statistics.
+- The new inherited playback decision is backed by the existing Dashboard
+  activation, QueryMode and 919 approval/source version, re-read before and
+  after data delivery. Per-chart manual *playback* approval is removed from
+  the wired runtime. Historical per-chart decisions remain as audit history.
+- **Separate public grouped-count privacy/small-cell/differencing attestation
+  remains a fail-closed backend requirement.** Its conversion to a convenient
+  Dashboard-wide or Dataset-policy-driven management action is **not yet
+  implemented or approved**. Do not fabricate review evidence, silently
+  default-approve patient counts, or claim device/public playback works until
+  a real review source satisfies this requirement.
+- PR #99 remains Draft. Production four Gate release decisions and the
+  currently compiled-off production constants do not change. No renewed SQL
+  928 installation, file overwrite, or expansion of testing phases is
+  authorized by this architecture update.
+
 ## Project owner update — 2026-11-14: administrator review and playback authorization
 
 The project owner confirms: no separate SQL login or additional isolation architecture is required for CHART. Reuse the existing UQP authentication, SQL connection and `uqp.AuditLog`. The functional security boundary requested is **administrator review followed by explicit authorization of the exact CHART version before playback**.

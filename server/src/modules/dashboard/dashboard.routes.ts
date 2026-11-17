@@ -1,9 +1,7 @@
 import {createChartTestManagementRouter} from "./dashboardChartTestManagement.routes.js";
 import {createChartLayoutRouter} from "./dashboardChartLayout.routes.js";
 import {chartAuthorizedTestEnabled,requireChartAuthorizedTest} from "./dashboardChartAuthorizedTest.js";
-import { createDormantPlaybackApprovalReader } from "./dashboardChartPlaybackApproval.repository.js";
-import { createChartPlaybackApprovalRouter, CHART_PLAYBACK_APPROVAL_HTTP_RELEASE_APPROVED } from "./dashboardChartPlaybackApproval.routes.js";
-import { decideChartPlaybackApproval } from "./dashboardChartPlaybackApproval.service.js";
+import {readDashboardChartPlaybackControl} from "./dashboardChartInheritedPlayback.js";
 import { createDrilldownRouter, validateDrillLayout } from "./dashboardDrilldown.routes.js";
 import { createDeviceEnrollmentService } from "./dashboardDeviceEnrollment.service.js";
 import { createKioskRouter } from "./dashboardKiosk.routes.js";
@@ -236,7 +234,6 @@ const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPla
 // the two separate, permanently disabled designer and device coordinators.
 // Public-device authorization MUST use its own Token/IP and privacy gate.
 const chartTrustReaders = createDormantChartTrustReaders();
-const chartPlaybackApprovalReader = createDormantPlaybackApprovalReader();
 const chartProjectionFor = (enabled:()=>boolean) => createDormantChartCoordinator({
   enabled,
   readSavedWidget: chartTrustReaders.readSavedWidget,
@@ -244,7 +241,7 @@ const chartProjectionFor = (enabled:()=>boolean) => createDormantChartCoordinato
   auditedPage: queryExecution,
   readFence: readChartRevisionFence,
   readPublicReview: chartTrustReaders.readPublicReview,
-  readPlaybackApproval: chartPlaybackApprovalReader,
+  readDashboardPlaybackControl: readDashboardChartPlaybackControl,
 });
 const trustedChartProjection = chartProjectionFor(
   () => CHART_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled());
@@ -387,10 +384,6 @@ dashboardRouter.use(createDrilldownRouter());
 dashboardRouter.use("/:id/query-sources/v1/layout", requirePermission("DESIGN_QUERY"), validateDrillLayout);
 dashboardRouter.use(createDashboardTransitionRouter(createDashboardTransitionService(dashboardTransitionStore, () => env.DASHBOARD_QUERY_SOURCE_MANAGEMENT)));
 dashboardRouter.use(createDashboardApprovalRouter(dashboardApprovalService));
-dashboardRouter.use(createChartPlaybackApprovalRouter({
-  enabled: () => CHART_PLAYBACK_APPROVAL_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled(),
-  decide: decideChartPlaybackApproval,
-}));
 dashboardRouter.use(createChartProjectionRouter({
   approved: () => CHART_PROJECTION_HTTP_RELEASE_APPROVED || chartAuthorizedTestEnabled(),
   project: async(...args)=>{await requireChartAuthorizedTest(args[0]);const r=await trustedChartProjection(...args);await requireChartAuthorizedTest(args[0]);return r;},

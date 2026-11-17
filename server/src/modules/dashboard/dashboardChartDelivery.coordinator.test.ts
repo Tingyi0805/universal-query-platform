@@ -93,6 +93,7 @@ type Scenario = {
   revokePlaybackAfterPage?: boolean;
   stalePlaybackRevision?: boolean;
   stalePlaybackDigest?: boolean;
+  dashboardInherited?: "APPROVED" | "DENIED" | "CHANGED" | "MALFORMED";
 };
 function fixture(options: Scenario = {}) {
   const isPublic = options.isPublic ?? Boolean(options.context);
@@ -130,6 +131,14 @@ function fixture(options: Scenario = {}) {
   const savedFacts = facts(isPublic);
   const deps: ChartCoordinatorDependencies = {
     enabled: () => options.enabled !== false,
+    ...(options.dashboardInherited ? {readDashboardPlaybackControl:async (_id:number)=>{
+      playbackReads++;
+      if(options.dashboardInherited==="DENIED")return null;
+      if(options.dashboardInherited==="MALFORMED")return {dashboardId:8,approved:true as const,revision:"1".repeat(64)};
+      return {dashboardId:7,approved:true as const,
+        revision:options.dashboardInherited==="CHANGED"&&calls>0
+          ?"0".repeat(64):"1".repeat(64)};
+    }}:{}),
     readPlaybackApproval: options.noPlaybackReader ? undefined : async (_dashboardId, widgetId) => {
       playbackReads++;
       if (options.missingPlaybackApproval ||
@@ -424,5 +433,29 @@ test("public review fingerprint is shared across authorized viewers but remains 
  for(const change of [()=>{second.sensitivity.version++;},()=>{second.revisions.dataset="1".repeat(16);},
   ()=>{second.publicDisplay!.version="2".repeat(16);},()=>{second.revisions.access="3".repeat(64);}]){
   change();assert.notEqual(chartPublicCountScope(second,"actor-B",parsed(config)).policyRevision,a.policyRevision);
+ }
+});
+
+test("Dashboard-wide authorization accepts valid unchanged activation without any per-chart approval", async()=>{
+ const f=fixture({isPublic:true,missingPlaybackApproval:true,dashboardInherited:"APPROVED"});
+ const result=await f.invoke();
+ assert.equal(result.points.length,2);
+ assert.equal(f.counts().publicReads,2);
+ assert.ok(f.playbackReads()>=3);
+});
+test("disabled, malformed and in-flight revoked Dashboard inherited permission fail closed",async()=>{
+ for(const scenario of ["DENIED","MALFORMED","CHANGED"] as const){
+  const f=fixture({isPublic:true,missingPlaybackApproval:true,dashboardInherited:scenario});
+  await refused(f);
+  assert.equal(f.counts().calls,scenario==="CHANGED"?1:0);
+ }
+});
+test("Dashboard-wide control does not skip independently checked public privacy review or masking",async()=>{
+ for(const scenario of [
+  {noReview:true},{masked:true},{invalidPublicThreshold:true},
+  {changeFence:true},{failedAudit:true}
+ ]){
+  const f=fixture({isPublic:true,dashboardInherited:"APPROVED",...scenario});
+  await refused(f);
  }
 });

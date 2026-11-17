@@ -467,6 +467,40 @@ test("ambiguous native CREATE cannot issue another UUID before server reload",as
   expect(state.writes).toHaveLength(0);
 });
 
+
+test("CHART removal writes only dedicated authenticated layout operation, never legacy layout save",async({page})=>{
+ const state=await setup(page,true);
+ state.chartActivated=true;state.chartCreateAllowed=true;
+ (state.profiles[0]!.widgets as unknown as Array<Record<string,unknown>>).push({
+  ...state.profiles[0]!.widgets[0]!,id:88,widgetType:"CHART",title:"受控統計",
+  x:1200,y:400,width:450,height:300,
+  chartLayoutRevision:"a".repeat(64),staticText:null,config:{}
+ });
+ const posted:Record<string,unknown>[]=[];
+ await page.route("**/api/dashboards/1/charts/v1/88/layout",async route=>{
+  const body=route.request().postDataJSON() as Record<string,unknown>;
+  posted.push(body);
+  if(route.request().method()!=="POST"||
+   route.request().headers().authorization!=="Bearer synthetic"||
+   body.action!=="HIDE"||body.expectedVersion!=="a".repeat(64)){
+    await route.fulfill({status:400,json:{error:{code:"INVALID_SYNTHETIC"}}});return;
+  }
+  state.profiles[0]!.widgets=state.profiles[0]!.widgets.filter(w=>w.id!==88);
+  await route.fulfill({json:{
+   widgetId:88,revision:"b".repeat(64),removed:true
+  }});
+ });
+ await page.goto("/designer/dashboards/1/layout");
+ await page.locator(".layout-widget-readonly").click({position:{x:12,y:12}});
+ page.once("dialog",dialog=>void dialog.accept());
+ await page.getByRole("button",{name:"從此版型移除 CHART"}).click();
+ await expect(page.getByText(/已從此版型移除 CHART/)).toBeVisible();
+ await expect(page.locator(".layout-widget-readonly")).toHaveCount(0);
+ expect(posted).toHaveLength(1);
+ expect(posted[0]?.requestId).toMatch(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i);
+ expect(state.writes).toHaveLength(0);
+ expect(state.legacy).toHaveLength(0);
+});
 test("sealed CHART admin UI requests audited exact-version decisions and requires valid server readback",async({page})=>{
  const state=await setup(page,true),decisions:{path:string;body:unknown}[]=[];
  (state.profiles[0]!.widgets as unknown[]).push({...state.profiles[0]!.widgets[0],id:88,widgetType:"CHART",title:"受控統計",x:1200,y:400,width:450,height:300,staticText:null,config:{}});

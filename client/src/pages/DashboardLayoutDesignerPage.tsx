@@ -1,5 +1,4 @@
 import {newNativeChartRequestId,canCreateChartOnActivatedDashboard} from "../dashboard/nativeChartCreate";
-import {DashboardChartApprovalPanel} from "../components/DashboardChartApprovalPanel";
 import {DashboardChartLayoutControls,type ChartLayoutGeometry} from "../components/DashboardChartLayoutControls";
 import { hasSealedChartWidgets } from "../dashboard/nativeChartLayoutGuard";
 import {buildNativeChartCreateBody,parseNativeChartCreateReceipt,
@@ -1194,8 +1193,7 @@ export function DashboardLayoutDesignerPage({dashboardId:providedId,embedded=fal
                 hasPermission("DESIGN_QUERY")&&hasPermission("EXECUTE_QUERY")}
               onCommit={changeChartLayout}/>
           )}
-          {selectedWidget?.widgetType === "CHART" && <DashboardChartApprovalPanel key={`${dashboardId}:${selectedWidget.id}`} dashboardId={dashboardId}
-            widgetId={selectedWidget.id!} accessToken={accessToken} canManage={hasPermission("MANAGE_USERS")}/>}
+          {selectedWidget?.widgetType === "CHART" && <p role="status">CHART 啟用、停用與播放沿用 Dashboard；不需逐張核准。公開統計仍須符合資料來源的公開顯示授權、小樣本保護及稽核規則。</p>}
           {selectedWidget?.widgetType === "CHART" && <p role="status">受控 CHART 的資料與 Seal 維持唯讀；位置、大小與移除請使用專用設定，不經舊版儲存版面。</p>}
           {selectedWidget && selectedWidget.widgetType !== "CHART" && (
             <div className="layout-inspector-form">

@@ -3,6 +3,7 @@
 // Only an authoritative saved-widget reader may supply ConfigJson/rowversion.
 import { createHash } from "node:crypto";
 import { isChartPlaybackApproved, type ChartPlaybackApproval } from "./dashboardChartPlaybackApproval.policy.js";
+import {validateDashboardChartPlaybackControl,type DashboardChartPlaybackControl} from "./dashboardChartInheritedPlayback.js";
 import { chartWidgetConfigSchema, ChartContractError } from "./dashboardChartWidget.contract.js";
 import type { ChartWidgetConfig } from "./dashboardChartWidget.contract.js";
 import {
@@ -49,6 +50,11 @@ export type ChartCoordinatorDependencies = {
   // Required for every playback context (user, device, admin-preview).
   // A missing reader fails closed before Query execution.
   readPlaybackApproval?: (dashboardId: number, widgetId: number) => Promise<ChartPlaybackApproval | null>;
+  // Project-owner decision: use the existing Dashboard enable/disable and
+  // versioned source/approval state for all charts. Legacy per-widget approval
+  // is retained only for fixtures/older callers; never fall back to it when
+  // the inherited reader is configured but denies.
+  readDashboardPlaybackControl?: (dashboardId:number) => Promise<DashboardChartPlaybackControl|null>;
   // Must read a trusted, immutable-revision privacy decision; Widget ConfigJson
   // and HTTP bodies must never carry a review or an approval flag.
   readPublicReview: (scope: PublicCountScope, subject: ExecutionSubject) => Promise<PublicCountReview | null>;
@@ -144,14 +150,25 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
       if (!parsed.success) return deny();
       const config = parsed.data;
       const configDigest = createHash("sha256").update(JSON.stringify(config)).digest("hex");
+      let inheritedRevision:string|null=null;
       const requirePlaybackApproval = async () => {
-        // Only an inactive designer preview may omit playback authorization.
+        // Design preview is not public delivery. User, kiosk and admin-preview
+        // share the verified Dashboard switch, never a browser approval flag.
         if (context === "designer") return;
-        const decision = await deps.readPlaybackApproval?.(dashboardId, widgetId) ?? null;
-        if (!isChartPlaybackApproved(decision, widgetId, saved.revision, configDigest)) return deny();
+        if (deps.readDashboardPlaybackControl){
+          const decision=await deps.readDashboardPlaybackControl(dashboardId);
+          if(!validateDashboardChartPlaybackControl(decision,dashboardId))return deny();
+          if(inheritedRevision===null)inheritedRevision=decision.revision;
+          else if(inheritedRevision!==decision.revision)return deny();
+          return;
+        }
+        // Backwards-compatible isolated policy tests. No fallback here when
+        // inherited authorization is configured but unavailable or revoked.
+        const decision=await deps.readPlaybackApproval?.(dashboardId,widgetId)??null;
+        if(!isChartPlaybackApproved(decision,widgetId,saved.revision,configDigest))return deny();
       };
-      // Do not allow admin playback to reach the data source without a reviewed
-      // exact widget revision and config digest.
+      // Dashboard activation, live source permissions, seal, privacy and
+      // immutable revision proofs must all be rechecked around Query delivery.
       await requirePlaybackApproval();
       const readFacts = deps.createFactsReader(config);
       const load = async () => {
@@ -235,7 +252,8 @@ export function createDormantChartCoordinator(deps: ChartCoordinatorDependencies
           lastWidget.revision !== saved.revision ||
           JSON.stringify(lastWidget.config) !== JSON.stringify(saved.config))
         return deny();
-      // Approval can be revoked after the audited page and final widget check.
+      // The Dashboard may be disabled or its approval source may change after
+      // Query delivery; the inherited decision is rechecked again here.
       await requirePlaybackApproval();
       return result;
     } catch {
