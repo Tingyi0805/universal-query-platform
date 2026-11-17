@@ -538,7 +538,7 @@ test("Dashboard-wide public statistics panel groups shared CHART reviews without
  await page.route("**/api/dashboards/1/charts/v1/privacy-summary",route=>
   route.fulfill({json:{dashboardId:1,dashboardEnabled:true,items:[
    {widgetId:88,sourceKey:"PRIMARY",categoryColumn:"ROOM",valueColumn:"TOTAL",
-    currentApproval:reviewed,review:reviewed?{
+    currentApproval:false,review:reviewed?{
      id:3,status:"REQUESTED",revision:"b".repeat(16),requestedBy:2
     }:null}
   ]}}));
