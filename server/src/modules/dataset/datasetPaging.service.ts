@@ -41,7 +41,7 @@ export function compileSavedPage(sqlText:string,type:DataSourceType,values:Recor
  SELECT @uqp_total=COUNT_BIG(*)${from};
  IF EXISTS(SELECT 1${from} GROUP BY ${plan.orderBy.map(n=>`uqp_page.${quote(n)}`).join(",")} HAVING COUNT_BIG(*)>1)
  THROW 51929,'HIERARCHY_NON_UNIQUE_ORDER',1;
- SELECT @uqp_witness=HASHBYTES('SHA2_256',CONVERT(nvarchar(max),(SELECT TOP (${bind("CAPPLUS")}) uqp_page.*${from} ORDER BY ${order} FOR JSON PATH,INCLUDE_NULL_VALUES)));
+ SELECT @uqp_witness=HASHBYTES('SHA2_256',CONVERT(nvarchar(max),COALESCE((SELECT TOP (${bind("CAPPLUS")}) uqp_page.*${from} ORDER BY ${order} FOR JSON PATH,INCLUDE_NULL_VALUES),N'[]')));
  SELECT CONVERT(varchar(20),@uqp_total) UQP_HP_TOTAL,CONVERT(varchar(64),@uqp_witness,2) UQP_HP_WITNESS,uqp_rows.*
  FROM (SELECT 1 placeholder) uqp_count OUTER APPLY(SELECT 1 UQP_HP_HAS_ROW,uqp_page.*${from} ORDER BY ${order} OFFSET ${bind("OFFSET")} ROWS FETCH NEXT ${bind("LIMIT")} ROWS ONLY) uqp_rows
  ORDER BY ${keys.map((n,i)=>`uqp_rows.${quote(n)} ${i===0&&plan.sort?plan.sort.direction:"ASC"}`).join(",")};

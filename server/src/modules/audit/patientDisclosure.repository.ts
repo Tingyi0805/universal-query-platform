@@ -52,7 +52,7 @@ export async function persistPatientListDisclosure(input: PatientListDisclosureI
       .query(`
         INSERT INTO uqp.PatientListDisclosure
           (UserId, WorkstationId, DashboardDeviceId, SessionId, QueryDefinitionId, DatasetId,
-           DeliveryType, RowCount, PageNumber, Masked)
+           DeliveryType, [RowCount], PageNumber, Masked)
         OUTPUT INSERTED.Id AS id
         VALUES (@userId,@workstationId,@dashboardDeviceId,@sessionId,@queryDefinitionId,@datasetId,
                 @deliveryType,@rowCount,@pageNumber,@masked)

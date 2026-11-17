@@ -6,6 +6,7 @@ on:
       - 'server/src/scripts/queryHierarchy929*'
       - 'tools/sqlserver-acceptance/hierarchy-929/**'
       - 'server/src/modules/dataset/datasetPaging*'
+      - 'server/src/modules/audit/patientDisclosure.repository.ts'
       - 'server/src/modules/queryDefinition/queryHierarchy*'
       - 'database/review/929_query_hierarchy.sql.txt'
   workflow_dispatch:

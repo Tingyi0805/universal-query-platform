@@ -8,7 +8,7 @@ const allow=[/^server\/src\/modules\/queryDefinition\/queryHierarchy[.].*\.ts$/,
  /^client\/src\/queryHierarchy\//,/^client\/e2e\/query-hierarchy\.spec\.ts$/,/^docs\/mobile-query-phase2\.md$/,
  /^database\/review\/929_query_hierarchy\.sql\.txt$/,/^tools\/validate-mobile-query-phase2-scope\.mjs$/,
  /^\.github\/workflows\/(?:ci|mobile-query-phase2|query-hierarchy-929)\.yml$/,/^server\/src\/scripts\/queryHierarchy929[A-Za-z]*\.ts$/,/^tools\/sqlserver-acceptance\/hierarchy-929\//];
-const exact=new Set(['server/src/app.ts','client/src/api/client.ts','client/src/pages/QueryRuntimePage.tsx','client/src/pages/QueryPublisherPage.tsx']);
+const exact=new Set(['server/src/modules/audit/patientDisclosure.repository.ts','server/src/app.ts','client/src/api/client.ts','client/src/pages/QueryRuntimePage.tsx','client/src/pages/QueryPublisherPage.tsx']);
 const files=git('diff','--name-only',baseline,'HEAD').split('\n').filter(Boolean);
 if(files.some(p=>!exact.has(p)&&!allow.some(r=>r.test(p))))throw Error('PHASE2_SCOPE_REQUIRES_REVIEW');
 const frozen=['server/src/modules/queryDefinition/queryDelivery.ts','server/src/modules/auth/auth.middleware.ts',
@@ -21,3 +21,7 @@ git('diff','--exit-code',baseline,'HEAD','--',...frozen);
 if(!/WORKSTATION_PIN_RUNTIME: envBoolean\(false\)/.test(readFileSync('server/src/config/env.ts','utf8')))throw Error('PIN_RUNTIME_DEFAULT_MUST_STAY_OFF');
 if(files.some(p=>p.startsWith('database/migrations/')||/928|CHART|Chart/.test(p)))throw Error('PHASE2_NO_CHART_OR_AUTOMATIC_MIGRATION');
 console.log('PHASE2_FROZEN_PR83_BASELINE_AND_TARGETED_SCOPE_PASS:'+baseline+':files='+files.length);
+
+const disclosure='server/src/modules/audit/patientDisclosure.repository.ts';
+const original=git('show',baseline+':'+disclosure);
+if(readFileSync(disclosure,'utf8').trim()!==original.replace('DeliveryType, RowCount, PageNumber, Masked)','DeliveryType, [RowCount], PageNumber, Masked)'))throw Error('PHASE2_PATIENT_AUDIT_ONLY_IDENTIFIER_QUOTE_ALLOWED');

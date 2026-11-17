@@ -9,6 +9,7 @@ on:
       - 'tools/validate-mobile-query-phase2-scope.mjs'
       - 'server/src/scripts/queryHierarchy929*'
       - 'server/src/modules/dataset/datasetPaging*'
+      - 'server/src/modules/audit/patientDisclosure.repository.ts'
       - 'server/src/modules/queryDefinition/queryHierarchy.service.ts'
       - 'server/src/modules/queryDefinition/queryHierarchy.page.ts'
       - 'server/src/modules/queryDefinition/queryHierarchy.testFixture.ts'
@@ -40,7 +41,7 @@ jobs:
           base='f9ac203d6e905ed156b765542cc02d9d2154c20a'
           subprocess.run(['git','merge-base','--is-ancestor',base,'HEAD'],check=True)
           files=subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
-          delegated={'server/src/modules/dataset/datasetPaging.service.ts','server/src/modules/dataset/datasetPaging.service.test.ts','server/src/modules/queryDefinition/queryHierarchy.service.ts','server/src/modules/queryDefinition/queryHierarchy.page.ts','server/src/modules/queryDefinition/queryHierarchy.testFixture.ts','server/src/modules/queryDefinition/queryHierarchy.paging.test.ts','server/src/modules/queryDefinition/queryHierarchy.repository.ts','server/src/modules/queryDefinition/queryHierarchy.repository.test.ts'}
+          delegated={'server/src/modules/audit/patientDisclosure.repository.ts','server/src/modules/dataset/datasetPaging.service.ts','server/src/modules/dataset/datasetPaging.service.test.ts','server/src/modules/queryDefinition/queryHierarchy.service.ts','server/src/modules/queryDefinition/queryHierarchy.page.ts','server/src/modules/queryDefinition/queryHierarchy.testFixture.ts','server/src/modules/queryDefinition/queryHierarchy.paging.test.ts','server/src/modules/queryDefinition/queryHierarchy.repository.ts','server/src/modules/queryDefinition/queryHierarchy.repository.test.ts'}
           server=not files or any(p.startswith('server/') and p not in delegated and not p.startswith('server/src/scripts/queryHierarchy929') for p in files)
           client=not files or any(p.startswith('client/') for p in files)
           with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('server='+str(server).lower()+'\nclient='+str(client).lower()+'\n')
