@@ -18,8 +18,37 @@ on:
 permissions:
   contents: read
 jobs:
-  phase2-server:
+  change-scope:
     if: github.head_ref == 'feature/mobile-hierarchical-query-phase2-20261117' || github.ref_name == 'feature/mobile-hierarchical-query-phase2-20261117'
+    runs-on: ubuntu-latest
+    outputs:
+      server: ${{ steps.delta.outputs.server }}
+      client: ${{ steps.delta.outputs.client }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: delta
+        # PR path filters see the entire PR, including the already-tested UI.
+        # Compare the accepted commit instead; only 929's changed server paths
+        # are delegated to its real-SQL + affected-regression workflow.
+        run: |
+          python3 - <<'PY'
+          import os, subprocess
+          base='f9ac203d6e905ed156b765542cc02d9d2154c20a'
+          subprocess.run(['git','merge-base','--is-ancestor',base,'HEAD'],check=True)
+          files=subprocess.check_output(['git','diff','--name-only',base,'HEAD'],text=True).splitlines()
+          delegated={'server/src/modules/dataset/datasetPaging.service.ts','server/src/modules/dataset/datasetPaging.service.test.ts','server/src/modules/queryDefinition/queryHierarchy.service.ts','server/src/modules/queryDefinition/queryHierarchy.page.ts','server/src/modules/queryDefinition/queryHierarchy.testFixture.ts','server/src/modules/queryDefinition/queryHierarchy.paging.test.ts'}
+          server=not files or any(p.startswith('server/') and p not in delegated and not p.startswith('server/src/scripts/queryHierarchy929') for p in files)
+          client=not files or any(p.startswith('client/') for p in files)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f: f.write('server='+str(server).lower()+'\nclient='+str(client).lower()+'\n')
+          print('Reuse successful f9ac203 evidence; server='+str(server)+', client='+str(client))
+          PY
+  phase2-server:
+    needs: change-scope
+    if: needs.change-scope.outputs.server == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -49,7 +78,8 @@ jobs:
       - run: npm run typecheck && npm run build
         working-directory: server
   phase2-client:
-    if: github.head_ref == 'feature/mobile-hierarchical-query-phase2-20261117' || github.ref_name == 'feature/mobile-hierarchical-query-phase2-20261117'
+    needs: change-scope
+    if: needs.change-scope.outputs.client == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
