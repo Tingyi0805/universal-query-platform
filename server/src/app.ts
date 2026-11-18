@@ -1,3 +1,4 @@
+import {createQueryHierarchyRouter} from "./modules/queryDefinition/queryHierarchy.routes.js";
 import { createMaskTemplateRouter } from "./modules/dataset/datasetMaskTemplate.routes.js";
 import { createDatasetPublicDisplayRouter } from "./modules/dataset/datasetPublicDisplay.routes.js";
 import { randomUUID } from "node:crypto";
@@ -77,6 +78,7 @@ app.use("/api/dataset-security", createDatasetScopeManagementRouter());
 app.use("/api/dashboards", dashboardRouter);
 app.use("/api/query-categories", queryCategoryRouter);
 app.use("/api/query-definitions", queryDefinitionRouter);
+app.use("/api/queries", createQueryHierarchyRouter());
 app.use("/api/queries", queryRuntimeRouter);
 app.use("/api/system-settings", systemSettingsRouter);
 

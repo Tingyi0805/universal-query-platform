@@ -1,0 +1,100 @@
+name: UQP PR99+PR100 Unified Test Package
+on:
+  pull_request:
+    branches:
+      - feature/native-chart-authorized-designer-playback-issue89-20261109
+permissions:
+  contents: read
+jobs:
+  unified-test-zip:
+    if: github.head_ref == 'test/pr99-pr100-direct-update-20261118'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact integration HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node 24 Windows x64
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          architecture: x64
+      - name: Verify combined baseline and native ABI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git merge-base --is-ancestor 7e0c32af2b04b591bc311282358589f791c93916 HEAD
+          if ($LASTEXITCODE) { throw 'PR99_BASELINE_NOT_INCLUDED' }
+          $v = node -p 'process.platform+":"+process.arch+":"+process.version+":"+process.versions.modules'
+          if ($v -ne 'win32:x64:v24.22.1:137') { throw "NODE_ABI_MISMATCH:$v" }
+          if (!(Test-Path 'server/src/modules/dashboard') -or !(Test-Path 'server/src/modules/queryDefinition/queryHierarchy.routes.ts')) { throw 'COMBINED_SOURCE_REQUIRED' }
+      - name: Build and focused hierarchy regression
+        working-directory: server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE) { throw 'SERVER_NPM_CI_FAILED' }
+          node --import tsx --test --test-concurrency=1 src/modules/queryDefinition/queryHierarchy.service.test.ts src/modules/queryDefinition/queryHierarchy.repository.test.ts src/modules/queryDefinition/queryHierarchy.routes.test.ts
+          if ($LASTEXITCODE) { throw 'HIERARCHY_REGRESSION_FAILED' }
+          npm run typecheck
+          if ($LASTEXITCODE) { throw 'SERVER_TYPECHECK_FAILED' }
+          npm run build
+          if ($LASTEXITCODE) { throw 'SERVER_BUILD_FAILED' }
+          npm prune --omit=dev
+          if ($LASTEXITCODE) { throw 'SERVER_NPM_PRUNE_FAILED' }
+          node -e "for(const p of ['mssql','oracledb','odbc']){require(p);console.log(p+':NATIVE_LOAD_PASS')}"
+          if ($LASTEXITCODE) { throw 'NATIVE_LOAD_FAILED' }
+      - name: Build React client
+        working-directory: client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE) { throw 'CLIENT_NPM_CI_FAILED' }
+          npm run typecheck
+          if ($LASTEXITCODE) { throw 'CLIENT_TYPECHECK_FAILED' }
+          npm run build
+          if ($LASTEXITCODE) { throw 'CLIENT_BUILD_FAILED' }
+      - name: Assemble local test-only combined runtime
+        id: pack
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pkg = 'UQP-PR99-PR100-Unified-TEST'
+          New-Item -ItemType Directory -Force "$pkg/server", "$pkg/client", "$pkg/database/review" | Out-Null
+          Copy-Item 'server/dist' "$pkg/server/dist" -Recurse
+          Copy-Item 'server/node_modules' "$pkg/server/node_modules" -Recurse
+          Copy-Item 'server/package.json' "$pkg/server/package.json"
+          Copy-Item 'client/dist' "$pkg/client/dist" -Recurse
+          Copy-Item 'database/review/929_query_hierarchy.sql.txt' "$pkg/database/review/929_query_hierarchy.sql.txt"
+          @'
+          UQP PR99 + PR100 unified Windows x64 test-only runtime.
+          Based on PR99 HEAD 7e0c32af and PR100 HEAD 2068629c.
+          No credentials, .env, database migrations, or installer included.
+          Test ONLY on operator-owned pre-production C:\UQP, after verifying
+          the baseline and 929 schema on the exact existing test database.
+          Never install on a hospital production system.
+          CHART approval/security release gates remain OFF and unchanged.
+          Manual backup, service stop, binary replacement and restart required.
+          Preserve existing .env, SQL DB name, SQL login and existing ports.
+          DO NOT run PR100 standalone/isolated package atop a PR99 environment.
+          '@ | Set-Content "$pkg/README-TEST.txt" -Encoding utf8
+          if (Get-ChildItem -Recurse -Force $pkg -File | Where-Object { $_.Name -eq '.env' -or $_.Name -eq '.env.production' }) { throw 'SECRETS_IN_PACKAGE' }
+          $sha=(git rev-parse --short=8 HEAD).Trim()
+          $zip="UQP-PR99-PR100-$sha-Win-x64-TEST.zip"
+          tar.exe -a -cf $zip -C $pkg .
+          if ($LASTEXITCODE -or !(Test-Path $zip)) { throw 'TEST_ZIP_CREATE_FAILED' }
+          $archiveHash=(Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "UNIFIED_PR99_PR100_WINDOWS_TEST_ZIP_SHA256:$archiveHash"
+          "zip=$zip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Upload combined Windows test ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr99-pr100-unified-windows-test
+          path: ${{ steps.pack.outputs.zip }}
+          retention-days: 14
+          if-no-files-found: error
