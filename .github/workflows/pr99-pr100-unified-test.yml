@@ -69,7 +69,7 @@ jobs:
           Copy-Item 'server\node_modules' "$out\payload\server\node_modules" -Recurse
           Copy-Item 'server\package.json' "$out\payload\server\package.json"
           Copy-Item 'client\dist' "$out\payload\client\dist" -Recurse
-          Copy-Item 'tools\operator\929_Existing_UQP_TestDB.sql' "$out\sql\929_Existing_UQP_TestDB.sql"
+          Copy-Item 'tools\operator\929_Existing_UQP_TestDB.sql.txt' "$out\sql\929_Existing_UQP_TestDB.sql"
           Copy-Item 'tools\operator\Update-UQP-PR99-PR100-Test-v2.ps1' "$out\Update-UQP-PR99-PR100-Test-v2.ps1"
           @'
           PR99+PR100 DIRECT test package V2. One GitHub download ZIP, no nested ZIP.
