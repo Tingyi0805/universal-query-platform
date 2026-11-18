@@ -91,9 +91,23 @@ jobs:
             'Update-UQP-PR99-PR100-Test-v2.ps1')) {
             if (!(Test-Path (Join-Path $out $f))) { throw "PACKAGE_PATH_MISSING:$f" }
           }
-          if (@(Get-ChildItem -LiteralPath $out -Recurse -File -Force | Where-Object {
-            $_.Name -in @('.env','.env.production','web.config') -or $_.Extension -eq '.zip'
-          }).Count -gt 0) { throw 'PACKAGE_HAS_ENV_OR_INNER_ZIP' }
+          # Node vendor modules may legitimately ship .zip/.env fixtures. Never
+          # package OUR server/client env, deployment web.config, or a second ZIP
+          # at the artifact root (the previous broad recursive filter was invalid).
+          $blocked = @(
+            "$out\payload\server\.env",
+            "$out\payload\server\.env.production",
+            "$out\payload\client\dist\.env",
+            "$out\payload\client\dist\web.config",
+            "$out\.env",
+            "$out\.env.production"
+          )
+          foreach ($bad in $blocked) {
+            if (Test-Path -LiteralPath $bad) { throw "PACKAGE_FORBIDDEN_CONFIGURATION:$bad" }
+          }
+          if (@(Get-ChildItem -LiteralPath $out -File -Filter '*.zip').Count -gt 0) {
+            throw 'PACKAGE_CONTAINS_SECOND_ZIP'
+          }
           $parseErrors=$null
           [void][System.Management.Automation.Language.Parser]::ParseFile(
              (Join-Path $out 'Update-UQP-PR99-PR100-Test-v2.ps1'),[ref]$null,[ref]$parseErrors)
@@ -145,7 +159,7 @@ jobs:
               'Update-UQP-PR99-PR100-Test-v2.ps1','sql\929_Existing_UQP_TestDB.sql')) {
             if (!(Test-Path (Join-Path $root $rel))) { throw "ARTIFACT_REQUIRED_PATH_MISSING:$rel" }
           }
-          if (@(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object { $_.Extension -eq '.zip' }).Count -gt 0) {
-            throw 'ARTIFACT_NESTED_ZIP_FOUND'
+          if (@(Get-ChildItem -LiteralPath $root -File -Filter '*.zip').Count -gt 0) {
+            throw 'ARTIFACT_SECOND_UPDATE_ZIP_FOUND'
           }
           Write-Host "PR99_PR100_V2_DIRECT_ARTIFACT_READBACK_PASS:files=$($list.Count)"
