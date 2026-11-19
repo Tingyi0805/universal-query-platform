@@ -38,7 +38,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           npm ci
           if ($LASTEXITCODE) { throw 'SERVER_NPM_CI_FAILED' }
-          node --import tsx --test --test-concurrency=1 src/modules/queryDefinition/queryHierarchy.service.test.ts src/modules/queryDefinition/queryHierarchy.repository.test.ts src/modules/queryDefinition/queryHierarchy.routes.test.ts
+          node --import tsx --test --test-concurrency=1 src/modules/queryDefinition/queryHierarchy.service.test.ts src/modules/queryDefinition/queryHierarchy.repository.test.ts src/modules/queryDefinition/queryHierarchy.routes.test.ts src/modules/dataset/datasetManagementApproval.policy.test.ts
           if ($LASTEXITCODE) { throw 'HIERARCHY_REGRESSION_FAILED' }
           npm run typecheck
           if ($LASTEXITCODE) { throw 'SERVER_TYPECHECK_FAILED' }

@@ -116,7 +116,7 @@ export function createDatasetManagementApprovalRouter() {
         const result = await new sql.Request(tx)
           .input("id", sql.BigInt, id)
           .input("active", sql.Bit, input.approve)
-          .input("version", sql.Binary(8), Buffer.from(input.expectedVersion, "hex"))
+          .input("version", sql.Binary, Buffer.from(input.expectedVersion, "hex"))
           .query("UPDATE uqp.Dataset SET IsActive=@active,UpdatedAtUtc=SYSUTCDATETIME() " +
                  "WHERE Id=@id AND IsArchived=0 AND DefinitionRowVersion=@version; " +
                  "SELECT @@ROWCOUNT AS Affected;");
