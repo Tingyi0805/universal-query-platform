@@ -168,12 +168,11 @@ export const createDatasetUpdater = (deps = {
       .input("sqlText", sql.NVarChar(sql.MAX), input.sqlText)
       .input("maxRows", sql.Int, input.maxRows)
       .input("queryTimeoutSec", sql.Int, input.queryTimeoutSec)
-      .input("isActive", sql.Bit, input.isActive)
       .query(`
         UPDATE uqp.Dataset SET
           Name=@name, Description=@description, DataSourceId=@dataSourceId,
           SqlText=@sqlText, MaxRows=@maxRows, QueryTimeoutSec=@queryTimeoutSec,
-          IsActive=@isActive, UpdatedAtUtc=SYSUTCDATETIME()
+          IsActive=IsActive, UpdatedAtUtc=SYSUTCDATETIME()
         WHERE Id=@id AND IsArchived=0;
         SELECT @@ROWCOUNT AS Affected;
       `);

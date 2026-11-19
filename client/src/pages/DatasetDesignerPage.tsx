@@ -1,11 +1,10 @@
 import {DatasetFieldSnapshotPanel} from "./DatasetFieldSnapshotPanel";
-import { DatasetPatientAuditEditor } from "../components/DatasetPatientAuditEditor";
+import { DatasetManagementApprovalPanel } from "../components/DatasetManagementApprovalPanel";
 import { DatasetCandidateMaskDraft } from "../components/DatasetCandidateMaskDraft";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { DatasetSensitivityEditor } from "../components/DatasetSensitivityEditor";
 import { DatasetParametersEditor } from "../components/DatasetParametersEditor";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
@@ -78,7 +77,7 @@ const emptyForm: FormState = {
   sqlText: "SELECT\n  *\nFROM YOUR_TABLE\nWHERE 1 = 1",
   maxRows: 500,
   queryTimeoutSec: "",
-  isActive: true,
+  isActive: false,
   isArchived: false,
   archivedAtUtc: null,
 };
@@ -100,8 +99,6 @@ export function DatasetDesignerPage() {
   const [savedSql, setSavedSql] = useState("");
   const [savedDataSourceId, setSavedDataSourceId] = useState<number | "">("");
   const [sqlSaveRevision, setSqlSaveRevision] = useState(0);
-  const [auditRevision, setAuditRevision] = useState(0);
-  const [sensitivityDirty, setSensitivityDirty] = useState(false);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
   const previewParameterSequence = useRef(0);
   const [previewParametersLoading, setPreviewParametersLoading] = useState(false);
@@ -127,7 +124,7 @@ export function DatasetDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
-  useEffect(() => { setPreview(null); setColumnCandidate(null); setColumnCandidateError(""); }, [form, sqlSaveRevision, sensitivityDirty]);
+  useEffect(() => { setPreview(null); setColumnCandidate(null); setColumnCandidateError(""); }, [form, sqlSaveRevision]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -279,7 +276,7 @@ export function DatasetDesignerPage() {
           method: "PUT",
           body: JSON.stringify(submitted),
         }, accessToken);
-        setNotice(sensitivityDirty ? "Dataset 基本設定已更新；敏感欄位規則尚未儲存，請使用獨立的儲存規則按鈕。" : "Dataset 已更新（不包含敏感欄位規則）。");
+        setNotice("Dataset 基本設定已更新；使用與播放核准由管理者獨立處理。");
       } else {
         const created = await apiRequest<{ id: number; parameterNames: string[] }>("/datasets", {
           method: "POST",
@@ -287,7 +284,7 @@ export function DatasetDesignerPage() {
         }, accessToken);
         savedId = created.id;
         setForm((current) => ({ ...current, id: created.id }));
-        setNotice("Dataset 已建立。請先同步欄位並明確儲存顯示政策，再執行預覽；患者資料的既有稽核要求不變。");
+        setNotice("Dataset 已建立，預設不開放使用；請由管理者核准。安全檢查仍適用。");
       }
 
       // The save API trims SQL. Keep the editor aligned with the saved definition.
@@ -414,7 +411,6 @@ export function DatasetDesignerPage() {
     if (!form.id || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId) {
       setError("請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。"); return;
     }
-    if (sensitivityDirty) { setError("敏感欄位規則尚未儲存，請先儲存規則再預覽。"); return; }
     if (form.id && (previewParametersLoading || previewParameterError)) {
       setError("參數設定尚未成功載入，請先重試讀取再執行預覽。");
       return;
@@ -468,7 +464,7 @@ export function DatasetDesignerPage() {
       }, accessToken);
 
       if (currentForm.current !== form) throw new Error("編輯內容已變更，預覽結果已捨棄。請儲存並重新確認後再預覽。");
-      setPreview(response.result); setAuditRevision(value => value + 1);
+      setPreview(response.result);
       setNotice(`預覽完成：${response.result.rowCount} 筆，${response.result.elapsedMs} ms${response.result.truncated ? "（結果已截斷）" : ""}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "查詢預覽失敗。");
@@ -638,11 +634,7 @@ export function DatasetDesignerPage() {
               {form.isArchived ? (
                 <span className="dataset-archive-badge">Archived</span>
               ) : (
-              <label className="inline-check">
-                <input type="checkbox" checked={form.isActive}
-                  onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
-                啟用
-              </label>
+              <span className="dataset-approval-summary-status">{form.isActive ? "已啟用（由管理者核准）" : "未核准使用"}</span>
               )}
             </div>
 
@@ -699,7 +691,7 @@ export function DatasetDesignerPage() {
             <p role="status">{form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId
               ? "編輯中 SQL／資料來源尚未儲存。下方 Parameter Designer 差異依已儲存 SQL 計算；本區參數依編輯中 SQL 偵測。"
               : "SQL／資料來源與已儲存設定一致。Parameter Designer 差異依已儲存 SQL 計算。"}</p>
-            <p>儲存 Dataset 僅儲存基本設定與 SQL；敏感欄位規則須使用下方獨立按鈕儲存。</p>
+            <p>儲存 Dataset 僅更新定義；是否允許使用與 Dashboard 播放由下方管理者核准面板控制。</p>
             <div className="parameter-panel">
               <div>
                 <strong>偵測到的參數</strong>
@@ -811,9 +803,18 @@ export function DatasetDesignerPage() {
             />
           )}
 
-          {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
-
-          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} definitionRevision={sqlSaveRevision} canSyncColumns={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY")} onSaved={() => { void loadPreviewParameterDefinitions(form.id); }} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
+          {form.id && !form.isArchived && <DatasetManagementApprovalPanel
+            key={form.id}
+            datasetId={form.id}
+            revision={sqlSaveRevision}
+            canSubmit={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId}
+            onUpdated={async () => {
+              if (!form.id) return;
+              const latest = await apiRequest<{ dataset: DatasetRow }>("/datasets/" + form.id, {}, accessToken);
+              selectDataset(latest.dataset);
+              await load();
+            }}
+          />}
 
           {preview && (
             <section className="preview-panel">

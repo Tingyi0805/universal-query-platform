@@ -1,0 +1,165 @@
+name: UQP PR99+PR100 Unified Test Package V2
+on:
+  pull_request:
+    branches:
+      - feature/native-chart-authorized-designer-playback-issue89-20261109
+permissions:
+  contents: read
+jobs:
+  unified-test-zip:
+    if: github.head_ref == 'test/pr99-pr100-direct-update-20261118'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Checkout exact integration HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node 24 Windows x64
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          architecture: x64
+      - name: Verify combined baseline and native ABI
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          git merge-base --is-ancestor 7e0c32af2b04b591bc311282358589f791c93916 HEAD
+          if ($LASTEXITCODE) { throw 'PR99_BASELINE_NOT_INCLUDED' }
+          $v = node -p 'process.platform+":"+process.arch+":"+process.version+":"+process.versions.modules'
+          if ($v -ne 'win32:x64:v24.22.1:137') { throw "NODE_ABI_MISMATCH:$v" }
+          if (!(Test-Path 'server/src/modules/dashboard') -or !(Test-Path 'server/src/modules/queryDefinition/queryHierarchy.routes.ts')) { throw 'COMBINED_SOURCE_REQUIRED' }
+      - name: Build and focused hierarchy regression
+        working-directory: server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE) { throw 'SERVER_NPM_CI_FAILED' }
+          node --import tsx --test --test-concurrency=1 src/modules/queryDefinition/queryHierarchy.service.test.ts src/modules/queryDefinition/queryHierarchy.repository.test.ts src/modules/queryDefinition/queryHierarchy.routes.test.ts src/modules/dataset/datasetManagementApproval.policy.test.ts
+          if ($LASTEXITCODE) { throw 'HIERARCHY_REGRESSION_FAILED' }
+          npm run typecheck
+          if ($LASTEXITCODE) { throw 'SERVER_TYPECHECK_FAILED' }
+          npm run build
+          if ($LASTEXITCODE) { throw 'SERVER_BUILD_FAILED' }
+          npm prune --omit=dev
+          if ($LASTEXITCODE) { throw 'SERVER_NPM_PRUNE_FAILED' }
+          node -e "for(const p of ['mssql','oracledb','odbc']){require(p);console.log(p+':NATIVE_LOAD_PASS')}"
+          if ($LASTEXITCODE) { throw 'NATIVE_LOAD_FAILED' }
+      - name: Build React client
+        working-directory: client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          npm ci
+          if ($LASTEXITCODE) { throw 'CLIENT_NPM_CI_FAILED' }
+          npm run typecheck
+          if ($LASTEXITCODE) { throw 'CLIENT_TYPECHECK_FAILED' }
+          npm run build
+          if ($LASTEXITCODE) { throw 'CLIENT_BUILD_FAILED' }
+      - name: Pack artifact directly, no inner ZIP, with updater and 929
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out=Join-Path $env:GITHUB_WORKSPACE 'direct-package'
+          New-Item -ItemType Directory -Force "$out\payload\server","$out\payload\client","$out\sql" | Out-Null
+          Copy-Item 'server\dist' "$out\payload\server\dist" -Recurse
+          Copy-Item 'server\node_modules' "$out\payload\server\node_modules" -Recurse
+          Copy-Item 'server\package.json' "$out\payload\server\package.json"
+          Copy-Item 'client\dist' "$out\payload\client\dist" -Recurse
+          Copy-Item 'tools\operator\929_Existing_UQP_TestDB.sql.txt' "$out\sql\929_Existing_UQP_TestDB.sql"
+          Copy-Item 'tools\operator\Update-UQP-PR99-PR100-Test-v2.ps1' "$out\Update-UQP-PR99-PR100-Test-v2.ps1"
+          @'
+          PR99+PR100 DIRECT test package V2. One GitHub download ZIP, no nested ZIP.
+          DO NOT USE on production/hospital systems.
+          1. Extract ZIP to C:\UQP_Update\PR99_PR100_V2, NOT C:\UQP.
+          2. Back up existing EINOV-VPN / UniversalQueryPlatform TEST database.
+          3. Manually run sql/929_Existing_UQP_TestDB.sql in SSMS on that exact DB.
+             If 929 already exists, STOP and review catalog; don't run twice.
+          4. Stop ONLY UQP server on Port 3200 with its existing service mechanism.
+          5. Run in PowerShell:
+             & 'C:\UQP_Update\PR99_PR100_V2\Update-UQP-PR99-PR100-Test-v2.ps1' -IConfirmThisIsTestOnly
+          6. Restart your existing UQP normally, using the unchanged original URL.
+          .env, database name, port, SQL credentials and IIS web.config preserved.
+          CHART gates remain OFF; no automatic 929 installation or production approval.
+          '@ | Set-Content "$out\README-START-HERE.txt" -Encoding utf8
+          foreach ($f in @('payload\server\dist\server.js',
+            'payload\server\node_modules','payload\server\package.json',
+            'payload\client\dist\index.html','sql\929_Existing_UQP_TestDB.sql',
+            'Update-UQP-PR99-PR100-Test-v2.ps1')) {
+            if (!(Test-Path (Join-Path $out $f))) { throw "PACKAGE_PATH_MISSING:$f" }
+          }
+          # Node vendor modules may legitimately ship .zip/.env fixtures. Never
+          # package OUR server/client env, deployment web.config, or a second ZIP
+          # at the artifact root (the previous broad recursive filter was invalid).
+          $blocked = @(
+            "$out\payload\server\.env",
+            "$out\payload\server\.env.production",
+            "$out\payload\client\dist\.env",
+            "$out\payload\client\dist\web.config",
+            "$out\.env",
+            "$out\.env.production"
+          )
+          foreach ($bad in $blocked) {
+            if (Test-Path -LiteralPath $bad) { throw "PACKAGE_FORBIDDEN_CONFIGURATION:$bad" }
+          }
+          if (@(Get-ChildItem -LiteralPath $out -File -Filter '*.zip').Count -gt 0) {
+            throw 'PACKAGE_CONTAINS_SECOND_ZIP'
+          }
+          $parseErrors=$null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+             (Join-Path $out 'Update-UQP-PR99-PR100-Test-v2.ps1'),[ref]$null,[ref]$parseErrors)
+          if ($parseErrors.Count) { throw "UPDATE_SCRIPT_SYNTAX_FAILED:$($parseErrors[0])" }
+          $list=@(Get-ChildItem -LiteralPath $out -Recurse -File -Force |
+            Sort-Object FullName | ForEach-Object {
+              [pscustomobject]@{Path=$_.FullName.Substring($out.Length+1).Replace('\','/');
+                SHA256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()}
+            })
+          $list | Export-Csv -LiteralPath "$out\SHA256SUMS.csv" -NoTypeInformation -Encoding utf8
+          Write-Host "PR99_PR100_V2_PACKAGE_MANIFEST_CREATED:files=$($list.Count)"
+      - name: Upload one-layer Windows test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: uqp-pr99-pr100-direct-test-v2
+          path: direct-package/
+          retention-days: 14
+          include-hidden-files: true
+          compression-level: 6
+          if-no-files-found: error
+      - name: Download artifact to verify actual ZIP contents
+        uses: actions/download-artifact@v4
+        with:
+          name: uqp-pr99-pr100-direct-test-v2
+          path: artifact-readback
+      - name: Verify downloaded layout and all SHA256 file hashes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $root=(Resolve-Path 'artifact-readback').Path
+          $m=Join-Path $root 'SHA256SUMS.csv'
+          if (!(Test-Path -LiteralPath $m)) { throw 'ARTIFACT_MANIFEST_MISSING' }
+          $list=@(Import-Csv -LiteralPath $m)
+          $files=@(Get-ChildItem -LiteralPath $root -Recurse -File -Force | Where-Object { $_.FullName -ne $m })
+          if ($list.Count -lt 100 -or $files.Count -ne $list.Count) { throw 'ARTIFACT_FILE_COUNT_MISMATCH' }
+          $paths=[System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+          foreach ($entry in $list) {
+            $rel=[string]$entry.Path
+            if (-not $paths.Add($rel)) { throw "ARTIFACT_DUPLICATE_PATH:$rel" }
+            if ($rel.StartsWith('/') -or $rel.StartsWith('\') -or $rel -match '(^|[\/])\.\.([\/]|$)' -or $rel -match '^[A-Za-z]:') {
+              throw 'ARTIFACT_UNSAFE_PATH'
+            }
+            $p=Join-Path $root ($rel -replace '/', '\')
+            if (!(Test-Path -LiteralPath $p -PathType Leaf)) { throw "ARTIFACT_FILE_MISSING:$rel" }
+            $got=(Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($got -ne ([string]$entry.SHA256).ToLowerInvariant()) { throw "ARTIFACT_SHA256_MISMATCH:$rel" }
+          }
+          foreach ($rel in @('payload\server\dist\server.js','payload\client\dist\index.html',
+              'Update-UQP-PR99-PR100-Test-v2.ps1','sql\929_Existing_UQP_TestDB.sql')) {
+            if (!(Test-Path (Join-Path $root $rel))) { throw "ARTIFACT_REQUIRED_PATH_MISSING:$rel" }
+          }
+          if (@(Get-ChildItem -LiteralPath $root -File -Filter '*.zip').Count -gt 0) {
+            throw 'ARTIFACT_SECOND_UPDATE_ZIP_FOUND'
+          }
+          Write-Host "PR99_PR100_V2_DIRECT_ARTIFACT_READBACK_PASS:files=$($list.Count)"

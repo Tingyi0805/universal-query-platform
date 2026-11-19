@@ -1,4 +1,5 @@
 import {DatasetDisplayError,exactPositiveId} from "./datasetDisplaySchema.js";
+import { createDatasetManagementApprovalRouter } from "./datasetManagementApproval.routes.js";
 import { validCustomMask } from "../dashboard/dashboardDeviceMasking.js";
 import { listDatasetColumns } from "./column.repository.js";
 import { createDatasetDataRouter } from "./datasetData.routes.js";
@@ -47,7 +48,7 @@ const datasetSchema = z.object({
   sqlText: z.string().trim().min(1).max(200000),
   maxRows: z.coerce.number().int().min(1).max(10000).default(500),
   queryTimeoutSec: z.coerce.number().int().min(1).max(3600).nullable().optional().default(null),
-  isActive: z.boolean().default(true),
+  isActive: z.boolean().default(false),
 });
 
 const parameterSchema = z.object({
@@ -218,6 +219,7 @@ function sendDatasetExecutionError(res: any, error: unknown): boolean {
 export const datasetRouter = Router();
 datasetRouter.use(authenticateJwt, requirePermission("DESIGN_QUERY"));
 datasetRouter.use(createDatasetParameterRouter());
+datasetRouter.use(createDatasetManagementApprovalRouter());
 
 datasetRouter.post("/date-parameter-preview", (req, res) => {
   const body = z.object({
@@ -343,6 +345,10 @@ datasetRouter.post("/", async (req, res, next) => {
     const parsed = datasetSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Dataset 設定格式不正確。" } });
+      return;
+    }
+    if (parsed.data.isActive) {
+      res.status(403).json({ error: { code: "DATASET_USAGE_APPROVAL_REQUIRED", message: "新增 Dataset 預設停用；僅能由管理者核准使用。" } });
       return;
     }
     assertSelectOnlySql(parsed.data.sqlText);
