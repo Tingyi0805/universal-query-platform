@@ -14,7 +14,7 @@ export function createDatasetPublicDisplayRouter(deps={repository:datasetPublicD
   res.setHeader("Cache-Control","no-store");try{
    if(!deps.enabled())throw new DatasetDisplayError("DATASET_DISPLAY_MANAGEMENT_DISABLED",503);
    const id=z.coerce.number().int().positive().safe().parse(req.params.id);
-   const actor=(tx:import("mssql").Transaction)=>deps.identity(req.header("Authorization"),tx);
+   const actor=async(tx:import("mssql").Transaction)=>{const live=await deps.identity(req.header("Authorization"),tx);if(method==="put"&&!live.permissions.includes("MANAGE_USERS"))throw new DatasetDisplayError("FORBIDDEN",403);return live;};
    const result=method==="get"?await deps.repository.get(id,actor):await deps.repository.save(id,actor,input.parse(req.body));
    res.json(result);
   }catch(e){const code=e instanceof DatasetDisplayError||e instanceof QueryDeliveryError?e.code:e instanceof z.ZodError?"VALIDATION_ERROR":"DATASET_DISPLAY_UNAVAILABLE";

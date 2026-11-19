@@ -39,4 +39,4 @@ Dataset 設計：資料來源、SQL、參數、預覽 + 「使用與播放核准
 - 交付：與正在測試的 PR99+100 V2 分開，不更動已部署 `C:\UQP`。完成安全核准邏輯與 CI 之後才製作新的原環境覆蓋測試 ZIP。
 
 ## 狀態
-已記錄產品與安全邊界決策，**尚未實作或部署新的核准 UI/API**；不可把現有 Dataset IsActive／Query Published 或管理者的表面選擇，直接當作公共播放安全核准。
+管理者用途核准的候選 UI/API 已於 PR #101 實作並進入 CI 驗證；未部署至 C:\UQP。Dataset 使用核准採 IsActive + 版本 CAS + 同交易 Audit，停止使用會取消關聯 Query 發佈。播放核准僅採已審查的敏感欄位策略與既有 925 寫入交易，無政策則拒絕；原公共顯示 PUT 寫入也要求目前有效的 MANAGE_USERS 身分。舊的 Dataset 編輯 PUT 不得更改 IsActive。仍須完成受影響的前端 E2E 及實際環境測試，不可宣稱正式通過。
