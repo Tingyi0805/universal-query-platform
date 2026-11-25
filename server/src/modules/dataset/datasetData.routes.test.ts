@@ -8,12 +8,21 @@ import { env } from "../../config/env.js";
 import { errorHandler } from "../../middleware/errorHandler.js";
 import { createAuthenticateJwt } from "../auth/auth.middleware.js";
 import { createRuntimeIdentityVerifier } from "../queryDefinition/queryDelivery.js";
-import { createDatasetDataRouter, defaultDatasetDataRouteDependencies } from "./datasetData.routes.js";
+import { createDatasetDataRouter, defaultDatasetDataRouteDependencies, datasetPreviewGuidance } from "./datasetData.routes.js";
 import { createDatasetDataDelivery, defaultDatasetDataDependencies } from "./datasetDataDelivery.js";
 import { type ConfirmedDatasetDeliverySnapshot, DatasetDeliverySnapshotError } from "./datasetDeliveryPolicy.repository.js";
 import { syntheticParameter } from "./parameterTestFixture.js";
 import { DatasetColumnCandidateError } from "./datasetColumnCandidate.js";
 
+test("unconfirmed policy guidance points to administrator safety review, never a removed UI form", () => {
+  const message = datasetPreviewGuidance("DATASET_DELIVERY_POLICY_UNCONFIRMED");
+  assert.match(message, /安全初始化與欄位審查/);
+  assert.match(message, /核准.*使用/);
+  assert.doesNotMatch(message, /請到敏感資料欄位管理/);
+  for (const code of ["DATASET_DELIVERY_POLICY_REQUIRED", "DATASET_DELIVERY_POLICY_INVALID"]) {
+    assert.doesNotMatch(datasetPreviewGuidance(code), /請到敏感資料欄位管理/);
+  }
+});
 const version = "0000000000000001", rawName = "王小明", rawId = "SYNTHETIC-AUDIT-ID";
 function policy(datasetId: number): ConfirmedDatasetDeliverySnapshot {
   return { datasetId, definitionVersion: version, sensitivityVersion: "1", patientAuditVersion: "1",

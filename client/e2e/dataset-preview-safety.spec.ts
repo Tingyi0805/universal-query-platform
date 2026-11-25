@@ -25,7 +25,7 @@ async function setup(page: Page, saved = true, execute = true) {
     }
     if (path.endsWith("/design-preview/context")) {
       state.contexts++;
-      if (!state.policyVersion) { await route.fulfill({ status: 409, json: { error: { code: "DATASET_DELIVERY_POLICY_UNCONFIRMED", message: "敏感欄位政策尚未確認，請檢查並儲存規則。", requestId: "synthetic-request" } } }); return; }
+      if (!state.policyVersion) { await route.fulfill({ status: 409, json: { error: { code: "DATASET_DELIVERY_POLICY_UNCONFIRMED", message: "此 Dataset 尚無已確認的欄位保護政策，預覽已停止資料交付。管理者核准「使用」不能取代資料安全分類；需完成安全初始化與欄位審查後才能預覽。", requestId: "synthetic-request" } } }); return; }
       await route.fulfill({ json: { datasetId: 2, definitionVersion: version } }); return;
     }
     if (path === "/api/datasets/preview/run") {
@@ -54,11 +54,11 @@ test("new Dataset saves inactive and cannot deliver unconfirmed data", async ({ 
   expect(state.saves).toBe(1);
   expect(state.policyWrites).toBe(0);
   await preview(page).click();
-  await expect(page.getByText(/敏感欄位政策尚未確認，/)).toBeVisible();
+  await expect(page.getByText(/安全初始化與欄位審查/)).toBeVisible();
   expect(state.runs).toEqual([]);
 });
 test("saved unconfirmed policy displays actionable error and retains SQL", async ({ page }) => {
-  const state = await setup(page); await preview(page).click(); await expect(page.getByText(/敏感欄位政策尚未確認，/)).toBeVisible();
+  const state = await setup(page); await preview(page).click(); await expect(page.getByText(/安全初始化與欄位審查/)).toBeVisible();
   await expect(page.getByText(/synthetic-request/)).toBeVisible(); expect(state.runs).toEqual([]); await expect(page.locator("textarea").first()).toHaveValue("SELECT 1 AS VALUE");
 });
 for (const code of ["DATASET_DELIVERY_VERSION_CONFLICT", "PATIENT_AUDIT_NOT_CONFIRMED"]) test(`saved preview preserves ${code} and version`, async ({ page }) => {

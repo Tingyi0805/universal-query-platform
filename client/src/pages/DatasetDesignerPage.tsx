@@ -719,7 +719,7 @@ export function DatasetDesignerPage() {
 
             <section className="preview-panel" aria-label="SQL 欄位候選預覽">
               <h3>SQL 欄位候選預覽（不讀取資料列）</h3>
-              <p>支援已儲存且可安全描述的 SQL Server／Oracle SELECT 與標量參數；MULTISELECT 缺少固定長度契約時拒絕。此處是未認證的候選描述；請在下方欄位規則區按「取得並同步欄位清單」後設定顯示方式，不代表來源未漂移，也不解除資料預覽限制。</p>
+              <p>支援已儲存且可安全描述的 SQL Server／Oracle SELECT 與標量參數；MULTISELECT 缺少固定長度契約時拒絕。此處僅提供尚未認證的候選欄位描述，不會讀取資料列，也不會建立可信分類或解除預覽限制；資料預覽與播放仍需完成安全確認。</p>
               <button type="button" disabled={busy || columnCandidateBusy || !form.id || form.isArchived}
                 onClick={() => void describeColumns()}>{columnCandidateBusy ? "讀取欄位中…" : "取得 SQL 欄位名稱及型別"}</button>
               {columnCandidateError && <p role="alert">{columnCandidateError}</p>}
@@ -736,9 +736,9 @@ export function DatasetDesignerPage() {
             </section>
             {form.id&&<DatasetFieldSnapshotPanel key={`${form.id}:${sqlSaveRevision}:${accessToken}`} datasetId={form.id} token={accessToken} enabled={hasPermission("CONFIRM_DATASET_CLASSIFICATION")&&!busy&&!form.isArchived&&form.sqlText===savedSql&&form.dataSourceId===savedDataSourceId} />}
             <section aria-label="Dataset 安全初始化狀態">
-              <h3>先同步欄位、設定政策，再執行預覽</h3>
-              <p>欄位結構探索不需要已確認的敏感政策，也不讀取資料列或實際參數值。請在下方取得並同步欄位清單，再逐欄設定；無需遮蔽時可明確確認目前清單全部原樣顯示。</p>
-              <p>未儲存政策不得交付資料。預覽保留即時權限、版本與操作稽核；已設定患者稽核時仍須完成識別欄位、HMAC 及揭露稽核，不會由欄名推定敏感性。</p>
+              <h3>資料預覽的安全確認狀態</h3>
+              <p>欄位候選探索不需要先確認敏感政策，也不讀取資料列。管理者「核准使用」只控制查詢用途，不能代替可信欄位分類。尚無安全初始化與審查證據時，執行預覽會拒絕交付資料；目前簡化介面尚未提供完整初始化入口，請勿以空政策或直接改寫資料庫繞過。</p>
+              <p>未確認的政策不得交付資料；預覽保留即時權限、版本與操作稽核。涉及患者資料時仍必須先完成識別欄位、HMAC 及揭露稽核，不能由欄名自動推定安全。</p>
               <p>欄位描述不是 SOURCE_BOUND 或 Native Type 確認，不會變更既有遮蔽與患者稽核證據。同步失敗會顯示錯誤代碼與 Request ID，請依指引處理。</p>
             </section>
             <div className="form-actions">
