@@ -2,7 +2,7 @@ import sql from "mssql";
 import type { DataSourceAdapter, ExecuteQueryInput } from "./datasourceAdapter.js";
 import type { ConnectionTestResult, DataSourceConfig } from "../datasource.types.js";
 import type { QueryResult } from "../../../query/query.types.js";
-import { candidateDescription, compileDescription, compileUnboundDescription, isUnboundDescription, inferredDescriptionDeclarations, descriptionError, QueryDescriptionError,
+import { candidateDescription, compileDescription, compileUnboundDescription, isUnboundDescription, inferredDescriptionDeclarations, QueryDescriptionError,
   type ColumnDescribeInput } from "../../../query/queryDescription.js";
 
 function createPool(config: DataSourceConfig, requestTimeoutSec?: number) {
@@ -27,16 +27,21 @@ export class SqlServerAdapter implements DataSourceAdapter {
     const unbound = isUnboundDescription(input);
     const compiled = unbound ? compileUnboundDescription(input, "SQLSERVER") : compileDescription(input, "SQLSERVER");
     let pool: sql.ConnectionPool | undefined;
+    // Record only a fixed stage code. Never attach SQL, credentials or driver
+    // exception messages to the externally observable error.
+    let phase: "CONNECT" | "INFERENCE" | "RPC" = "CONNECT";
     try {
       pool = createPool({ ...config, connectionTimeoutSec: input.timeoutSec }, input.timeoutSec);
       await pool.connect();
       let declaration = "parameterDeclaration" in compiled ? compiled.parameterDeclaration : null;
       if ("parameterNames" in compiled && compiled.parameterNames.length) {
+        phase = "INFERENCE";
         const inference = pool.request();
         inference.input("tsql", sql.NVarChar(sql.MAX), compiled.sql);
         const types = await inference.execute("sys.sp_describe_undeclared_parameters");
         declaration = inferredDescriptionDeclarations(types.recordset, compiled.parameterNames);
       }
+      phase = "RPC";
       const request = pool.request();
       request.input("tsql", sql.NVarChar(sql.MAX), compiled.sql);
       request.input("params", sql.NVarChar(sql.MAX), declaration);
@@ -51,7 +56,11 @@ export class SqlServerAdapter implements DataSourceAdapter {
         return { name: column.name, dataType: column.system_type_name, ordinal: column.column_ordinal };
       });
       return candidateDescription("SQLSERVER_DESCRIBE_FIRST_RESULT_SET", columns);
-    } catch (error) { throw descriptionError(error); }
+    } catch (error) {
+      if (error instanceof QueryDescriptionError) throw error;
+      throw new QueryDescriptionError(phase === "CONNECT" ? "DESCRIPTION_CONNECT_FAILED"
+        : phase === "INFERENCE" ? "DESCRIPTION_INFERENCE_FAILED" : "DESCRIPTION_RPC_FAILED");
+    }
     finally {
       if (pool) {
         try { await pool.close(); } catch { throw new QueryDescriptionError("DESCRIPTION_CLEANUP_FAILED"); }

@@ -17,7 +17,9 @@ import { listDatasetParameters } from "./parameter.repository.js";
 export class DatasetColumnCandidateError extends Error {
   constructor(readonly code: "DATASET_COLUMN_PARAMETERS_NOT_SYNCED" | "DATASET_COLUMN_DESCRIPTION_LIST_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS" | "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_CONFLICT"
     | "DATASET_COLUMN_DESCRIPTION_FAILED" | "DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED" | "DATASET_COLUMN_DESCRIPTION_SOURCE_FAILED"
-    | "DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED" | "DATASET_NOT_AVAILABLE" | "DATASOURCE_NOT_AVAILABLE",
+    | "DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED" | "DATASET_COLUMN_DESCRIPTION_CONNECT_FAILED"
+    | "DATASET_COLUMN_DESCRIPTION_RPC_FAILED" | "DATASET_COLUMN_DESCRIPTION_INFERENCE_FAILED"
+    | "DATASET_COLUMN_DESCRIPTION_CLEANUP_FAILED" | "DATASET_NOT_AVAILABLE" | "DATASOURCE_NOT_AVAILABLE",
     readonly status = 409) { super(code); this.name = "DatasetColumnCandidateError"; }
 }
 
@@ -139,6 +141,15 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
       } catch (error) {
         if (error instanceof QueryDescriptionError && error.code === "DESCRIPTION_METADATA_INVALID")
           throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS");
+        if (error instanceof QueryDescriptionError) {
+          const code: Partial<Record<string, DatasetColumnCandidateError["code"]>> = {
+            DESCRIPTION_CONNECT_FAILED: "DATASET_COLUMN_DESCRIPTION_CONNECT_FAILED",
+            DESCRIPTION_INFERENCE_FAILED: "DATASET_COLUMN_DESCRIPTION_INFERENCE_FAILED",
+            DESCRIPTION_RPC_FAILED: "DATASET_COLUMN_DESCRIPTION_RPC_FAILED",
+            DESCRIPTION_CLEANUP_FAILED: "DATASET_COLUMN_DESCRIPTION_CLEANUP_FAILED",
+          };
+          if (code[error.code]) throw new DatasetColumnCandidateError(code[error.code]!, 503);
+        }
         if (error instanceof QueryDescriptionError && ["DESCRIPTION_UNSUPPORTED", "DESCRIPTION_PARAMETER_UNSUPPORTED"].includes(error.code))
           throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
         // Never expose driver exceptions, SQL, parameters, credential or row values.

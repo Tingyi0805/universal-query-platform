@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDatasetColumnCandidate } from "./datasetColumnCandidate.js";
+import { QueryDescriptionError } from "../../query/queryDescription.js";
 
 const v = "0000000000000001";
 function fixture() {
@@ -71,6 +72,21 @@ test("source and metadata RPC failures have distinct fixed codes without exposin
     code: "DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED",
     message: "DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED",
   });
+});
+
+test("SQL Server metadata failure stages return only fixed codes without SQL or driver secrets", async () => {
+  const cases = [
+    ["DESCRIPTION_CONNECT_FAILED", "DATASET_COLUMN_DESCRIPTION_CONNECT_FAILED"],
+    ["DESCRIPTION_INFERENCE_FAILED", "DATASET_COLUMN_DESCRIPTION_INFERENCE_FAILED"],
+    ["DESCRIPTION_RPC_FAILED", "DATASET_COLUMN_DESCRIPTION_RPC_FAILED"],
+    ["DESCRIPTION_CLEANUP_FAILED", "DATASET_COLUMN_DESCRIPTION_CLEANUP_FAILED"],
+  ] as const;
+  for (const [driverCode,expectedCode] of cases) {
+    const f=fixture();
+    f.deps.describe=async()=>{throw new QueryDescriptionError(driverCode);};
+    await assert.rejects((await f.service.open(7)).describe(),
+      {code: expectedCode, message: expectedCode});
+  }
 });
 
 test("saved parameters or SQL bind tokens fail closed before RPC", async () => {

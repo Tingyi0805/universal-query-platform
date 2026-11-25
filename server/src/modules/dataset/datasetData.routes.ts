@@ -90,7 +90,8 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
         deliveryAllowed: false });
     } catch (error) {
       if (auditId !== null) await deps.completeAuditFailure(auditId,
-        { errorCode: safeAuditErrorCode(error), durationMs: Date.now() - started }).catch(() => undefined);
+        { errorCode: error instanceof DatasetColumnCandidateError ? error.code : safeAuditErrorCode(error),
+          durationMs: Date.now() - started }).catch(() => undefined);
       next(error);
     }
   });
@@ -218,7 +219,11 @@ export function datasetPreviewGuidance(code: string): string {
     DATASET_COLUMN_DESCRIPTION_FAILED: "無法取得欄位候選描述，請管理者檢查來源與稽核服務；未執行資料列查詢。",
     DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED: "無法讀取或重新驗證 Dataset／來源版本，欄位探索未完成；請依 Request ID 查核平台資料庫及版本狀態。",
     DATASET_COLUMN_DESCRIPTION_SOURCE_FAILED: "無法取得資料來源設定，欄位探索未完成；請依 Request ID 查核來源設定服務。",
-    DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED: "資料來源無法透過安全 Metadata Describe 取得欄位；請依 Request ID 查核 SQL Server／Oracle 欄位描述與來源連線。未執行資料列查詢。",
+    DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED: "Metadata Describe 未完成；請依 Request ID 檢查來源連線與描述程序，未執行資料列查詢。",
+    DATASET_COLUMN_DESCRIPTION_CONNECT_FAILED: "無法連接 SQL Server 資料來源；請確認資料來源主機、連接埠、TLS 設定與測試連線。未執行資料列查詢。",
+    DATASET_COLUMN_DESCRIPTION_INFERENCE_FAILED: "SQL Server 無法推導查詢參數型別；請確認來源權限與標量參數。未執行資料列查詢。",
+    DATASET_COLUMN_DESCRIPTION_RPC_FAILED: "SQL Server 的 sp_describe_first_result_set 欄位描述程序未成功；請用同一資料來源帳號檢查 Describe 權限、SQL Server 版本與 SQL 語法。未執行資料列查詢。",
+    DATASET_COLUMN_DESCRIPTION_CLEANUP_FAILED: "SQL Server Metadata Describe 連線清理失敗，操作未完成；請依 Request ID 查核來源連線服務。",
     DATASET_CANDIDATE_PREVIEW_UNAVAILABLE: "請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。",
     DATASET_PREVIEW_VERSION_REQUIRED: "缺少預覽定義版本，請重新載入 Dataset 後重試。",
     DATASET_DELIVERY_VERSION_CONFLICT: "Dataset 定義、來源或安全設定已變更，請重新載入並確認後再預覽。",
