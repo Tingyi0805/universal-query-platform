@@ -31,6 +31,12 @@ export class SimpleReviewError extends Error {
  * revisions, policy version, complete saved field membership and absence of
  * an existing patient audit configuration under the same SQL transaction.
  */
+export function simpleReviewEligible(policyVersion: number, existingRules: number, columnCount: number,
+  hasPatientAuditEvidence: boolean, sourceType: string): boolean {
+  return policyVersion === 0 && existingRules === 0 && columnCount > 0 && columnCount <= 300
+    && !hasPatientAuditEvidence && ["SQLSERVER", "ORACLE"].includes(sourceType);
+}
+
 export function buildSimpleNonPatientRules(
   saved: readonly {name: string}[], input: SimpleReviewInput,
 ): DatasetSensitiveColumn[] {

@@ -5,7 +5,7 @@ import { test, expect, type Page } from "@playwright/test";
 // covered by the Server's policy, permission and delivery contract tests.
 const definitionVersion = "0000000000000001";
 type Playback = "APPROVED" | "UNAPPROVED" | "STALE" | "BLOCKED";
-async function setup(page: Page, options: { manager?: boolean; exists?: boolean; active?: boolean; playback?: Playback; conflict?: boolean } = {}) {
+async function setup(page: Page, options: { manager?: boolean; exists?: boolean; active?: boolean; playback?: Playback; conflict?: boolean; patientEvidence?: boolean } = {}) {
   const manager = options.manager ?? true;
   const state = {
     exists: options.exists ?? true,
@@ -60,9 +60,9 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
         expectedDefinitionVersion:definitionVersion,
         expectedSourceVersion:"0000000000000002",
         expectedPolicyVersion:state.reviewVersion,
-        available:state.reviewVersion===0,
+        available:state.reviewVersion===0 && !options.patientEvidence,
         columns:[{name:"TEST_VALUE",dataType:"int",ordinal:1}],
-        note:"合成測試欄位需明確審查",
+        note:options.patientEvidence ? "已存在患者稽核設定或患者欄位歷史 Metadata，禁止使用非患者簡化審查。" : "合成測試欄位需明確審查",
       } }); return;
     }
     if (p === "/api/datasets/2/management-approval/safety-review" && method === "PUT") {
@@ -297,4 +297,14 @@ test("manager nonpatient review requires explicit per-field choice and attestati
   expect(state.queryPublishWrites).toBe(0);
   await expect(panel.getByRole("button",{name:"核准使用"})).toBeVisible();
   await expect(panel.getByRole("button",{name:"核准播放"})).toBeDisabled();
+});
+
+test("patient audit history prevents nonpatient first-review submission", async ({ page }) => {
+  const { state, panel } = await setup(page, {active:false,patientEvidence:true,playback:"BLOCKED"});
+  await panel.getByRole("button", {name:/開啟簡化安全審查/}).click();
+  await expect(page.getByText(/患者欄位歷史 Metadata/).first()).toBeVisible();
+  await expect(page.getByRole("button", {name:"確認並儲存一般資料安全審查"})).toHaveCount(0);
+  expect(state.reviewWrites).toEqual([]);
+  expect(state.usageWrites).toEqual([]);
+  expect(state.playbackWrites).toEqual([]);
 });

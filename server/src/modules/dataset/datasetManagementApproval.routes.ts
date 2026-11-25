@@ -11,7 +11,7 @@ import { getDatasetSensitivitySnapshot, replaceDatasetSensitiveColumns } from ".
 import { readColumnCandidateSnapshot } from "./datasetColumnCandidate.js";
 import { listDatasetColumns } from "./column.repository.js";
 import { auditRequestContext } from "../audit/auditContext.js";
-import { buildSimpleNonPatientRules, simpleReviewSchema, SimpleReviewError } from "./datasetManagementApproval.simpleReview.js";
+import { buildSimpleNonPatientRules, simpleReviewSchema, simpleReviewEligible, SimpleReviewError } from "./datasetManagementApproval.simpleReview.js";
 import { managerPlaybackGrants } from "./datasetManagementApproval.policy.js";
 import { decodeDatasetApprovalRevision } from "./datasetManagementApproval.revision.js";
 import { readConfirmedDatasetDeliverySnapshot } from "./datasetDeliveryPolicy.repository.js";
@@ -122,13 +122,23 @@ export function createDatasetManagementApprovalRouter() {
       const id=idSchema.parse(req.params.id);
       const source=await readColumnCandidateSnapshot(await platformPool(),id);
       if (!source || source.datasetArchived || !source.sourceActive) throw new ApprovalError("DATASET_NOT_FOUND",404);
-      const [policy,columns]=await Promise.all([getDatasetSensitivitySnapshot(id),listDatasetColumns(id)]);
+      const [policy,columns,patient]=await Promise.all([getDatasetSensitivitySnapshot(id),listDatasetColumns(id),
+        (await platformPool()).request().input("id",sql.BigInt,id).query(`
+          SELECT CASE WHEN EXISTS(SELECT 1 FROM uqp.DatasetPatientAuditConfig WHERE DatasetId=@id)
+            OR EXISTS(SELECT 1 FROM uqp.DatasetPatientAuditMetadata WHERE DatasetId=@id)
+            THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS HasPatientEvidence`),
+      ]);
+      const patientEvidence=patient.recordset.length!==1 || Boolean(patient.recordset[0].HasPatientEvidence);
+      const available=simpleReviewEligible(policy.version,policy.columns.length,columns.length,
+        patientEvidence,source.sourceType);
       res.json({ expectedDefinitionVersion:source.definitionVersion,
         expectedSourceVersion:source.configurationVersion,
         expectedPolicyVersion:policy.version,
-        available:policy.version===0 && policy.columns.length===0 && columns.length>0 && columns.length<=300,
+        available,
         columns:columns.map(c=>({name:c.name,dataType:c.dataType,ordinal:c.ordinal})),
-        note:"此處只供管理者明確確認一般非患者資料；已存在的遮蔽政策不會被簡化審查覆寫。" });
+        note:patientEvidence
+          ? "已存在患者稽核設定或患者欄位歷史 Metadata，禁止使用非患者簡化審查；請改走患者資料專用審查。"
+          : "僅限管理者明確確認的一般非患者資料；既有遮蔽政策不會被簡化審查覆寫。" });
     } catch (e) { respondError(res,e); }
   });
 

@@ -71,20 +71,25 @@ export async function replaceDatasetSensitiveColumns(datasetId: number, rules: D
         || !/^[0-9a-f]{16}$/u.test(review.expectedSourceVersion))
         throw new Error("REVIEW_EXISTING_POLICY");
       const identity = await new sql.Request(transaction).input("datasetId", sql.BigInt, datasetId).query(`
-        SELECT d.IsArchived,d.DefinitionRowVersion,s.ConfigurationRowVersion,s.IsActive AS SourceActive
+        SELECT d.IsArchived,d.DefinitionRowVersion,s.ConfigurationRowVersion,s.IsActive AS SourceActive,s.Type AS SourceType
         FROM uqp.Dataset d WITH (UPDLOCK,HOLDLOCK)
         INNER JOIN uqp.DataSource s WITH (UPDLOCK,HOLDLOCK) ON s.Id=d.DataSourceId
         WHERE d.Id=@datasetId`);
       const item=identity.recordset[0];
       if (identity.recordset.length!==1 || item.IsArchived || !item.SourceActive ||
+        !["SQLSERVER","ORACLE"].includes(String(item.SourceType)) ||
         !Buffer.isBuffer(item.DefinitionRowVersion) || item.DefinitionRowVersion.length!==8 ||
         !Buffer.isBuffer(item.ConfigurationRowVersion) || item.ConfigurationRowVersion.length!==8 ||
         item.DefinitionRowVersion.toString("hex")!==review.expectedDefinitionVersion ||
         item.ConfigurationRowVersion.toString("hex")!==review.expectedSourceVersion)
         throw new Error("REVIEW_VERSION_CONFLICT");
       const patient = await new sql.Request(transaction).input("datasetId",sql.BigInt,datasetId)
-        .query("SELECT TOP(1) DatasetId FROM uqp.DatasetPatientAuditConfig WITH(HOLDLOCK) WHERE DatasetId=@datasetId");
-      if (patient.recordset.length) throw new Error("REVIEW_PATIENT_SCOPE_REQUIRED");
+        .query(`SELECT CASE
+          WHEN EXISTS(SELECT 1 FROM uqp.DatasetPatientAuditConfig WITH(HOLDLOCK) WHERE DatasetId=@datasetId)
+            OR EXISTS(SELECT 1 FROM uqp.DatasetPatientAuditMetadata WITH(HOLDLOCK) WHERE DatasetId=@datasetId)
+          THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS HasPatientEvidence`);
+      if (patient.recordset.length!==1 || Boolean(patient.recordset[0].HasPatientEvidence))
+        throw new Error("REVIEW_PATIENT_SCOPE_REQUIRED");
       const savedFields = await new sql.Request(transaction).input("datasetId",sql.BigInt,datasetId)
         .query("SELECT ColumnName FROM uqp.DatasetColumn WITH(HOLDLOCK) WHERE DatasetId=@datasetId");
       const expected = new Set(savedFields.recordset.map(x=>String(x.ColumnName).toUpperCase()));

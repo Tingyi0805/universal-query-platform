@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildSimpleNonPatientRules, simpleReviewSchema } from "./datasetManagementApproval.simpleReview.js";
+import { buildSimpleNonPatientRules, simpleReviewSchema, simpleReviewEligible } from "./datasetManagementApproval.simpleReview.js";
 
 const request = {
   expectedDefinitionVersion: "0000000000000001",
@@ -36,4 +36,11 @@ test("nonpatient confirmation and revisions are mandatory",()=>{
     {...request,columns:[{columnName:"TEST_VALUE",decision:"UNKNOWN"}]}]) {
     assert.equal(simpleReviewSchema.safeParse(body).success,false);
   }
+});
+
+test("first review is blocked when any patient config or historical patient metadata is present", () => {
+  assert.equal(simpleReviewEligible(0,0,1,false,"SQLSERVER"),true);
+  assert.equal(simpleReviewEligible(0,0,1,true,"SQLSERVER"),false);
+  assert.equal(simpleReviewEligible(1,0,1,false,"SQLSERVER"),false);
+  assert.equal(simpleReviewEligible(0,0,1,false,"MYSQL"),false);
 });

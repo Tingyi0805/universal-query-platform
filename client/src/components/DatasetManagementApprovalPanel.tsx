@@ -85,7 +85,7 @@ export function DatasetManagementApprovalPanel({
       setReview(result); setReviewOpen(true);
       if (!result.available) setReviewMessage(result.columns.length===0
         ? "尚無設計用欄位清單；請先取得欄位並儲存候選欄位清單。"
-        : "已有安全政策或欄位不適用於首次簡化審查；原政策維持不變。");
+        : result.note);
     } catch (e) {
       setReviewMessage(e instanceof Error ? e.message : "無法讀取安全審查狀態。");
     } finally { setReviewBusy(false); }
