@@ -2,7 +2,8 @@ import { Router } from "express";
 import { z } from "zod";
 import { authenticateJwt, requirePermission } from "../auth/auth.middleware.js";
 import { auditRequestContext } from "../audit/auditContext.js";
-import { tryWriteAuditEvent } from "../audit/audit.repository.js";
+import { tryWriteAuditEvent, writeAuditEvent } from "../audit/audit.repository.js";
+import { diagnoseSavedMetadata } from "./datasourceMetadataDiagnostic.js";
 import {
   createDataSource,
   deleteDataSource,
@@ -246,6 +247,46 @@ dataSourceRouter.post("/test", async (req, res) => {
     return;
   }
   res.json(await testDataSourceConfig(parsed.data));
+});
+
+// Read-only, source-specific metadata smoke. Never accepts user SQL, row values,
+// passwords, arbitrary hostnames or a replacement database connection.
+dataSourceRouter.post("/:id/test-metadata", async (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    const id = idSchema.safeParse(req.params.id);
+    if (!id.success || (req.body != null && Object.keys(req.body).length !== 0)) {
+      res.status(400).json({ error: {
+        code: "VALIDATION_ERROR", message: "欄位描述診斷僅接受已儲存的資料來源 ID，不接受 SQL 或連線參數。",
+      } });
+      return;
+    }
+    if (!Number.isSafeInteger(req.authUser?.id) || !req.authUser?.id) {
+      res.status(401).json({ error: {code: "UNAUTHORIZED", message: "請重新登入後再測試。"} });
+      return;
+    }
+    const diagnosis = await diagnoseSavedMetadata(id.data);
+    // Unlike management's best-effort audit, this diagnostic fails closed when
+    // its immutable outcome cannot be recorded. No source data is returned.
+    const auditId = await writeAuditEvent({
+      eventType: "DATASOURCE_METADATA_DESCRIBE",
+      userId: req.authUser.id,
+      parameters: {dataSourceId: id.data, sourceType: diagnosis.sourceType,
+        diagnosticCode: diagnosis.code, purpose: "FIXED_CONSTANT_METADATA_ONLY"},
+      status: diagnosis.ok ? "SUCCESS" : "FAILED",
+      errorCode: diagnosis.ok ? null : diagnosis.code,
+      ...auditRequestContext(req),
+    });
+    if (!Number.isSafeInteger(auditId) || auditId < 1)
+      throw new Error("DATASOURCE_METADATA_AUDIT_REQUIRED");
+    res.json(diagnosis);
+  } catch (error) {
+    if (error instanceof Error && error.message === "DATASOURCE_NOT_FOUND") {
+      res.status(404).json({error:{code:"DATASOURCE_NOT_FOUND",message:"找不到已儲存的資料來源。"}});
+      return;
+    }
+    next(error);
+  }
 });
 
 dataSourceRouter.post("/:id/test", async (req, res, next) => {
