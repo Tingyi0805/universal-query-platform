@@ -31,7 +31,7 @@ export async function resolveDatasetPreviewSafety(
     if (e instanceof DatasetDeliverySnapshotError) {
       if (e.code === "DATASET_DELIVERY_POLICY_UNCONFIRMED") {
         return { status: "BLOCKED", code: "POLICY_UNCONFIRMED",
-          message: "尚未確認欄位保護政策，預覽維持禁止；管理者核准使用不能取代欄位安全審查。" };
+          message: "系統尚未確認有效的資料保護政策，預覽維持禁止；管理者僅核准使用，不必逐欄設定。安全條件未就緒時不交付資料。" };
       }
       if (e.code === "DATASET_DELIVERY_POLICY_INVALID" || e.code === "DATASET_DELIVERY_VERSION_CONFLICT") {
         return { status: "BLOCKED", code: "POLICY_INVALID",

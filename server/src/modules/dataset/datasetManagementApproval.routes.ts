@@ -7,11 +7,7 @@ import { writeAuditEvent } from "../audit/audit.repository.js";
 import { requirePermission } from "../auth/auth.middleware.js";
 import { createRuntimeIdentityVerifier, QueryDeliveryError } from "../queryDefinition/queryDelivery.js";
 import { datasetPublicDisplayRepository } from "./datasetPublicDisplay.repository.js";
-import { getDatasetSensitivitySnapshot, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
-import { readColumnCandidateSnapshot } from "./datasetColumnCandidate.js";
-import { listDatasetColumns } from "./column.repository.js";
-import { auditRequestContext } from "../audit/auditContext.js";
-import { buildSimpleNonPatientRules, simpleReviewSchema, simpleReviewEligible, SimpleReviewError } from "./datasetManagementApproval.simpleReview.js";
+import { getDatasetSensitivitySnapshot } from "./datasetSensitiveColumn.repository.js";
 import { managerPlaybackGrants } from "./datasetManagementApproval.policy.js";
 import { decodeDatasetApprovalRevision } from "./datasetManagementApproval.revision.js";
 import { readConfirmedDatasetDeliverySnapshot } from "./datasetDeliveryPolicy.repository.js";
@@ -58,7 +54,7 @@ async function readUsage(id: number, tx?: sql.Transaction, lock = false) {
 }
 
 function respondError(res: import("express").Response, e: unknown) {
-  const known = e instanceof ApprovalError || e instanceof QueryDeliveryError || e instanceof SimpleReviewError;
+  const known = e instanceof ApprovalError || e instanceof QueryDeliveryError;
   const code = known ? e.code : e instanceof z.ZodError ? "VALIDATION_ERROR" : "MANAGER_APPROVAL_UNAVAILABLE";
   const status = known ? e.status : e instanceof z.ZodError ? 400 : 503;
   const messages: Record<string, string> = {
@@ -70,12 +66,6 @@ function respondError(res: import("express").Response, e: unknown) {
     MANAGER_APPROVAL_NO_SAFE_VISIBLE_COLUMNS: "沒有可安全公開的欄位，播放維持不核准。",
     DATASET_DISPLAY_MANAGEMENT_DISABLED: "公共顯示政策管理功能尚未啟用，不能核准播放。",
     MANAGER_APPROVAL_UNAVAILABLE: "安全核准未完成，既有權限與遮蔽保護維持不變。",
-    REVIEW_COLUMNS_NOT_READY: "尚無可審查的已儲存欄位清單；請先於 SQL 欄位候選預覽取得並儲存設計用欄位。",
-    REVIEW_COLUMN_MISMATCH: "安全審查必須逐一確認全部已儲存欄位；欄位內容已變更，請重新取得並確認。",
-    REVIEW_PATIENT_SCOPE_REQUIRED: "一般非患者資料簡化審查不適用於患者資料；請先完成患者識別與揭露稽核審查。",
-    REVIEW_VERSION_CONFLICT: "Dataset、來源或欄位安全政策版本已改變，請重新載入後再審查。",
-    REVIEW_EXISTING_POLICY: "此 Dataset 已有安全政策；為避免覆蓋既有遮蔽規則，簡化首次審查不允許修改。",
-    REVIEW_WRITE_FAILED: "安全審查未完成，維持原本的遮蔽政策；請依 Request ID 查核。",
   };
   res.setHeader("Cache-Control", "no-store");
   res.status(status).json({ error: { code, message: messages[code] ?? messages.MANAGER_APPROVAL_UNAVAILABLE } });
@@ -110,67 +100,6 @@ export function createDatasetManagementApprovalRouter() {
       const previewSafety = await resolveDatasetPreviewSafety(usage.active, () => readConfirmedDatasetDeliverySnapshot(id));
       res.json({ usage, playback, previewSafety });
     } catch (e) { respondError(res, e); }
-  });
-
-  // Read-only first-review context. DatasetColumn is a design catalogue only.
-  // The manager must inspect every column and positively attest nonpatient scope.
-  router.get("/:id/management-approval/safety-review", async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    try {
-      const manager=await requireManager(req.header("Authorization"));
-      if (!manager.permissions.includes("EXECUTE_QUERY")) throw new ApprovalError("FORBIDDEN",403);
-      const id=idSchema.parse(req.params.id);
-      const source=await readColumnCandidateSnapshot(await platformPool(),id);
-      if (!source || source.datasetArchived || !source.sourceActive) throw new ApprovalError("DATASET_NOT_FOUND",404);
-      const [policy,columns,patient]=await Promise.all([getDatasetSensitivitySnapshot(id),listDatasetColumns(id),
-        (await platformPool()).request().input("id",sql.BigInt,id).query(`
-          SELECT CASE WHEN EXISTS(SELECT 1 FROM uqp.DatasetPatientAuditConfig WHERE DatasetId=@id)
-            OR EXISTS(SELECT 1 FROM uqp.DatasetPatientAuditMetadata WHERE DatasetId=@id)
-            THEN CAST(1 AS BIT) ELSE CAST(0 AS BIT) END AS HasPatientEvidence`),
-      ]);
-      const patientEvidence=patient.recordset.length!==1 || Boolean(patient.recordset[0].HasPatientEvidence);
-      const available=simpleReviewEligible(policy.version,policy.columns.length,columns.length,
-        patientEvidence,source.sourceType);
-      res.json({ expectedDefinitionVersion:source.definitionVersion,
-        expectedSourceVersion:source.configurationVersion,
-        expectedPolicyVersion:policy.version,
-        available,
-        columns:columns.map(c=>({name:c.name,dataType:c.dataType,ordinal:c.ordinal})),
-        note:patientEvidence
-          ? "已存在患者稽核設定或患者欄位歷史 Metadata，禁止使用非患者簡化審查；請改走患者資料專用審查。"
-          : "僅限管理者明確確認的一般非患者資料；既有遮蔽政策不會被簡化審查覆寫。" });
-    } catch (e) { respondError(res,e); }
-  });
-
-  router.put("/:id/management-approval/safety-review", async(req,res)=>{
-    res.setHeader("Cache-Control","no-store");
-    try {
-      const manager=await requireManager(req.header("Authorization"));
-      if (!manager.permissions.includes("EXECUTE_QUERY")) throw new ApprovalError("FORBIDDEN",403);
-      const id=idSchema.parse(req.params.id);
-      const input=simpleReviewSchema.parse(req.body);
-      const saved=await listDatasetColumns(id);
-      const rules=buildSimpleNonPatientRules(saved,input);
-      const version=await replaceDatasetSensitiveColumns(id,rules,manager.userId,
-        auditRequestContext(req),input.expectedPolicyVersion,[],
-        {expectedDefinitionVersion:input.expectedDefinitionVersion,
-         expectedSourceVersion:input.expectedSourceVersion,requestId:input.requestId,
-         reauthorize:async tx=>{
-           const current=await requireManager(req.header("Authorization"),tx);
-           if (!current.permissions.includes("EXECUTE_QUERY") ||
-               current.userId!==manager.userId || current.tokenVersion!==manager.tokenVersion)
-             throw new ApprovalError("FORBIDDEN",403);
-         }});
-      res.json({status:"OK",version});
-    } catch(e) {
-      const code=e instanceof Error?e.message:"";
-      if (["REVIEW_VERSION_CONFLICT","REVIEW_PATIENT_SCOPE_REQUIRED",
-           "REVIEW_COLUMN_MISMATCH","REVIEW_EXISTING_POLICY"].includes(code))
-        respondError(res,new ApprovalError(code));
-      else if (code==="SENSITIVITY_VERSION_CONFLICT") respondError(res,new ApprovalError("REVIEW_VERSION_CONFLICT"));
-      else if (code==="SENSITIVITY_COLUMN_NOT_FOUND") respondError(res,new ApprovalError("REVIEW_COLUMN_MISMATCH"));
-      else respondError(res,e);
-    }
   });
 
   router.put("/:id/management-approval/usage", async (req, res) => {

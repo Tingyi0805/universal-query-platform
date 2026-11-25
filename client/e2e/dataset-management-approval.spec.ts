@@ -5,7 +5,7 @@ import { test, expect, type Page } from "@playwright/test";
 // covered by the Server's policy, permission and delivery contract tests.
 const definitionVersion = "0000000000000001";
 type Playback = "APPROVED" | "UNAPPROVED" | "STALE" | "BLOCKED";
-async function setup(page: Page, options: { manager?: boolean; exists?: boolean; active?: boolean; playback?: Playback; conflict?: boolean; patientEvidence?: boolean } = {}) {
+async function setup(page: Page, options: { manager?: boolean; exists?: boolean; active?: boolean; playback?: Playback; conflict?: boolean } = {}) {
   const manager = options.manager ?? true;
   const state = {
     exists: options.exists ?? true,
@@ -21,9 +21,6 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
     datasetSaves: [] as any[],
     columnDescribeRequests: 0,
     columnSyncWrites: [] as any[],
-    reviewReads: 0,
-    reviewWrites: [] as any[],
-    reviewVersion: 0,
   };
   const userPermissions = ["DESIGN_QUERY", "EXECUTE_QUERY", ...(manager ? ["MANAGE_USERS"] : [])];
   await page.addInitScript((permissions) => {
@@ -53,25 +50,6 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
           message: state.playback === "BLOCKED" ? "安全政策尚未完成。" :
             state.playback === "STALE" ? "需重新核准。" : "" },
       } }); return;
-    }
-    if (p === "/api/datasets/2/management-approval/safety-review" && method === "GET") {
-      state.reviewReads++;
-      await route.fulfill({ json: {
-        expectedDefinitionVersion:definitionVersion,
-        expectedSourceVersion:"0000000000000002",
-        expectedPolicyVersion:state.reviewVersion,
-        available:state.reviewVersion===0 && !options.patientEvidence,
-        columns:[{name:"TEST_VALUE",dataType:"int",ordinal:1}],
-        note:options.patientEvidence ? "已存在患者稽核設定或患者欄位歷史 Metadata，禁止使用非患者簡化審查。" : "合成測試欄位需明確審查",
-      } }); return;
-    }
-    if (p === "/api/datasets/2/management-approval/safety-review" && method === "PUT") {
-      const body=req.postDataJSON(); state.reviewWrites.push(body);
-      expect(body.confirmedNoPatientData).toBe(true);
-      expect(body.expectedPolicyVersion).toBe(0);
-      expect(body.columns).toEqual([{columnName:"TEST_VALUE",decision:"GENERAL"}]);
-      state.reviewVersion=1;
-      await route.fulfill({ json: {status:"OK",version:1} }); return;
     }
     if (p === "/api/datasets/2/management-approval/usage" && method === "PUT") {
       const body = req.postDataJSON();
@@ -154,9 +132,9 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
   if (state.exists) {
     await page.getByRole("button", { name: /合成 Dataset/ }).first().click();
   }
-  const panel = page.getByRole("region", { name: "Dataset 使用與播放核准" });
+  const panel = page.getByRole("region", { name: "Dataset 使用核准" });
   if (state.exists) await expect(panel).toBeVisible();
-  if (manager && state.exists) await expect(panel.getByText("允許登入使用")).toBeVisible();
+  if (manager && state.exists) await expect(panel.getByText("允許使用")).toBeVisible();
   return { state, panel };
 }
 
@@ -164,7 +142,7 @@ test("removed patient audit and sensitive-column forms never surface in Dataset 
   const { state, panel } = await setup(page, { manager: false });
   await expect(page.getByRole("heading", { name: "Dataset 患者揭露稽核設定" })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Dataset 敏感資料欄位管理" })).toHaveCount(0);
-  await expect(panel).toContainText("仍由系統檢查");
+  await expect(panel).toContainText("由系統依現有安全規則檢查");
   await expect(panel.getByRole("button", { name: "核准使用" })).toHaveCount(0);
   expect(state.adminReads).toBe(0);
   expect(state.usageWrites).toEqual([]);
@@ -205,23 +183,20 @@ test("administrator revokes usage without granting playback", async ({ page }) =
   expect(state.playbackWrites).toEqual([]);
 });
 
-test("playback approval only sends a decision, not client-supplied grants or SQL", async ({ page }) => {
+test("manager has only the usage decision, not field selection or playback-approval controls", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true });
-  page.on("dialog", d => d.accept());
-  await panel.getByRole("button", { name: "核准播放" }).click();
-  await expect(panel.getByRole("button", { name: "停止播放" })).toBeVisible();
-  expect(state.playbackWrites).toHaveLength(1);
-  expect(state.playbackWrites[0].approve).toBe(true);
+  await expect(panel.getByRole("button", { name: "停止使用" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: /核准播放|停止播放|簡化安全審查/ })).toHaveCount(0);
+  await expect(panel.getByRole("combobox", { name: /保護方式/ })).toHaveCount(0);
+  await expect(panel.getByRole("checkbox", { name: /我已核對 SQL/ })).toHaveCount(0);
+  expect(state.playbackWrites).toHaveLength(0);
   expect(state.publicPolicyWrites).toBe(0);
-  await panel.getByRole("button", { name: "停止播放" }).click();
-  await expect(panel.getByRole("button", { name: "核准播放" })).toBeVisible();
-  expect(state.playbackWrites[1].approve).toBe(false);
 });
 
 test("unsafe or unavailable playback policy remains blocked", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true, playback: "BLOCKED" });
-  await expect(panel.getByRole("button", { name: "核准播放" })).toBeDisabled();
-  await expect(panel).toContainText("安全政策尚未完成");
+  await expect(panel.getByRole("button", { name: "核准播放" })).toHaveCount(0);
+  await expect(panel).toContainText("核准使用不會自動公開未通過安全檢查的資料");
   expect(state.playbackWrites).toHaveLength(0);
 });
 
@@ -229,7 +204,7 @@ test("unsaved SQL changes prevent both approvals", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true });
   await page.locator("textarea").first().fill("SELECT changed FROM synthetic");
   await expect(panel.getByRole("button", { name: "停止使用" })).toBeDisabled();
-  await expect(panel.getByRole("button", { name: "核准播放" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "核准播放" })).toHaveCount(0);
   expect(state.usageWrites).toHaveLength(0);
   expect(state.playbackWrites).toHaveLength(0);
 });
@@ -244,9 +219,9 @@ test("conflicting approval does not report a successful decision or change statu
   expect(state.usageWrites).toHaveLength(1);
 });
 
-test("stale public policy requires a new verified decision, never auto-approves", async ({ page }) => {
+test("stale public policy is not auto-approved by the single usage control", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true, playback: "STALE" });
-  await expect(panel).toContainText("需重新核准");
+  await expect(panel.getByRole("button", {name:"核准播放"})).toHaveCount(0);
   expect(state.playbackWrites).toHaveLength(0);
   expect(state.publicPolicyWrites).toBe(0);
 });
@@ -254,7 +229,7 @@ test("stale public policy requires a new verified decision, never auto-approves"
 test("preview safety status is distinct from usage and playback grants", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true, playback: "BLOCKED" });
   const preview = panel.getByRole("group", { name: "資料預覽安全狀態" });
-  await expect(preview).toContainText("尚不可預覽");
+  await expect(preview).toContainText("安全條件尚未具備");
   await expect(preview).toContainText("尚未確認欄位保護政策");
   expect(state.usageWrites).toHaveLength(0);
   expect(state.playbackWrites).toHaveLength(0);
@@ -275,36 +250,15 @@ test("inactive Dataset can save display columns without approving usage or previ
   expect(state.playbackWrites).toHaveLength(0);
   expect(state.publicPolicyWrites).toBe(0);
   await expect(panel.getByRole("button", { name: "核准使用" })).toBeVisible();
-  await expect(panel.getByRole("button", { name: "核准播放" })).toBeDisabled();
+  await expect(panel.getByRole("button", { name: "核准播放" })).toHaveCount(0);
 });
 
-test("manager nonpatient review requires explicit per-field choice and attestation; never auto-publishes", async ({ page }) => {
-  const { state,panel }=await setup(page, {active:false,playback:"BLOCKED"});
-  await panel.getByRole("button", {name:/開啟簡化安全審查/}).click();
-  await expect(page.getByRole("table",{name:"安全審查欄位清單"})).toBeVisible();
-  const confirm=page.getByRole("button",{name:"確認並儲存一般資料安全審查"});
-  await expect(confirm).toBeDisabled();
-  await page.getByRole("combobox",{name:"欄位 TEST_VALUE 的保護方式"}).selectOption("GENERAL");
-  await expect(confirm).toBeDisabled();
-  await page.getByRole("checkbox",{name:/我已核對 SQL/}).check();
-  page.on("dialog",d=>d.accept());
-  await confirm.click();
-  await expect(page.getByText(/安全審查已儲存/)).toBeVisible();
-  expect(state.reviewReads).toBe(1);
-  expect(state.reviewWrites).toHaveLength(1);
-  expect(state.usageWrites).toEqual([]);
-  expect(state.playbackWrites).toEqual([]);
-  expect(state.queryPublishWrites).toBe(0);
-  await expect(panel.getByRole("button",{name:"核准使用"})).toBeVisible();
-  await expect(panel.getByRole("button",{name:"核准播放"})).toBeDisabled();
-});
-
-test("patient audit history prevents nonpatient first-review submission", async ({ page }) => {
-  const { state, panel } = await setup(page, {active:false,patientEvidence:true,playback:"BLOCKED"});
-  await panel.getByRole("button", {name:/開啟簡化安全審查/}).click();
-  await expect(page.getByText(/患者欄位歷史 Metadata/).first()).toBeVisible();
-  await expect(page.getByRole("button", {name:"確認並儲存一般資料安全審查"})).toHaveCount(0);
-  expect(state.reviewWrites).toEqual([]);
-  expect(state.usageWrites).toEqual([]);
-  expect(state.playbackWrites).toEqual([]);
+test("removed field review is not available to manager or nonmanager", async ({ page }) => {
+  const { state, panel } = await setup(page, { active: false, playback: "BLOCKED" });
+  await expect(panel.getByRole("button", { name: "核准使用" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "管理者簡化安全審查" })).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "安全審查欄位清單" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "確認並儲存一般資料安全審查" })).toHaveCount(0);
+  expect(state.usageWrites).toHaveLength(0);
+  expect(state.playbackWrites).toHaveLength(0);
 });

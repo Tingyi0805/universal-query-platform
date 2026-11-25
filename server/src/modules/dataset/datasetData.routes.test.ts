@@ -14,11 +14,11 @@ import { type ConfirmedDatasetDeliverySnapshot, DatasetDeliverySnapshotError } f
 import { syntheticParameter } from "./parameterTestFixture.js";
 import { DatasetColumnCandidateError } from "./datasetColumnCandidate.js";
 
-test("unconfirmed policy guidance points to administrator safety review, never a removed UI form", () => {
+test("unconfirmed policy guidance keeps usage approval independent without retired per-column review", () => {
   const message = datasetPreviewGuidance("DATASET_DELIVERY_POLICY_UNCONFIRMED");
-  assert.match(message, /安全初始化與欄位審查/);
+  assert.match(message, /系統已確認的資料保護政策/);
   assert.match(message, /核准.*使用/);
-  assert.doesNotMatch(message, /請到敏感資料欄位管理/);
+  assert.doesNotMatch(message, /請到敏感資料欄位管理|逐欄設定後再預覽/);
   for (const code of ["DATASET_DELIVERY_POLICY_REQUIRED", "DATASET_DELIVERY_POLICY_INVALID"]) {
     assert.doesNotMatch(datasetPreviewGuidance(code), /請到敏感資料欄位管理/);
   }
