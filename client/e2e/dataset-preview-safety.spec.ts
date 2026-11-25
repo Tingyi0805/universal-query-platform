@@ -49,7 +49,7 @@ test("new Dataset saves inactive and cannot deliver unconfirmed data", async ({ 
   await page.getByRole("combobox", { name: "資料來源", exact: true }).selectOption("4");
   await page.locator("textarea").first().fill("SELECT 1 AS VALUE");
   await page.getByRole("button", { name: "儲存 Dataset", exact: true }).click();
-  await expect(page.getByRole("region", { name: "Dataset 使用與播放核准" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Dataset 患者揭露稽核設定" })).toHaveCount(0);
   expect(state.saves).toBe(1);
   expect(state.policyWrites).toBe(0);
@@ -77,7 +77,7 @@ test("designer without execute permission cannot request preview", async ({ page
 
 test("simplified Dataset page never auto-confirms policy or executes rows", async ({ page }) => {
   const state = await setup(page);
-  await expect(page.getByRole("region", { name: "Dataset 使用與播放核准" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
   await expect(page.getByRole("region", { name: "Dataset 敏感資料欄位管理" })).toHaveCount(0);
   expect(state.policyWrites).toBe(0);
   expect(state.runs).toEqual([]);
@@ -95,7 +95,7 @@ test("designer displays candidate metadata without unlocking sensitive policy or
   await expect(panel.getByText("UNBOUND_CANDIDATE", { exact: false })).toBeVisible();
   await expect(panel.getByRole("cell", { name: "VALUE" })).toBeVisible();
   await expect(panel.getByRole("cell", { name: "int" })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Dataset 使用與播放核准" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
   expect(state.runs).toEqual([]); expect(state.policyWrites).toBe(0);
   await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
   await expect(panel.getByRole("cell", { name: "VALUE" })).toHaveCount(0);
@@ -111,7 +111,7 @@ test("candidate-only masking rehearsal never writes policy, syncs trusted column
   await expect(draft.locator("table caption")).toHaveText("尚未儲存、未生效的遮蔽草稿");
   await expect(draft).toContainText("ABC01234");
   expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
-  await expect(page.getByRole("region", { name: "Dataset 使用與播放核准" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
   await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
   await expect(panel.getByText("尚未儲存、未生效的遮蔽草稿")).toHaveCount(0);
   expect(state.policyWrites).toBe(0);
