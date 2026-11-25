@@ -9,6 +9,7 @@ import { createRuntimeIdentityVerifier, QueryDeliveryError } from "../queryDefin
 import { datasetPublicDisplayRepository } from "./datasetPublicDisplay.repository.js";
 import { getDatasetSensitivitySnapshot } from "./datasetSensitiveColumn.repository.js";
 import { managerPlaybackGrants } from "./datasetManagementApproval.policy.js";
+import { decodeDatasetApprovalRevision } from "./datasetManagementApproval.revision.js";
 
 const idSchema = z.coerce.number().int().positive().safe();
 const usageSchema = z.object({
@@ -39,14 +40,14 @@ async function platformPool() {
 async function readUsage(id: number, tx?: sql.Transaction, lock = false) {
   const poolOrRequest = tx ? new sql.Request(tx) : (await platformPool()).request();
   const result = await poolOrRequest.input("id", sql.BigInt, id).query(
-    "SELECT IsActive,IsArchived,CONVERT(VARCHAR(16),DefinitionRowVersion,2) AS DefinitionVersion " +
+    "SELECT IsActive,IsArchived,DefinitionRowVersion AS DefinitionVersion " +
     "FROM uqp.Dataset " + (lock ? "WITH(UPDLOCK,HOLDLOCK) " : "") + "WHERE Id=@id"
   );
   if (!result.recordset.length) throw new ApprovalError("DATASET_NOT_FOUND", 404);
   const item = result.recordset[0];
   if (item.IsArchived) throw new ApprovalError("DATASET_ARCHIVED", 409);
-  const definitionVersion = String(item.DefinitionVersion).toLowerCase();
-  if (!/^[a-f0-9]{16}$/.test(definitionVersion)) throw new ApprovalError("DATASET_REVISION_INVALID", 503);
+  const definitionVersion = decodeDatasetApprovalRevision(item.DefinitionVersion);
+  if (!definitionVersion) throw new ApprovalError("DATASET_REVISION_INVALID", 503);
   return { active: Boolean(item.IsActive), definitionVersion };
 }
 
