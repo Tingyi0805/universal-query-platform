@@ -21,6 +21,9 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
     datasetSaves: [] as any[],
     columnDescribeRequests: 0,
     columnSyncWrites: [] as any[],
+    reviewReads: 0,
+    reviewWrites: [] as any[],
+    reviewVersion: 0,
   };
   const userPermissions = ["DESIGN_QUERY", "EXECUTE_QUERY", ...(manager ? ["MANAGE_USERS"] : [])];
   await page.addInitScript((permissions) => {
@@ -50,6 +53,25 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
           message: state.playback === "BLOCKED" ? "安全政策尚未完成。" :
             state.playback === "STALE" ? "需重新核准。" : "" },
       } }); return;
+    }
+    if (p === "/api/datasets/2/management-approval/safety-review" && method === "GET") {
+      state.reviewReads++;
+      await route.fulfill({ json: {
+        expectedDefinitionVersion:definitionVersion,
+        expectedSourceVersion:"0000000000000002",
+        expectedPolicyVersion:state.reviewVersion,
+        available:state.reviewVersion===0,
+        columns:[{name:"TEST_VALUE",dataType:"int",ordinal:1}],
+        note:"合成測試欄位需明確審查",
+      } }); return;
+    }
+    if (p === "/api/datasets/2/management-approval/safety-review" && method === "PUT") {
+      const body=req.postDataJSON(); state.reviewWrites.push(body);
+      expect(body.confirmedNoPatientData).toBe(true);
+      expect(body.expectedPolicyVersion).toBe(0);
+      expect(body.columns).toEqual([{columnName:"TEST_VALUE",decision:"GENERAL"}]);
+      state.reviewVersion=1;
+      await route.fulfill({ json: {status:"OK",version:1} }); return;
     }
     if (p === "/api/datasets/2/management-approval/usage" && method === "PUT") {
       const body = req.postDataJSON();
@@ -254,4 +276,25 @@ test("inactive Dataset can save display columns without approving usage or previ
   expect(state.publicPolicyWrites).toBe(0);
   await expect(panel.getByRole("button", { name: "核准使用" })).toBeVisible();
   await expect(panel.getByRole("button", { name: "核准播放" })).toBeDisabled();
+});
+
+test("manager nonpatient review requires explicit per-field choice and attestation; never auto-publishes", async ({ page }) => {
+  const { state,panel }=await setup(page, {active:false,playback:"BLOCKED"});
+  await panel.getByRole("button", {name:/開啟簡化安全審查/}).click();
+  await expect(page.getByRole("table",{name:"安全審查欄位清單"})).toBeVisible();
+  const confirm=page.getByRole("button",{name:"確認並儲存一般資料安全審查"});
+  await expect(confirm).toBeDisabled();
+  await page.getByRole("combobox",{name:"欄位 TEST_VALUE 的保護方式"}).selectOption("GENERAL");
+  await expect(confirm).toBeDisabled();
+  await page.getByRole("checkbox",{name:/我已核對 SQL/}).check();
+  page.on("dialog",d=>d.accept());
+  await confirm.click();
+  await expect(page.getByText(/安全審查已儲存/)).toBeVisible();
+  expect(state.reviewReads).toBe(1);
+  expect(state.reviewWrites).toHaveLength(1);
+  expect(state.usageWrites).toEqual([]);
+  expect(state.playbackWrites).toEqual([]);
+  expect(state.queryPublishWrites).toBe(0);
+  await expect(panel.getByRole("button",{name:"核准使用"})).toBeVisible();
+  await expect(panel.getByRole("button",{name:"核准播放"})).toBeDisabled();
 });

@@ -614,7 +614,7 @@ datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
   } catch (error) { next(error); }
 });
 
-datasetRouter.put("/:id/sensitive-columns", async (req, res, next) => {
+datasetRouter.put("/:id/sensitive-columns", requirePermission("MANAGE_USERS"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     const parsed = z.object({ columns: z.array(sensitiveColumnSchema).max(300), expectedVersion: z.number().int().nonnegative().safe(), templateApplications:z.array(z.object({columnName:z.string().min(1).max(256),templateId:z.string().refine(exactPositiveId),templateRevision:z.string().refine(exactPositiveId)}).strict()).max(300).optional() }).strict().safeParse(req.body);
