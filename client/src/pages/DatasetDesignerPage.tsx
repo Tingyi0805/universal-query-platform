@@ -111,6 +111,8 @@ export function DatasetDesignerPage() {
   const [columnCandidateBusy, setColumnCandidateBusy] = useState(false);
   const [columnCandidateRevision, setColumnCandidateRevision] = useState(0);
   const [columnCandidateError, setColumnCandidateError] = useState("");
+  const [columnSyncNotice, setColumnSyncNotice] = useState("");
+  const [columnSyncBusy, setColumnSyncBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -124,7 +126,7 @@ export function DatasetDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
-  useEffect(() => { setPreview(null); setColumnCandidate(null); setColumnCandidateError(""); }, [form, sqlSaveRevision]);
+  useEffect(() => { setPreview(null); setColumnCandidate(null); setColumnCandidateError(""); setColumnSyncNotice(""); }, [form, sqlSaveRevision]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -385,6 +387,7 @@ export function DatasetDesignerPage() {
     const requestedForm = form;
     setColumnCandidate(null);
     setColumnCandidateError("");
+    setColumnSyncNotice("");
     setColumnCandidateBusy(true);
     try {
       const result = await apiRequest<{ columns: { name: string; dataType: string; ordinal: number }[];
@@ -402,6 +405,35 @@ export function DatasetDesignerPage() {
     } catch (error) {
       setColumnCandidateError(error instanceof Error ? error.message : "取得欄位資訊失敗。");
     } finally { setColumnCandidateBusy(false); }
+  }
+
+  async function syncCandidateDisplayColumns() {
+    if (!form.id || !columnCandidate || columnSyncBusy || columnCandidateBusy || busy
+        || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId) {
+      setColumnCandidateError("請先儲存 Dataset，並重新取得目前版本的欄位候選清單。");
+      return;
+    }
+    if (!hasPermission("DESIGN_QUERY") || !hasPermission("EXECUTE_QUERY")) {
+      setColumnCandidateError("同步欄位需要 DESIGN_QUERY 與 EXECUTE_QUERY 權限。");
+      return;
+    }
+    const requestedForm = form;
+    setColumnSyncBusy(true); setColumnCandidateError(""); setColumnSyncNotice("");
+    try {
+      const result = await apiRequest<{columns: {name: string; dataType: string; ordinal: number}[];
+        trust: "UNBOUND_CANDIDATE"; deliveryAllowed: false; purpose: "DISPLAY_COLUMN_OPTIONS_ONLY"}>(
+          `/datasets/${form.id}/columns/sync`, {method: "POST", body: JSON.stringify({})}, accessToken);
+      if (currentForm.current !== requestedForm) {
+        setColumnCandidateError("同步期間 Dataset 已切換；請重新載入並確認欄位。"); return;
+      }
+      if (result.trust !== "UNBOUND_CANDIDATE" || result.deliveryAllowed !== false
+          || result.purpose !== "DISPLAY_COLUMN_OPTIONS_ONLY" || !Array.isArray(result.columns)) {
+        setColumnCandidateError("欄位同步回應不符合安全契約，請重新讀取。"); return;
+      }
+      setColumnSyncNotice("設計用欄位清單已儲存；尚未完成欄位安全分類，不代表已核准使用、資料預覽或公共播放。");
+    } catch (e) {
+      setColumnCandidateError(e instanceof Error ? e.message : "欄位候選同步失敗。");
+    } finally { setColumnSyncBusy(false); }
   }
 
   async function runPreview() {
@@ -723,6 +755,7 @@ export function DatasetDesignerPage() {
               <button type="button" disabled={busy || columnCandidateBusy || !form.id || form.isArchived}
                 onClick={() => void describeColumns()}>{columnCandidateBusy ? "讀取欄位中…" : "取得 SQL 欄位名稱及型別"}</button>
               {columnCandidateError && <p role="alert">{columnCandidateError}</p>}
+              {columnSyncNotice && <p role="status">{columnSyncNotice}</p>}
               {columnCandidate && <>
                 <p role="status">UNBOUND_CANDIDATE · 尚未初始化 · 禁止資料列交付</p>
                 <table className="preview-table">
@@ -732,6 +765,13 @@ export function DatasetDesignerPage() {
                   </tr>)}</tbody>
                 </table>
                 <DatasetCandidateMaskDraft key={columnCandidateRevision} columns={columnCandidate.columns} />
+                <p>確認欄位名稱後，可先儲存為設計用欄位清單。此動作不會建立敏感欄位政策或放行資料預覽。</p>
+                <button type="button" className="secondary-button"
+                  disabled={busy || columnSyncBusy || columnCandidateBusy || !form.id || form.isArchived
+                    || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId}
+                  onClick={() => void syncCandidateDisplayColumns()}>
+                  {columnSyncBusy ? "儲存欄位中…" : "儲存欄位候選清單（僅供設計）"}
+                </button>
               </>}
             </section>
             {form.id&&<DatasetFieldSnapshotPanel key={`${form.id}:${sqlSaveRevision}:${accessToken}`} datasetId={form.id} token={accessToken} enabled={hasPermission("CONFIRM_DATASET_CLASSIFICATION")&&!busy&&!form.isArchived&&form.sqlText===savedSql&&form.dataSourceId===savedDataSourceId} />}

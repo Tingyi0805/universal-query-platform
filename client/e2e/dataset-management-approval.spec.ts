@@ -19,6 +19,8 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
     queryPublishWrites: 0,
     datasetCreates: [] as any[],
     datasetSaves: [] as any[],
+    columnDescribeRequests: 0,
+    columnSyncWrites: [] as any[],
   };
   const userPermissions = ["DESIGN_QUERY", "EXECUTE_QUERY", ...(manager ? ["MANAGE_USERS"] : [])];
   await page.addInitScript((permissions) => {
@@ -91,6 +93,16 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
       state.exists = true;
       state.active = false;
       await route.fulfill({ status: 201, json: { id: 2, parameterNames: [] } }); return;
+    }
+    if (p === "/api/datasets/2/column-candidates" && method === "GET") {
+      state.columnDescribeRequests++;
+      await route.fulfill({ json: { columns: [{ name: "TEST_VALUE", dataType: "int", ordinal: 1 }],
+        trust: "UNBOUND_CANDIDATE", metadataState: "NOT_INITIALIZED", deliveryAllowed: false } }); return;
+    }
+    if (p === "/api/datasets/2/columns/sync" && method === "POST") {
+      state.columnSyncWrites.push(req.postDataJSON());
+      await route.fulfill({ json: { columns: [{ name: "TEST_VALUE", dataType: "int", ordinal: 1 }],
+        trust: "UNBOUND_CANDIDATE", purpose: "DISPLAY_COLUMN_OPTIONS_ONLY", deliveryAllowed: false } }); return;
     }
     if (p === "/api/datasets/2" && method === "GET") {
       await route.fulfill({ json: { dataset: record() } }); return;
@@ -224,4 +236,22 @@ test("preview safety status is distinct from usage and playback grants", async (
   await expect(preview).toContainText("尚未確認欄位保護政策");
   expect(state.usageWrites).toHaveLength(0);
   expect(state.playbackWrites).toHaveLength(0);
+});
+
+// Design-time metadata may be saved before usage approval, but it is never an
+// implicit sensitivity decision, a row-preview grant, or a public display grant.
+test("inactive Dataset can save display columns without approving usage or preview", async ({ page }) => {
+  const { state, panel } = await setup(page, { active: false, playback: "BLOCKED" });
+  await page.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
+  await expect(page.getByText("UNBOUND_CANDIDATE", { exact: false }).first()).toBeVisible();
+  expect(state.columnDescribeRequests).toBe(1);
+  expect(state.columnSyncWrites).toHaveLength(0);
+  await page.getByRole("button", { name: "儲存欄位候選清單（僅供設計）" }).click();
+  await expect(page.getByText(/設計用欄位清單已儲存/)).toBeVisible();
+  expect(state.columnSyncWrites).toEqual([{}]);
+  expect(state.usageWrites).toHaveLength(0);
+  expect(state.playbackWrites).toHaveLength(0);
+  expect(state.publicPolicyWrites).toBe(0);
+  await expect(panel.getByRole("button", { name: "核准使用" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "核准播放" })).toBeDisabled();
 });
