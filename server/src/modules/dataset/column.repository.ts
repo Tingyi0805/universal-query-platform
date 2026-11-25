@@ -33,13 +33,16 @@ export function createDatasetColumnRepository(deps = {
     const request = () => deps.request(tx);
     try {
       await request().query("SET XACT_ABORT ON");
+      // Metadata-only column choices are design-time data. An inactive new
+      // Dataset may save these choices; actual row delivery, audit and public
+      // display retain their independent active + policy authorization gates.
       const check = async () => {
         const result = await request().input("datasetId", sql.BigInt, datasetId).input("sourceId", sql.BigInt, options.dataSourceId).query(`
           SELECT d.DefinitionRowVersion AS DefinitionVersion,
             s.ConfigurationRowVersion AS ConfigurationVersion
           FROM uqp.Dataset d WITH (UPDLOCK,HOLDLOCK)
           INNER JOIN uqp.DataSource s WITH (HOLDLOCK) ON s.Id=d.DataSourceId
-          WHERE d.Id=@datasetId AND s.Id=@sourceId AND d.IsActive=1 AND d.IsArchived=0 AND s.IsActive=1`);
+          WHERE d.Id=@datasetId AND s.Id=@sourceId AND d.IsArchived=0 AND s.IsActive=1`);
         const row = result.recordset[0];
         if (result.recordset.length !== 1 || !Buffer.isBuffer(row.DefinitionVersion) || row.DefinitionVersion.length !== 8
           || !Buffer.isBuffer(row.ConfigurationVersion) || row.ConfigurationVersion.length !== 8
