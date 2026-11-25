@@ -1,5 +1,6 @@
 import { getDataSourceConfig } from "./datasource.repository.js";
-import { createDataSourceAdapter } from "./adapters/adapterFactory.js";
+import { SqlServerAdapter } from "./adapters/sqlServerAdapter.js";
+import { OracleAdapter } from "./adapters/oracleAdapter.js";
 import { QueryDescriptionError } from "../../query/queryDescription.js";
 import type { DataSourceConfig } from "./datasource.types.js";
 import type { CandidateQueryDescription, ColumnDescribeInput } from "../../query/queryDescription.js";
@@ -20,7 +21,9 @@ type DiagnosticDependencies = Readonly<{
 }>;
 export const defaultMetadataDiagnosticDependencies: DiagnosticDependencies = {
   config: getDataSourceConfig,
-  adapter: createDataSourceAdapter,
+  // Do not import the all-source factory: it eagerly loads native ODBC even
+  // though this diagnostic only supports SQL Server and Oracle.
+  adapter: (type) => type === "ORACLE" ? new OracleAdapter() : new SqlServerAdapter(),
 };
 
 // Fixed messages only. Never return SQL Server/Oracle exception text, server
