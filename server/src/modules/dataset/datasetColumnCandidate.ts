@@ -16,7 +16,8 @@ import { listDatasetParameters } from "./parameter.repository.js";
  */
 export class DatasetColumnCandidateError extends Error {
   constructor(readonly code: "DATASET_COLUMN_PARAMETERS_NOT_SYNCED" | "DATASET_COLUMN_DESCRIPTION_LIST_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_INVALID_COLUMNS" | "DATASET_COLUMN_DESCRIPTION_UNSUPPORTED" | "DATASET_COLUMN_DESCRIPTION_CONFLICT"
-    | "DATASET_COLUMN_DESCRIPTION_FAILED" | "DATASET_NOT_AVAILABLE" | "DATASOURCE_NOT_AVAILABLE",
+    | "DATASET_COLUMN_DESCRIPTION_FAILED" | "DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED" | "DATASET_COLUMN_DESCRIPTION_SOURCE_FAILED"
+    | "DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED" | "DATASET_NOT_AVAILABLE" | "DATASOURCE_NOT_AVAILABLE",
     readonly status = 409) { super(code); this.name = "DatasetColumnCandidateError"; }
 }
 
@@ -67,10 +68,13 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
       initial = snapshot;
     } catch (error) {
       if (error instanceof DatasetColumnCandidateError) throw error;
-      throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
+      throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED", 503);
     }
+    // This is metadata-only, audited and requires DESIGN_QUERY + EXECUTE_QUERY.
+    // Approval to execute rows is independent: an inactive new Dataset may inspect
+    // candidate names, but cannot preview or deliver data until separately approved.
     if (initial.datasetId !== datasetId || !Number.isSafeInteger(initial.dataSourceId)
-      || initial.dataSourceId <= 0 || !initial.datasetActive || initial.datasetArchived)
+      || initial.dataSourceId <= 0 || initial.datasetArchived)
       throw new DatasetColumnCandidateError("DATASET_NOT_AVAILABLE", 409);
     if (!initial.sourceActive) throw new DatasetColumnCandidateError("DATASOURCE_NOT_AVAILABLE", 409);
     if (!["SQLSERVER", "ORACLE"].includes(initial.sourceType) || !/^[0-9a-f]{16}$/u.test(initial.definitionVersion)
@@ -112,7 +116,7 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
         await revalidateParameters();
       } catch (error) {
         if (error instanceof DatasetColumnCandidateError) throw error;
-        throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
+        throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED", 503);
       }
     };
 
@@ -125,7 +129,7 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
     const describe = async (): Promise<CandidateQueryDescription> => {
       let source: DataSourceConfig | null;
       try { source = await deps.config(initial.dataSourceId); }
-      catch { throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503); }
+      catch { throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_SOURCE_FAILED", 503); }
       if (!source || !source.isActive) throw new DatasetColumnCandidateError("DATASOURCE_NOT_AVAILABLE");
       if (source.type !== initial.sourceType) throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
       await revalidate();
@@ -138,7 +142,7 @@ export function createDatasetColumnCandidate(deps = defaultColumnCandidateDepend
         if (error instanceof QueryDescriptionError && ["DESCRIPTION_UNSUPPORTED", "DESCRIPTION_PARAMETER_UNSUPPORTED"].includes(error.code))
           throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_UNSUPPORTED");
         // Never expose driver exceptions, SQL, parameters, credential or row values.
-        throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_FAILED", 503);
+        throw new DatasetColumnCandidateError("DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED", 503);
       }
       if (candidate.trust !== "UNBOUND_CANDIDATE" || candidate.requiresExecutionComparison !== true
         || candidate.evidenceType !== (initial.sourceType === "ORACLE" ? "ORACLE_STATEMENT_INFO" : "SQLSERVER_DESCRIBE_FIRST_RESULT_SET")

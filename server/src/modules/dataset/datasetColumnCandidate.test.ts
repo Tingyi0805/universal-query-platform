@@ -32,13 +32,45 @@ test("candidate describes only saved zero-parameter SQL and never gains delivery
   assert.deepEqual(result.columns, [{ name: "FIELD_A", dataType: "int", ordinal: 1 }]);
 });
 
-test("missing, inactive, archived or unsupported-source Dataset never reaches describe", async () => {
-  for (const key of ["datasetActive", "datasetArchived", "sourceActive", "sourceType"] as const) {
+test("new inactive Dataset can inspect metadata candidates without being approved for data rows", async () => {
+  const f = fixture();
+  f.s.datasetActive = false;
+  const ctx = await f.service.open(7);
+  const candidate = await ctx.describe();
+  assert.equal(candidate.trust, "UNBOUND_CANDIDATE");
+  assert.equal(candidate.requiresExecutionComparison, true);
+  assert.equal(f.describes, 1);
+  assert.deepEqual(Object.keys(candidate).sort(), ["columns", "evidenceType", "requiresExecutionComparison", "trust"]);
+});
+
+test("archived, disabled-source or unsupported-source Dataset never reaches describe", async () => {
+  for (const key of ["datasetArchived", "sourceActive", "sourceType"] as const) {
     const f = fixture();
-    (f.s as any)[key] = key === "datasetActive" || key === "sourceActive" ? false : key === "sourceType" ? "MYSQL" : true;
+    (f.s as any)[key] = key === "sourceActive" ? false : key === "sourceType" ? "MYSQL" : true;
     await assert.rejects(f.service.open(7));
     assert.equal(f.describes, 0);
   }
+});
+
+test("source and metadata RPC failures have distinct fixed codes without exposing SQL or driver messages", async () => {
+  const f = fixture();
+  f.deps.config = async () => { throw new Error("SYNTHETIC_PRIVATE_SOURCE_SECRET"); };
+  await assert.rejects((await f.service.open(7)).describe(), {
+    code: "DATASET_COLUMN_DESCRIPTION_SOURCE_FAILED",
+    message: "DATASET_COLUMN_DESCRIPTION_SOURCE_FAILED",
+  });
+  const g = fixture();
+  g.deps.describe = async () => { throw new Error("SYNTHETIC_PRIVATE_SQL_AND_CREDENTIAL"); };
+  await assert.rejects((await g.service.open(7)).describe(), {
+    code: "DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED",
+    message: "DATASET_COLUMN_DESCRIPTION_DRIVER_FAILED",
+  });
+  const h = fixture();
+  h.deps.snapshot = async () => { throw new Error("SYNTHETIC_PRIVATE_DB_TARGET"); };
+  await assert.rejects(h.service.open(7), {
+    code: "DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED",
+    message: "DATASET_COLUMN_DESCRIPTION_SNAPSHOT_FAILED",
+  });
 });
 
 test("saved parameters or SQL bind tokens fail closed before RPC", async () => {

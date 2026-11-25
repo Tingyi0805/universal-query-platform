@@ -129,10 +129,21 @@ jobs:
           compression-level: 6
           if-no-files-found: error
       - name: Download artifact to verify actual ZIP contents
-        uses: actions/download-artifact@v4
-        with:
-          name: uqp-pr99-pr100-direct-test-v2
-          path: artifact-readback
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub artifact listing can lag a successful upload by several seconds.
+          # Download the uploaded ZIP from the SAME run and retain full readback hashing.
+          $ErrorActionPreference = 'Stop'
+          $ok = $false
+          for ($attempt=1; $attempt -le 8; $attempt++) {
+            Remove-Item -LiteralPath 'artifact-readback' -Recurse -Force -ErrorAction SilentlyContinue
+            gh run download $env:GITHUB_RUN_ID --repo $env:GITHUB_REPOSITORY --name 'uqp-pr99-pr100-direct-test-v2' --dir 'artifact-readback'
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            if ($attempt -lt 8) { Start-Sleep -Seconds 5 }
+          }
+          if (-not $ok) { throw 'ARTIFACT_READBACK_DOWNLOAD_FAILED' }
       - name: Verify downloaded layout and all SHA256 file hashes
         shell: pwsh
         run: |
