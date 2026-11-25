@@ -4,6 +4,11 @@ import { useAuth } from "../auth/AuthContext";
 
 type ApprovalStatus = {
   usage: { active: boolean; definitionVersion: string };
+  previewSafety?: {
+    status: "BLOCKED" | "POLICY_CONFIRMED";
+    code: string;
+    message: string;
+  };
   playback: {
     status: "APPROVED" | "UNAPPROVED" | "STALE" | "BLOCKED";
     permittedColumns: number;
@@ -111,6 +116,13 @@ export function DatasetManagementApprovalPanel({
             onClick={() => void setUsage(!status.usage.active)}>
             {status.usage.active ? "停止使用" : "核准使用"}
           </button>
+        </div>
+        <div className="dataset-management-approval-row" role="group" aria-label="資料預覽安全狀態">
+          <div>
+            <strong>執行預覽前的安全確認</strong>
+            <p>狀態：{status.previewSafety?.status === "POLICY_CONFIRMED" ? "欄位政策已確認" : "尚不可預覽"}</p>
+            <p role="status">{status.previewSafety?.message ?? "請重新載入安全核准狀態。"}</p>
+          </div>
         </div>
         <div className="dataset-management-approval-row">
           <div>

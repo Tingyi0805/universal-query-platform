@@ -10,6 +10,8 @@ import { datasetPublicDisplayRepository } from "./datasetPublicDisplay.repositor
 import { getDatasetSensitivitySnapshot } from "./datasetSensitiveColumn.repository.js";
 import { managerPlaybackGrants } from "./datasetManagementApproval.policy.js";
 import { decodeDatasetApprovalRevision } from "./datasetManagementApproval.revision.js";
+import { readConfirmedDatasetDeliverySnapshot } from "./datasetDeliveryPolicy.repository.js";
+import { resolveDatasetPreviewSafety } from "./datasetManagementApproval.previewSafety.js";
 
 const idSchema = z.coerce.number().int().positive().safe();
 const usageSchema = z.object({
@@ -95,7 +97,8 @@ export function createDatasetManagementApprovalRouter() {
           playback = { status: "BLOCKED", permittedColumns: 0, message: "安全政策尚未完成，不能核准播放。" };
         }
       }
-      res.json({ usage, playback });
+      const previewSafety = await resolveDatasetPreviewSafety(usage.active, () => readConfirmedDatasetDeliverySnapshot(id));
+      res.json({ usage, playback, previewSafety });
     } catch (e) { respondError(res, e); }
   });
 

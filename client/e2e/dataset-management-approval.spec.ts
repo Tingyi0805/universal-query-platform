@@ -42,6 +42,8 @@ async function setup(page: Page, options: { manager?: boolean; exists?: boolean;
       state.adminReads++;
       await route.fulfill({ json: {
         usage: { active: state.active, definitionVersion },
+        previewSafety: { status: "BLOCKED", code: state.active ? "POLICY_UNCONFIRMED" : "USAGE_NOT_APPROVED",
+          message: state.active ? "尚未確認欄位保護政策，預覽維持禁止。" : "尚未核准使用，不能執行資料預覽。" },
         playback: { status: state.playback, permittedColumns: state.playback === "APPROVED" ? 2 : 0,
           message: state.playback === "BLOCKED" ? "安全政策尚未完成。" :
             state.playback === "STALE" ? "需重新核准。" : "" },
@@ -213,4 +215,13 @@ test("stale public policy requires a new verified decision, never auto-approves"
   await expect(panel).toContainText("需重新核准");
   expect(state.playbackWrites).toHaveLength(0);
   expect(state.publicPolicyWrites).toBe(0);
+});
+
+test("preview safety status is distinct from usage and playback grants", async ({ page }) => {
+  const { state, panel } = await setup(page, { active: true, playback: "BLOCKED" });
+  const preview = panel.getByRole("group", { name: "資料預覽安全狀態" });
+  await expect(preview).toContainText("尚不可預覽");
+  await expect(preview).toContainText("尚未確認欄位保護政策");
+  expect(state.usageWrites).toHaveLength(0);
+  expect(state.playbackWrites).toHaveLength(0);
 });
