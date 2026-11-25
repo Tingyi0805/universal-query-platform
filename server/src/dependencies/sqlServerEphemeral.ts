@@ -12,6 +12,17 @@ async function main(){
  const adapter=new SqlServerAdapter();let ready=false;
  for(let i=0;i<45;i++){try{assert.equal((await adapter.testConnection(config)).ok,true);ready=true;break;}catch{await new Promise(resolve=>setTimeout(resolve,2000));}}
  assert(ready,"EPHEMERAL_SQL_NOT_READY");
+ stage="metadata-only";
+ // Exercise the real production adapter against a live disposable SQL Server.
+ // This path must use sp_describe_first_result_set and must not fetch SQL rows.
+ const description=await adapter.describeQuery(config,{
+   sql:"SELECT 1 AS TEST_VALUE", parameters:[], timeoutSec:5,
+ });
+ assert.equal(description.trust,"UNBOUND_CANDIDATE");
+ assert.equal(description.evidenceType,"SQLSERVER_DESCRIBE_FIRST_RESULT_SET");
+ assert.equal(description.requiresExecutionComparison,true);
+ assert.deepEqual(description.columns,[{name:"TEST_VALUE",dataType:"int",ordinal:1}]);
+ console.log("DEPENDENCY_SQL_METADATA_DESCRIBE_PASS (SELECT 1 AS TEST_VALUE; metadata-only)");
  stage="query-and-binds";
  const result=await adapter.executeQuery(config,{sql:"SELECT @AMOUNT AS AMOUNT, @LABEL AS LABEL, CONVERT(varchar(33),@EDATE,126) AS NATIVE_DATE, @LARGE_ID AS LARGE_ID",binds:{AMOUNT:12.5,LABEL:"合成資料",EDATE:new Date("2026-10-29T23:59:59.999Z"),LARGE_ID:9007199254740993n},maxRows:10,timeoutSec:5});
  assert.equal(result.rowCount,1);assert.equal(result.rows[0]!.AMOUNT,12.5);assert.equal(result.rows[0]!.LABEL,"合成資料");assert.match(String(result.rows[0]!.NATIVE_DATE),/^2026-10-29T23:59:59\.999/);assert.equal(result.rows[0]!.LARGE_ID,"9007199254740993");
