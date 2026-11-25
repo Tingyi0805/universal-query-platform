@@ -20,7 +20,10 @@ async function setup(t:import("node:test").TestContext){
  app.get("/legacy",(_req,res)=>res.json({legacy:true}));
  const server=app.listen(0,"127.0.0.1");await once(server,"listening");t.after(()=>{server.closeAllConnections();server.close();});const address=server.address() as import("node:net").AddressInfo;
  const token=(version=1,expires=60)=>jwt.sign({tokenVersion:version,roles:["SYSTEM_ADMIN"]},env.JWT_SECRET!,{subject:"8",expiresIn:expires});
- return {...f,state,session,token,call:(path:string,body?:unknown,bearer:string|null=token(),method=body===undefined?"GET":"POST")=>fetch(`http://127.0.0.1:${address.port}/${path}`,{method,headers:{"content-type":"application/json",...(bearer?{authorization:`Bearer ${bearer}`}:{})},body:body===undefined?undefined:JSON.stringify(body)})};
+ // One session must reuse an identical bearer; JWT iat/exp changes across a
+ // second boundary and the hierarchy context is bound to the bearer hash.
+ const sessionToken=token();
+ return {...f,state,session,token,call:(path:string,body?:unknown,bearer:string|null=sessionToken,method=body===undefined?"GET":"POST")=>fetch(`http://127.0.0.1:${address.port}/${path}`,{method,headers:{"content-type":"application/json",...(bearer?{authorization:`Bearer ${bearer}`}:{})},body:body===undefined?undefined:JSON.stringify(body)})};
 }
 test("JWT signature/expiry/live TokenVersion and current permissions are mandatory",async t=>{
  const f=await setup(t);
