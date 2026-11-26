@@ -23,10 +23,12 @@ export function createHierarchyApprovalDelivery(legacy=createQueryDelivery(),man
 }
 export const hierarchyPageDependencies={execute:executeSavedDatasetPage,auditPatient:auditDashboardPatientList};
 export function createHierarchyPageDelivery(deps=hierarchyPageDependencies){return async(context:HierarchyOpen,values:Record<string,unknown>,plan:SavedPagePlan)=>{
- await context.revalidate();
- const raw=await deps.execute(context.query.datasetId,values,plan);await context.revalidate();
  if("receipt" in context){
   if(context.actor.pinSession||context.action!=="EXECUTE")throw new QueryDeliveryError("FORBIDDEN",403);
+  await context.revalidate();
+ }
+ const raw=await deps.execute(context.query.datasetId,values,plan);await context.revalidate();
+ if("receipt" in context){
   try{assertWholeResultShape(context.receipt.approval,raw.result.columns,raw.result.rows);}
   catch(e){if(e instanceof WholeResultApprovalError)throw new QueryDeliveryError(e.code);throw e;}
   await context.revalidate();
