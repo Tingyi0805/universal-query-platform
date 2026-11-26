@@ -183,10 +183,11 @@ test("administrator revokes usage without granting playback", async ({ page }) =
   expect(state.playbackWrites).toEqual([]);
 });
 
-test("manager has only the usage decision, not field selection or playback-approval controls", async ({ page }) => {
+test("manager has usage and public playback decisions without individual field selection", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true });
   await expect(panel.getByRole("button", { name: "停止使用" })).toBeVisible();
-  await expect(panel.getByRole("button", { name: /核准播放|停止播放|簡化安全審查/ })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "核准公共播放", exact: true })).toBeEnabled();
+  await expect(panel.getByRole("button", { name: /簡化安全審查/ })).toHaveCount(0);
   await expect(panel.getByRole("combobox", { name: /保護方式/ })).toHaveCount(0);
   await expect(panel.getByRole("checkbox", { name: /我已核對 SQL/ })).toHaveCount(0);
   expect(state.playbackWrites).toHaveLength(0);
@@ -195,7 +196,7 @@ test("manager has only the usage decision, not field selection or playback-appro
 
 test("unsafe or unavailable playback policy remains blocked", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true, playback: "BLOCKED" });
-  await expect(panel.getByRole("button", { name: "核准播放" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "核准公共播放", exact: true })).toBeDisabled();
   await expect(panel).toContainText("核准使用不會自動公開未通過安全檢查的資料");
   expect(state.playbackWrites).toHaveLength(0);
 });
@@ -204,7 +205,7 @@ test("unsaved SQL changes prevent both approvals", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true });
   await page.locator("textarea").first().fill("SELECT changed FROM synthetic");
   await expect(panel.getByRole("button", { name: "停止使用" })).toBeDisabled();
-  await expect(panel.getByRole("button", { name: "核准播放" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "核准公共播放", exact: true })).toBeDisabled();
   expect(state.usageWrites).toHaveLength(0);
   expect(state.playbackWrites).toHaveLength(0);
 });
@@ -221,7 +222,7 @@ test("conflicting approval does not report a successful decision or change statu
 
 test("stale public policy is not auto-approved by the single usage control", async ({ page }) => {
   const { state, panel } = await setup(page, { active: true, playback: "STALE" });
-  await expect(panel.getByRole("button", {name:"核准播放"})).toHaveCount(0);
+  await expect(panel.getByRole("button", {name:"核准公共播放",exact:true})).toBeEnabled();
   expect(state.playbackWrites).toHaveLength(0);
   expect(state.publicPolicyWrites).toBe(0);
 });
@@ -250,7 +251,7 @@ test("inactive Dataset can save display columns without approving usage or previ
   expect(state.playbackWrites).toHaveLength(0);
   expect(state.publicPolicyWrites).toBe(0);
   await expect(panel.getByRole("button", { name: "核准使用" })).toBeVisible();
-  await expect(panel.getByRole("button", { name: "核准播放" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: "核准公共播放", exact: true })).toBeDisabled();
 });
 
 test("removed field review is not available to manager or nonmanager", async ({ page }) => {
@@ -261,4 +262,20 @@ test("removed field review is not available to manager or nonmanager", async ({ 
   await expect(page.getByRole("button", { name: "確認並儲存一般資料安全審查" })).toHaveCount(0);
   expect(state.usageWrites).toHaveLength(0);
   expect(state.playbackWrites).toHaveLength(0);
+});
+
+
+test("manager explicitly approves and revokes public playback without a field editor", async ({ page }) => {
+  const { state, panel } = await setup(page, { active: true });
+  page.on("dialog", d => d.accept());
+  await panel.getByRole("button", { name: "核准公共播放", exact: true }).click();
+  await expect(panel.getByRole("button", { name: "撤銷播放核准" })).toBeVisible();
+  expect(state.playbackWrites).toHaveLength(1);
+  expect(state.playbackWrites[0].approve).toBe(true);
+  await panel.getByRole("button", { name: "撤銷播放核准" }).click();
+  await expect(panel.getByRole("button", { name: "核准公共播放", exact: true })).toBeVisible();
+  expect(state.playbackWrites).toHaveLength(2);
+  expect(state.playbackWrites[1].approve).toBe(false);
+  expect(state.usageWrites).toHaveLength(0);
+  expect(state.publicPolicyWrites).toBe(0);
 });
