@@ -83,3 +83,15 @@ test("derived numeric keys reject floating/unsafe values; exact BIGINT STRING ke
  const r:any=await f.service.create(1,"a",{},f.identity,f.meta);await f.service.act(1,r.contextId,"a",f.identity,{kind:"NAVIGATE",edge:"open",rowRef:r.rowRefs[0]},f.meta);
  assert.equal(f.state.pages[1]!.values.KEY,"9007199254740993");
 });
+
+
+test("manager-approved hierarchy supports parent/child mappings without requiring legacy field policy",async()=>{
+ const f=hierarchyFixture();f.state.managerApproved=true;
+ const root:any=await f.service.create(1,"a",{},f.identity,f.meta);
+ assert.equal(root.columns[0].canFilter,true);
+ const child:any=await f.service.act(1,root.contextId,"a",f.identity,{kind:"NAVIGATE",edge:"open",rowRef:root.rowRefs[0]},f.meta);
+ assert.equal(child.depth,2);assert.equal(f.state.pages[1]!.values.KEY,11);assert.equal(f.state.successes,2);
+ f.state.denied=2;
+ await assert.rejects(f.service.act(1,root.contextId,"a",f.identity,{kind:"PAGE",controls:hierarchyPageSchema.parse({})},f.meta));
+ assert.equal(f.state.pages.length,2);
+});
