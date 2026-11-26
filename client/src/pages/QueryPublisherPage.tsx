@@ -110,8 +110,8 @@ export function QueryPublisherPage() {
   const [listTotal, setListTotal] = useState(0);
   const [listTotalPages, setListTotalPages] = useState(1);
   const [listCategoryId, setListCategoryId] = useState<number | "">("");
-  const canPublish = hasPermission("PUBLISH_QUERY");
   const canManageAccess = hasPermission("MANAGE_USERS");
+  const canPublish = canManageAccess && hasPermission("PUBLISH_QUERY");
   const selectedIcon = iconOptions.find((item) => item.key === form.icon) ?? iconOptions[0];
   const selectedQuery = form.id ? queries.find((query) => query.id === form.id) ?? null : null;
   const load = useCallback(async () => {
@@ -234,7 +234,7 @@ export function QueryPublisherPage() {
   }
 
   async function setPublished(published: boolean) {
-    if (!form.id) return;
+    if (!form.id || !canPublish) return;
     setError("");
     setNotice("");
     try {
@@ -683,6 +683,7 @@ export function QueryPublisherPage() {
 
             <div className="form-actions">
               {!form.isArchived && <button className="primary-button" type="submit">儲存</button>}
+              {form.id && !form.isArchived && !canPublish && <span role="status">Query 發佈與取消發佈由管理者授權。</span>}
               {form.id && !form.isArchived && canPublish && (
                 <button className="secondary-button" type="button" onClick={() => void setPublished(!form.isPublished)}>
                   {form.isPublished ? "取消發佈" : "發佈"}
