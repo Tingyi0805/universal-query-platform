@@ -140,7 +140,7 @@ export function createDatasetDataRouter(deps = defaultDatasetDataRouteDependenci
   router.get("/:id/design-preview/context", ...guard, async (req, res, next) => {
     try {
       const id = idSchema.parse(req.params.id);
-      const context = await deps.delivery.open(id, identity(req));
+      const context = await deps.delivery.open(id, identity(req), "DESIGN_CONTEXT");
       await context.revalidate();
       res.json({ datasetId: id, definitionVersion: context.snapshot.definitionVersion,
         sensitivityVersion: context.snapshot.sensitivityVersion, patientAuditVersion: context.snapshot.patientAuditVersion });
@@ -225,6 +225,9 @@ export function datasetPreviewGuidance(code: string): string {
     DATASET_COLUMN_DESCRIPTION_RPC_FAILED: "SQL Server 的 sp_describe_first_result_set 欄位描述程序未成功；請用同一資料來源帳號檢查 Describe 權限、SQL Server 版本與 SQL 語法。未執行資料列查詢。",
     DATASET_COLUMN_DESCRIPTION_CLEANUP_FAILED: "SQL Server Metadata Describe 連線清理失敗，操作未完成；請依 Request ID 查核來源連線服務。",
     DATASET_CANDIDATE_PREVIEW_UNAVAILABLE: "請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。",
+    MANAGER_PREVIEW_APPROVAL_REQUIRED: "管理者須重新核准目前已儲存的 SQL 與資料來源版本，才能執行管理者預覽。",
+    MANAGER_PREVIEW_APPROVAL_UNAVAILABLE: "無法讀取管理者核准紀錄，請依 Request ID 檢查平台資料庫。",
+    MANAGER_PREVIEW_LEGACY_PROTECTION_REQUIRED: "此 Dataset 仍有既有欄位或患者設定，尚未完成轉換，不會自動解除既有保護。",
     DATASET_PREVIEW_VERSION_REQUIRED: "缺少預覽定義版本，請重新載入 Dataset 後重試。",
     DATASET_DELIVERY_VERSION_CONFLICT: "Dataset 定義、來源或安全設定已變更，請重新載入並確認後再預覽。",
     DATASET_DELIVERY_POLICY_UNCONFIRMED: "此 Dataset 尚無系統已確認的資料保護政策，預覽維持禁止。管理者只核准是否可使用，不需逐欄設定；系統安全條件尚未就緒，不會自動交付資料。",
