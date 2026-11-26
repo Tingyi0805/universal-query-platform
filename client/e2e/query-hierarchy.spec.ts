@@ -4,7 +4,7 @@ const context="A".repeat(43),row="B".repeat(43);
 async function setup(page:Page,trigger="ROW",display="PAGE"){
  const state={byDepth:{1:{page:1,search:null,sort:null},2:{page:1,search:null,sort:null}} as Record<number,{page:number;search:any;sort:any}>,depth:1,page:1,revision:"1".repeat(16),deny:false,missing:false,hold:false,release:(()=>{}) as ()=>void,
   calls:[] as {path:string;body:any;authorization:string|undefined}[],configWrites:[] as any[]};
- await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic-A",user:{id:8,username:"A",displayName:"合成管理員",permissions:["VIEW_QUERY","EXECUTE_QUERY","DESIGN_QUERY","PUBLISH_QUERY"]}})));
+ await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic-A",user:{id:8,username:"A",displayName:"合成管理員",permissions:["VIEW_QUERY","EXECUTE_QUERY","DESIGN_QUERY","PUBLISH_QUERY","MANAGE_USERS"]}})));
  const view=()=>({contextId:context,expiresAtUtc:new Date(Date.now()+120000).toISOString(),depth:state.depth,trail:state.depth===1?["合成主層"]:["合成主層","合成明細"],query:{name:state.depth===1?"合成主層":"合成明細"},layout:state.depth===1?"TABLE":"CARDS",
   controls:state.byDepth[state.depth],result:{columns:[{name:"ID"},{name:"NAME"}],rows:[{ID:11,NAME:state.depth===1?`主層頁${state.page}`:"合成遮蔽○"}]},
   pagination:{page:state.page,pageSize:1,totalRows:3,totalPages:3,capped:false},columns:[{key:"c0",name:"ID",label:"識別",canFilter:true,alignment:"LEFT"},{key:"c1",name:"NAME",label:"姓名",canFilter:false,alignment:"LEFT"}],rowRefs:[row],
