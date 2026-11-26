@@ -117,7 +117,8 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken, active
   useEffect(() => {
     if (issued.current && !devices.some(device => device.id === issued.current!.deviceId && deviceMayIssue(device, now))) clearCredential();
   }, [devices, now]);
-  const canActivate = readMessages.length === 0 && !!mode && !!configuration?.editable && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
+  const canManagePlayback = hasPermission("MANAGE_USERS");
+  const canActivate = canManagePlayback && readMessages.length === 0 && !!mode && !!configuration?.editable && !!preflight?.ready && preflight.version === mode.version && preflight.version === configuration.version;
   const canIssue = (device: ManagedDevice, time = Date.now()) => legacyCredentials?.includes(device.id)===true && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY") && readMessages.length === 0 && mode?.mode === "QUERY_ONLY" && configuration?.dashboardMode === "QUERY_ONLY" && configuration.isActive === true && configuration.version === mode.version && device.suspendedAtUtc == null && device.reenrollmentRequired == null && deviceMayIssue(device, time) && devices.some(d=>d.id===device.id&&deviceMayIssue(d,time));
   function failed(error: unknown) { clearCredential(); setPreflight(null); setMode(null); setMessage(dashboardOperationError(error)); }
   async function check() {
@@ -130,7 +131,7 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken, active
     finally { if (current === epoch.current) setBusy(false); }
   }
   async function change(activate: boolean) {
-    if (busy || !mode || (activate && !canActivate) || !window.confirm(activate ? "啟用 Query-only？後端會重新驗證，所有原裝置憑證失效，須重新授權。" : "停用 Query-only 並撤銷相關裝置憑證？")) return;
+    if (!canManagePlayback || busy || !mode || (activate && !canActivate) || !window.confirm(activate ? "啟用 Query-only？後端會重新驗證，所有原裝置憑證失效，須重新授權。" : "停用 Query-only 並撤銷相關裝置憑證？")) return;
     const current = epoch.current; clearCredential(); setBusy(true); setMessage("");
     try {
       dashboardMode(await apiRequest<DashboardMode>(base, { method: "POST", body: JSON.stringify({ expectedVersion: mode.version, activate }) }, accessToken));
@@ -188,8 +189,9 @@ export function DashboardQueryPlaybackManager({ dashboardId, accessToken, active
     <button id="uqp-query-preflight" type="button" disabled={busy || !mode} onClick={() => void check()}>執行啟用前檢查</button>
     {preflight && <div role="status"><p>來源：{preflight.sourceCount}/8；待轉換：{preflight.pendingCount}。{preflight.ready ? "後端預檢通過，啟用與核發仍會重新驗證。" : "後端預檢未通過，禁止啟用。"}</p>
       <ul>{preflight.checks.map(item => <li key={item.name}>{labels[item.name] ?? "安全檢查"}：{result(item)}</li>)}{preflight.queries.map(item => <li key={item.sourceKey}>{item.sourceKey} Query ACL／必要參數／遮蔽與稽核：{result(item)}</li>)}{preflight.delegators.map(item => <li key={item.deviceId}>裝置 {item.deviceId} 委派者／工作站／Query ACL：{result(item)}</li>)}</ul></div>}
-    <button type="button" disabled={busy || !canActivate || mode?.mode === "QUERY_ONLY"} onClick={() => void change(true)}>啟用 Query-only</button>
-    <button type="button" disabled={busy || mode?.mode !== "QUERY_ONLY"} onClick={() => void change(false)}>停用 Query-only</button>
+    {!canManagePlayback && <p role="status">Dashboard 與 CHART 的播放啟停由管理者授權。</p>}
+    <button type="button" disabled={!canManagePlayback || busy || !canActivate || mode?.mode === "QUERY_ONLY"} onClick={() => void change(true)}>核准播放</button>
+    <button type="button" disabled={!canManagePlayback || busy || mode?.mode !== "QUERY_ONLY"} onClick={() => void change(false)}>停止播放</button>
     <p>裝置名稱、IP 限制與到期時間為後端已儲存設定。下方版本化管理區顯示已儲存工作站關聯；即時有效性仍以預檢與核發時的後端委派驗證為準。</p>
     <DashboardDeviceMetadataManager dashboardId={dashboardId} accessToken={accessToken} onPage={onDevicePage} active={active} onDirtyChange={onDirtyChange} onLegacyCredentials={onLegacyCredentials} playbackReady={mode?.mode==="QUERY_ONLY"&&configuration?.isActive===true&&configuration.version===mode.version}/>
     <p>裝置封存只標記裝置歷史，與 Dashboard 停用／退役不同；不提供實體刪除。</p>
