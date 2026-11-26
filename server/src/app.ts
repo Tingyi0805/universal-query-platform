@@ -1,5 +1,4 @@
 import {createQueryHierarchyRouter} from "./modules/queryDefinition/queryHierarchy.routes.js";
-import { createMaskTemplateRouter } from "./modules/dataset/datasetMaskTemplate.routes.js";
 import { createDatasetPublicDisplayRouter } from "./modules/dataset/datasetPublicDisplay.routes.js";
 import { randomUUID } from "node:crypto";
 import cors from "cors";
@@ -22,8 +21,6 @@ import { queryDefinitionRouter } from "./modules/queryDefinition/queryDefinition
 import { queryRuntimeRouter } from "./modules/queryDefinition/queryRuntime.routes.js";
 import { systemSettingsRouter } from "./modules/systemSettings/systemSettings.routes.js";
 import { healthRouter } from "./routes/health.routes.js";
-import { createDatasetFieldInitializationRouter } from "./modules/dataset/datasetFieldInitialization.routes.js";
-import { createDatasetScopeManagementRouter } from "./modules/dataset/datasetScopeManagement.routes.js";
 
 const pinoHttp = pinoHttpModule as unknown as (options: {
   logger: typeof logger;
@@ -70,11 +67,8 @@ app.use("/api/workstations/current", createWorkstationPinRouter());
 app.use("/api/admin", adminRouter);
 app.use("/api/audit", auditRouter);
 app.use("/api/datasources", dataSourceRouter);
-app.use("/api/dataset-mask-templates", createMaskTemplateRouter());
 app.use("/api/datasets", createDatasetPublicDisplayRouter());
 app.use("/api/datasets", datasetRouter);
-app.use("/api/dataset-field-initialization", createDatasetFieldInitializationRouter());
-app.use("/api/dataset-security", createDatasetScopeManagementRouter());
 app.use("/api/dashboards", dashboardRouter);
 app.use("/api/query-categories", queryCategoryRouter);
 app.use("/api/query-definitions", queryDefinitionRouter);

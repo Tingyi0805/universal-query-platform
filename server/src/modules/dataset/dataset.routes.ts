@@ -1,12 +1,6 @@
-import {DatasetDisplayError,exactPositiveId} from "./datasetDisplaySchema.js";
 import { createDatasetManagementApprovalRouter } from "./datasetManagementApproval.routes.js";
-import { validCustomMask } from "../dashboard/dashboardDeviceMasking.js";
-import { listDatasetColumns } from "./column.repository.js";
 import { createDatasetDataRouter } from "./datasetData.routes.js";
 import { Router, type RequestHandler } from "express";
-import { getDatasetSensitivitySnapshot, listDatasetSensitiveColumns, replaceDatasetSensitiveColumns } from "./datasetSensitiveColumn.repository.js";
-import { patientAuditService } from "./patientAuditContract.repository.js";
-import { createPatientAuditConfigRouter } from "./patientAuditConfig.routes.js";
 import { z } from "zod";
 import { assertSelectOnlySql } from "../../query/selectOnlySql.js";
 import { extractParameterNames } from "../../query/queryCompiler.js";
@@ -588,63 +582,7 @@ datasetRouter.delete("/:id", async (req, res, next) => {
   }
 });
 
-datasetRouter.use(createPatientAuditConfigRouter(patientAuditService));
+// Retired manual patient/column configuration routes are intentionally not
+// mounted. Stored protections and clinical disclosure auditing remain enforced
+// by the runtime until a separately validated replacement is available.
 
-const sensitiveColumnSchema = z.object({
-  columnName: z.string().trim().min(1).max(256),
-  sensitivityType: z.string().regex(/^[A-Z0-9_]{1,64}$/),
-  deviceMaskMode: z.enum(["NONE", "NAME", "MRN", "PHONE", "GENERIC", "FULL", "OMIT", "CUSTOM"]),
-  customMask: z.object({
-    prefix: z.number().int().min(0).max(100),
-    suffix: z.number().int().min(0).max(100),
-    start: z.number().int().min(1).max(10000).optional(),
-    end: z.number().int().min(1).max(10000).optional(),
-    symbol: z.string().min(1).max(2).refine((v) => Array.from(v).length === 1 && !/[\r\n\t]/u.test(v)),
-  }).strict().refine(validCustomMask).nullable().optional(),
-}).refine((rule) => rule.sensitivityType === "OTHER" || rule.deviceMaskMode !== "NONE", "敏感欄位不可原樣顯示")
-  .refine((rule) => rule.deviceMaskMode === "CUSTOM" ? !!rule.customMask : rule.customMask == null, "自訂遮蔽設定必須與模式一致");
-
-datasetRouter.get("/:id/sensitive-columns", async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    if (!id.success) { res.status(400).json({ error: { code: "VALIDATION_ERROR" } }); return; }
-    if (!await getDataset(id.data)) { res.status(404).json({ error: { code: "DATASET_NOT_FOUND" } }); return; }
-    res.setHeader("Cache-Control", "no-store");
-    res.json({ ...await getDatasetSensitivitySnapshot(id.data), availableColumns: await listDatasetColumns(id.data) });
-  } catch (error) { next(error); }
-});
-
-datasetRouter.put("/:id/sensitive-columns", requirePermission("MANAGE_USERS"), async (req, res, next) => {
-  try {
-    const id = idSchema.safeParse(req.params.id);
-    const parsed = z.object({ columns: z.array(sensitiveColumnSchema).max(300), expectedVersion: z.number().int().nonnegative().safe(), templateApplications:z.array(z.object({columnName:z.string().min(1).max(256),templateId:z.string().refine(exactPositiveId),templateRevision:z.string().refine(exactPositiveId)}).strict()).max(300).optional() }).strict().safeParse(req.body);
-    if (!id.success || !parsed.success || !req.authUser) {
-      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "敏感欄位設定格式不正確。" } }); return;
-    }
-    const names = parsed.data.columns.map((column) => column.columnName);
-    if (new Set(names.map((name) => name.toUpperCase())).size !== names.length) {
-      res.status(400).json({ error: { code: "DUPLICATE_SENSITIVE_COLUMN", message: "欄位名稱不可重複。" } }); return;
-    }
-    const version = await replaceDatasetSensitiveColumns(id.data, parsed.data.columns, req.authUser.id, auditRequestContext(req), parsed.data.expectedVersion,parsed.data.templateApplications);
-    res.json({ status: "OK", version, columns: parsed.data.columns });
-  } catch (error) {
-    if(error instanceof DatasetDisplayError){res.status(error.status).json({error:{code:error.code,message:"範本或政策版本已改變，請重新載入後確認；未覆寫現有規則。",requestId:req.id}});return;}
-    if (error instanceof Error && error.message === "SENSITIVITY_ACTIVE_DASHBOARD") {
-      res.status(409).json({ error: { code: "SENSITIVITY_ACTIVE_DASHBOARD", message: "此 Dataset 仍有啟用中的 Dashboard，不能清空敏感欄位規則；請先停用相關 Dashboard，再進行規則調整。" } });
-      return;
-    }
-    if (error instanceof Error && error.message === "SENSITIVITY_COLUMN_NOT_FOUND") {
-      res.status(400).json({ error: { code: "SENSITIVITY_COLUMN_NOT_FOUND", message: "敏感欄位不在目前 Dataset 的已同步欄位清單中，請先完成已儲存 Dataset 的可信欄位初始化；候選描述不能代替已同步欄位。" } });
-      return;
-    }
-    if (error instanceof Error && error.message === "SENSITIVITY_AUDIT_TOO_LARGE") {
-      res.status(400).json({ error: { code: "SENSITIVITY_AUDIT_TOO_LARGE", message: "敏感欄位規則異動內容超過稽核紀錄上限，請減少單次修改的欄位數量或縮短欄位名稱。" } });
-      return;
-    }
-    if (error instanceof Error && error.message === "SENSITIVITY_VERSION_CONFLICT") {
-      res.status(409).json({ error: { code: "SENSITIVITY_VERSION_CONFLICT", message: "其他管理者已更新敏感欄位規則，請重新載入後再修改。" } });
-      return;
-    }
-    next(error);
-  }
-});
