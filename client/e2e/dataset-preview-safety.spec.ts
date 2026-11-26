@@ -101,29 +101,16 @@ test("designer displays candidate metadata without unlocking sensitive policy or
   await expect(panel.getByRole("cell", { name: "VALUE" })).toHaveCount(0);
 });
 
-test("candidate-only masking rehearsal never writes policy, syncs trusted columns or runs data", async ({ page }) => {
-  const state = await setup(page);
-  const panel = page.getByRole("region", { name: "SQL 欄位候選預覽" });
-  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
-  const draft = panel.getByRole("region", { name: "候選欄位遮蔽草稿" });
-  await draft.getByRole("combobox", { name: "候選遮蔽欄位" }).selectOption("VALUE");
-  await draft.getByRole("button", { name: "加入／更新本頁草稿（不儲存）" }).click();
-  await expect(draft.locator("table caption")).toHaveText("尚未儲存、未生效的遮蔽草稿");
-  await expect(draft).toContainText("ABC01234");
-  expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
-  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
-  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
-  await expect(panel.getByText("尚未儲存、未生效的遮蔽草稿")).toHaveCount(0);
+test("simplified manager-only Dataset does not expose retired manual sensitivity controls", async ({ page }) => {
+  const state=await setup(page);
+  await expect(page.getByRole("region",{name:"Dataset 使用核准"})).toBeVisible();
+  await expect(page.getByRole("region",{name:"候選欄位遮蔽草稿"})).toHaveCount(0);
+  await expect(page.getByRole("region",{name:"已儲存欄位 Snapshot"})).toHaveCount(0);
+  await expect(page.getByRole("region",{name:"Dataset 安全初始化狀態"})).toHaveCount(0);
+  await expect(page.getByRole("heading",{name:"資料預覽的安全確認狀態"})).toHaveCount(0);
+  await page.getByRole("region",{name:"SQL 欄位候選預覽"})
+    .getByRole("button",{name:"取得 SQL 欄位名稱及型別"}).click();
+  await expect(page.getByRole("region",{name:"候選欄位遮蔽草稿"})).toHaveCount(0);
   expect(state.policyWrites).toBe(0);
-});
-test("candidate masking draft disappears when saved SQL changes", async ({ page }) => {
-  const state = await setup(page);
-  const panel = page.getByRole("region", { name: "SQL 欄位候選預覽" });
-  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
-  const draft = panel.getByRole("region", { name: "候選欄位遮蔽草稿" });
-  await draft.getByRole("combobox", { name: "候選遮蔽欄位" }).selectOption("VALUE");
-  await draft.getByRole("button", { name: "加入／更新本頁草稿（不儲存）" }).click();
-  await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
-  await expect(panel.getByRole("region", { name: "候選欄位遮蔽草稿" })).toHaveCount(0);
-  expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
+  expect(state.runs).toEqual([]);
 });

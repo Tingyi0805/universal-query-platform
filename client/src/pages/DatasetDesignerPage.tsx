@@ -1,6 +1,4 @@
-import {DatasetFieldSnapshotPanel} from "./DatasetFieldSnapshotPanel";
 import { DatasetManagementApprovalPanel } from "../components/DatasetManagementApprovalPanel";
-import { DatasetCandidateMaskDraft } from "../components/DatasetCandidateMaskDraft";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
@@ -109,7 +107,6 @@ export function DatasetDesignerPage() {
   const [columnCandidate, setColumnCandidate] = useState<{ columns: { name: string; dataType: string; ordinal: number }[];
     trust: "UNBOUND_CANDIDATE"; metadataState: "NOT_INITIALIZED"; deliveryAllowed: false } | null>(null);
   const [columnCandidateBusy, setColumnCandidateBusy] = useState(false);
-  const [columnCandidateRevision, setColumnCandidateRevision] = useState(0);
   const [columnCandidateError, setColumnCandidateError] = useState("");
   const [columnSyncNotice, setColumnSyncNotice] = useState("");
   const [columnSyncBusy, setColumnSyncBusy] = useState(false);
@@ -764,8 +761,7 @@ export function DatasetDesignerPage() {
                     <td>{item.ordinal}</td><td>{item.name}</td><td>{item.dataType}</td>
                   </tr>)}</tbody>
                 </table>
-                <DatasetCandidateMaskDraft key={columnCandidateRevision} columns={columnCandidate.columns} />
-                <p>確認欄位名稱後，可先儲存為設計用欄位清單。此動作不會建立敏感欄位政策或放行資料預覽。</p>
+                <p>可將取得的欄位名稱與型別儲存為設計參考，管理者只需核准 Dataset 是否可使用；欄位清單本身不代表取得資料列授權。</p>
                 <button type="button" className="secondary-button"
                   disabled={busy || columnSyncBusy || columnCandidateBusy || !form.id || form.isArchived
                     || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId}
@@ -773,13 +769,6 @@ export function DatasetDesignerPage() {
                   {columnSyncBusy ? "儲存欄位中…" : "儲存欄位候選清單（僅供設計）"}
                 </button>
               </>}
-            </section>
-            {form.id&&<DatasetFieldSnapshotPanel key={`${form.id}:${sqlSaveRevision}:${accessToken}`} datasetId={form.id} token={accessToken} enabled={hasPermission("CONFIRM_DATASET_CLASSIFICATION")&&!busy&&!form.isArchived&&form.sqlText===savedSql&&form.dataSourceId===savedDataSourceId} />}
-            <section aria-label="Dataset 安全初始化狀態">
-              <h3>資料預覽的安全確認狀態</h3>
-              <p>欄位候選探索僅讀取名稱及型別，不會讀取資料列。管理者只需核准是否允許使用；系統端尚未具備可信保護政策時，預覽仍會拒絕交付資料，不必在此逐欄設定，也不得以空政策或直接改寫資料庫繞過。</p>
-              <p>未確認的政策不得交付資料；預覽保留即時權限、版本與操作稽核。涉及患者資料時仍必須先完成識別欄位、HMAC 及揭露稽核，不能由欄名自動推定安全。</p>
-              <p>欄位描述不是 SOURCE_BOUND 或 Native Type 確認，不會變更既有遮蔽與患者稽核證據。同步失敗會顯示錯誤代碼與 Request ID，請依指引處理。</p>
             </section>
             <div className="form-actions">
               {!form.isArchived ? (
