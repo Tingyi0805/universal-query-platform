@@ -1,6 +1,6 @@
 import {createHash,randomBytes} from "node:crypto";
 import type sql from "mssql";
-import {createQueryDelivery,deliveryReportColumns,QueryDeliveryError} from "./queryDelivery.js";
+import {deliveryReportColumns,QueryDeliveryError} from "./queryDelivery.js";
 import {listDatasetParameters} from "../dataset/parameter.repository.js";
 import {runtimeParameterDefinitions} from "../dataset/parameterSync.js";
 import {typedDrillValue} from "../dashboard/dashboardDrilldown.schema.js";
@@ -8,19 +8,19 @@ import {startAudit,completeAuditFailure} from "../audit/audit.repository.js";
 import {finalizeDeliveryAudit} from "../audit/deliveryAudit.repository.js";
 import {parseHierarchyGraph,hierarchyPageSchema,type HierarchyGraph,type HierarchyPage} from "./queryHierarchy.contract.js";
 import {queryHierarchyRepository,readHierarchyQueryRevision,type HierarchyIdentity} from "./queryHierarchy.repository.js";
-import {createHierarchyPageDelivery,createHierarchyMetadataDelivery,type HierarchyOpen} from "./queryHierarchy.page.js";
+import {createHierarchyApprovalDelivery,createHierarchyPageDelivery,createHierarchyMetadataDelivery,type HierarchyOpen} from "./queryHierarchy.page.js";
 const hash=(x:unknown)=>createHash("sha256").update(JSON.stringify(x)).digest("hex");
 const opaque=()=>randomBytes(32).toString("base64url");
-export const hierarchyServiceDependencies={delivery:createQueryDelivery(),transactionDelivery:createHierarchyMetadataDelivery,parameters:listDatasetParameters,revision:readHierarchyQueryRevision,
+export const hierarchyServiceDependencies={delivery:createHierarchyApprovalDelivery(),transactionDelivery:createHierarchyMetadataDelivery,parameters:listDatasetParameters,revision:readHierarchyQueryRevision,
  store:queryHierarchyRepository,page:createHierarchyPageDelivery(),startAudit,finalizeDeliveryAudit,completeAuditFailure,now:Date.now};
 type Frame={node:string;values:Record<string,unknown>;controls:HierarchyPage;witness?:{controls:string;source:string}};
 type Context={root:number;owner:string;savedRevision:string;graph:HierarchyGraph;expires:number;stack:Frame[];rows:Map<string,Record<string,unknown>>;
  bindings:Record<string,string>;evidence:Map<string,string>;busy:boolean;bytes:number};
 type Meta={ipAddress:string|null;userAgent:string|null};
 export function hierarchyVisibleColumns(c:HierarchyOpen){
- const reports=deliveryReportColumns(c.snapshot.policy,c.reports).filter(r=>r.isVisible).sort((a,b)=>a.displayOrder-b.displayOrder);
+ const reports=("receipt" in c?c.reports:deliveryReportColumns(c.snapshot.policy,c.reports)).filter(r=>r.isVisible).sort((a,b)=>a.displayOrder-b.displayOrder);
  if(!reports.length||reports.some(r=>r.groupOrder!==null||r.aggregateType!=="NONE"))throw new QueryDeliveryError("HIERARCHY_REPORT_REQUIRES_FLAT_COLUMNS");
- return reports.map((r,i)=>({...r,key:`c${i}`,canFilter:c.snapshot.policy.rules.some(p=>p.columnName===r.columnName&&p.mode==="NONE")}));
+ return reports.map((r,i)=>({...r,key:`c${i}`,canFilter:"receipt" in c?c.receipt.approval.columns.includes(r.columnName):c.snapshot.policy.rules.some(p=>p.columnName===r.columnName&&p.mode==="NONE")}));
 }
 export function createQueryHierarchyService(deps=hierarchyServiceDependencies){
  const contexts=new Map<string,Context>();const sweep=()=>{for(const [id,c] of contexts)if(c.expires<=deps.now())contexts.delete(id);};
@@ -34,7 +34,7 @@ export function createQueryHierarchyService(deps=hierarchyServiceDependencies){
    if(!clear.has(field))throw new QueryDeliveryError("HIERARCHY_MASKED_OR_HIDDEN_KEY",403);
   const parameters=runtimeParameterDefinitions(c.dataset.sqlText,await deps.parameters(c.query.datasetId,tx));
   const revision=await deps.revision(node.queryId,tx);
-  return {c,columns,parameters,binding:hash([node.queryId,c.query.datasetId,revision,parameters,c.snapshot,c.reports]),evidence:hash([c.fingerprint,revision,parameters])};
+  return {c,columns,parameters,binding:hash([node.queryId,c.query.datasetId,revision,parameters,"receipt" in c?c.receipt:c.snapshot,c.reports]),evidence:hash([c.fingerprint,revision,parameters])};
  }
  async function inspectGraph(root:number,input:unknown,identity:HierarchyIdentity,tx?:sql.Transaction){
   const graph=parseHierarchyGraph(input);if(graph.nodes.find(n=>n.id===graph.root)!.queryId!==root)throw new QueryDeliveryError("HIERARCHY_ROOT_MISMATCH",400);
