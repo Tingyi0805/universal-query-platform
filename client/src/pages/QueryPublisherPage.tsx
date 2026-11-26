@@ -235,6 +235,7 @@ export function QueryPublisherPage() {
 
   async function setPublished(published: boolean) {
     if (!form.id || !canPublish) return;
+    if (published && !window.confirm("確認核准發佈此 Query？請確認 Dataset 的 SQL 僅回傳授權對象所需資料；既有患者及遮蔽設定不會被解除，公開播放需獨立授權。")) return;
     setError("");
     setNotice("");
     try {
@@ -243,6 +244,7 @@ export function QueryPublisherPage() {
         queryDefinition: QueryDefinition;
       }>(`/query-definitions/${form.id}/${published ? "publish" : "unpublish"}`, {
         method: "POST",
+        ...(published ? { body: JSON.stringify({ approveSourceMinimizedResult: true }) } : {}),
       }, accessToken);
 
       if (result.queryDefinition) applyQueryToForm(result.queryDefinition);
