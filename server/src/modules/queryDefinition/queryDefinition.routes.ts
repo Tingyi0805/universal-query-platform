@@ -369,7 +369,7 @@ queryDefinitionRouter.post("/:id/restore", requirePermission("DESIGN_QUERY"), as
   }
 });
 
-queryDefinitionRouter.post("/:id/publish", requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
+queryDefinitionRouter.post("/:id/publish", requirePermission("MANAGE_USERS"), requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success || !req.authUser) {
@@ -397,7 +397,7 @@ queryDefinitionRouter.post("/:id/publish", requirePermission("PUBLISH_QUERY"), a
   }
 });
 
-queryDefinitionRouter.post("/:id/unpublish", requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
+queryDefinitionRouter.post("/:id/unpublish", requirePermission("MANAGE_USERS"), requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success) {
