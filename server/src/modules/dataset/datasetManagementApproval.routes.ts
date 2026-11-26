@@ -43,7 +43,7 @@ async function platformPool() {
 async function readUsage(id: number, tx?: sql.Transaction, lock = false) {
   const poolOrRequest = tx ? new sql.Request(tx) : (await platformPool()).request();
   const result = await poolOrRequest.input("id", sql.BigInt, id).query(
-    "SELECT IsActive,IsArchived,DefinitionRowVersion AS DefinitionVersion " +
+    "SELECT IsActive,IsArchived,DataSourceId,DefinitionRowVersion AS DefinitionVersion " +
     "FROM uqp.Dataset " + (lock ? "WITH(UPDLOCK,HOLDLOCK) " : "") + "WHERE Id=@id"
   );
   if (!result.recordset.length) throw new ApprovalError("DATASET_NOT_FOUND", 404);
@@ -51,7 +51,9 @@ async function readUsage(id: number, tx?: sql.Transaction, lock = false) {
   if (item.IsArchived) throw new ApprovalError("DATASET_ARCHIVED", 409);
   const definitionVersion = decodeDatasetApprovalRevision(item.DefinitionVersion);
   if (!definitionVersion) throw new ApprovalError("DATASET_REVISION_INVALID", 503);
-  return { active: Boolean(item.IsActive), definitionVersion };
+  const dataSourceId = Number(item.DataSourceId);
+  if (!Number.isSafeInteger(dataSourceId) || dataSourceId < 1) throw new ApprovalError("DATASET_REVISION_INVALID", 503);
+  return { active: Boolean(item.IsActive), definitionVersion, dataSourceId };
 }
 
 function respondError(res: import("express").Response, e: unknown) {
@@ -62,6 +64,8 @@ function respondError(res: import("express").Response, e: unknown) {
     FORBIDDEN: "只有具有管理權限的帳號可核准使用及播放。",
     DATASET_NOT_FOUND: "找不到 Dataset。",
     DATASET_ARCHIVED: "已封存 Dataset 不可核准。",
+    DATASOURCE_NOT_AVAILABLE: "資料來源已停用或不存在，不能核准使用。",
+    DATASET_REVISION_INVALID: "無法確認 Dataset 或資料來源版本，未完成核准。",
     MANAGER_APPROVAL_VERSION_CONFLICT: "Dataset 已變更，請重新載入後再核准。",
     MANAGER_APPROVAL_SENSITIVITY_REQUIRED: "尚未具備可受信任的欄位遮蔽政策，不能核准公共播放。",
     MANAGER_APPROVAL_NO_SAFE_VISIBLE_COLUMNS: "沒有可安全公開的欄位，播放維持不核准。",
@@ -106,7 +110,7 @@ export function createDatasetManagementApprovalRouter() {
         }
       }
       const previewSafety = await resolveDatasetPreviewSafety(usage.active, () => readConfirmedDatasetDeliverySnapshot(id));
-      res.json({ usage, playback, previewSafety });
+      res.json({ usage: { active: usage.active, definitionVersion: usage.definitionVersion }, playback, previewSafety });
     } catch (e) { respondError(res, e); }
   });
 
@@ -124,6 +128,18 @@ export function createDatasetManagementApprovalRouter() {
       if (before.definitionVersion !== input.expectedVersion) {
         throw new ApprovalError("MANAGER_APPROVAL_VERSION_CONFLICT");
       }
+      let sourceConfigurationVersion: string | null = null;
+      if (input.approve) {
+        // Capture the actual source revision in the same transaction. No
+        // source revision supplied by a browser can be used as approval proof.
+        const source = await new sql.Request(tx).input("id", sql.BigInt, before.dataSourceId)
+          .query("SELECT IsActive, ConfigurationRowVersion FROM uqp.DataSource WITH(UPDLOCK,HOLDLOCK) WHERE Id=@id");
+        if (source.recordset.length !== 1 || !source.recordset[0].IsActive) {
+          throw new ApprovalError("DATASOURCE_NOT_AVAILABLE");
+        }
+        sourceConfigurationVersion = decodeDatasetApprovalRevision(source.recordset[0].ConfigurationRowVersion);
+        if (!sourceConfigurationVersion) throw new ApprovalError("DATASET_REVISION_INVALID", 503);
+      }
       if (before.active !== input.approve) {
         const result = await new sql.Request(tx)
           .input("id", sql.BigInt, id)
@@ -139,10 +155,16 @@ export function createDatasetManagementApprovalRouter() {
             "UpdatedAtUtc=SYSUTCDATETIME() WHERE DatasetId=@id AND IsPublished=1"
           );
         }
+        const after = await readUsage(id, tx, true);
+        if (after.active !== input.approve || after.dataSourceId !== before.dataSourceId ||
+            after.definitionVersion === before.definitionVersion) {
+          throw new ApprovalError("MANAGER_APPROVAL_VERSION_CONFLICT");
+        }
         const auditId = await writeAuditEvent({
           eventType: input.approve ? "DATASET_USAGE_APPROVED" : "DATASET_USAGE_REVOKED",
           userId: actor.userId, datasetId: id,
-          parameters: { previousActive: before.active, approved: input.approve, revision: before.definitionVersion }
+          parameters: { previousActive: before.active, approved: input.approve, revision: before.definitionVersion,
+            definitionVersion: after.definitionVersion, dataSourceId: after.dataSourceId, sourceConfigurationVersion }
         }, tx);
         if (!Number.isSafeInteger(auditId) || auditId <= 0) throw new ApprovalError("MANAGER_APPROVAL_AUDIT_FAILED", 503);
       }
