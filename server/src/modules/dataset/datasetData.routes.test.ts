@@ -13,6 +13,7 @@ import { createDatasetDataDelivery, defaultDatasetDataDependencies } from "./dat
 import { type ConfirmedDatasetDeliverySnapshot, DatasetDeliverySnapshotError } from "./datasetDeliveryPolicy.repository.js";
 import { syntheticParameter } from "./parameterTestFixture.js";
 import { DatasetColumnCandidateError } from "./datasetColumnCandidate.js";
+import { QueryDeliveryError } from "../queryDefinition/queryDelivery.js";
 
 test("unconfirmed policy guidance keeps usage approval independent without retired per-column review", () => {
   const message = datasetPreviewGuidance("DATASET_DELIVERY_POLICY_UNCONFIRMED");
@@ -47,6 +48,7 @@ async function setup() {
     executions: [] as number[], disclosures: [] as Array<{ datasetId: number; masked: boolean; identity: unknown }>,
     parameters: [{ ...syntheticParameter, name: "WARD", optionMode: "DATASET" as "DATASET" | "FIXED" | "NONE",
       lookupDatasetId: 2, lookupValueField: "CODE", lookupLabelField: "LABEL", defaultValue: "A", fixedOptionsJson: '[{"value":"A","label":"A"}]' }],
+    managerPreviewAllowed: false, managerPreviewReads: 0,
     datasetActive: true, sourceActive: true, sourceRevision: "source-1", policyUnconfirmed: false, patientStatus: "CONFIRMED", patientFingerprint: "proof-1",
     sqlText: "SELECT NAME, MRN, CODE, LABEL WHERE CODE={{WARD}}", phase: "", change: () => {},
     auditFailure: false, operationFailure: false, failureWriteFailure: false, missingDisclosure: false,
@@ -59,6 +61,13 @@ async function setup() {
       if (state.schemaMissing) throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_SCHEMA_REQUIRED");
       if (state.policyUnconfirmed) throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_POLICY_UNCONFIRMED");
       return structuredClone(state.snapshots.get(id)!); },
+    managerPreview: async (id: number) => {
+      state.managerPreviewReads++;
+      if (!state.managerPreviewAllowed) throw new QueryDeliveryError("MANAGER_PREVIEW_APPROVAL_REQUIRED");
+      return { datasetId: id, definitionVersion: version, sensitivityVersion: "0", patientAuditVersion: "0", policy: null,
+        patientAudit: { configured: false, enabled: false, patientKeyColumn: null },
+        managerApproval: { decisionId: "8", approvedBy: "4", dataSourceId: id + 10, sourceConfigurationVersion: version } };
+    },
     dataset: async (id: number) => ({ id, dataSourceId: id + 10, sqlText: state.sqlText, isActive: state.datasetActive, isArchived: false, maxRows: 100 }),
     source: async () => ({ isActive: state.sourceActive, revision: state.sourceRevision }),
     parameters: async () => structuredClone(state.parameters),
@@ -450,4 +459,49 @@ test("unavailable source is rejected before missing legacy policy is inspected",
   assert.deepEqual(f.state.snapshotReads, []);
   assert.deepEqual(f.state.executions, []);
   assert.equal(f.state.startAudits, 0);
+}));
+
+
+test("manager design preview works for a fresh approved definition without a legacy field policy", () => fixture(async f => {
+  f.state.session.permissions.push("MANAGE_USERS");
+  f.state.policyUnconfirmed = true;
+  f.state.managerPreviewAllowed = true;
+  const context = await f.request("/1/design-preview/context");
+  assert.equal(context.status, 200);
+  assert.equal((await context.json() as any).definitionVersion, version);
+  const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
+  assert.equal(response.status, 200);
+  const body = await response.json() as any;
+  assert.equal(body.result.rows[0].NAME, rawName);
+  assert.equal(body.disclosureId, null);
+  assert.deepEqual(f.state.disclosures, []);
+  assert.equal(f.state.operationStatus, "SUCCESS");
+  const reads = f.state.managerPreviewReads;
+  const ordinary = await f.request("/1/execute", { values: {} });
+  assert.equal(ordinary.status, 409);
+  assert.equal(f.state.managerPreviewReads, reads);
+  assert.deepEqual(f.state.executions, [1]);
+}));
+
+test("missing fresh manager decision or ordinary designer cannot use manager-only preview", () => fixture(async f => {
+  f.state.policyUnconfirmed = true;
+  const body = { expectedDefinitionVersion: version, values: {} };
+  assert.equal((await f.request("/1/design-preview", body)).status, 409);
+  assert.equal(f.state.managerPreviewReads, 0);
+  f.state.session.permissions.push("MANAGE_USERS");
+  const response = await f.request("/1/design-preview", body);
+  assert.equal((await response.json() as any).error.code, "MANAGER_PREVIEW_APPROVAL_REQUIRED");
+  assert.deepEqual(f.state.executions, []);
+}));
+
+test("manager preview refuses delivery if usage is revoked while executing", () => fixture(async f => {
+  f.state.session.permissions.push("MANAGE_USERS");
+  f.state.policyUnconfirmed = true;
+  f.state.managerPreviewAllowed = true;
+  f.state.phase = "sql";
+  f.state.change = () => { f.state.datasetActive = false; };
+  const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
+  assert.notEqual(response.status, 200);
+  assert.equal(f.state.operationStatus, "FAILED");
+  assert.deepEqual(f.state.disclosures, []);
 }));
