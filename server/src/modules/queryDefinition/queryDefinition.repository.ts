@@ -177,7 +177,7 @@ export async function updateQueryDefinition(id: number, input: QueryDefinitionIn
   }
 }
 
-export async function publishQueryDefinition(id: number, userId: number): Promise<void> {
+export async function publishQueryDefinition(id: number, userId: number, approveSourceMinimizedResult = false): Promise<void> {
   const pool = await requirePool();
   const tx = new sql.Transaction(pool);
   await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
@@ -211,6 +211,48 @@ export async function publishQueryDefinition(id: number, userId: number): Promis
       : Number(result.recordset[0].DatasetId);
 
     if (!datasetId) throw new Error("QUERY_NOT_PUBLISHABLE");
+
+    // Explicit whole-result approval is a separate internal Query grant, not
+    // an inferred legacy sensitivity policy or a public playback grant.
+    // Preserve legacy publishing semantics when existing protections are present.
+    if (approveSourceMinimizedResult) {
+      const legacy = await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId).query(`
+        SELECT CASE WHEN EXISTS (SELECT 1 FROM uqp.DatasetSensitivePolicyVersion WITH(HOLDLOCK) WHERE DatasetId=@datasetId)
+          OR EXISTS (SELECT 1 FROM uqp.DatasetSensitiveColumn WITH(HOLDLOCK) WHERE DatasetId=@datasetId)
+          OR EXISTS (SELECT 1 FROM uqp.DatasetPatientAuditConfig WITH(HOLDLOCK) WHERE DatasetId=@datasetId)
+          THEN 1 ELSE 0 END AS HasLegacyProtection
+      `);
+      const hasLegacy = legacy.recordset[0]?.HasLegacyProtection;
+      if (hasLegacy === 0 || hasLegacy === false) {
+        const { readManagerDesignPreviewApproval } = await import("../dataset/datasetManagerDesignPreview.repository.js");
+        const { wholeResultApprovalSchema } = await import("../dataset/datasetWholeResultApproval.js");
+        const { writeAuditEvent } = await import("../audit/audit.repository.js");
+        const approval = await readManagerDesignPreviewApproval(datasetId, tx);
+        const manifest = await new sql.Request(tx).input("datasetId", sql.BigInt, datasetId).query(`
+          SELECT ColumnName FROM uqp.DatasetColumn WITH(HOLDLOCK)
+          WHERE DatasetId=@datasetId ORDER BY [Ordinal]
+        `);
+        const evidence = wholeResultApprovalSchema.omit({auditLogId:true}).safeParse({
+          scope: "INTERNAL_SOURCE_MINIMIZED", datasetId, definitionVersion: approval.definitionVersion,
+          dataSourceId: approval.managerApproval.dataSourceId,
+          sourceConfigurationVersion: approval.managerApproval.sourceConfigurationVersion,
+          approvedBy: userId, columns: manifest.recordset.map(r => r.ColumnName),
+        });
+        if (!evidence.success) throw new Error("QUERY_APPROVAL_COLUMNS_REQUIRED");
+        const stamp = await new sql.Request(tx).input("id", sql.BigInt, id).query(
+          "SELECT CONVERT(varchar(33),PublishedAtUtc,126) AS PublishedStamp FROM uqp.QueryDefinition WITH(HOLDLOCK) WHERE Id=@id AND IsPublished=1");
+        const publishedStamp = stamp.recordset[0]?.PublishedStamp;
+        if (typeof publishedStamp !== "string" || !publishedStamp) throw new Error("QUERY_NOT_PUBLISHABLE");
+        const parameters = { ...evidence.data, queryId: id, publishedStamp,
+          datasetApprovalDecisionId: approval.managerApproval.decisionId };
+        if (JSON.stringify(parameters).length > 20000) throw new Error("QUERY_APPROVAL_COLUMNS_REQUIRED");
+        const auditId = await writeAuditEvent({ eventType: "QUERY_WHOLE_RESULT_APPROVED",
+          userId, datasetId, queryDefinitionId: id, parameters }, tx);
+        if (!Number.isSafeInteger(auditId) || auditId <= 0) throw new Error("QUERY_APPROVAL_RECORD_FAILED");
+      } else if (hasLegacy !== 1 && hasLegacy !== true) {
+        throw new Error("QUERY_APPROVAL_RECORD_FAILED");
+      }
+    }
 
     await snapshotQueryVersion(tx, id, userId, "PUBLISHED_SNAPSHOT");
     await snapshotDatasetVersion(tx, datasetId, userId, "PUBLISHED_SNAPSHOT");
