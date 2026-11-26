@@ -31,16 +31,18 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
       const actor = await identity(transaction);
       if (!["DESIGN_QUERY", "EXECUTE_QUERY"].every(p => actor.permissions.includes(p)))
         throw new QueryDeliveryError("FORBIDDEN", 403);
+      // Reject unapproved/archived definitions and unavailable sources before
+      // inspecting legacy delivery policy. The same order applies at revalidation.
+      const dataset = await deps.dataset(datasetId, transaction);
+      if (!dataset?.isActive || dataset.isArchived || dataset.id !== datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
+      const source = await deps.source(dataset.dataSourceId, transaction);
+      if (!source?.isActive) throw new QueryDeliveryError("DATASOURCE_NOT_AVAILABLE");
       const snapshot = await deps.snapshot(datasetId, undefined, transaction);
       if (snapshot.datasetId !== datasetId || snapshot.sensitivityVersion !== snapshot.policy.version
         || !/^[0-9a-f]{16}$/u.test(snapshot.definitionVersion)) throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_INVALID", 503);
       applyDatasetDeliveryPolicy({ policy: snapshot.policy, columns: [], rows: [] });
       if (purpose !== "STANDARD" && snapshot.definitionVersion !== expectedDefinitionVersion)
         throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_CONFLICT");
-      const dataset = await deps.dataset(datasetId, transaction);
-      if (!dataset?.isActive || dataset.isArchived || dataset.id !== datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
-      const source = await deps.source(dataset.dataSourceId, transaction);
-      if (!source?.isActive) throw new QueryDeliveryError("DATASOURCE_NOT_AVAILABLE");
       // A non-patient Dataset does not require the patient-only disclosure
       // configuration merely to use the ordinary, masked Designer preview.
       // When patient disclosure auditing is enabled, its existing confirmation
