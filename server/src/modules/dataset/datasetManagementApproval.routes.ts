@@ -9,6 +9,7 @@ import { createRuntimeIdentityVerifier, QueryDeliveryError } from "../queryDefin
 import { datasetPublicDisplayRepository } from "./datasetPublicDisplay.repository.js";
 import { getDatasetSensitivitySnapshot } from "./datasetSensitiveColumn.repository.js";
 import { managerPlaybackGrants } from "./datasetManagementApproval.policy.js";
+import { DatasetDisplayError } from "./datasetDisplaySchema.js";
 import { decodeDatasetApprovalRevision } from "./datasetManagementApproval.revision.js";
 import { readConfirmedDatasetDeliverySnapshot } from "./datasetDeliveryPolicy.repository.js";
 import { resolveDatasetPreviewSafety } from "./datasetManagementApproval.previewSafety.js";
@@ -54,7 +55,7 @@ async function readUsage(id: number, tx?: sql.Transaction, lock = false) {
 }
 
 function respondError(res: import("express").Response, e: unknown) {
-  const known = e instanceof ApprovalError || e instanceof QueryDeliveryError;
+  const known = e instanceof ApprovalError || e instanceof QueryDeliveryError || e instanceof DatasetDisplayError;
   const code = known ? e.code : e instanceof z.ZodError ? "VALIDATION_ERROR" : "MANAGER_APPROVAL_UNAVAILABLE";
   const status = known ? e.status : e instanceof z.ZodError ? 400 : 503;
   const messages: Record<string, string> = {
@@ -64,6 +65,13 @@ function respondError(res: import("express").Response, e: unknown) {
     MANAGER_APPROVAL_VERSION_CONFLICT: "Dataset 已變更，請重新載入後再核准。",
     MANAGER_APPROVAL_SENSITIVITY_REQUIRED: "尚未具備可受信任的欄位遮蔽政策，不能核准公共播放。",
     MANAGER_APPROVAL_NO_SAFE_VISIBLE_COLUMNS: "沒有可安全公開的欄位，播放維持不核准。",
+    DATASET_DISPLAY_SENSITIVITY_REQUIRED: "系統尚無有效的資料保護政策；公共播放維持不核准。",
+    DATASET_DISPLAY_SENSITIVITY_INVALID: "既有資料保護政策無效或過期；公共播放維持不核准。",
+    DATASET_DISPLAY_VERSION_CONFLICT: "資料定義或政策已變更，請重新載入再核准。",
+    DATASET_DISPLAY_REQUEST_CONFLICT: "核准請求已失效或衝突，請重新載入。",
+    DATASET_DISPLAY_GRANTS_INVALID: "系統無法建立符合安全政策的播放核准，未變更既有設定。",
+    DATASET_DISPLAY_DATASET_FORBIDDEN: "目前帳號沒有此 Dataset 所需的查詢權限。",
+    DATASET_NOT_AVAILABLE: "Dataset 尚未核准使用、已封存或資料來源不可用。",
     DATASET_DISPLAY_MANAGEMENT_DISABLED: "公共顯示政策管理功能尚未啟用，不能核准播放。",
     MANAGER_APPROVAL_UNAVAILABLE: "安全核准未完成，既有權限與遮蔽保護維持不變。",
   };
@@ -164,7 +172,18 @@ export function createDatasetManagementApprovalRouter() {
       const before = await datasetPublicDisplayRepository.get(id, actor);
       const sensitivity = await getDatasetSensitivitySnapshot(id);
       if (sensitivity.version !== before.sensitivityVersion) throw new ApprovalError("MANAGER_APPROVAL_VERSION_CONFLICT");
-      const grants = managerPlaybackGrants(sensitivity, input.approve);
+      let grants: ReturnType<typeof managerPlaybackGrants>;
+      try {
+        grants = managerPlaybackGrants(sensitivity, input.approve);
+      } catch (e) {
+        // Translate only the two explicit policy outcomes; unexpected errors
+        // retain the generic fail-closed 503 response without internal details.
+        if (e instanceof Error && (e.message === "MANAGER_APPROVAL_SENSITIVITY_REQUIRED" ||
+            e.message === "MANAGER_APPROVAL_NO_SAFE_VISIBLE_COLUMNS")) {
+          throw new ApprovalError(e.message);
+        }
+        throw e;
+      }
       const updated = await datasetPublicDisplayRepository.save(id, actor, {
         expectedVersion: before.version,
         expectedSensitivityVersion: before.sensitivityVersion,
