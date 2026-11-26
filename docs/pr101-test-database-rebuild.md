@@ -14,6 +14,13 @@
 6. 依序建立合成 Dataset、管理者使用核准、同步欄位、管理者發佈 Query、匯出、多層次查詢、Dashboard 設計預覽及播放測試。公共播放只使用已確認可公開的資料及既有公共顯示政策；新無政策 Dataset 尚不能正式公共播放。保留 CHART release gates、基本登入授權及必要醫療資料保護。
 7. 驗收未通過即停止 UQP、保留失敗資料庫供檢查，回復原 DB 名稱及應用程式備份，檢查原 .env、Web.config、Port 與登入後再恢復服務。
 
+## 928／929 核對結論
+- 001 至 927 是既有一般 migration 來源；929 真實 SQL 驗收程式使用 SQL Server 2019 隔離環境建立此 baseline（50 個 SQL 檔案）。這是歷史隔離驗收證據，不代表目前醫院資料庫或 Windows ZIP 已具備完整初始化能力。
+- 928 的 `database/drafts/928_dashboard_chart_trust_schema.sql.draft` 明確限制為 disposable database，不能用於原 UQP 同名資料庫；通用 migration runner 對納入掃描範圍的 928 SQL 有阻擋，不能改副檔名繞過。
+- 929 的 `database/review/929_query_hierarchy.sql.txt` 不由通用 runner 掃描；需由已核准安裝程序持有單一交易並驗證實際 catalog。929 不以 928 為前置條件。
+- 因此，現階段優先沿用已成功覆蓋更新的既有測試資料庫，建立全新合成 Dataset / Query（使用不同代碼），無需先重建整庫。這可隔離舊設定並保留現有 CHART／階層 schema，避免重建後失去已安裝的結構。若目前測試 DB 仍供正式服務或包含真實患者資料，先隔離，不能用公共播放作為測試。
+- 最小驗收：以唯讀測試來源執行例如 `SELECT N'TEST' AS ROOM, CAST(17 AS int) AS TOTAL`（SQL Server）；Oracle 使用 `SELECT 'TEST' AS ROOM, 17 AS TOTAL FROM DUAL`。先儲存欄位與 SQL，管理者核准使用，執行預覽、發佈、Query 查詢、匯出；不混入病歷或員工資料。不應把這個測試的成功推論為公共播放已完成。
+
 ## 尚未完成
 - 未執行任何 DB 操作、備份或還原。
 - 尚未提供可以直接執行的破壞性重建腳本。需先確定完全隔離的測試目標及受核准的 migration 928/929 版本。
