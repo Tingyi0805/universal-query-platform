@@ -7,13 +7,15 @@ import { QueryDeliveryError, type RuntimeIdentity } from "../queryDefinition/que
 import { getDataset } from "./dataset.repository.js";
 import { executeSavedDataset, fixedParameterOptions } from "./dataset.service.js";
 import { applyDatasetDeliveryPolicy } from "./datasetDeliveryPolicy.js";
-import { readConfirmedDatasetDeliverySnapshot } from "./datasetDeliveryPolicy.repository.js";
+import { readConfirmedDatasetDeliverySnapshot, DatasetDeliverySnapshotError, type ConfirmedDatasetDeliverySnapshot } from "./datasetDeliveryPolicy.repository.js";
+import { readManagerDesignPreviewApproval, type ManagerDesignPreviewSnapshot } from "./datasetManagerDesignPreview.repository.js";
 import { patientAuditService } from "./patientAuditContract.repository.js";
 import { listDatasetParameters } from "./parameter.repository.js";
 import { runtimeParameterDefinitions } from "./parameterSync.js";
 
 export const defaultDatasetDataDependencies = {
   dataset: getDataset, snapshot: readConfirmedDatasetDeliverySnapshot, source: getDataSourcePlaybackState,
+  managerPreview: readManagerDesignPreviewApproval,
   parameters: listDatasetParameters, patientState: patientAuditService.dashboardState,
   auditPatient: auditDashboardPatientList, execute: executeSavedDataset,
 };
@@ -24,8 +26,8 @@ export const defaultDatasetDataDependencies = {
  */
 export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies) {
   async function open(datasetId: number, identity: (transaction?: sql.Transaction) => Promise<RuntimeIdentity>,
-    purpose: "STANDARD" | "RAW_DESIGN" = "STANDARD", expectedDefinitionVersion?: string) {
-    if (purpose !== "STANDARD" && !/^[0-9a-f]{16}$/u.test(expectedDefinitionVersion ?? ""))
+    purpose: "STANDARD" | "RAW_DESIGN" | "DESIGN_CONTEXT" = "STANDARD", expectedDefinitionVersion?: string) {
+    if (purpose === "RAW_DESIGN" && !/^[0-9a-f]{16}$/u.test(expectedDefinitionVersion ?? ""))
       throw new QueryDeliveryError("DATASET_PREVIEW_VERSION_REQUIRED");
     async function inspect(transaction?: sql.Transaction) {
       const actor = await identity(transaction);
@@ -37,11 +39,26 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
       if (!dataset?.isActive || dataset.isArchived || dataset.id !== datasetId) throw new QueryDeliveryError("DATASET_NOT_AVAILABLE");
       const source = await deps.source(dataset.dataSourceId, transaction);
       if (!source?.isActive) throw new QueryDeliveryError("DATASOURCE_NOT_AVAILABLE");
-      const snapshot = await deps.snapshot(datasetId, undefined, transaction);
-      if (snapshot.datasetId !== datasetId || snapshot.sensitivityVersion !== snapshot.policy.version
-        || !/^[0-9a-f]{16}$/u.test(snapshot.definitionVersion)) throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_INVALID", 503);
-      applyDatasetDeliveryPolicy({ policy: snapshot.policy, columns: [], rows: [] });
-      if (purpose !== "STANDARD" && snapshot.definitionVersion !== expectedDefinitionVersion)
+      let snapshot: ConfirmedDatasetDeliverySnapshot | ManagerDesignPreviewSnapshot;
+      try {
+        snapshot = await deps.snapshot(datasetId, undefined, transaction);
+      } catch (error) {
+        if (!(error instanceof DatasetDeliverySnapshotError) || error.code !== "DATASET_DELIVERY_POLICY_UNCONFIRMED" ||
+            purpose === "STANDARD" || actor.pinSession || !actor.permissions.includes("MANAGE_USERS")) throw error;
+        // Only a manager preview of a freshly approved saved definition may use
+        // the new path. Ordinary execution, lookup, PIN and configured legacy
+        // patient/masking policies are not bypassed.
+        snapshot = await deps.managerPreview(datasetId, transaction);
+      }
+      if (snapshot.datasetId !== datasetId || !/^[0-9a-f]{16}$/u.test(snapshot.definitionVersion))
+        throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_INVALID", 503);
+      if (snapshot.policy !== null) {
+        if (snapshot.sensitivityVersion !== snapshot.policy.version) throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_INVALID", 503);
+        applyDatasetDeliveryPolicy({ policy: snapshot.policy, columns: [], rows: [] });
+      } else if (purpose === "STANDARD" || snapshot.managerApproval.dataSourceId !== dataset.dataSourceId) {
+        throw new QueryDeliveryError("MANAGER_PREVIEW_APPROVAL_REQUIRED");
+      }
+      if (purpose === "RAW_DESIGN" && snapshot.definitionVersion !== expectedDefinitionVersion)
         throw new QueryDeliveryError("DATASET_DELIVERY_VERSION_CONFLICT");
       // A non-patient Dataset does not require the patient-only disclosure
       // configuration merely to use the ordinary, masked Designer preview.
@@ -68,9 +85,17 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
   type Context = Awaited<ReturnType<typeof open>>;
 
   async function execute(context: Context, values: Record<string, unknown>, maxRows?: number) {
+    if (context.purpose === "DESIGN_CONTEXT") throw new QueryDeliveryError("DATASET_PREVIEW_VERSION_REQUIRED");
     await context.revalidate();
     const raw = await deps.execute(context.dataset.id, values, maxRows);
     await context.revalidate();
+    if (context.snapshot.policy === null) {
+      // The manager has authorized this saved SQL definition for design preview.
+      // Output comes from the source SQL, not a fabricated confirmed policy.
+      if (context.purpose !== "RAW_DESIGN" || !context.actor.permissions.includes("MANAGE_USERS") || context.actor.pinSession)
+        throw new QueryDeliveryError("FORBIDDEN", 403);
+      return { result: raw, disclosureId: null };
+    }
     let disclosureId: number | null = null;
     if (context.snapshot.patientAudit.enabled) {
       disclosureId = await deps.auditPatient({ datasetId: context.dataset.id, userId: context.actor.userId,
@@ -100,6 +125,7 @@ export function createDatasetDataDelivery(deps = defaultDatasetDataDependencies)
       || !parameter.lookupValueField || !parameter.lookupLabelField) throw new QueryDeliveryError("PARAMETER_LOOKUP_NOT_CONFIGURED");
     // Never substitute the parent Dataset policy for the actual lookup source.
     const source = await open(parameter.lookupDatasetId!, parent.identity, "STANDARD");
+    if (source.snapshot.policy === null) throw new QueryDeliveryError("PARAMETER_LOOKUP_PROTECTED_FIELD");
     const protectedFields = new Set(source.snapshot.policy.rules.filter(r => r.mode !== "NONE").map(r => r.columnName.toUpperCase()));
     if ([parameter.lookupValueField, parameter.lookupLabelField].some(field => protectedFields.has(field.toUpperCase())))
       throw new QueryDeliveryError("PARAMETER_LOOKUP_PROTECTED_FIELD");
