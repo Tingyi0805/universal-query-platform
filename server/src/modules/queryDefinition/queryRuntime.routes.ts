@@ -25,10 +25,11 @@ import {
   buildCsvFilename,
   createQueryCsv,
 } from "../export/csvExport.service.js";
-import { createQueryDelivery, createRuntimeIdentityVerifier, deliveryReportColumns, QueryDeliveryError } from "./queryDelivery.js";
+import { createQueryDelivery, createRuntimeIdentityVerifier, deliveryReportColumns, QueryDeliveryError, type DeliveryAction } from "./queryDelivery.js";
 import { DatasetDeliveryPolicyError } from "../dataset/datasetDeliveryPolicy.js";
 import { DatasetDeliverySnapshotError } from "../dataset/datasetDeliveryPolicy.repository.js";
 import { setQueryFavorite } from "./queryFavorite.repository.js";
+import { createManagerApprovedQueryDelivery } from "./queryManagerApprovedDelivery.js";
 
 const idSchema = z.coerce.number().int().positive().safe();
 const executeBodySchema = z.object({
@@ -38,7 +39,10 @@ const executeBodySchema = z.object({
 function sendRuntimeError(res: any, error: unknown): boolean {
   if (error instanceof QueryDeliveryError || error instanceof DatasetDeliveryPolicyError || error instanceof DatasetDeliverySnapshotError) {
     res.status(error instanceof QueryDeliveryError ? error.status : error instanceof DatasetDeliverySnapshotError && error.code === "DATASET_DELIVERY_SCHEMA_REQUIRED" ? 503 : 409)
-      .json({ error: { code: error.code, message: "資料交付安全檢查未通過，請確認政策、版本及授權。", requestId: res.req?.id } });
+      .json({ error: { code: error.code, message: ["QUERY_WHOLE_RESULT_APPROVAL_REQUIRED", "MANAGER_PREVIEW_APPROVAL_REQUIRED", "WHOLE_RESULT_APPROVAL_STALE"].includes(error.code)
+        ? "目前 SQL 或 Query 發佈版本尚未核准，請管理者確認後重新發佈。"
+        : error.code === "WHOLE_RESULT_SHAPE_CHANGED" ? "SQL 輸出欄位與核准時不同，請管理者重新確認並發佈。"
+        : "資料交付安全檢查未通過，請確認政策、版本及授權。", requestId: res.req?.id } });
     return true;
   }
   if (!(error instanceof Error)) return false;
@@ -110,8 +114,21 @@ export const defaultQueryRuntimeDependencies = {
   startAudit, finalizeDeliveryAudit, completeAuditFailure, createQueryCsv, createQueryExcel,
 };
 export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies,
-  requestIdentity?: (req: Request, tx?: sql.Transaction) => Promise<RuntimeIdentity>) {
+  requestIdentity?: (req: Request, tx?: sql.Transaction) => Promise<RuntimeIdentity>,
+  managerDelivery = deps === defaultQueryRuntimeDependencies && !requestIdentity ? createManagerApprovedQueryDelivery() : undefined) {
   const identity = (req: Request, tx?: sql.Transaction) => requestIdentity ? requestIdentity(req, tx) : deps.identity(req.headers.authorization, tx);
+  async function openRuntime(id: number, action: DeliveryAction, req: Request) {
+    const verify = (tx?: sql.Transaction) => identity(req, tx);
+    try {
+      return { kind: "legacy" as const, context: await deps.delivery.open(id, action, verify) };
+    } catch (error) {
+      if (requestIdentity || !managerDelivery || !(error instanceof DatasetDeliverySnapshotError) ||
+          error.code !== "DATASET_DELIVERY_POLICY_UNCONFIRMED") throw error;
+      // An explicit current manager publication receipt is required; missing
+      // legacy policy alone never authorizes an ordinary user or export.
+      return { kind: "manager" as const, context: await managerDelivery.open(id, action, verify), service: managerDelivery };
+    }
+  }
   const queryRuntimeRouter = Router();
   queryRuntimeRouter.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); next(); });
   queryRuntimeRouter.use(deps.authenticate);
@@ -160,11 +177,13 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies,
         return;
       }
 
-      const context = await deps.delivery.open(id.data, "VIEW", transaction => identity(req, transaction));
+      const opened = await openRuntime(id.data, "VIEW", req);
+      const context = opened.context;
       const query = context.query, dataset = context.dataset;
       const savedParameters = await withErrorModule("dataset.parameters.load", () => deps.listDatasetParameters(query.datasetId));
       const parameters = await withErrorModule("dataset.parameters.validate", async () => runtimeParameterDefinitions(dataset.sqlText, savedParameters));
-      const reportColumns = deliveryReportColumns(context.snapshot.policy, context.reports);
+      const reportColumns = opened.kind === "legacy"
+        ? deliveryReportColumns(opened.context.snapshot.policy, opened.context.reports) : opened.context.reports;
       await context.revalidate();
       res.json({
         query,
@@ -203,7 +222,7 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies,
         return;
       }
 
-      const context = await deps.delivery.open(id.data, "VIEW", transaction => identity(req, transaction));
+      const context = (await openRuntime(id.data, "VIEW", req)).context;
       const parameters = await deps.listDatasetParameters(context.query.datasetId);
       const parameter = parameters.find(p => p.name === name.data);
       if (!parameter) throw new QueryDeliveryError("PARAMETER_NOT_FOUND", 404);
@@ -224,7 +243,8 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies,
       try {
         const id = idSchema.safeParse(req.params.id), body = executeBodySchema.safeParse(req.body);
         if (!id.success || !body.success) throw new QueryDeliveryError("VALIDATION_ERROR", 400);
-        const context = await deps.delivery.open(id.data, format === "json" ? "EXECUTE" : "EXPORT", transaction => identity(req, transaction));
+        const opened = await openRuntime(id.data, format === "json" ? "EXECUTE" : "EXPORT", req);
+        const context = opened.context;
         const query = context.query;
         auditId = await deps.startAudit({
           eventType: format === "json" ? "QUERY_EXECUTE" : format === "csv" ? "QUERY_EXPORT_CSV" : "QUERY_EXPORT_EXCEL",
@@ -234,7 +254,8 @@ export function createQueryRuntimeRouter(deps = defaultQueryRuntimeDependencies,
         });
         if (!Number.isSafeInteger(auditId) || Number(auditId) <= 0) throw new QueryDeliveryError("QUERY_AUDIT_REQUIRED", 503);
         await context.revalidate();
-        const delivery = await deps.delivery.execute(context, body.data.values);
+        const delivery = opened.kind === "legacy" ? await deps.delivery.execute(opened.context, body.data.values)
+          : await opened.service.execute(opened.context, body.data.values);
         // Exporters only receive the policy-processed result and metadata.
         const payload = format === "csv" ? deps.createQueryCsv(delivery.result, delivery.reportColumns)
           : format === "excel" ? await deps.createQueryExcel(query.name, delivery.result, delivery.reportColumns)
