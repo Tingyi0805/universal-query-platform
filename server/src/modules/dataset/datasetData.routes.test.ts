@@ -47,7 +47,7 @@ async function setup() {
     executions: [] as number[], disclosures: [] as Array<{ datasetId: number; masked: boolean; identity: unknown }>,
     parameters: [{ ...syntheticParameter, name: "WARD", optionMode: "DATASET" as "DATASET" | "FIXED" | "NONE",
       lookupDatasetId: 2, lookupValueField: "CODE", lookupLabelField: "LABEL", defaultValue: "A", fixedOptionsJson: '[{"value":"A","label":"A"}]' }],
-    sourceActive: true, sourceRevision: "source-1", policyUnconfirmed: false, patientStatus: "CONFIRMED", patientFingerprint: "proof-1",
+    datasetActive: true, sourceActive: true, sourceRevision: "source-1", policyUnconfirmed: false, patientStatus: "CONFIRMED", patientFingerprint: "proof-1",
     sqlText: "SELECT NAME, MRN, CODE, LABEL WHERE CODE={{WARD}}", phase: "", change: () => {},
     auditFailure: false, operationFailure: false, failureWriteFailure: false, missingDisclosure: false,
     operationStatus: "NONE", schemaMissing: false, startAudits: 0, candidateCalls: 0, candidateDrift: false, candidateFailure: false,
@@ -59,7 +59,7 @@ async function setup() {
       if (state.schemaMissing) throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_SCHEMA_REQUIRED");
       if (state.policyUnconfirmed) throw new DatasetDeliverySnapshotError("DATASET_DELIVERY_POLICY_UNCONFIRMED");
       return structuredClone(state.snapshots.get(id)!); },
-    dataset: async (id: number) => ({ id, dataSourceId: id + 10, sqlText: state.sqlText, isActive: true, isArchived: false, maxRows: 100 }),
+    dataset: async (id: number) => ({ id, dataSourceId: id + 10, sqlText: state.sqlText, isActive: state.datasetActive, isArchived: false, maxRows: 100 }),
     source: async () => ({ isActive: state.sourceActive, revision: state.sourceRevision }),
     parameters: async () => structuredClone(state.parameters),
     patientState: async () => ({ status: state.patientStatus, fingerprint: state.patientFingerprint }),
@@ -429,4 +429,25 @@ test("zero-row SQL preview still exposes only explicitly permitted column struct
   const result = (await response.json() as any).result;
   assert.equal(result.rowCount, 0); assert.deepEqual(result.rows, []);
   assert.deepEqual(result.columns.map((c: any) => c.name), ["NAME", "CODE", "LABEL"]);
+}));
+
+
+test("unapproved Dataset is rejected before missing legacy policy is inspected", () => fixture(async f => {
+  f.state.datasetActive = false;
+  f.state.policyUnconfirmed = true;
+  const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
+  assert.equal((await response.json() as any).error.code, "DATASET_NOT_AVAILABLE");
+  assert.deepEqual(f.state.snapshotReads, []);
+  assert.deepEqual(f.state.executions, []);
+  assert.equal(f.state.startAudits, 0);
+}));
+
+test("unavailable source is rejected before missing legacy policy is inspected", () => fixture(async f => {
+  f.state.sourceActive = false;
+  f.state.policyUnconfirmed = true;
+  const response = await f.request("/1/design-preview", { expectedDefinitionVersion: version, values: {} });
+  assert.equal((await response.json() as any).error.code, "DATASOURCE_NOT_AVAILABLE");
+  assert.deepEqual(f.state.snapshotReads, []);
+  assert.deepEqual(f.state.executions, []);
+  assert.equal(f.state.startAudits, 0);
 }));
