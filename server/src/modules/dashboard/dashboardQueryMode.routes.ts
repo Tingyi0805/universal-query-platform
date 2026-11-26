@@ -20,7 +20,7 @@ export function createQueryModeRouter(service: ReturnType<typeof createQueryMode
     try { const c = context(req); res.json(await service.read(c.id, c.user, c.version)); }
     catch (error) { failure(error, res, req.id); }
   });
-  router.post("/:id/query-mode/v1", async (req, res) => {
+  router.post("/:id/query-mode/v1", requirePermission("MANAGE_USERS"), async (req, res) => {
     try {
       const c = context(req), body = z.object({ expectedVersion: z.string().regex(/^[a-f0-9]{64}$/), activate: z.boolean() }).strict().safeParse(req.body);
       if (!body.success) throw new QuerySourceError("VALIDATION_ERROR", 400);
