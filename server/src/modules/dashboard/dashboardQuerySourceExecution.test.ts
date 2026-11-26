@@ -822,3 +822,43 @@ test("D6-3 authenticated preview HTTP accepts owned continuation and audits each
   const first=await (await request({page:1})).json();const response=await request({page:2,snapshotId:first.snapshotId});assert.equal(response.status,200);const second=await response.json();assert.equal(second.page,2);assert.equal(second.totalRows,2);assert.equal(second.result.elapsedMs,1);assert.equal(second.snapshotId,first.snapshotId);assert.equal(f.control.audits.length,2);
  }finally{env.JWT_SECRET=old;await new Promise<void>(r=>server.close(()=>r()));}
 });
+
+
+test("staged manager preview uses a current whole-result publication receipt, not an empty field policy", async () => {
+  const f = fixture();
+  f.control.session.permissions.push("MANAGE_USERS");
+  f.deps.getSensitivity = async () => ({ version: 0, columns: [] });
+  let approved = true;
+  const version = "0000000000000001";
+  f.deps.getManagerApproval = async () => {
+    if (!approved) throw Error("REVOKED");
+    return { approval: { scope: "INTERNAL_SOURCE_MINIMIZED", datasetId: 99,
+      dataSourceId: 4, definitionVersion: version, sourceConfigurationVersion: version,
+      approvedBy: 1, auditLogId: 11, columns: ["TOTAL"] },
+      publicationStamp: "synthetic", datasetDecisionId: "10" };
+  };
+  f.deps.execute = async () => ({ columns: [{ name: "TOTAL" }], rows: [{ TOTAL: 17 }],
+    rowCount: 1, elapsedMs: 1, truncated: false });
+  const service = createQuerySourceExecution(f.deps, () => true);
+  const page = await service.page(1, "WARD", subject, { page: 1 });
+  assert.deepEqual(page.result.rows, [{ TOTAL: 17 }]);
+  assert.equal(page.disclosureId, null);
+  approved = false;
+  await assert.rejects(service.page(1, "WARD", subject, { page: 1, snapshotId: page.snapshotId }),
+    /QUERY_SOURCE_MANAGER_APPROVAL_REQUIRED/);
+});
+
+test("missing legacy policy never grants manager preview to ordinary users or device/public contexts", async () => {
+  const f = fixture();
+  f.deps.getSensitivity = async () => ({ version: 0, columns: [] });
+  let reads = 0;
+  f.deps.getManagerApproval = async () => { reads++; throw Error("unexpected receipt read"); };
+  const service = createQuerySourceExecution(f.deps, () => true);
+  await assert.rejects(service.page(1, "WARD", subject, { page: 1 }), /QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED/);
+  f.control.session.permissions.push("MANAGE_USERS", "VIEW_QUERY");
+  Object.assign(f.control.bindings.WARD!, { dashboardActive: true, mode: "QUERY_ONLY", modeRevision: 1, referenced: true });
+  await assert.rejects(service.page(1, "WARD", { ...subject, context: "admin-preview", expiresAt: Math.floor(Date.now()/1000)+60 }, { page: 1 }),
+    /QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED/);
+  assert.equal(reads, 0);
+  assert.deepEqual(f.control.executions, []);
+});
