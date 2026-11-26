@@ -12,6 +12,15 @@ type ApprovalStatus = {
   };
 };
 
+// Web Crypto getRandomValues also works on ordinary HTTP intranet origins.
+function approvalRequestId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join("-");
+}
+
 export function DatasetManagementApprovalPanel({
   datasetId, revision, canSubmit, onUpdated,
 }: {
@@ -82,7 +91,7 @@ export function DatasetManagementApprovalPanel({
     setMessage("");
     try {
       await apiRequest("/datasets/" + datasetId + "/management-approval/playback",
-        { method: "PUT", body: JSON.stringify({ approve, requestId: crypto.randomUUID() }) }, accessToken);
+        { method: "PUT", body: JSON.stringify({ approve, requestId: approvalRequestId() }) }, accessToken);
       setMessage(approve ? "已核准公共播放。" : "已撤銷公共播放授權。");
       await onUpdated();
     } catch (e) {
