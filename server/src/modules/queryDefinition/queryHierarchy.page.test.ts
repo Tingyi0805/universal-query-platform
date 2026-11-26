@@ -37,3 +37,26 @@ test("patient-contract UPDLOCK reads and all metadata inspections reuse the owne
  await context.revalidate(owner);assert(seen.includes("patient-UPDLOCK"));assert(seen.includes("snapshot"));assert(seen.includes("acl"));
  await assert.rejects(context.revalidate({} as any),/HIERARCHY_TRANSACTION_OWNER_MISMATCH/);
 });
+
+
+test("manager-approved page validates the exact manifest before returning synthetic results",async()=>{
+ const f=fixture(),version="0000000000000001";
+ const {snapshot,...base}=f.context;
+ const context={...base,action:"EXECUTE",receipt:{approval:{scope:"INTERNAL_SOURCE_MINIMIZED",datasetId:2,dataSourceId:9,
+  definitionVersion:version,sourceConfigurationVersion:version,approvedBy:8,auditLogId:1,columns:["ID","TOTAL"]},publicationStamp:"synthetic",datasetDecisionId:"2"}};
+ const deps={...f.deps,execute:async()=>({result:{columns:[{name:"ID"},{name:"TOTAL"}],rows:[{ID:11,TOTAL:3}],
+  rowCount:1,truncated:false,elapsedMs:1},pagination:{page:2,pageSize:10,totalRows:20,totalPages:2,capped:false}}),
+  auditPatient:async()=>{throw Error("unexpected legacy audit");}};
+ const page=createHierarchyPageDelivery(deps);
+ const result=await page(context,{},plan);
+ assert.deepEqual(result.result.rows,[{ID:11,TOTAL:3}]);assert.equal(result.disclosureId,null);
+ assert.equal(f.counts().validations,3);
+ await assert.rejects(createHierarchyPageDelivery(f.deps)(context,{},plan),/WHOLE_RESULT_SHAPE_CHANGED/);
+});
+
+test("manager-approved page rejects metadata-only context before executing SQL",async()=>{
+ const f=fixture();let calls=0;
+ const context={...f.context,receipt:{},action:"VIEW"};
+ const page=createHierarchyPageDelivery({...f.deps,execute:async()=>{calls++;return f.deps.execute();}});
+ await assert.rejects(page(context,{},plan),/FORBIDDEN/);assert.equal(calls,0);
+});
