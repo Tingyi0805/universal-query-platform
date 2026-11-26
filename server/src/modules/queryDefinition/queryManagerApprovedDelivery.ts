@@ -83,7 +83,7 @@ export function wholeQueryReportColumns(approval: WholeResultApproval, reports: 
     .map(r => ({ ...r, columnName: names.get(r.columnName.toUpperCase())! }));
 }
 
-const defaultDeps = {
+export const defaultManagerApprovedQueryDependencies = {
   access: defaultQueryDeliveryDependencies.access,
   accessRevision: defaultQueryDeliveryDependencies.accessRevision,
   dataset: defaultQueryDeliveryDependencies.dataset,
@@ -92,9 +92,9 @@ const defaultDeps = {
   approval: readWholeQueryApproval,
 };
 
-/** Only the ordinary authenticated Query runtime opts into this service.
- * It is not installed in PIN, hierarchy, device or public-display runtimes. */
-export function createManagerApprovedQueryDelivery(deps = defaultDeps) {
+/** Authenticated internal Query delivery only. Each caller must opt in explicitly.
+ * Never installed in PIN, device or public-display runtimes. */
+export function createManagerApprovedQueryDelivery(deps = defaultManagerApprovedQueryDependencies) {
   async function open(queryId: number, action: DeliveryAction, identity: (tx?: sql.Transaction) => Promise<RuntimeIdentity>) {
     async function inspect(tx?: sql.Transaction) {
       const actor = await identity(tx);
