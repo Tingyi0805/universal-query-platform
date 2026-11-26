@@ -12,7 +12,8 @@ import { managerPlaybackGrants } from "./datasetManagementApproval.policy.js";
 import { DatasetDisplayError } from "./datasetDisplaySchema.js";
 import { decodeDatasetApprovalRevision } from "./datasetManagementApproval.revision.js";
 import { readConfirmedDatasetDeliverySnapshot } from "./datasetDeliveryPolicy.repository.js";
-import { resolveDatasetPreviewSafety } from "./datasetManagementApproval.previewSafety.js";
+import { resolveDatasetPreviewSafety, type DatasetPreviewSafetyState } from "./datasetManagementApproval.previewSafety.js";
+import { readManagerDesignPreviewApproval } from "./datasetManagerDesignPreview.repository.js";
 
 const idSchema = z.coerce.number().int().positive().safe();
 const usageSchema = z.object({
@@ -91,7 +92,7 @@ export function createDatasetManagementApprovalRouter() {
   router.get("/:id/management-approval", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     try {
-      await requireManager(req.header("Authorization"));
+      const manager = await requireManager(req.header("Authorization"));
       const id = idSchema.parse(req.params.id);
       const usage = await readUsage(id);
       let playback: { status: "APPROVED" | "UNAPPROVED" | "STALE" | "BLOCKED"; permittedColumns: number; message: string } =
@@ -109,7 +110,22 @@ export function createDatasetManagementApprovalRouter() {
           playback = { status: "BLOCKED", permittedColumns: 0, message: "安全政策尚未完成，不能核准播放。" };
         }
       }
-      const previewSafety = await resolveDatasetPreviewSafety(usage.active, () => readConfirmedDatasetDeliverySnapshot(id));
+      let previewSafety: DatasetPreviewSafetyState | { status: "MANAGER_APPROVED"; code: "MANAGER_APPROVED"; message: string } =
+        await resolveDatasetPreviewSafety(usage.active, () => readConfirmedDatasetDeliverySnapshot(id));
+      if (previewSafety.code === "POLICY_UNCONFIRMED" && manager.permissions.includes("EXECUTE_QUERY") && !manager.pinSession) {
+        try {
+          const decision = await readManagerDesignPreviewApproval(id);
+          if (decision.definitionVersion === usage.definitionVersion) {
+            previewSafety = { status: "MANAGER_APPROVED", code: "MANAGER_APPROVED",
+              message: "管理者已核准目前 SQL，可由管理者預覽資料來源輸出。一般 Query 與公共播放不會因此開放。" };
+          }
+        } catch (error) {
+          if (error instanceof QueryDeliveryError && error.code === "MANAGER_PREVIEW_APPROVAL_REQUIRED") {
+            previewSafety = { status: "BLOCKED", code: "POLICY_UNCONFIRMED",
+              message: "請先停止使用再重新核准目前 SQL 與來源版本，以建立管理者預覽授權。" };
+          }
+        }
+      }
       res.json({ usage: { active: usage.active, definitionVersion: usage.definitionVersion }, playback, previewSafety });
     } catch (e) { respondError(res, e); }
   });
