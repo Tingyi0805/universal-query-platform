@@ -29,6 +29,7 @@ import {
   createChartDeviceProjectionRouter,
 } from "./dashboardChartDeviceProjection.routes.js";
 import { createQuerySourceExecution } from "./dashboardQuerySourceExecution.js";
+import { readWholeQueryApproval } from "../queryDefinition/queryManagerApprovedDelivery.js";
 import { createQuerySourceExecutionRouter } from "./dashboardQuerySourceExecution.routes.js";
 // Issue #89: production CHART projection adapter remains hard-disabled until
 // sealed Widget, DB 928, trusted aggregate and HTTP release are approved.
@@ -228,6 +229,7 @@ const queryExecution = createQuerySourceExecution({ loadUserSources: loadUserPla
   getSession: getTokenSessionState, getQuery: getQueryDefinition, getAccess: getEffectiveQueryAccess,
   getAccessRevision: getQueryAccessRevision, getDataset, getParameters: listDatasetParameters,
   getDataSource: getDataSourcePlaybackState, getSensitivity: getDashboardSensitivitySnapshot,
+  getManagerApproval: readWholeQueryApproval,
   execute: executeSavedDataset, audit: auditDashboardPatientList }, (device, context) => context === "user" ? env.DASHBOARD_QUERY_SOURCE_EXECUTION && env.DASHBOARD_QUERY_DEVICE_PLAYBACK : device ? env.DASHBOARD_QUERY_DEVICE_PLAYBACK : env.DASHBOARD_QUERY_SOURCE_EXECUTION);
 
 // The existing SQL repositories and audited Query delivery are shared by
