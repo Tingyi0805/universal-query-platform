@@ -5,7 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 type ApprovalStatus = {
   usage: { active: boolean; definitionVersion: string };
   previewSafety?: {
-    status: "BLOCKED" | "POLICY_CONFIRMED";
+    status: "BLOCKED" | "POLICY_CONFIRMED" | "MANAGER_APPROVED";
     code: string;
     message: string;
   };
@@ -46,7 +46,7 @@ export function DatasetManagementApprovalPanel({
   async function setUsage(approve: boolean) {
     if (!admin || !status || !canSubmit || busy) return;
     const prompt = approve
-      ? "確認允許此 Dataset 用於已授權 Query？核准不會自動發佈 Query 或開放公共播放。"
+      ? "確認核准此 Dataset 使用？新建 Dataset 的管理者預覽將顯示 SQL 原始輸出，請先確認 SQL 僅回傳必要資料。核准不會自動發佈 Query 或開放公共播放。"
       : "確認停止此 Dataset 的查詢使用？相關 Query 將取消發佈。";
     if (!window.confirm(prompt)) return;
     setBusy(true);
@@ -60,7 +60,7 @@ export function DatasetManagementApprovalPanel({
         accessToken,
       );
       setMessage(approve
-        ? "已核准使用；查詢與預覽仍須通過既有權限、遮蔽及稽核檢查。"
+        ? "已核准使用；請確認下方預覽狀態。"
         : "已停止使用，並取消相關 Query 發佈。");
       await onUpdated();
     } catch (e) {
@@ -93,7 +93,8 @@ export function DatasetManagementApprovalPanel({
           <div>
             <strong>系統安全檢查（唯讀）</strong>
             <p>資料預覽：{status.previewSafety?.status === "POLICY_CONFIRMED"
-              ? "欄位政策已確認" : "安全條件尚未具備"}</p>
+              ? "欄位政策已確認" : status.previewSafety?.status === "MANAGER_APPROVED"
+                ? "管理者已核准預覽" : "安全條件尚未具備"}</p>
             <p role="status">{status.previewSafety?.message ?? "請重新讀取安全狀態。"}</p>
             <p>核准使用不會自動公開未通過安全檢查的資料，也不會自動核准 Dashboard 公共播放。</p>
           </div>
