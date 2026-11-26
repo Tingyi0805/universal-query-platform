@@ -1,4 +1,6 @@
 import { getDatasetPublicDisplay } from "../dataset/datasetPublicDisplay.repository.js";
+import type { readWholeQueryApproval } from "../queryDefinition/queryManagerApprovedDelivery.js";
+import { assertWholeResultShape, WholeResultApprovalError } from "../dataset/datasetWholeResultApproval.js";
 import { resolveDatasetPublicDisplayMasks } from "../dataset/datasetPublicDisplayPolicy.js";
 import { dashboardSecurityFailure } from "./dashboardSecurityFailure.js";
 import { getDatasetPatientAuditConfig } from "../dataset/patientAuditConfig.repository.js";
@@ -32,6 +34,7 @@ export type ExecutionDependencies = {
   getParameters: typeof import("../dataset/parameter.repository.js").listDatasetParameters;
   getDataSource: typeof import("../datasource/datasource.repository.js").getDataSourcePlaybackState;
   getPublicDisplay?: typeof getDatasetPublicDisplay;
+  getManagerApproval?: typeof readWholeQueryApproval;
   getSensitivity: typeof import("../dataset/datasetSensitiveColumn.repository.js").getDatasetSensitivitySnapshot;
   execute: typeof import("../dataset/dataset.service.js").executeSavedDataset;
   audit: typeof import("../audit/patientDisclosure.service.js").auditPatientListIfConfigured;
@@ -88,8 +91,25 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     try { coerceRuntimeParameters(runtimeParameterDefinitions(dataset.sqlText, definitions), binding.parameters); }
     catch (error) { safeParameterFailure(error); }
     const sensitivity = await deps.getSensitivity(dataset.id);
-    try { assertDatasetSensitivityPolicy(sensitivity); } catch (error) { throw new QuerySourceError(error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"
-      ? "QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED" : "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", 503); }
+    let managerApproval: Awaited<ReturnType<typeof readWholeQueryApproval>> | null = null;
+    try { assertDatasetSensitivityPolicy(sensitivity); } catch (error) {
+      // New internal SQL results may be previewed by a manager only, on an
+      // inactive dashboard. Never turn an absent policy into a public/device
+      // grant, and never override any existing patient/masking configuration.
+      if (error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"
+          && sensitivity?.version === 0 && Array.isArray(sensitivity.columns) && sensitivity.columns.length === 0
+          && !binding.dashboardActive && (context === "designer" || context === "admin-preview")
+          && session.permissions.includes("MANAGE_USERS") && deps.getManagerApproval) {
+        try { managerApproval = await deps.getManagerApproval(query.id, dataset.id); }
+        catch { throw new QuerySourceError("QUERY_SOURCE_MANAGER_APPROVAL_REQUIRED", 409); }
+        if (managerApproval.approval.datasetId !== dataset.id ||
+            managerApproval.approval.dataSourceId !== dataset.dataSourceId)
+          throw new QuerySourceError("QUERY_SOURCE_MANAGER_APPROVAL_REQUIRED", 409);
+      } else {
+        throw new QuerySourceError(error instanceof Error && error.message === "DASHBOARD_SENSITIVITY_POLICY_REQUIRED"
+          ? "QUERY_SOURCE_SENSITIVITY_POLICY_REQUIRED" : "QUERY_SOURCE_SENSITIVITY_POLICY_INVALID", 503);
+      }
+    }
     const publicDisplay = context === "designer" || context === "admin-preview" && !binding.dashboardActive ? null : await (deps.getPublicDisplay ?? getDatasetPublicDisplay)(dataset.id);
     if (publicDisplay && (publicDisplay.status !== "CONFIRMED" || !publicDisplay.policy?.confirmed || publicDisplay.sensitivityVersion !== sensitivity.version))
       throw new QuerySourceError("QUERY_SOURCE_PUBLIC_POLICY_REQUIRED",403);
@@ -100,8 +120,8 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
     if (await approvalEvidence(id) !== approvals) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
     const modeVersion = context === "device" ? `QUERY_ONLY_DEVICE_V1:${binding.modeRevision}` : context === "user" ? `QUERY_ONLY_USER_V1:${binding.modeRevision}` : context === "admin-preview" ? `QUERY_ONLY_ADMIN_PREVIEW_V1:${binding.modeRevision ?? 0}` : "QUERY_ONLY_PREVIEW_V1";
     const fingerprint = createHash("sha256").update(JSON.stringify({ approvals, context, modeVersion, proof, subject, binding, query,
-      session, access, accessRevision, dataset, source, definitions, sensitivity, publicDisplay })).digest("hex");
-    return { fingerprint, approvals, binding, query, dataset, sensitivity, publicDisplay, accessRevision, modeVersion };
+      session, access, accessRevision, dataset, source, definitions, sensitivity, publicDisplay, managerApproval })).digest("hex");
+    return { fingerprint, approvals, binding, query, dataset, sensitivity, publicDisplay, managerApproval, accessRevision, modeVersion };
   };
   const readState = async (id: number, key: string, subject: ExecutionSubject) => {
     if (subject.context !== "user") return readSingleState(id, key, subject);
@@ -149,6 +169,10 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
             }
           });
         await current();
+        if (initial.managerApproval) {
+          try { assertWholeResultShape(initial.managerApproval.approval, result.columns, result.rows); }
+          catch (error) { if (error instanceof WholeResultApprovalError) throw new QuerySourceError(error.code, 409); throw error; }
+        }
         const maxRows = Math.min(binding.maxRows!, dataset.maxRows);
         if (result.rows.length > maxRows) throw new QuerySourceError("QUERY_SOURCE_ROW_LIMIT");
         snapshot = createDashboardPageSnapshot({ deviceId: ownerId, dashboardId: id, queryId: query.id, datasetId: dataset.id,
@@ -161,6 +185,16 @@ export function createQuerySourceExecution(deps: ExecutionDependencies, enabled:
       if (input.page > totalPages) throw new QuerySourceError("DASHBOARD_PAGE_OUT_OF_RANGE", 400);
       const rawRows = snapshot.rows.slice((input.page - 1) * binding.pageSize, input.page * binding.pageSize);
       assertDashboardResultColumns(snapshot.columns,rawRows);
+      if (initial.managerApproval) {
+        try { assertWholeResultShape(initial.managerApproval.approval, snapshot.columns, rawRows); }
+        catch (error) { if (error instanceof WholeResultApprovalError) throw new QuerySourceError(error.code, 409); throw error; }
+        await current();
+        if (!getDashboardPageSnapshot(snapshot.id, ownerId, id)) throw new QuerySourceError("DASHBOARD_SNAPSHOT_EXPIRED");
+        return { deliveredAtUtc:new Date().toISOString(), sourceKey: key, modeVersion, query: { id: query.id, code: query.code, name: query.name }, refreshSeconds: binding.refreshSeconds, pageSeconds: binding.pageSeconds,
+          pageSize: binding.pageSize, page: input.page, totalPages, totalRows: snapshot.rows.length,
+          snapshotId: snapshot.id, snapshotExpiresAt: snapshot.createdAt + snapshot.ttlMs, disclosureId: null,
+          result: { columns: snapshot.columns, rows: rawRows, ...(subject.context==="admin-preview"?{rowCount:rawRows.length,elapsedMs:snapshot.executionMs??null,truncated:snapshot.truncated??null}:{}) } };
+      }
       const masks = initial.publicDisplay
         ? resolveDatasetPublicDisplayMasks(sensitivity, initial.publicDisplay.policy, snapshot.columns.map(c=>c.name))
         : Object.fromEntries(sensitivity.columns.filter(r=>snapshot!.columns.some(c=>c.name.toUpperCase()===r.columnName.toUpperCase())).map(r=>[r.columnName,r.deviceMaskMode]));
