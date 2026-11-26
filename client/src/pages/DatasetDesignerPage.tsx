@@ -397,7 +397,6 @@ export function DatasetDesignerPage() {
         || result.deliveryAllowed !== false || !Array.isArray(result.columns)) {
         setColumnCandidateError("欄位描述回應不符合安全契約。"); return;
       }
-      setColumnCandidateRevision(current => current + 1);
       setColumnCandidate(result);
     } catch (error) {
       setColumnCandidateError(error instanceof Error ? error.message : "取得欄位資訊失敗。");
