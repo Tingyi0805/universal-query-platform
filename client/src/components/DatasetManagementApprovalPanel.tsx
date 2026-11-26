@@ -4,6 +4,7 @@ import { useAuth } from "../auth/AuthContext";
 
 type ApprovalStatus = {
   usage: { active: boolean; definitionVersion: string };
+  playback?: { status: "APPROVED" | "UNAPPROVED" | "STALE" | "BLOCKED"; permittedColumns: number; message: string };
   previewSafety?: {
     status: "BLOCKED" | "POLICY_CONFIRMED" | "MANAGER_APPROVED";
     code: string;
@@ -71,6 +72,27 @@ export function DatasetManagementApprovalPanel({
     }
   }
 
+  async function setPlayback(approve: boolean) {
+    if (!admin || !hasPermission("EXECUTE_QUERY") || !status?.usage.active || !canSubmit || busy ||
+        status.playback?.status === "BLOCKED" || !status.playback) return;
+    if (!window.confirm(approve
+      ? "確認核准此 Dataset 公共播放？公開內容仍依系統現有資料保護政策處理。"
+      : "確認撤銷此 Dataset 公共播放授權？")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await apiRequest("/datasets/" + datasetId + "/management-approval/playback",
+        { method: "PUT", body: JSON.stringify({ approve, requestId: crypto.randomUUID() }) }, accessToken);
+      setMessage(approve ? "已核准公共播放。" : "已撤銷公共播放授權。");
+      await onUpdated();
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : "播放授權未完成。");
+    } finally {
+      setBusy(false);
+      void reload();
+    }
+  }
+
   return <section className="preview-panel" aria-label="Dataset 使用核准">
     <h2>Dataset 使用核准</h2>
     <p>管理者只需核准或停止使用；敏感欄位遮蔽、患者揭露稽核與 Dashboard 裝置權限由系統依現有安全規則檢查，不需要逐欄選擇顯示方式。</p>
@@ -87,6 +109,20 @@ export function DatasetManagementApprovalPanel({
           <button type="button" disabled={busy || !canSubmit}
             onClick={() => void setUsage(!status.usage.active)}>
             {status.usage.active ? "停止使用" : "核准使用"}
+          </button>
+        </div>
+        <div className="dataset-management-approval-row" role="group" aria-label="公共播放核准">
+          <div>
+            <strong>允許公共播放</strong>
+            <p>狀態：{status.playback?.status === "APPROVED" ? "已核准" :
+              status.playback?.status === "STALE" ? "需重新核准" :
+              status.playback?.status === "UNAPPROVED" ? "未核准" : "尚未具備播放條件"}</p>
+            <p role="status">{status.playback?.message}</p>
+          </div>
+          <button type="button" disabled={busy || !canSubmit || !hasPermission("EXECUTE_QUERY") ||
+            !status.usage.active || !status.playback || status.playback.status === "BLOCKED"}
+            onClick={() => void setPlayback(status.playback?.status !== "APPROVED")}>
+            {status.playback?.status === "APPROVED" ? "撤銷播放核准" : "核准公共播放"}
           </button>
         </div>
         <div className="dataset-management-approval-row" role="group" aria-label="資料預覽安全狀態">
