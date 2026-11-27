@@ -3,14 +3,14 @@ import {test,expect,type Page} from "@playwright/test";
 const context="A".repeat(43),row="B".repeat(43);
 async function setup(page:Page,trigger="ROW",display="PAGE"){
  const state={byDepth:{1:{page:1,search:null,sort:null},2:{page:1,search:null,sort:null}} as Record<number,{page:number;search:any;sort:any}>,depth:1,page:1,revision:"1".repeat(16),deny:false,missing:false,hold:false,release:(()=>{}) as ()=>void,
-  calls:[] as {path:string;body:any;authorization:string|undefined}[],configWrites:[] as any[]};
+  calls:[] as {path:string;body:any;authorization:string|undefined}[],configWrites:[] as any[],portalWrites:[] as any[],portalVisibility:{1:true,2:true} as Record<number,boolean>};
  await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic-A",user:{id:8,username:"A",displayName:"合成管理員",permissions:["VIEW_QUERY","EXECUTE_QUERY","DESIGN_QUERY","PUBLISH_QUERY","MANAGE_USERS"]}})));
  const view=()=>({contextId:context,expiresAtUtc:new Date(Date.now()+120000).toISOString(),depth:state.depth,trail:state.depth===1?["合成主層"]:["合成主層","合成明細"],query:{name:state.depth===1?"合成主層":"合成明細"},layout:state.depth===1?"TABLE":"CARDS",
   controls:state.byDepth[state.depth],result:{columns:[{name:"ID"},{name:"NAME"}],rows:[{ID:11,NAME:state.depth===1?`主層頁${state.page}`:"合成遮蔽○"}]},
   pagination:{page:state.page,pageSize:1,totalRows:3,totalPages:3,capped:false},columns:[{key:"c0",name:"ID",label:"識別",canFilter:true,alignment:"LEFT"},{key:"c1",name:"NAME",label:"姓名",canFilter:false,alignment:"LEFT"}],rowRefs:[row],
   actions:state.depth===1?[{id:"open",label:"看明細",trigger,display,columnKey:trigger==="COLUMN"?"c0":null}]:[]});
  const options=(id:number)=>({columns:[{name:"ID",label:"識別",canBind:true},{name:"NAME",label:"姓名",canBind:false}],parameters:id===1?[]:[{name:"KEY",dataType:"NUMBER",controlType:"NUMBER"}]});
- const query=(id:number)=>({id,code:`Q${id}`,name:id===1?"合成主層":"合成子層",description:null,category:null,categoryId:null,icon:"Table2",datasetId:id,sortOrder:0,isPublished:true,isActive:true,isArchived:false,allowExcelExport:true,auditCount:0,canView:true,canExecute:true,canExport:false});
+ const query=(id:number)=>({id,code:`Q${id}`,name:id===1?"合成主層":"合成子層",description:null,category:null,categoryId:null,icon:"Table2",datasetId:id,sortOrder:0,isPublished:true,isActive:true,isArchived:false,allowExcelExport:true,auditCount:0,canView:true,canExecute:true,canExport:false,showInPortal:state.portalVisibility[id],isFavorite:id===2,lastUsedAtUtc:new Date().toISOString()});
  await page.route(url=>url.pathname.startsWith("/api/"),async route=>{
   const r=route.request(),path=new URL(r.url()).pathname;
   if(path.includes("/hierarchy/")){
@@ -35,6 +35,11 @@ async function setup(page:Page,trigger="ROW",display="PAGE"){
   if(path==="/api/auth/login"){await route.fulfill({json:{accessToken:"synthetic-B",user:{id:9,username:"B",displayName:"使用者B",permissions:["VIEW_QUERY","EXECUTE_QUERY"]}}});return;}
   if(path==="/api/queries/1"){await route.fulfill({json:{query:query(1),parameters:[],reportColumns:[]}});return;}
   if(path==="/api/queries"){await route.fulfill({json:{queries:[query(1),query(2)]}});return;}
+  if(path.endsWith("/portal-visibility")&&r.method()==="PUT"){
+   const id=Number(path.split("/")[3]),body=r.postDataJSON();state.portalWrites.push(body);
+   if(state.portalVisibility[id]!==body.expected){await route.fulfill({status:409,json:{error:{code:"QUERY_PORTAL_VISIBILITY_CONFLICT"}}});return;}
+   state.portalVisibility[id]=body.showInPortal;await route.fulfill({json:{status:"OK",showInPortal:body.showInPortal}});return;
+  }
   if(path==="/api/query-definitions"){await route.fulfill({json:{queryDefinitions:[query(1),query(2)],total:2,totalPages:1}});return;}
   if(path==="/api/datasets"){await route.fulfill({json:{datasets:[{id:1,code:"D1",name:"合成Dataset",isActive:true,isArchived:false}]}});return;}
   if(path==="/api/query-categories"){await route.fulfill({json:{categories:[]}});return;}
@@ -127,4 +132,28 @@ test("hierarchy styling uses shared UQP controls and remains usable on a narrow 
  expect(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth+2)).toBe(true);
  await panel.getByRole("button",{name:"返回上一層"}).click();
  await expect(region.getByText("主層頁1",{exact:true})).toBeVisible();
+});
+
+test("manager hides child from all portal sections without unpublishing or losing hierarchy navigation",async({page})=>{
+ const s=await setup(page);
+ await page.goto("/designer/queries");
+ await page.locator(".query-list-item").filter({has:page.getByText("合成子層",{exact:true})}).click();
+ await expect(page.getByRole("checkbox",{name:"顯示於資料查詢首頁"})).toBeChecked();
+ await page.getByRole("checkbox",{name:"顯示於資料查詢首頁"}).uncheck();
+ await expect(page.getByRole("checkbox",{name:"顯示於資料查詢首頁"})).not.toBeChecked();
+ await expect(page.getByRole("button",{name:"取消發佈",exact:true})).toBeVisible();
+ expect(s.portalWrites).toEqual([{showInPortal:false,expected:true}]);
+ await page.goto("/queries");
+ await expect(page.locator(".query-icon-card").filter({hasText:"合成主層"}).first()).toBeVisible();
+ await expect(page.locator(".query-icon-card").filter({hasText:"合成子層"})).toHaveCount(0);
+ await page.getByRole("searchbox",{name:"搜尋查詢功能"}).fill("合成子層");
+ await expect(page.getByText("找不到符合條件的查詢。")).toBeVisible();
+ await open(page);await page.getByRole("cell",{name:"主層頁1",exact:true}).click();
+ await expect(page.getByText("合成遮蔽○",{exact:true})).toBeVisible();
+ await page.goto("/designer/queries");
+ await page.locator(".query-list-item").filter({has:page.getByText("合成子層",{exact:true})}).click();
+ await page.getByRole("checkbox",{name:"顯示於資料查詢首頁"}).check();
+ await expect(page.getByRole("checkbox",{name:"顯示於資料查詢首頁"})).toBeChecked();
+ expect(s.portalWrites.at(-1)).toEqual({showInPortal:true,expected:false});
+ await page.goto("/queries");await expect(page.locator(".query-icon-card").filter({hasText:"合成子層"}).first()).toBeVisible();
 });
