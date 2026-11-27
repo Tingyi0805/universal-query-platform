@@ -19,7 +19,8 @@ const idSchema = z.coerce.number().int().positive().safe();
 const usageSchema = z.object({
   approve: z.boolean(),
   expectedVersion: z.string().regex(/^[a-f0-9]{16}$/i),
-}).strict();
+  renew: z.literal(true).optional(),
+}).strict().refine(v => !v.renew || v.approve, { message: "Renewal requires approval." });
 const playbackSchema = z.object({
   approve: z.boolean(),
   requestId: z.string().uuid(),
@@ -122,7 +123,7 @@ export function createDatasetManagementApprovalRouter() {
         } catch (error) {
           if (error instanceof QueryDeliveryError && error.code === "MANAGER_PREVIEW_APPROVAL_REQUIRED") {
             previewSafety = { status: "BLOCKED", code: "POLICY_UNCONFIRMED",
-              message: "請先停止使用再重新核准目前 SQL 與來源版本，以建立管理者預覽授權。" };
+              message: "目前 SQL 或資料來源版本尚未核准，請點選重新核准使用；不需先停止使用。" };
           }
         }
       }
@@ -156,7 +157,8 @@ export function createDatasetManagementApprovalRouter() {
         sourceConfigurationVersion = decodeDatasetApprovalRevision(source.recordset[0].ConfigurationRowVersion);
         if (!sourceConfigurationVersion) throw new ApprovalError("DATASET_REVISION_INVALID", 503);
       }
-      if (before.active !== input.approve) {
+      if (input.renew && !before.active) throw new ApprovalError("MANAGER_APPROVAL_VERSION_CONFLICT");
+      if (before.active !== input.approve || input.renew) {
         const result = await new sql.Request(tx)
           .input("id", sql.BigInt, id)
           .input("active", sql.Bit, input.approve)
@@ -165,7 +167,8 @@ export function createDatasetManagementApprovalRouter() {
                  "WHERE Id=@id AND IsArchived=0 AND DefinitionRowVersion=@version; " +
                  "SELECT @@ROWCOUNT AS Affected;");
         if (Number(result.recordset[0]?.Affected) !== 1) throw new ApprovalError("MANAGER_APPROVAL_VERSION_CONFLICT");
-        if (!input.approve) {
+        // Renewal invalidates earlier publication decisions bound to the old revision.
+        if (!input.approve || input.renew) {
           await new sql.Request(tx).input("id", sql.BigInt, id).query(
             "UPDATE uqp.QueryDefinition SET IsPublished=0,PublishedAtUtc=NULL,PublishedByUserId=NULL," +
             "UpdatedAtUtc=SYSUTCDATETIME() WHERE DatasetId=@id AND IsPublished=1"
@@ -180,7 +183,8 @@ export function createDatasetManagementApprovalRouter() {
           eventType: input.approve ? "DATASET_USAGE_APPROVED" : "DATASET_USAGE_REVOKED",
           userId: actor.userId, datasetId: id,
           parameters: { previousActive: before.active, approved: input.approve, revision: before.definitionVersion,
-            definitionVersion: after.definitionVersion, dataSourceId: after.dataSourceId, sourceConfigurationVersion }
+            definitionVersion: after.definitionVersion, dataSourceId: after.dataSourceId, sourceConfigurationVersion,
+            ...(input.renew ? { renewed: true } : {}) }
         }, tx);
         if (!Number.isSafeInteger(auditId) || auditId <= 0) throw new ApprovalError("MANAGER_APPROVAL_AUDIT_FAILED", 503);
       }
