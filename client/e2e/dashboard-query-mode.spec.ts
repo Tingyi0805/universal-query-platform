@@ -2,7 +2,7 @@ import {test,expect,type Page} from "@playwright/test";
 const token="A".repeat(43),version="a".repeat(64);
 async function setup(page:Page){
   const state={disabled:false,ready:true,pending:false,missingPublicPolicy:false,expiry:null as string|null|undefined,archived:false,preflightDenied:false,mode:"LEGACY",revision:0,failStatus:0,revoked:false,writes:[] as {path:string;method:string;body:any}[],legacyExecutions:0,credentialSerial:0};
-  await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic",user:{id:1,username:"synthetic",displayName:"測試",permissions:["DESIGN_QUERY","VIEW_QUERY","EXECUTE_QUERY"]}})));
+  await page.addInitScript(()=>sessionStorage.setItem("uqp.auth",JSON.stringify({accessToken:"synthetic",user:{id:1,username:"synthetic",displayName:"測試",permissions:["DESIGN_QUERY","VIEW_QUERY","EXECUTE_QUERY","MANAGE_USERS"]}})));
   const primary={sourceKey:"PRIMARY",queryDefinitionId:20,parameters:{},refreshSeconds:5,pageSeconds:5,pageSize:1,maxRows:100};
   await page.context().route(url=>url.pathname.startsWith("/api/"),async route=>{
     const req=route.request(),path=new URL(req.url()).pathname;
@@ -47,10 +47,10 @@ async function setup(page:Page){
 }
 test("manual preflight, enable, credential handoff, reload waiting, revoke and disable",async({page})=>{
   const state=await setup(page);
-  await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"核准播放",exact:true})).toBeDisabled();
   await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
   await expect(page.getByText(/委派者／工作站／Query ACL：通過/)).toBeVisible();
-  await page.getByRole("button",{name:"啟用 Query-only",exact:true}).click();
+  await page.getByRole("button",{name:"核准播放",exact:true}).click();
   await expect(page.getByText(/目前模式：QUERY_ONLY/)).toBeVisible();
   await page.getByRole("button",{name:"核發／重新核發 合成平板",exact:true}).click();
   await expect(page.getByRole("button",{name:"關閉並清除 Token",exact:true})).toBeVisible();
@@ -66,7 +66,7 @@ test("manual preflight, enable, credential handoff, reload waiting, revoke and d
   await expect(page.getByText("永久撤銷已完成；請重新載入後再操作。")).toBeVisible();
   await expect(page.getByRole("button",{name:"顯示本次憑證",exact:true})).toHaveCount(0);
   await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
-  await page.getByRole("button",{name:"停用 Query-only",exact:true}).click();await expect(page.getByText(/目前模式：QUERY_ONLY_DISABLED/)).toBeVisible();
+  await page.getByRole("button",{name:"停止播放",exact:true}).click();await expect(page.getByText(/目前模式：QUERY_ONLY_DISABLED/)).toBeVisible();
   expect(state.writes.filter(item=>item.path.includes("query-mode/v1")).every(item=>item.body.expectedVersion===version)).toBe(true);
 });
 test("mode failures are safe, versioned and never automatically retried",async({page})=>{
@@ -74,7 +74,7 @@ test("mode failures are safe, versioned and never automatically retried",async({
   for(const status of [400,403,409,503]){
     await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
     await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
-    state.failStatus=status;await page.getByRole("button",{name:"啟用 Query-only",exact:true}).click();
+    state.failStatus=status;await page.getByRole("button",{name:"核准播放",exact:true}).click();
     await expect(page.getByText(/設定未完成：/).last()).toBeVisible();await expect(page.getByText("SQL SECRET TOKEN",{exact:true})).toHaveCount(0);
     await expect(page.getByText(/目前模式：LEGACY/)).toBeVisible();
   }
@@ -85,7 +85,7 @@ test("playback flag disabled is an expected safe state with no Legacy issuance f
   const state = await setup(page); state.disabled = true;
   await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
   await expect(page.getByText(/Query-only 播放功能旗標關閉/)).toBeVisible();
-  await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"核准播放",exact:true})).toBeDisabled();
   await expect(page.getByRole("button",{name:"核發／重新核發 合成平板",exact:true})).toBeDisabled();
   expect(state.writes).toHaveLength(0); await expect(page.locator("body")).not.toContainText("SQL SECRET TOKEN");
   await expect(page.getByRole("button",{name:"舊版模式重新核發 Token",exact:true})).toHaveCount(0);
@@ -105,15 +105,15 @@ test("expiry, archive and missing expiry evidence deny issuance without changing
 test("pending sources and missing Dataset public policy cannot become activation evidence", async ({page}) => {
   const state = await setup(page); state.pending = true; state.missingPublicPolicy = true;
   await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
-  await expect(page.getByText(/後端預檢未通過/)).toBeVisible(); await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeDisabled();
+  await expect(page.getByText(/後端預檢未通過/)).toBeVisible(); await expect(page.getByRole("button",{name:"核准播放",exact:true})).toBeDisabled();
   state.pending = false; await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click(); await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
   await expect(page.getByText(/QUERY_SOURCE_PUBLIC_POLICY_REQUIRED/)).toBeVisible();
-  await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeDisabled(); expect(state.writes).toHaveLength(0);
+  await expect(page.getByRole("button",{name:"核准播放",exact:true})).toBeDisabled(); expect(state.writes).toHaveLength(0);
 });
 test("policy and permission refusals clear cached readiness without automatic activation", async ({page}) => {
   const state = await setup(page); state.ready = false;
   await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click(); await expect(page.getByText(/PATIENT_AUDIT_NOT_CONFIGURED/)).toBeVisible();
-  await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeDisabled();
+  await expect(page.getByRole("button",{name:"核准播放",exact:true})).toBeDisabled();
   state.preflightDenied = true; await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click(); await expect(page.getByText(/設定未完成：FORBIDDEN/)).toBeVisible();
   await expect(page.getByRole("button",{name:"執行啟用前檢查",exact:true})).toBeDisabled(); expect(state.writes).toHaveLength(0);
 });
@@ -144,7 +144,7 @@ test("server Dataset public preflight permits explicit activation without a seco
  await page.route("**/api/dashboards/1/column-approvals",async route=>{oldReads++;await route.fulfill({status:503,json:{error:{code:"LEGACY_APPROVAL_UNAVAILABLE"}}});});
  await page.getByRole("button",{name:"重新載入播放狀態",exact:true}).click();
  await page.getByRole("button",{name:"執行啟用前檢查",exact:true}).click();
- await expect(page.getByRole("button",{name:"啟用 Query-only",exact:true})).toBeEnabled();expect(oldReads).toBe(0);expect(state.writes).toHaveLength(0);
+ await expect(page.getByRole("button",{name:"核准播放",exact:true})).toBeEnabled();expect(oldReads).toBe(0);expect(state.writes).toHaveLength(0);
 });
 
 test("actual manager popup recovers a lost first delivery and consumes the credential once", async ({ page }) => {
