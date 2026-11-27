@@ -1,0 +1,35 @@
+/*
+TEST ENVIRONMENT ONLY. Existing EINOV-VPN / UniversalQueryPlatform.
+Verify a current backup and target before executing in SSMS.
+No automatic execution by runtime or ZIP updater.
+Existing Queries remain visible by default; no data, publication or ACL is reset.
+*/
+SET NOCOUNT ON;
+SET XACT_ABORT ON;
+IF @@SERVERNAME <> N'EINOV-VPN' OR DB_NAME() <> N'UniversalQueryPlatform'
+    THROW 51930, 'QUERY_PORTAL_TEST_TARGET_MISMATCH', 1;
+IF @@TRANCOUNT <> 0
+    THROW 51930, 'QUERY_PORTAL_EXTERNAL_TRANSACTION_NOT_ALLOWED', 1;
+IF OBJECT_ID(N'uqp.QueryDefinition', N'U') IS NULL
+    THROW 51930, 'QUERY_PORTAL_BASELINE_REQUIRED', 1;
+BEGIN TRY
+    BEGIN TRANSACTION;
+    IF COL_LENGTH(N'uqp.QueryDefinition', N'ShowInPortal') IS NULL
+        ALTER TABLE uqp.QueryDefinition ADD ShowInPortal BIT NOT NULL
+            CONSTRAINT DF_QueryDefinition_ShowInPortal DEFAULT (1) WITH VALUES;
+    IF NOT EXISTS (
+        SELECT 1 FROM sys.columns c
+        INNER JOIN sys.default_constraints d ON c.default_object_id=d.object_id
+        WHERE c.object_id=OBJECT_ID(N'uqp.QueryDefinition',N'U')
+          AND c.name=N'ShowInPortal' AND c.system_type_id=104 AND c.user_type_id=104
+          AND c.is_nullable=0 AND c.is_computed=0
+          AND REPLACE(REPLACE(REPLACE(d.definition,N'(',N''),N')',N''),N' ',N'')=N'1'
+    )
+        THROW 51930, 'QUERY_PORTAL_SCHEMA_MISMATCH', 1;
+    COMMIT;
+    SELECT N'QUERY_PORTAL_930_PASS' AS Result, @@SERVERNAME AS ServerName, DB_NAME() AS DatabaseName;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE() <> 0 ROLLBACK;
+    THROW;
+END CATCH;
