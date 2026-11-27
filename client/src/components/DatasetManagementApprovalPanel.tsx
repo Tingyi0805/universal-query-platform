@@ -53,9 +53,9 @@ export function DatasetManagementApprovalPanel({
     void reload();
   }, [reload, revision]);
 
-  async function setUsage(approve: boolean) {
+  async function setUsage(approve: boolean, renew = false) {
     if (!admin || !status || !canSubmit || busy) return;
-    const prompt = approve
+    const prompt = renew ? "確認重新核准目前 SQL 與資料來源版本？相關已發佈 Query 將退回草稿，需重新發佈；不會自動開放公共播放。" : approve
       ? "確認核准此 Dataset 使用？新建 Dataset 的管理者預覽將顯示 SQL 原始輸出，請先確認 SQL 僅回傳必要資料。核准不會自動發佈 Query 或開放公共播放。"
       : "確認停止此 Dataset 的查詢使用？相關 Query 將取消發佈。";
     if (!window.confirm(prompt)) return;
@@ -65,7 +65,7 @@ export function DatasetManagementApprovalPanel({
       await apiRequest(
         "/datasets/" + datasetId + "/management-approval/usage",
         { method: "PUT", body: JSON.stringify({
-          approve, expectedVersion: status.usage.definitionVersion,
+          approve, expectedVersion: status.usage.definitionVersion, ...(renew ? { renew: true } : {}),
         }) },
         accessToken,
       );
@@ -113,12 +113,14 @@ export function DatasetManagementApprovalPanel({
         <div className="dataset-management-approval-row">
           <div>
             <strong>允許使用</strong>
-            <p>狀態：{status.usage.active ? "已啟用" : "未核准"}</p>
+            <p>狀態：{status.usage.active ? (status.previewSafety?.code === "POLICY_UNCONFIRMED" ? "已啟用，預覽需重新核准" : "已啟用") : "未核准"}</p>
           </div>
           <button type="button" disabled={busy || !canSubmit}
             onClick={() => void setUsage(!status.usage.active)}>
             {status.usage.active ? "停止使用" : "核准使用"}
           </button>
+          {status.usage.active && status.previewSafety?.code === "POLICY_UNCONFIRMED" && hasPermission("EXECUTE_QUERY") &&
+            <button type="button" disabled={busy || !canSubmit} onClick={() => void setUsage(true, true)}>重新核准使用</button>}
         </div>
         <div className="dataset-management-approval-row" role="group" aria-label="公共播放核准">
           <div>
