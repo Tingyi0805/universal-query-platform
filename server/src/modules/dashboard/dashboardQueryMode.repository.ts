@@ -41,10 +41,11 @@ return createQuerySourceStore({ ...deps,
     const scoped = (id: number) => request().input("id", sql.BigInt, id);
     return Object.assign(base, {
       modeReady: () => queryModeSchemaReady(request()),
-      async actor(userId, tokenVersion) {
+      async actor(userId, tokenVersion, managerOnly = false) {
         const session = await getTokenSessionState(userId, transaction);
         if (!session?.isActive || session.tokenVersion !== tokenVersion) throw new QuerySourceError("TOKEN_REVOKED", 401);
-        if (!session.permissions.includes("DESIGN_QUERY")) throw new QuerySourceError("FORBIDDEN", 403);
+        if (!session.permissions.includes("DESIGN_QUERY") || (managerOnly && !session.permissions.includes("MANAGE_USERS")))
+          throw new QuerySourceError("FORBIDDEN", 403);
       },
       async devices(id) {
         const rows = (await scoped(id).query(`SELECT * FROM uqp.DashboardDisplayDevice WITH (UPDLOCK,HOLDLOCK)

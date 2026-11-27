@@ -4,7 +4,7 @@ import { compileQuery } from "../../../query/queryCompiler.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import oracledb from "oracledb";
-import { OracleAdapter, supportsOracleDescriptionServer, validateOracleBinds } from "./oracleAdapter.js";
+import { OracleAdapter, supportsOracleDescriptionServer, validateOracleBinds, safeOracleDescriptionDriverCode } from "./oracleAdapter.js";
 import type { DataSourceConfig } from "../datasource.types.js";
 const config = { oracleServiceName: "SYNTHETIC", queryTimeoutSec: 10 } as DataSourceConfig;
 test("Oracle preserves scalar, native date, null and buffer binds without coercion", () => {
@@ -56,4 +56,34 @@ test("Oracle driver boundary preserves canonical DATETIME Dates and formatted RO
   }, close: async () => { closed++; } }));
   await new OracleAdapter().executeQuery(config, { ...compiled, timeoutSec: 1, maxRows: 1 });
   assert.equal(calls, 1); assert.equal(closed, 1);
+});
+
+test("Oracle describe diagnostics expose only a fixed-format error identifier", () => {
+  assert.equal(safeOracleDescriptionDriverCode(Object.assign(new Error("private SQL"), { code: "ORA-00942" })), "ORA-00942");
+  assert.equal(safeOracleDescriptionDriverCode(new Error("NJS-098: private bind value")), "NJS-098");
+  assert.equal(safeOracleDescriptionDriverCode(new Error("DPI-1047: private library path")), "DPI-1047");
+  assert.equal(safeOracleDescriptionDriverCode({ code: "ORA-00942 private SQL" }), undefined);
+  assert.equal(safeOracleDescriptionDriverCode(new Error("private connection details")), undefined);
+  assert.equal(safeOracleDescriptionDriverCode(null), undefined);
+});
+
+test("Oracle paging opens exactly one read-only transaction and always rolls back and closes", async t => {
+  const calls:string[]=[];
+  let fail=false;
+  t.mock.method(oracledb,"getConnection",async()=>{
+    calls.push("OPEN");
+    return {execute:async(statement:string)=>{
+      calls.push(statement);
+      if(statement==="SET TRANSACTION READ ONLY")return {};
+      if(fail)throw new Error("SYNTHETIC_PAGE_FAILURE");
+      return {metaData:[{name:"REGNO",dbTypeName:"VARCHAR2"}],rows:[{REGNO:"00000001"}]};
+    },rollback:async()=>{calls.push("ROLLBACK");},close:async()=>{calls.push("CLOSE");}};
+  });
+  const adapter=new OracleAdapter(),input={sql:"SELECT REGNO FROM SYNTHETIC",binds:{},maxRows:1,timeoutSec:2};
+  const values=await adapter.withReadOnlySnapshot(config,2,async execute=>[await execute(input),await execute(input)]);
+  assert.equal(values[0]?.rows[0]?.REGNO,"00000001");
+  assert.deepEqual(calls,["OPEN","SET TRANSACTION READ ONLY",input.sql,input.sql,"ROLLBACK","CLOSE"]);
+  calls.length=0;fail=true;
+  await assert.rejects(adapter.withReadOnlySnapshot(config,2,execute=>execute(input)),/SYNTHETIC_PAGE_FAILURE/);
+  assert.deepEqual(calls,["OPEN","SET TRANSACTION READ ONLY",input.sql,"ROLLBACK","CLOSE"]);
 });

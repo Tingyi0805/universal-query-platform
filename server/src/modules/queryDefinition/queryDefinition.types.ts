@@ -11,6 +11,7 @@ export type QueryDefinitionRecord = {
   datasetName?: string;
   sortOrder: number;
   allowExcelExport: boolean;
+  showInPortal?: boolean;
   isPublished: boolean;
   isActive: boolean;
   isArchived: boolean;

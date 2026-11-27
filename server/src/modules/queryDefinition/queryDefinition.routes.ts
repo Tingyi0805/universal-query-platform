@@ -15,6 +15,7 @@ import {
   restoreQueryDefinition,
   unpublishQueryDefinition,
   updateQueryDefinition,
+  setQueryPortalVisibility,
 } from "./queryDefinition.repository.js";
 import {
   getQueryAccessConfiguration,
@@ -172,6 +173,25 @@ queryDefinitionRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req,
           message: "指定的 Dataset 已封存或不存在，請選擇可使用的 Dataset。",
         },
       });
+      return;
+    }
+    next(error);
+  }
+});
+
+queryDefinitionRouter.put("/:id/portal-visibility", requirePermission("DESIGN_QUERY"), requirePermission("MANAGE_USERS"), requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
+  const id = idSchema.safeParse(req.params.id);
+  const body = z.object({showInPortal:z.boolean(),expected:z.boolean()}).strict().safeParse(req.body);
+  if (!id.success || !body.success || !req.authUser) {
+    res.status(400).json({error:{code:"VALIDATION_ERROR",message:"首頁顯示設定不正確。"}});
+    return;
+  }
+  try {
+    await setQueryPortalVisibility(id.data,body.data.showInPortal,body.data.expected,req.authUser.id);
+    res.json({status:"OK",showInPortal:body.data.showInPortal});
+  } catch(error) {
+    if (error instanceof Error && ["QUERY_PORTAL_SCHEMA_REQUIRED","QUERY_PORTAL_VISIBILITY_CONFLICT"].includes(error.message)) {
+      res.status(409).json({error:{code:error.message,message:error.message==="QUERY_PORTAL_SCHEMA_REQUIRED"?"尚未安裝首頁顯示設定欄位。":"設定已異動、Query 已封存或管理權限不符，請重新載入。"}});
       return;
     }
     next(error);
@@ -369,14 +389,19 @@ queryDefinitionRouter.post("/:id/restore", requirePermission("DESIGN_QUERY"), as
   }
 });
 
-queryDefinitionRouter.post("/:id/publish", requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
+queryDefinitionRouter.post("/:id/publish", requirePermission("MANAGE_USERS"), requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success || !req.authUser) {
       res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query ID 不正確。" } });
       return;
     }
-    await publishQueryDefinition(id.data, req.authUser.id);
+    const approval = z.object({ approveSourceMinimizedResult: z.boolean().default(false) }).strict().safeParse(req.body ?? {});
+    if (!approval.success) {
+      res.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Query 核准格式不正確。" } });
+      return;
+    }
+    await publishQueryDefinition(id.data, req.authUser.id, approval.data.approveSourceMinimizedResult);
     await tryWriteAuditEvent({
       eventType: "QUERY_PUBLISHED",
       userId: req.authUser.id,
@@ -389,6 +414,20 @@ queryDefinitionRouter.post("/:id/publish", requirePermission("PUBLISH_QUERY"), a
       queryDefinition: await getQueryDefinition(id.data),
     });
   } catch (error) {
+    if (error instanceof Error && ["QUERY_APPROVAL_COLUMNS_REQUIRED", "QUERY_APPROVAL_RECORD_FAILED",
+        "MANAGER_PREVIEW_APPROVAL_REQUIRED", "MANAGER_PREVIEW_APPROVAL_UNAVAILABLE",
+        "MANAGER_PREVIEW_LEGACY_PROTECTION_REQUIRED"].includes(error.message)) {
+      const messages: Record<string, string> = {
+        QUERY_APPROVAL_COLUMNS_REQUIRED: "請先在 Dataset 儲存 SQL 欄位清單，再核准發佈。",
+        QUERY_APPROVAL_RECORD_FAILED: "無法儲存管理者核准紀錄，未完成發佈。",
+        MANAGER_PREVIEW_APPROVAL_REQUIRED: "Dataset 的 SQL 或資料來源版本尚未重新核准，請管理者確認。",
+        MANAGER_PREVIEW_APPROVAL_UNAVAILABLE: "無法讀取 Dataset 核准紀錄，未完成發佈。",
+        MANAGER_PREVIEW_LEGACY_PROTECTION_REQUIRED: "Dataset 仍有既有保護設定，未自動轉換。",
+      };
+      res.status(error.message.endsWith("FAILED") || error.message.endsWith("UNAVAILABLE") ? 503 : 409)
+        .json({ error: { code: error.message, message: messages[error.message] } });
+      return;
+    }
     if (error instanceof Error && error.message === "QUERY_NOT_PUBLISHABLE") {
       res.status(409).json({ error: { code: error.message, message: "Query、Dataset 或 DataSource 尚未啟用，無法發布。" } });
       return;
@@ -397,7 +436,7 @@ queryDefinitionRouter.post("/:id/publish", requirePermission("PUBLISH_QUERY"), a
   }
 });
 
-queryDefinitionRouter.post("/:id/unpublish", requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
+queryDefinitionRouter.post("/:id/unpublish", requirePermission("MANAGE_USERS"), requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
   try {
     const id = idSchema.safeParse(req.params.id);
     if (!id.success) {

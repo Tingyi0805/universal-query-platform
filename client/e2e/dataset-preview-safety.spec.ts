@@ -25,7 +25,7 @@ async function setup(page: Page, saved = true, execute = true) {
     }
     if (path.endsWith("/design-preview/context")) {
       state.contexts++;
-      if (!state.policyVersion) { await route.fulfill({ status: 409, json: { error: { code: "DATASET_DELIVERY_POLICY_UNCONFIRMED", message: "敏感欄位政策尚未確認，請檢查並儲存規則。", requestId: "synthetic-request" } } }); return; }
+      if (!state.policyVersion) { await route.fulfill({ status: 409, json: { error: { code: "DATASET_DELIVERY_POLICY_UNCONFIRMED", message: "此 Dataset 尚無已確認的欄位保護政策，預覽已停止資料交付。管理者核准「使用」不能取代資料安全分類；需完成安全初始化與欄位審查後才能預覽。", requestId: "synthetic-request" } } }); return; }
       await route.fulfill({ json: { datasetId: 2, definitionVersion: version } }); return;
     }
     if (path === "/api/datasets/preview/run") {
@@ -39,27 +39,26 @@ async function setup(page: Page, saved = true, execute = true) {
 }
 const empty = (page: Page) => page.getByRole("checkbox", { name: /明確確認空政策/ });
 const preview = (page: Page) => page.getByRole("button", { name: "執行預覽", exact: true });
-test("new ordinary Dataset confirms an explicit raw field list then previews without patient setup", async ({ page }) => {
+test("new Dataset saves inactive and cannot deliver unconfirmed data", async ({ page }) => {
   const state = await setup(page, false);
-  await preview(page).click(); await expect(page.getByText(/請先儲存 Dataset；/)).toBeVisible(); expect(state.contexts).toBe(0);
-  await page.getByLabel("代碼", { exact: true }).fill("TEST"); await page.getByLabel("名稱", { exact: true }).fill("合成預覽");
-  await page.getByRole("combobox", { name: "資料來源", exact: true }).selectOption("4"); await page.locator("textarea").first().fill("SELECT 1 AS VALUE");
+  await preview(page).click();
+  await expect(page.getByText(/請先儲存 Dataset；/)).toBeVisible();
+  expect(state.contexts).toBe(0);
+  await page.getByLabel("代碼", { exact: true }).fill("TEST");
+  await page.getByLabel("名稱", { exact: true }).fill("合成預覽");
+  await page.getByRole("combobox", { name: "資料來源", exact: true }).selectOption("4");
+  await page.locator("textarea").first().fill("SELECT 1 AS VALUE");
   await page.getByRole("button", { name: "儲存 Dataset", exact: true }).click();
-  await expect(empty(page)).toBeVisible(); expect(state.policyWrites).toBe(0);
-  await expect(page.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true })).toBeDisabled();
-  await expect(empty(page)).toBeDisabled();
-  await page.getByRole("button", { name: "取得並同步欄位清單", exact: true }).click();
-  await expect(page.getByText(/欄位清單已同步/)).toBeVisible();
-  await empty(page).check(); await page.getByRole("button", { name: "儲存 Dataset 敏感欄位規則", exact: true }).click(); await expect(empty(page)).toHaveCount(0);
-  await preview(page).click(); await expect(page.getByText(/預覽完成：1 筆/)).toBeVisible();
-  expect(state.rules).toEqual([{ columnName: "VALUE", sensitivityType: "OTHER", deviceMaskMode: "NONE", customMask: null }]);
-  expect(state.saves).toBe(1); expect(state.runs[0]).toMatchObject({ datasetId: 2, dataSourceId: 4, sqlText: "SELECT 1 AS VALUE", expectedDefinitionVersion: version });
-  expect(state.runs[0].nonPatientConfirmed).toBeUndefined();
-  await expect(page.getByRole("checkbox", { name: /本次已儲存定義不含患者資料/ })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "預覽結果", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 患者揭露稽核設定" })).toHaveCount(0);
+  expect(state.saves).toBe(1);
+  expect(state.policyWrites).toBe(0);
+  await preview(page).click();
+  await expect(page.getByText(/安全初始化與欄位審查/)).toBeVisible();
+  expect(state.runs).toEqual([]);
 });
 test("saved unconfirmed policy displays actionable error and retains SQL", async ({ page }) => {
-  const state = await setup(page); await preview(page).click(); await expect(page.getByText(/敏感欄位政策尚未確認，/)).toBeVisible();
+  const state = await setup(page); await preview(page).click(); await expect(page.getByText(/安全初始化與欄位審查/)).toBeVisible();
   await expect(page.getByText(/synthetic-request/)).toBeVisible(); expect(state.runs).toEqual([]); await expect(page.locator("textarea").first()).toHaveValue("SELECT 1 AS VALUE");
 });
 for (const code of ["DATASET_DELIVERY_VERSION_CONFLICT", "PATIENT_AUDIT_NOT_CONFIRMED"]) test(`saved preview preserves ${code} and version`, async ({ page }) => {
@@ -76,16 +75,13 @@ test("designer without execute permission cannot request preview", async ({ page
   const state = await setup(page, true, false); await preview(page).click(); await expect(page.getByText(/預覽需要 DESIGN_QUERY 與 EXECUTE_QUERY 權限/)).toBeVisible(); expect(state.contexts).toBe(0); expect(state.runs).toEqual([]);
 });
 
-test("metadata discovery stays independent and does not auto-confirm policy or execute rows", async ({ page }) => {
+test("simplified Dataset page never auto-confirms policy or executes rows", async ({ page }) => {
   const state = await setup(page);
-  const panel = page.getByRole("region", { name: "Dataset 安全初始化狀態" });
-  await expect(panel.getByRole("heading", { name: "先同步欄位、設定政策，再執行預覽" })).toBeVisible();
-  await expect(panel).toContainText("欄位結構探索不需要已確認的敏感政策");
-  await expect(panel).toContainText("未儲存政策不得交付資料");
-  await expect(page.getByRole("combobox", { name: /查詢結果欄位/ }).getByRole("option")).toHaveCount(1);
-  expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
+  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 敏感資料欄位管理" })).toHaveCount(0);
+  expect(state.policyWrites).toBe(0);
+  expect(state.runs).toEqual([]);
 });
-
 test("existing confirmed context still supplies exact version without a non-patient declaration", async ({ page }) => {
   const state = await setup(page); state.policyVersion = 1;
   await preview(page).click(); await expect(page.getByText(/預覽完成：1 筆/)).toBeVisible();
@@ -99,35 +95,22 @@ test("designer displays candidate metadata without unlocking sensitive policy or
   await expect(panel.getByText("UNBOUND_CANDIDATE", { exact: false })).toBeVisible();
   await expect(panel.getByRole("cell", { name: "VALUE" })).toBeVisible();
   await expect(panel.getByRole("cell", { name: "int" })).toBeVisible();
-  await expect(page.getByText(/清單為空時，請先儲存 SQL/)).toBeVisible();
+  await expect(page.getByRole("region", { name: "Dataset 使用核准" })).toBeVisible();
   expect(state.runs).toEqual([]); expect(state.policyWrites).toBe(0);
   await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
   await expect(panel.getByRole("cell", { name: "VALUE" })).toHaveCount(0);
 });
 
-test("candidate-only masking rehearsal never writes policy, syncs trusted columns or runs data", async ({ page }) => {
-  const state = await setup(page);
-  const panel = page.getByRole("region", { name: "SQL 欄位候選預覽" });
-  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
-  const draft = panel.getByRole("region", { name: "候選欄位遮蔽草稿" });
-  await draft.getByRole("combobox", { name: "候選遮蔽欄位" }).selectOption("VALUE");
-  await draft.getByRole("button", { name: "加入／更新本頁草稿（不儲存）" }).click();
-  await expect(draft.locator("table caption")).toHaveText("尚未儲存、未生效的遮蔽草稿");
-  await expect(draft).toContainText("ABC01234");
-  expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
-  await expect(page.getByText(/清單為空時，請先儲存 SQL/)).toBeVisible();
-  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
-  await expect(panel.getByText("尚未儲存、未生效的遮蔽草稿")).toHaveCount(0);
+test("simplified manager-only Dataset does not expose retired manual sensitivity controls", async ({ page }) => {
+  const state=await setup(page);
+  await expect(page.getByRole("region",{name:"Dataset 使用核准"})).toBeVisible();
+  await expect(page.getByRole("region",{name:"候選欄位遮蔽草稿"})).toHaveCount(0);
+  await expect(page.getByRole("region",{name:"已儲存欄位 Snapshot"})).toHaveCount(0);
+  await expect(page.getByRole("region",{name:"Dataset 安全初始化狀態"})).toHaveCount(0);
+  await expect(page.getByRole("heading",{name:"資料預覽的安全確認狀態"})).toHaveCount(0);
+  await page.getByRole("region",{name:"SQL 欄位候選預覽"})
+    .getByRole("button",{name:"取得 SQL 欄位名稱及型別"}).click();
+  await expect(page.getByRole("region",{name:"候選欄位遮蔽草稿"})).toHaveCount(0);
   expect(state.policyWrites).toBe(0);
-});
-test("candidate masking draft disappears when saved SQL changes", async ({ page }) => {
-  const state = await setup(page);
-  const panel = page.getByRole("region", { name: "SQL 欄位候選預覽" });
-  await panel.getByRole("button", { name: "取得 SQL 欄位名稱及型別" }).click();
-  const draft = panel.getByRole("region", { name: "候選欄位遮蔽草稿" });
-  await draft.getByRole("combobox", { name: "候選遮蔽欄位" }).selectOption("VALUE");
-  await draft.getByRole("button", { name: "加入／更新本頁草稿（不儲存）" }).click();
-  await page.locator("textarea").first().fill("SELECT 2 AS VALUE");
-  await expect(panel.getByRole("region", { name: "候選欄位遮蔽草稿" })).toHaveCount(0);
-  expect(state.policyWrites).toBe(0); expect(state.runs).toEqual([]);
+  expect(state.runs).toEqual([]);
 });

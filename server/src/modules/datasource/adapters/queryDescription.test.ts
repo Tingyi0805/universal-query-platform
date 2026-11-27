@@ -86,15 +86,31 @@ test("SQL Server describe failure and native request timeout are sanitized, clos
   const fake = sqlServer(t);
   for (const error of [sensitiveFailure, Object.assign(new Error("SYNTHETIC_SECRET"), { code: "ETIMEOUT" })]) {
     t.mock.method(fake.request, "execute", async () => { throw error; });
-    await assert.rejects(new SqlServerAdapter().describeQuery(config, input), /^QueryDescriptionError: DESCRIPTION_FAILED$/);
+    await assert.rejects(new SqlServerAdapter().describeQuery(config, input), /^QueryDescriptionError: DESCRIPTION_RPC_FAILED$/);
   }
   assert.equal(fake.counts().closed, 2);
+});
+
+test("SQL Server metadata-only parameter inference failure is isolated from connection and describe failures", async t => {
+  const fake = sqlServer(t);
+  t.mock.method(fake.request, "execute", async (name: string) => {
+    fake.procedures.push(name);
+    if (name === "sys.sp_describe_undeclared_parameters")
+      throw new Error("PRIVATE_SQL_SERVER_INFERENCE_ERROR");
+    return { recordset: [] };
+  });
+  const query = {purpose: "COLUMN_OPTIONS_ONLY" as const,
+    sql: "SELECT {{P}} AS Synthetic", parameterNames: ["P"], timeoutSec: 1};
+  await assert.rejects(new SqlServerAdapter().describeQuery(config, query),
+    /^QueryDescriptionError: DESCRIPTION_INFERENCE_FAILED$/);
+  assert.deepEqual(fake.procedures, ["sys.sp_describe_undeclared_parameters"]);
+  assert.deepEqual(fake.counts(), {connected: 1, closed: 1});
 });
 
 test("SQL Server connection error and close error never expose driver details", async t => {
   const fake = sqlServer(t);
   t.mock.method(fake.pool, "connect", async () => { throw sensitiveFailure; });
-  await assert.rejects(new SqlServerAdapter().describeQuery(config, input), /^QueryDescriptionError: DESCRIPTION_FAILED$/);
+  await assert.rejects(new SqlServerAdapter().describeQuery(config, input), /^QueryDescriptionError: DESCRIPTION_CONNECT_FAILED$/);
   assert.equal(fake.counts().closed, 1);
   t.mock.method(fake.pool, "close", async () => { throw sensitiveFailure; });
   await assert.rejects(new SqlServerAdapter().describeQuery(config, input), /^QueryDescriptionError: DESCRIPTION_CLEANUP_FAILED$/);

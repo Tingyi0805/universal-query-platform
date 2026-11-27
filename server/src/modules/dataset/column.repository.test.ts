@@ -7,7 +7,7 @@ const v = "0000000000000001";
 function fixture() {
   const state = { columns: [{ name: "OLD", dataType: "int", ordinal: 0 }], rules: [] as string[], audits: 0 };
   let staged = structuredClone(state), checks = 0, authorizations = 0, rollbacks = 0;
-  const control = { fault: "", parameters: false, definition: v, source: v, invalidVersionShape: false, parameterValidator: undefined as undefined | ((transaction: sql.Transaction) => Promise<void>) };
+  const control = { fault: "", parameters: false, datasetActive: true, definition: v, source: v, invalidVersionShape: false, parameterValidator: undefined as undefined | ((transaction: sql.Transaction) => Promise<void>) };
   const tx = {
     begin: async (isolation: number) => { assert.equal(isolation, sql.ISOLATION_LEVEL.SERIALIZABLE); staged = structuredClone(state); },
     commit: async () => { if (control.fault === "commit") throw new Error("synthetic-private-driver-message"); Object.assign(state, staged); },
@@ -20,7 +20,7 @@ function fixture() {
       return { input(name: string, _type: unknown, value: unknown) { values[name] = value; return this; },
         async query(text: string) {
           if (text === "SET XACT_ABORT ON") return { recordset: [] };
-          if (text.includes("FROM uqp.Dataset d")) { checks++; return { recordset: [{ DefinitionVersion: control.invalidVersionShape ? control.definition : Buffer.from(control.definition, "hex"), ConfigurationVersion: Buffer.from(control.source, "hex") }] }; }
+          if (text.includes("FROM uqp.Dataset d")) { checks++; assert.match(text, /d\.IsArchived=0/); assert.match(text, /s\.IsActive=1/); return { recordset: !control.datasetActive && text.includes("d.IsActive=1") ? [] : [{ DefinitionVersion: control.invalidVersionShape ? control.definition : Buffer.from(control.definition, "hex"), ConfigurationVersion: Buffer.from(control.source, "hex") }] }; }
           if (text.includes("FROM uqp.DatasetParameter")) return { recordset: control.parameters ? [{ Id: 1 }] : [] };
           if (text.includes("FROM uqp.DatasetSensitiveColumn")) return { recordset: staged.rules.map(ColumnName => ({ ColumnName })) };
           if (text.startsWith("DELETE FROM uqp.DatasetColumn")) staged.columns = [];
@@ -46,6 +46,15 @@ function fixture() {
   });
   return { state, control, sync, get checks() { return checks; }, get rollbacks() { return rollbacks; } };
 }
+
+test("inactive Dataset sync keeps metadata-only choices and mandatory audit", async () => {
+  const f = fixture();
+  f.control.datasetActive = false;
+  await f.sync([{ name: "FIELD_A", dataType: "int" }]);
+  assert.equal(f.state.audits, 1);
+  assert.equal(f.checks, 2);
+  assert.deepEqual(f.state.rules, []);
+});
 
 test("metadata-only sync persists ordered options and mandatory audit together without creating policy or patient evidence", async () => {
   const f = fixture(); f.state.columns = [];

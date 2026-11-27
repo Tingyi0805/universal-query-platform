@@ -1,11 +1,8 @@
-import {DatasetFieldSnapshotPanel} from "./DatasetFieldSnapshotPanel";
-import { DatasetPatientAuditEditor } from "../components/DatasetPatientAuditEditor";
-import { DatasetCandidateMaskDraft } from "../components/DatasetCandidateMaskDraft";
+import { DatasetManagementApprovalPanel } from "../components/DatasetManagementApprovalPanel";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
-import { DatasetSensitivityEditor } from "../components/DatasetSensitivityEditor";
 import { DatasetParametersEditor } from "../components/DatasetParametersEditor";
 import { VersionHistoryPanel } from "../components/VersionHistoryPanel";
 import { ManagementListToolbar } from "../components/ManagementListToolbar";
@@ -78,7 +75,7 @@ const emptyForm: FormState = {
   sqlText: "SELECT\n  *\nFROM YOUR_TABLE\nWHERE 1 = 1",
   maxRows: 500,
   queryTimeoutSec: "",
-  isActive: true,
+  isActive: false,
   isArchived: false,
   archivedAtUtc: null,
 };
@@ -100,8 +97,6 @@ export function DatasetDesignerPage() {
   const [savedSql, setSavedSql] = useState("");
   const [savedDataSourceId, setSavedDataSourceId] = useState<number | "">("");
   const [sqlSaveRevision, setSqlSaveRevision] = useState(0);
-  const [auditRevision, setAuditRevision] = useState(0);
-  const [sensitivityDirty, setSensitivityDirty] = useState(false);
   const [parameterValues, setParameterValues] = useState<Record<string, unknown>>({});
   const previewParameterSequence = useRef(0);
   const [previewParametersLoading, setPreviewParametersLoading] = useState(false);
@@ -112,8 +107,9 @@ export function DatasetDesignerPage() {
   const [columnCandidate, setColumnCandidate] = useState<{ columns: { name: string; dataType: string; ordinal: number }[];
     trust: "UNBOUND_CANDIDATE"; metadataState: "NOT_INITIALIZED"; deliveryAllowed: false } | null>(null);
   const [columnCandidateBusy, setColumnCandidateBusy] = useState(false);
-  const [columnCandidateRevision, setColumnCandidateRevision] = useState(0);
   const [columnCandidateError, setColumnCandidateError] = useState("");
+  const [columnSyncNotice, setColumnSyncNotice] = useState("");
+  const [columnSyncBusy, setColumnSyncBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -127,7 +123,7 @@ export function DatasetDesignerPage() {
   const [listTotalPages, setListTotalPages] = useState(1);
 
   const parameterNames = useMemo(() => extractParameters(form.sqlText), [form.sqlText]);
-  useEffect(() => { setPreview(null); setColumnCandidate(null); setColumnCandidateError(""); }, [form, sqlSaveRevision, sensitivityDirty]);
+  useEffect(() => { setPreview(null); setColumnCandidate(null); setColumnCandidateError(""); setColumnSyncNotice(""); }, [form, sqlSaveRevision]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -279,7 +275,7 @@ export function DatasetDesignerPage() {
           method: "PUT",
           body: JSON.stringify(submitted),
         }, accessToken);
-        setNotice(sensitivityDirty ? "Dataset 基本設定已更新；敏感欄位規則尚未儲存，請使用獨立的儲存規則按鈕。" : "Dataset 已更新（不包含敏感欄位規則）。");
+        setNotice("Dataset 基本設定已更新；使用與播放核准由管理者獨立處理。");
       } else {
         const created = await apiRequest<{ id: number; parameterNames: string[] }>("/datasets", {
           method: "POST",
@@ -287,7 +283,7 @@ export function DatasetDesignerPage() {
         }, accessToken);
         savedId = created.id;
         setForm((current) => ({ ...current, id: created.id }));
-        setNotice("Dataset 已建立。請先同步欄位並明確儲存顯示政策，再執行預覽；患者資料的既有稽核要求不變。");
+        setNotice("Dataset 已建立，預設不開放使用；請由管理者核准。安全檢查仍適用。");
       }
 
       // The save API trims SQL. Keep the editor aligned with the saved definition.
@@ -388,6 +384,7 @@ export function DatasetDesignerPage() {
     const requestedForm = form;
     setColumnCandidate(null);
     setColumnCandidateError("");
+    setColumnSyncNotice("");
     setColumnCandidateBusy(true);
     try {
       const result = await apiRequest<{ columns: { name: string; dataType: string; ordinal: number }[];
@@ -400,11 +397,39 @@ export function DatasetDesignerPage() {
         || result.deliveryAllowed !== false || !Array.isArray(result.columns)) {
         setColumnCandidateError("欄位描述回應不符合安全契約。"); return;
       }
-      setColumnCandidateRevision(current => current + 1);
       setColumnCandidate(result);
     } catch (error) {
       setColumnCandidateError(error instanceof Error ? error.message : "取得欄位資訊失敗。");
     } finally { setColumnCandidateBusy(false); }
+  }
+
+  async function syncCandidateDisplayColumns() {
+    if (!form.id || !columnCandidate || columnSyncBusy || columnCandidateBusy || busy
+        || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId) {
+      setColumnCandidateError("請先儲存 Dataset，並重新取得目前版本的欄位候選清單。");
+      return;
+    }
+    if (!hasPermission("DESIGN_QUERY") || !hasPermission("EXECUTE_QUERY")) {
+      setColumnCandidateError("同步欄位需要 DESIGN_QUERY 與 EXECUTE_QUERY 權限。");
+      return;
+    }
+    const requestedForm = form;
+    setColumnSyncBusy(true); setColumnCandidateError(""); setColumnSyncNotice("");
+    try {
+      const result = await apiRequest<{columns: {name: string; dataType: string; ordinal: number}[];
+        trust: "UNBOUND_CANDIDATE"; deliveryAllowed: false; purpose: "DISPLAY_COLUMN_OPTIONS_ONLY"}>(
+          `/datasets/${form.id}/columns/sync`, {method: "POST", body: JSON.stringify({})}, accessToken);
+      if (currentForm.current !== requestedForm) {
+        setColumnCandidateError("同步期間 Dataset 已切換；請重新載入並確認欄位。"); return;
+      }
+      if (result.trust !== "UNBOUND_CANDIDATE" || result.deliveryAllowed !== false
+          || result.purpose !== "DISPLAY_COLUMN_OPTIONS_ONLY" || !Array.isArray(result.columns)) {
+        setColumnCandidateError("欄位同步回應不符合安全契約，請重新讀取。"); return;
+      }
+      setColumnSyncNotice("設計用欄位清單已儲存；尚未完成欄位安全分類，不代表已核准使用、資料預覽或公共播放。");
+    } catch (e) {
+      setColumnCandidateError(e instanceof Error ? e.message : "欄位候選同步失敗。");
+    } finally { setColumnSyncBusy(false); }
   }
 
   async function runPreview() {
@@ -414,7 +439,6 @@ export function DatasetDesignerPage() {
     if (!form.id || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId) {
       setError("請先儲存 Dataset；SQL／資料來源有修改時，須儲存後才可預覽。"); return;
     }
-    if (sensitivityDirty) { setError("敏感欄位規則尚未儲存，請先儲存規則再預覽。"); return; }
     if (form.id && (previewParametersLoading || previewParameterError)) {
       setError("參數設定尚未成功載入，請先重試讀取再執行預覽。");
       return;
@@ -468,7 +492,7 @@ export function DatasetDesignerPage() {
       }, accessToken);
 
       if (currentForm.current !== form) throw new Error("編輯內容已變更，預覽結果已捨棄。請儲存並重新確認後再預覽。");
-      setPreview(response.result); setAuditRevision(value => value + 1);
+      setPreview(response.result);
       setNotice(`預覽完成：${response.result.rowCount} 筆，${response.result.elapsedMs} ms${response.result.truncated ? "（結果已截斷）" : ""}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "查詢預覽失敗。");
@@ -638,11 +662,7 @@ export function DatasetDesignerPage() {
               {form.isArchived ? (
                 <span className="dataset-archive-badge">Archived</span>
               ) : (
-              <label className="inline-check">
-                <input type="checkbox" checked={form.isActive}
-                  onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
-                啟用
-              </label>
+              <span className="dataset-approval-summary-status">{form.isActive ? "已啟用（由管理者核准）" : "未核准使用"}</span>
               )}
             </div>
 
@@ -699,7 +719,7 @@ export function DatasetDesignerPage() {
             <p role="status">{form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId
               ? "編輯中 SQL／資料來源尚未儲存。下方 Parameter Designer 差異依已儲存 SQL 計算；本區參數依編輯中 SQL 偵測。"
               : "SQL／資料來源與已儲存設定一致。Parameter Designer 差異依已儲存 SQL 計算。"}</p>
-            <p>儲存 Dataset 僅儲存基本設定與 SQL；敏感欄位規則須使用下方獨立按鈕儲存。</p>
+            <p>儲存 Dataset 僅更新定義；是否允許使用與 Dashboard 播放由下方管理者核准面板控制。</p>
             <div className="parameter-panel">
               <div>
                 <strong>偵測到的參數</strong>
@@ -727,10 +747,11 @@ export function DatasetDesignerPage() {
 
             <section className="preview-panel" aria-label="SQL 欄位候選預覽">
               <h3>SQL 欄位候選預覽（不讀取資料列）</h3>
-              <p>支援已儲存且可安全描述的 SQL Server／Oracle SELECT 與標量參數；MULTISELECT 缺少固定長度契約時拒絕。此處是未認證的候選描述；請在下方欄位規則區按「取得並同步欄位清單」後設定顯示方式，不代表來源未漂移，也不解除資料預覽限制。</p>
+              <p>支援已儲存且可安全描述的 SQL Server／Oracle SELECT 與標量參數；MULTISELECT 缺少固定長度契約時拒絕。此處僅提供尚未認證的候選欄位描述，不會讀取資料列，也不會建立可信分類或解除預覽限制；資料預覽與播放仍需完成安全確認。</p>
               <button type="button" disabled={busy || columnCandidateBusy || !form.id || form.isArchived}
                 onClick={() => void describeColumns()}>{columnCandidateBusy ? "讀取欄位中…" : "取得 SQL 欄位名稱及型別"}</button>
               {columnCandidateError && <p role="alert">{columnCandidateError}</p>}
+              {columnSyncNotice && <p role="status">{columnSyncNotice}</p>}
               {columnCandidate && <>
                 <p role="status">UNBOUND_CANDIDATE · 尚未初始化 · 禁止資料列交付</p>
                 <table className="preview-table">
@@ -739,15 +760,14 @@ export function DatasetDesignerPage() {
                     <td>{item.ordinal}</td><td>{item.name}</td><td>{item.dataType}</td>
                   </tr>)}</tbody>
                 </table>
-                <DatasetCandidateMaskDraft key={columnCandidateRevision} columns={columnCandidate.columns} />
+                <p>可將取得的欄位名稱與型別儲存為設計參考，管理者只需核准 Dataset 是否可使用；欄位清單本身不代表取得資料列授權。</p>
+                <button type="button" className="secondary-button"
+                  disabled={busy || columnSyncBusy || columnCandidateBusy || !form.id || form.isArchived
+                    || form.sqlText !== savedSql || form.dataSourceId !== savedDataSourceId}
+                  onClick={() => void syncCandidateDisplayColumns()}>
+                  {columnSyncBusy ? "儲存欄位中…" : "儲存欄位候選清單（僅供設計）"}
+                </button>
               </>}
-            </section>
-            {form.id&&<DatasetFieldSnapshotPanel key={`${form.id}:${sqlSaveRevision}:${accessToken}`} datasetId={form.id} token={accessToken} enabled={hasPermission("CONFIRM_DATASET_CLASSIFICATION")&&!busy&&!form.isArchived&&form.sqlText===savedSql&&form.dataSourceId===savedDataSourceId} />}
-            <section aria-label="Dataset 安全初始化狀態">
-              <h3>先同步欄位、設定政策，再執行預覽</h3>
-              <p>欄位結構探索不需要已確認的敏感政策，也不讀取資料列或實際參數值。請在下方取得並同步欄位清單，再逐欄設定；無需遮蔽時可明確確認目前清單全部原樣顯示。</p>
-              <p>未儲存政策不得交付資料。預覽保留即時權限、版本與操作稽核；已設定患者稽核時仍須完成識別欄位、HMAC 及揭露稽核，不會由欄名推定敏感性。</p>
-              <p>欄位描述不是 SOURCE_BOUND 或 Native Type 確認，不會變更既有遮蔽與患者稽核證據。同步失敗會顯示錯誤代碼與 Request ID，請依指引處理。</p>
             </section>
             <div className="form-actions">
               {!form.isArchived ? (
@@ -811,9 +831,18 @@ export function DatasetDesignerPage() {
             />
           )}
 
-          {form.id && !form.isArchived && <DatasetPatientAuditEditor key={form.id} datasetId={form.id} revision={sqlSaveRevision + auditRevision} />}
-
-          {form.id && !form.isArchived && <DatasetSensitivityEditor key={form.id} definitionRevision={sqlSaveRevision} canSyncColumns={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId && hasPermission("DESIGN_QUERY") && hasPermission("EXECUTE_QUERY")} onSaved={() => { void loadPreviewParameterDefinitions(form.id); }} onDirtyChanged={setSensitivityDirty} datasetId={form.id} accessToken={accessToken} />}
+          {form.id && !form.isArchived && <DatasetManagementApprovalPanel
+            key={form.id}
+            datasetId={form.id}
+            revision={sqlSaveRevision}
+            canSubmit={!busy && form.sqlText === savedSql && form.dataSourceId === savedDataSourceId}
+            onUpdated={async () => {
+              if (!form.id) return;
+              const latest = await apiRequest<{ dataset: DatasetRow }>("/datasets/" + form.id, {}, accessToken);
+              selectDataset(latest.dataset);
+              await load();
+            }}
+          />}
 
           {preview && (
             <section className="preview-panel">

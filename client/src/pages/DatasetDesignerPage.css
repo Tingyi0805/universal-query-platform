@@ -371,3 +371,10 @@
   .designer-editor .dataset-public-policy-table .dataset-public-policy-check-column,
   .designer-editor .dataset-public-policy-table .dataset-public-policy-check-cell { width: 128px; }
 }
+
+/* Administrator decision summary replaces detailed patient/sensitivity forms. */
+.dataset-management-approval-row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid var(--border-color, #e0e3e9); }
+.dataset-management-approval-row > div { min-width: 0; flex: 1; }
+.dataset-management-approval-row p { margin: .35rem 0 0; }
+.dataset-approval-summary-status { font-size: .9rem; color: var(--text-secondary, #666); }
+@media (max-width: 600px) { .dataset-management-approval-row { align-items: flex-start; flex-direction: column; } }

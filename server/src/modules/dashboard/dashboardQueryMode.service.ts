@@ -6,7 +6,7 @@ export type ModeDevice = { lifecycleManaged?: boolean; id: number; ownerId: numb
   enforceIpRestriction?: boolean; allowedIp?: string | null; allowedCidr?: string | null };
 export interface ModeTransaction extends SourceTransaction {
   modeReady(): Promise<boolean>;
-  actor(userId: number, tokenVersion: number): Promise<void>;
+  actor(userId: number, tokenVersion: number, managerOnly?: boolean): Promise<void>;
   devices(id: number): Promise<ModeDevice[]>;
   delegation(device: ModeDevice): Promise<void>;
   policy(datasetId: number): Promise<void>;
@@ -18,12 +18,12 @@ export interface ModeTransaction extends SourceTransaction {
   issueAudit(userId: number, id: number, deviceId: number): Promise<void>;
 }
 export function createQueryModeService(store: SourceStore, enabled: () => boolean) {
-  const run = async <T>(id: number, user: number, version: number, work: (tx: ModeTransaction) => Promise<T>) => {
+  const run = async <T>(id: number, user: number, version: number, work: (tx: ModeTransaction) => Promise<T>, managerOnly = false) => {
     if (!enabled()) throw new QuerySourceError("QUERY_DEVICE_PLAYBACK_DISABLED", 404);
     return store.transaction(async base => {
       const tx = base as ModeTransaction;
       if (!await tx.schemaReady() || !await tx.modeReady()) throw new QuerySourceError("QUERY_MODE_SCHEMA_REQUIRED", 503);
-      await tx.actor(user, version);
+      await tx.actor(user, version, managerOnly);
       return work(tx);
     });
   };
@@ -122,11 +122,12 @@ export function createQueryModeService(store: SourceStore, enabled: () => boolea
           for (const device of devices) await tx.validateQuery(device.ownerId, source.queryDefinitionId!, source.parameters);
         }
       } else if (state.dashboard.mode !== "QUERY_ONLY") throw new QuerySourceError("QUERY_MODE_TRANSITION_CONFLICT");
+      await tx.actor(user, tokenVersion, true);
       await tx.switchMode(id, activate); // Also rotates all device token hashes; never returns a new credential.
       await tx.modeAudit(user, id, activate);
       const updated = await tx.readState(id);
       return { mode: updated.dashboard.mode, modeVersion: updated.dashboard.modeVersion,
         version: sourceVersion(updated), deviceCredentialsInvalidated: true };
-    }),
+    }, true),
   };
 }

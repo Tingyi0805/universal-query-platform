@@ -52,6 +52,13 @@ type ConnectionTestResult = {
   recommendation?: string;
 };
 
+type MetadataDiagnostic = {
+  ok: boolean;
+  code: string;
+  message: string;
+  sourceType: DataSourceType;
+};
+
 function dataSourceTypeLabel(type: DataSourceType): string {
   switch (type) {
     case "SQLSERVER": return "SQL Server";
@@ -92,6 +99,8 @@ export function DataSourcesPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [connectionTest, setConnectionTest] = useState<ConnectionTestResult | null>(null);
+  const [metadataDiagnostic, setMetadataDiagnostic] = useState<MetadataDiagnostic | null>(null);
+  const [metadataBusy, setMetadataBusy] = useState(false);
   const [listSearch, setListSearch] = useState("");
   const [listStatus, setListStatus] = useState<"ACTIVE" | "INACTIVE" | "ALL">("ACTIVE");
   const [listType, setListType] = useState<"" | DataSourceType>("");
@@ -139,6 +148,7 @@ export function DataSourcesPage() {
     setNotice("");
     setError("");
     setConnectionTest(null);
+    setMetadataDiagnostic(null);
   }
 
   function resetForm(type: DataSourceType = "SQLSERVER") {
@@ -152,6 +162,7 @@ export function DataSourcesPage() {
     setError("");
     setNotice("");
     setConnectionTest(null);
+    setMetadataDiagnostic(null);
   }
 
   function changeType(type: DataSourceType) {
@@ -261,6 +272,28 @@ export function DataSourcesPage() {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "測試連線失敗。");
+    }
+  }
+
+  async function testMetadata() {
+    if (!form.id || metadataBusy || saving) return;
+    setMetadataBusy(true);
+    setMetadataDiagnostic(null);
+    setError("");
+    setNotice("");
+    try {
+      const result = await apiRequest<MetadataDiagnostic>(
+        `/datasources/${form.id}/test-metadata`,
+        {method: "POST", body: JSON.stringify({})},
+        accessToken,
+      );
+      setMetadataDiagnostic(result);
+      if (result.ok) setNotice("資料來源欄位描述驗證通過，尚不代表 Dataset 預覽政策已完成。");
+      else setError(`${result.message}（代碼：${result.code}）`);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "欄位描述診斷失敗。");
+    } finally {
+      setMetadataBusy(false);
     }
   }
 
@@ -518,6 +551,16 @@ export function DataSourcesPage() {
               啟用此資料來源
             </label>
 
+            {metadataDiagnostic && (
+              <section className={`connection-diagnostics ${metadataDiagnostic.ok ? "success" : "failure"}`}
+                aria-label="欄位描述診斷結果">
+                <strong>欄位描述：{metadataDiagnostic.ok ? "成功" : "失敗"}</strong>
+                <dl><dt>診斷代碼</dt><dd>{metadataDiagnostic.code}</dd>
+                  <dt>資料來源類型</dt><dd>{metadataDiagnostic.sourceType}</dd></dl>
+                <p>{metadataDiagnostic.message}</p>
+                <p>本功能僅描述固定測試欄位，不讀取 SQL 查詢資料列，也不自動建立資料保護政策。</p>
+              </section>
+            )}
             {connectionTest && (
               <section className={`connection-diagnostics ${connectionTest.ok ? "success" : "failure"}`}>
                 <div className="diagnostics-header">
@@ -549,6 +592,12 @@ export function DataSourcesPage() {
             <div className="form-actions">
               <button className="primary-button" type="submit" disabled={saving}>{saving ? "儲存中…" : "儲存"}</button>
               <button className="secondary-button" type="button" onClick={() => void testConnection()}>測試連線</button>
+              {form.id && (form.type === "SQLSERVER" || form.type === "ORACLE") && (
+                <button className="secondary-button" type="button"
+                  disabled={metadataBusy || saving} onClick={() => void testMetadata()}>
+                  {metadataBusy ? "測試欄位描述中…" : "測試欄位描述（不取資料列）"}
+                </button>
+              )}
               {form.id && (
                 <button className="danger-button" type="button"
                   onClick={() => {

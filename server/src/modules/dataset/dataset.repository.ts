@@ -111,8 +111,11 @@ export const createDatasetUpdater = (deps = {
       .query("SELECT SqlText, DataSourceId, IsArchived FROM uqp.Dataset WITH (UPDLOCK, HOLDLOCK) WHERE Id=@id");
     if (!existing.recordset.length) throw new Error("DATASET_NOT_FOUND");
     if (existing.recordset[0].IsArchived) throw new Error("DATASET_ARCHIVED");
-    if (existing.recordset.length &&
-        (String(existing.recordset[0].SqlText) !== input.sqlText || Number(existing.recordset[0].DataSourceId) !== input.dataSourceId)) {
+    // Approval of one SQL definition cannot authorize a different SQL or source.
+    // Derive this decision from the locked database row, never from the client.
+    const definitionChanged = String(existing.recordset[0].SqlText) !== input.sqlText ||
+      Number(existing.recordset[0].DataSourceId) !== input.dataSourceId;
+    if (definitionChanged) {
       const protectedRules = await deps.createRequest(tx).input("id", sql.BigInt, id)
         .query("SELECT ColumnName FROM uqp.DatasetSensitiveColumn WITH (HOLDLOCK) WHERE DatasetId=@id");
       if (protectedRules.recordset.length) {
@@ -168,12 +171,12 @@ export const createDatasetUpdater = (deps = {
       .input("sqlText", sql.NVarChar(sql.MAX), input.sqlText)
       .input("maxRows", sql.Int, input.maxRows)
       .input("queryTimeoutSec", sql.Int, input.queryTimeoutSec)
-      .input("isActive", sql.Bit, input.isActive)
+      .input("definitionChanged", sql.Bit, definitionChanged)
       .query(`
         UPDATE uqp.Dataset SET
           Name=@name, Description=@description, DataSourceId=@dataSourceId,
           SqlText=@sqlText, MaxRows=@maxRows, QueryTimeoutSec=@queryTimeoutSec,
-          IsActive=@isActive, UpdatedAtUtc=SYSUTCDATETIME()
+          IsActive=CASE WHEN @definitionChanged=1 THEN 0 ELSE IsActive END, UpdatedAtUtc=SYSUTCDATETIME()
         WHERE Id=@id AND IsArchived=0;
         SELECT @@ROWCOUNT AS Affected;
       `);

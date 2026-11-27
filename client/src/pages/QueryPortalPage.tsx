@@ -18,6 +18,7 @@ type QueryItem = {
   icon: string;
   sortOrder: number;
   canView: boolean;
+  showInPortal?: boolean;
   canExecute: boolean;
   canExport: boolean;
   isFavorite: boolean;
@@ -51,7 +52,8 @@ export function QueryPortalPage() {
     setError("");
     try {
       const result = await apiRequest<{ queries: QueryItem[] }>("/queries", {}, accessToken);
-      setQueries(result.queries);
+      // Visibility is presentation only. Keep /queries available to the hierarchy designer.
+      setQueries(result.queries.filter(query => query.showInPortal !== false));
     } catch (e) {
       setError(e instanceof Error ? e.message : "載入查詢功能失敗。");
     } finally {
