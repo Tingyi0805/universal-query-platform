@@ -139,7 +139,7 @@ test("manager hides child from all portal sections without unpublishing or losin
  await page.goto("/designer/queries");
  await page.locator(".query-list-item").filter({has:page.getByText("合成子層",{exact:true})}).click();
  await expect(page.getByRole("checkbox",{name:"顯示於資料查詢首頁"})).toBeChecked();
- await page.getByRole("checkbox",{name:"顯示於資料查詢首頁"}).uncheck();
+ await page.getByRole("checkbox",{name:"顯示於資料查詢首頁"}).click();
  await expect(page.getByRole("checkbox",{name:"顯示於資料查詢首頁"})).not.toBeChecked();
  await expect(page.getByRole("button",{name:"取消發佈",exact:true})).toBeVisible();
  expect(s.portalWrites).toEqual([{showInPortal:false,expected:true}]);
@@ -152,7 +152,7 @@ test("manager hides child from all portal sections without unpublishing or losin
  await expect(page.getByText("合成遮蔽○",{exact:true})).toBeVisible();
  await page.goto("/designer/queries");
  await page.locator(".query-list-item").filter({has:page.getByText("合成子層",{exact:true})}).click();
- await page.getByRole("checkbox",{name:"顯示於資料查詢首頁"}).check();
+ await page.getByRole("checkbox",{name:"顯示於資料查詢首頁"}).click();
  await expect(page.getByRole("checkbox",{name:"顯示於資料查詢首頁"})).toBeChecked();
  expect(s.portalWrites.at(-1)).toEqual({showInPortal:true,expected:false});
  await page.goto("/queries");await expect(page.locator(".query-icon-card").filter({hasText:"合成子層"}).first()).toBeVisible();
