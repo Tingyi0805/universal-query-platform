@@ -40,8 +40,8 @@ export function supportsOracleDescriptionServer(thin: boolean, serverVersion: nu
 export function safeOracleDescriptionDriverCode(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return undefined;
   const value = error as { code?: unknown; message?: unknown };
-  if (typeof value.code === "string" && /^(?:ORA-[0-9]{5}|(?:DPI|NJS)-[0-9]{3})$/.test(value.code)) return value.code;
-  if (typeof value.message === "string") return /^(ORA-[0-9]{5}|(?:DPI|NJS)-[0-9]{3}):/.exec(value.message)?.[1];
+  if (typeof value.code === "string" && /^(?:ORA-[0-9]{5}|DPI-[0-9]{4}|NJS-[0-9]{3})$/.test(value.code)) return value.code;
+  if (typeof value.message === "string") return /^(ORA-[0-9]{5}|DPI-[0-9]{4}|NJS-[0-9]{3}):/.exec(value.message)?.[1];
   return undefined;
 }
 
