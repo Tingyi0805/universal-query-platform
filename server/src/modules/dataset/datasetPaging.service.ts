@@ -1,4 +1,5 @@
 /** Saved SQL only. Browser column keys are resolved to policy-approved columns by the caller. */
+import {createHash} from "node:crypto";
 import {getDataset} from "./dataset.repository.js";
 import {listDatasetParameters} from "./parameter.repository.js";
 import {getDataSourceConfig} from "../datasource/datasource.repository.js";
@@ -47,7 +48,8 @@ export function compileSavedPage(sqlText:string,type:DataSourceType,values:Recor
  ORDER BY ${keys.map((n,i)=>`uqp_rows.${quote(n)} ${i===0&&plan.sort?plan.sort.direction:"ASC"}`).join(",")};
  COMMIT; SET TRANSACTION ISOLATION LEVEL READ COMMITTED;
  END TRY BEGIN CATCH IF XACT_STATE()<>0 ROLLBACK; SET TRANSACTION ISOLATION LEVEL READ COMMITTED; THROW; END CATCH;`;
- return {consistentSql,countSql:`SELECT ${type==="SQLSERVER"?"COUNT_BIG":"COUNT"}(*) AS UQP_HP_TOTAL${from}`,
+ const oracleCountSql=type==="ORACLE"?`SELECT NVL(SUM(UQP_HP_GROUP_SIZE),0) AS UQP_HP_TOTAL,NVL(MAX(UQP_HP_GROUP_SIZE),0) AS UQP_HP_MAX_GROUP FROM (SELECT COUNT(*) AS UQP_HP_GROUP_SIZE${from} GROUP BY ${plan.orderBy.map(n=>`uqp_page.${quote(n)}`).join(",")})`:null;
+ return {consistentSql,oracleCountSql,countSql:`SELECT ${type==="SQLSERVER"?"COUNT_BIG":"COUNT"}(*) AS UQP_HP_TOTAL${from}`,
   pageSql:type==="SQLSERVER"?`SELECT uqp_page.*${from} ORDER BY ${order} OFFSET ${bind("OFFSET")} ROWS FETCH NEXT ${bind("LIMIT")} ROWS ONLY`:
    `SELECT * FROM (SELECT uqp_page.*,ROW_NUMBER() OVER(ORDER BY ${order}) AS UQP_HP_ROW_NUMBER${from}) uqp_ranked WHERE UQP_HP_ROW_NUMBER>${bind("OFFSET")} AND UQP_HP_ROW_NUMBER<=(${bind("OFFSET")}+${bind("LIMIT")}) ORDER BY UQP_HP_ROW_NUMBER`,binds};
 }
@@ -75,17 +77,69 @@ export function createSavedDatasetPager(deps=savedPageDependencies){return async
   if(rows.length!==Math.min(limit,Math.max(0,totalRows-offset))||raw.rows.some(r=>r.UQP_HP_HAS_ROW!==1&&(r.UQP_HP_HAS_ROW!==null||totalRows>offset)))throw new Error("HIERARCHY_PAGE_INVALID");
   return {sourceWitness,result:{...raw,columns:raw.columns.filter(c=>!c.name.startsWith("UQP_HP_")),rows,rowCount:rows.length,elapsedMs:Date.now()-started},pagination:{page:plan.page,pageSize:plan.pageSize,totalRows,totalPages,capped:exact>BigInt(ds.maxRows)}};
  }
- const count=await adapter.executeQuery(source,{sql:compiled.countSql,binds:compiled.binds,maxRows:1,timeoutSec:ds.queryTimeoutSec??source.queryTimeoutSec});
- const text=String(count.rows[0]?.UQP_HP_TOTAL??"");
- if(count.truncated||count.rows.length!==1||!/^(0|[1-9][0-9]*)$/.test(text)||typeof count.rows[0]?.UQP_HP_TOTAL==="number"&&!Number.isSafeInteger(count.rows[0].UQP_HP_TOTAL))throw new Error("HIERARCHY_COUNT_INVALID");
- const exact=BigInt(text);if(!Number.isSafeInteger(ds.maxRows)||ds.maxRows<1)throw new Error("HIERARCHY_LIMIT_INVALID");
- const totalRows=Number(exact>BigInt(ds.maxRows)?BigInt(ds.maxRows):exact),totalPages=Math.max(1,Math.ceil(totalRows/plan.pageSize));
- if(plan.page>totalPages)throw new Error("HIERARCHY_PAGE_OUT_OF_RANGE");
- const offset=(plan.page-1)*plan.pageSize,limit=Math.min(plan.pageSize,Math.max(1,totalRows-offset));
- const result=await adapter.executeQuery(source,{sql:compiled.pageSql,binds:{...compiled.binds,UQP_HP_OFFSET:offset,UQP_HP_LIMIT:limit},maxRows:limit,timeoutSec:ds.queryTimeoutSec??source.queryTimeoutSec});
- if(result.truncated||result.rows.length>limit||result.rows.length>Math.max(0,totalRows-offset))throw new Error("HIERARCHY_PAGE_INVALID");
- const pageResult=source.type==="ORACLE"?{...result,columns:result.columns.filter(c=>c.name!=="UQP_HP_ROW_NUMBER"),
-  rows:result.rows.map(row=>Object.fromEntries(Object.entries(row).filter(([name])=>name!=="UQP_HP_ROW_NUMBER")))}:result;
- return {result:{...pageResult,elapsedMs:Date.now()-started},pagination:{page:plan.page,pageSize:plan.pageSize,totalRows,totalPages,capped:exact>BigInt(ds.maxRows)}};
+ // Oracle 11g-compatible paging: use one read-only transaction for all
+ // count, uniqueness, witness and page reads. No extra database privileges,
+ // temporary tables, writes, or version-dependent SQL hash functions.
+ if(source.type!=="ORACLE"||!compiled.oracleCountSql||!adapter.withReadOnlySnapshot)throw new Error("HIERARCHY_PAGING_UNSUPPORTED");
+ if(!Number.isSafeInteger(ds.maxRows)||ds.maxRows<1||ds.maxRows>10000)throw new Error("HIERARCHY_LIMIT_INVALID");
+ const timeout=ds.queryTimeoutSec??source.queryTimeoutSec;
+ return adapter.withReadOnlySnapshot(source,timeout,async execute=>{
+  const deadline=started+timeout*1000;
+  const remaining=()=>{const ms=deadline-Date.now();if(ms<=0)throw new Error("HIERARCHY_PAGING_TIMEOUT");return Math.max(1,Math.ceil(ms/1000));};
+  const count=await execute({sql:compiled.oracleCountSql!,binds:compiled.binds,maxRows:1,timeoutSec:remaining()});
+  const integer=(v:unknown)=>{if(typeof v==="number"&&!Number.isSafeInteger(v))throw new Error("HIERARCHY_COUNT_INVALID");
+   const s=String(v??"");if(!/^(0|[1-9][0-9]*)$/.test(s))throw new Error("HIERARCHY_COUNT_INVALID");return BigInt(s);};
+  if(count.truncated||count.rows.length!==1)throw new Error("HIERARCHY_COUNT_INVALID");
+  const exact=integer(count.rows[0]?.UQP_HP_TOTAL),maxGroup=integer(count.rows[0]?.UQP_HP_MAX_GROUP);
+  if(exact===0n?maxGroup!==0n:maxGroup!==1n)throw new Error("HIERARCHY_NON_UNIQUE_ORDER");
+  const totalRows=Number(exact>BigInt(ds.maxRows)?BigInt(ds.maxRows):exact),totalPages=Math.max(1,Math.ceil(totalRows/plan.pageSize));
+  if(plan.page>totalPages)throw new Error("HIERARCHY_PAGE_OUT_OF_RANGE");
+  const offset=(plan.page-1)*plan.pageSize,limit=Math.min(plan.pageSize,Math.max(1,totalRows-offset));
+  const readPage=async (start:number,size:number,expected:number)=>{
+   const raw=await execute({sql:compiled.pageSql,binds:{...compiled.binds,UQP_HP_OFFSET:start,UQP_HP_LIMIT:size},maxRows:size,timeoutSec:remaining()});
+   if(raw.truncated||raw.rows.length!==expected||raw.columns.filter(c=>c.name==="UQP_HP_ROW_NUMBER").length!==1
+     ||raw.columns.some(c=>c.name.startsWith("UQP_HP_")&&c.name!=="UQP_HP_ROW_NUMBER")
+     ||raw.rows.some((r,i)=>r.UQP_HP_ROW_NUMBER!==start+i+1))throw new Error("HIERARCHY_PAGE_INVALID");
+   const columns=raw.columns.filter(c=>c.name!=="UQP_HP_ROW_NUMBER"),names=columns.map(c=>c.name);
+   if(!names.length||new Set(names).size!==names.length)throw new Error("HIERARCHY_PAGE_INVALID");
+   const rows=raw.rows.map(row=>{
+    if(Object.keys(row).length!==names.length+1||names.some(n=>!Object.hasOwn(row,n)))throw new Error("HIERARCHY_PAGE_INVALID");
+    return Object.fromEntries(names.map(n=>[n,row[n]]));
+   });
+   return {...raw,columns,rows,rowCount:rows.length};
+  };
+  const page=await readPage(offset,limit,Math.min(limit,Math.max(0,totalRows-offset)));
+  // Witness the bounded ordered result including the first capped-out row,
+  // but retain only the requested page. Hash type-tagged scalar values; reject
+  // unsupported LOB/object/unsafe numeric representations instead of guessing.
+  const hash=createHash("sha256"),signature=JSON.stringify(page.columns);
+  hash.update(signature+"\\n");
+  const atom=(v:unknown):unknown=>{
+   if(v===null||typeof v==="string"||typeof v==="boolean")return v;
+   if(typeof v==="number"&&Number.isFinite(v)&&(!Number.isInteger(v)||Number.isSafeInteger(v)))return v;
+   if(v instanceof Date&&Number.isFinite(v.getTime()))return ["date",v.toISOString()];
+   if(Buffer.isBuffer(v))return ["binary",v.toString("base64")];
+   throw new Error("HIERARCHY_WITNESS_VALUE_UNSUPPORTED");
+  };
+  const encode=(row:Record<string,unknown>)=>JSON.stringify(page.columns.map(c=>atom(row[c.name])));
+  const expectedPage=page.rows.map(encode);
+  let bytes=Buffer.byteLength(signature);
+  const witnessRows=Number(exact>BigInt(ds.maxRows)?BigInt(ds.maxRows)+1n:exact);
+  for(let pos=0;pos<witnessRows;pos+=200){
+   const size=Math.min(200,witnessRows-pos),chunk=await readPage(pos,size,size);
+   if(JSON.stringify(chunk.columns)!==signature)throw new Error("HIERARCHY_PAGE_INVALID");
+   for(let i=0;i<chunk.rows.length;i++){
+    const encoded=encode(chunk.rows[i]!);bytes+=Buffer.byteLength(encoded)+1;
+    if(bytes>16000000)throw new Error("HIERARCHY_WITNESS_CAPACITY");
+    const index=pos+i-offset;
+    if(index>=0&&index<expectedPage.length&&expectedPage[index]!==encoded)throw new Error("HIERARCHY_SOURCE_PAGE_CHANGED");
+    hash.update(encoded+"\\n");
+   }
+  }
+  remaining();
+  const sourceWitness=`${exact}:${hash.digest("hex")}`;
+  if(plan.expectedWitness&&plan.expectedWitness!==sourceWitness)throw new Error("HIERARCHY_SOURCE_PAGE_CHANGED");
+  return {sourceWitness,result:{...page,elapsedMs:Date.now()-started},pagination:{page:plan.page,pageSize:plan.pageSize,totalRows,totalPages,capped:exact>BigInt(ds.maxRows)}};
+ });
 };}
 export const executeSavedDatasetPage=createSavedDatasetPager();
