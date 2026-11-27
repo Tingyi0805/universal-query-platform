@@ -36,7 +36,18 @@ export function QueryHierarchyWorkspace({rootQueryId,values,accessToken,onExit}:
    if(!alive.current||epoch.current!==current)return;context.current=v.contextId;setView(v);setSearchColumn(v.controls.search?.column??v.columns.find(c=>c.canFilter)?.key??"");setSearchText(v.controls.search?.text??"");
    if(display)setMode(display);if(v.depth===1)setMode("PAGE");if(expiry.current)clearTimeout(expiry.current);
    expiry.current=setTimeout(()=>discard("查詢階層已到期，已清除資料；請重新回主層。"),Math.min(2147483647,Date.parse(v.expiresAtUtc)-Date.now()));
-  }catch{if(alive.current&&epoch.current===current)discard("多層查詢未完成。授權、版本、政策或稽核無法驗證時停止交付；請重新回主層，不會自動重送。");}
+  }catch(error){if(alive.current&&epoch.current===current){
+   const details=error as {code?:unknown;requestId?:unknown}|null;
+   const code=typeof details?.code==="string"&&/^[A-Z][A-Z0-9_]{1,95}$/.test(details.code)?details.code:"";
+   const requestId=typeof details?.requestId==="string"&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(details.requestId)?details.requestId:"";
+   const reason=code==="HIERARCHY_NON_UNIQUE_ORDER"?"排序鍵有重複，請管理者設定可唯一識別每列的欄位。":
+    code==="HIERARCHY_SOURCE_PAGE_CHANGED"?"來源資料已異動，請重新回主層。":
+    code==="HIERARCHY_PAGING_UNSUPPORTED"?"目前資料來源或 SQL 不支援此分頁方式，請管理者確認。":
+    code==="HIERARCHY_PAGING_TIMEOUT"?"來源分頁驗證逾時，請管理者確認查詢範圍與效能。":
+    code==="HIERARCHY_SAVED_BINDING_STALE"?"Query 或 Dataset 已異動，請管理者重新儲存多層設定。":
+    "授權、版本、政策、稽核或來源查詢無法驗證時停止交付。";
+   discard("多層查詢未完成。"+reason+"請重新回主層，不會自動重送。"+(code?"（"+code+"）":"")+(requestId?" Request ID: "+requestId:""));
+  }}
   finally{if(alive.current&&epoch.current===current)setBusy(false);}
  }
  useEffect(()=>{
