@@ -23,7 +23,7 @@ async function setup(page:Page,trigger="ROW",display="PAGE"){
     await route.fulfill({json:{graph:null,revision:"MISSING"}});return;
    }
    if(r.method()==="DELETE"){await route.fulfill({json:{status:"OK"}});return;}
-   if(state.deny){await route.fulfill({status:403,json:{error:{code:"QUERY_DELIVERY_FORBIDDEN",message:"安全拒絕"}}});return;}
+   if(state.deny){await route.fulfill({status:403,json:{error:{code:"QUERY_DELIVERY_FORBIDDEN",message:"SQL SECRET SYNTHETIC",requestId:"12345678-1234-1234-1234-123456789abc"}}});return;}
    if(path.endsWith("/contexts")){state.depth=1;state.byDepth[1]={page:1,search:null,sort:null};}
    if(path.endsWith("/navigate")){state.depth=2;state.byDepth[2]={page:1,search:null,sort:null};}
    if(path.endsWith("/back"))state.depth=1;
@@ -64,7 +64,7 @@ for(const [trigger,display] of [["ROW","PAGE"],["COLUMN","PANEL"],["MORE","MODAL
 });
 test("denied child clears all patient rows and never falls back to ordinary Query execution",async({page})=>{
  const s=await setup(page);await open(page);s.deny=true;await page.getByRole("cell",{name:"主層頁1",exact:true}).click();
- await expect(page.getByText(/多層查詢未完成/)).toBeVisible();await expect(page.getByText("主層頁1",{exact:true})).toHaveCount(0);expect(s.calls.some(c=>c.path.endsWith("/execute"))).toBe(false);
+ await expect(page.getByText(/多層查詢未完成/)).toBeVisible();await expect(page.getByRole("alert")).toContainText("QUERY_DELIVERY_FORBIDDEN");await expect(page.getByRole("alert")).toContainText("12345678-1234-1234-1234-123456789abc");await expect(page.locator("body")).not.toContainText("SQL SECRET SYNTHETIC");await expect(page.getByText("主層頁1",{exact:true})).toHaveCount(0);expect(s.calls.some(c=>c.path.endsWith("/execute"))).toBe(false);
 });
 test("identity clear aborts a delayed response, removes conditions/stack, and re-entry starts at root",async({page})=>{
  const s=await setup(page);await open(page);s.hold=true;await page.getByRole("cell",{name:"主層頁1",exact:true}).click();
@@ -79,7 +79,12 @@ test("offline and refresh do not restore saved hierarchy patient data",async({pa
  await page.context().setOffline(false);await page.reload();await expect(page.getByText("主層頁1",{exact:true})).toHaveCount(0);expect(s.calls.filter(c=>c.path.endsWith("/contexts"))).toHaveLength(1);
 });
 test("Query Publisher configures saved published Queries, mappings, display mode and revision CAS",async({page})=>{
- const s=await setup(page);await page.goto("/designer/queries");await page.getByRole("button").filter({has:page.getByText("合成主層",{exact:true})}).click();
+ const s=await setup(page);await page.goto("/designer/queries");
+ const parent=page.locator(".query-list-item").filter({has:page.getByText("合成主層",{exact:true})});
+ await expect(parent).toContainText("已發佈");await parent.click();
+ await expect(parent).toHaveClass(/selected/);
+ await expect(page.locator(".publisher-editor .publish-badge")).toHaveText("Published");
+ await expect(page.getByRole("button",{name:"取消發佈",exact:true})).toBeVisible();
  await expect(page.getByRole("heading",{name:"第二階段：多層查詢設定"})).toBeVisible();await page.getByLabel("root 排序鍵").selectOption("ID");
  await page.getByLabel("子層 Query").selectOption("2");await page.getByRole("button",{name:"新增父子關聯"}).click();await page.getByLabel("q2 排序鍵").selectOption("ID");
  const field=page.getByLabel(/映射 edge.* KEY/);await field.selectOption("ID");
