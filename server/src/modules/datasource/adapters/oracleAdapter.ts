@@ -119,37 +119,41 @@ export class OracleAdapter implements DataSourceAdapter {
     }
   }
 
-  async executeQuery(config: DataSourceConfig, input: ExecuteQueryInput): Promise<QueryResult> {
+  private async executeOnConnection(connection: Awaited<ReturnType<typeof openConnection>>, input: ExecuteQueryInput): Promise<QueryResult> {
     const binds = validateOracleBinds(input.binds);
-    const connection = await openConnection(config);
     const started = Date.now();
+    connection.callTimeout = input.timeoutSec * 1000;
+    const result = await connection.execute(input.sql, binds, {
+      outFormat: oracledb.OUT_FORMAT_OBJECT,
+      maxRows: input.maxRows + 1,
+    });
+    const rows = (result.rows ?? []) as Record<string, unknown>[];
+    const truncated = rows.length > input.maxRows;
+    const visibleRows = truncated ? rows.slice(0, input.maxRows) : rows;
+    const columns = (result.metaData ?? []).map((column: any) => ({
+      name: String(column.name),
+      dataType: column.dbTypeName ? String(column.dbTypeName) : undefined,
+    }));
+    return { columns, rows: visibleRows, rowCount: visibleRows.length, truncated, elapsedMs: Date.now() - started };
+  }
 
+  async withReadOnlySnapshot<T>(config: DataSourceConfig, timeoutSec: number,
+    run: (execute: (input: ExecuteQueryInput) => Promise<QueryResult>) => Promise<T>): Promise<T> {
+    const connection = await openConnection(config);
     try {
-      connection.callTimeout = input.timeoutSec * 1000;
-      const result = await connection.execute(
-        input.sql,
-        binds,
-        {
-          outFormat: oracledb.OUT_FORMAT_OBJECT,
-          maxRows: input.maxRows + 1,
-        },
-      );
+      connection.callTimeout = timeoutSec * 1000;
+      await connection.execute("SET TRANSACTION READ ONLY");
+      return await run(input => this.executeOnConnection(connection, input));
+    } finally {
+      try { await connection.rollback(); } finally { await connection.close(); }
+    }
+  }
 
-      const rows = (result.rows ?? []) as Record<string, unknown>[];
-      const truncated = rows.length > input.maxRows;
-      const visibleRows = truncated ? rows.slice(0, input.maxRows) : rows;
-      const columns = (result.metaData ?? []).map((column: any) => ({
-        name: String(column.name),
-        dataType: column.dbTypeName ? String(column.dbTypeName) : undefined,
-      }));
-
-      return {
-        columns,
-        rows: visibleRows,
-        rowCount: visibleRows.length,
-        truncated,
-        elapsedMs: Date.now() - started,
-      };
+  async executeQuery(config: DataSourceConfig, input: ExecuteQueryInput): Promise<QueryResult> {
+    validateOracleBinds(input.binds);
+    const connection = await openConnection(config);
+    try {
+      return await this.executeOnConnection(connection, input);
     } finally {
       await connection.close().catch(() => undefined);
     }
