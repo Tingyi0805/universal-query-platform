@@ -154,6 +154,8 @@ test("Mock mode HTTP enforces JWT/RBAC/TokenVersion, strict input and explicit c
     assert.equal((await request({expectedVersion:sourceVersion(f.state())},"/devices/7/credential",token,"DELETE")).status,403);
     permissions = ["DESIGN_QUERY"];
     assert.equal((await request(undefined,"/preflight")).body.ready,true);
+    assert.equal((await request({ expectedVersion: sourceVersion(f.state()), activate: true })).status, 403);
+    permissions = ["DESIGN_QUERY", "MANAGE_USERS"];
     assert.equal((await request({ expectedVersion: sourceVersion(f.state()), activate: true, ownerId: 1 })).status, 400);
     assert.equal((await request({ expectedVersion: sourceVersion(f.state()), activate: true })).body.mode, "QUERY_ONLY");
     const issued = await request({ expectedVersion: sourceVersion(f.state()) }, "/devices/7/credential");
