@@ -4,7 +4,7 @@ import { compileQuery } from "../../../query/queryCompiler.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import oracledb from "oracledb";
-import { OracleAdapter, supportsOracleDescriptionServer, validateOracleBinds } from "./oracleAdapter.js";
+import { OracleAdapter, supportsOracleDescriptionServer, validateOracleBinds, safeOracleDescriptionDriverCode } from "./oracleAdapter.js";
 import type { DataSourceConfig } from "../datasource.types.js";
 const config = { oracleServiceName: "SYNTHETIC", queryTimeoutSec: 10 } as DataSourceConfig;
 test("Oracle preserves scalar, native date, null and buffer binds without coercion", () => {
@@ -56,4 +56,13 @@ test("Oracle driver boundary preserves canonical DATETIME Dates and formatted RO
   }, close: async () => { closed++; } }));
   await new OracleAdapter().executeQuery(config, { ...compiled, timeoutSec: 1, maxRows: 1 });
   assert.equal(calls, 1); assert.equal(closed, 1);
+});
+
+test("Oracle describe diagnostics expose only a fixed-format error identifier", () => {
+  assert.equal(safeOracleDescriptionDriverCode(Object.assign(new Error("private SQL"), { code: "ORA-00942" })), "ORA-00942");
+  assert.equal(safeOracleDescriptionDriverCode(new Error("NJS-098: private bind value")), "NJS-098");
+  assert.equal(safeOracleDescriptionDriverCode(new Error("DPI-1047: private library path")), "DPI-1047");
+  assert.equal(safeOracleDescriptionDriverCode({ code: "ORA-00942 private SQL" }), undefined);
+  assert.equal(safeOracleDescriptionDriverCode(new Error("private connection details")), undefined);
+  assert.equal(safeOracleDescriptionDriverCode(null), undefined);
 });
