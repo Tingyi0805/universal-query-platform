@@ -38,6 +38,7 @@ async function setup(page:Page,trigger="ROW",display="PAGE"){
   if(path==="/api/query-definitions"){await route.fulfill({json:{queryDefinitions:[query(1),query(2)],total:2,totalPages:1}});return;}
   if(path==="/api/datasets"){await route.fulfill({json:{datasets:[{id:1,code:"D1",name:"合成Dataset",isActive:true,isArchived:false}]}});return;}
   if(path==="/api/query-categories"){await route.fulfill({json:{categories:[]}});return;}
+  if(path.endsWith("/access")){await route.fulfill({json:{roles:[],roleAccess:[],userAccess:[]}});return;}
   if(path.endsWith("/report-columns")){await route.fulfill({json:{columns:[]}});return;}
   if(path.endsWith("/versions")){await route.fulfill({json:{versions:[]}});return;}
   await route.fulfill({json:{organizationName:"合成",platformName:"UQP",platformTitle:"合成測試平台",platformSubtitle:"離線Fixture"}});
