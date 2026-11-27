@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { writeAuditEvent } from "../audit/audit.repository.js";
 import { getPlatformDbPool } from "../../config/database.js";
 import type { QueryDefinitionInput, QueryDefinitionRecord } from "./queryDefinition.types.js";
 import {
@@ -26,6 +27,7 @@ function mapRow(row: any): QueryDefinitionRecord {
     datasetName: row.DatasetName == null ? undefined : String(row.DatasetName),
     sortOrder: Number(row.SortOrder),
     allowExcelExport: Boolean(row.AllowExcelExport),
+    ...(typeof row.ShowInPortal === "boolean" ? { showInPortal: row.ShowInPortal } : {}),
     isPublished: Boolean(row.IsPublished),
     isActive: Boolean(row.IsActive),
     isArchived: Boolean(row.IsArchived),
@@ -375,11 +377,11 @@ export async function listAccessibleQueries(userId: number, transaction?: sql.Tr
       FROM uqp.UserQueryAccess
       WHERE UserId=@userId
     )
-    SELECT q.Id, q.Code, q.Name, q.Description, q.CategoryId,
+    SELECT ${includeUsage ? "q.*" : "q.Id, q.Code, q.Name, q.Description, q.CategoryId"},
            c.Name AS CategoryName,
            ISNULL(c.SortOrder, 2147483647) AS CategorySortOrder,
-           q.Icon, q.DatasetId, q.SortOrder, q.AllowExcelExport, q.IsPublished,
-           q.IsActive, q.PublishedAtUtc, d.Name AS DatasetName,
+           ${includeUsage ? "" : "q.Icon, q.DatasetId, q.SortOrder, q.AllowExcelExport, q.IsPublished, q.IsActive, q.PublishedAtUtc,"}
+           d.Name AS DatasetName,
            CASE WHEN f.UserId IS NULL THEN 0 ELSE 1 END AS IsFavorite,
            ${includeUsage ? "recent.LastUsedAtUtc" : "NULL AS LastUsedAtUtc"},
            CASE WHEN ISNULL(ra.CanView,0)=1 OR ISNULL(ua.CanView,0)=1 THEN 1 ELSE 0 END AS EffectiveCanView,
@@ -511,4 +513,38 @@ export async function listQueryDefinitionsPaged(input: {
     items: (recordsets[0] ?? []).map(mapRow),
     total: Number(recordsets[1]?.[0]?.Total ?? 0),
   };
+}
+
+/** Portal presentation only: do not change publication, definition versions,
+ * approval evidence, ACLs, favorites, or hierarchy bindings. */
+export async function setQueryPortalVisibility(id: number, showInPortal: boolean, expected: boolean, actorId: number): Promise<void> {
+  const tx = new sql.Transaction(await requirePool());
+  await tx.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+  try {
+    const schema = await new sql.Request(tx).query(`SELECT CASE WHEN EXISTS (
+      SELECT 1 FROM sys.columns WHERE object_id=OBJECT_ID(N'uqp.QueryDefinition',N'U')
+      AND name=N'ShowInPortal' AND system_type_id=104 AND user_type_id=104
+      AND is_nullable=0 AND is_computed=0
+    ) THEN 1 ELSE 0 END AS Available`);
+    if (!schema.recordset[0]?.Available) throw new Error("QUERY_PORTAL_SCHEMA_REQUIRED");
+    const result = await new sql.Request(tx).input("id", sql.BigInt, id)
+      .input("actor", sql.BigInt, actorId).input("visible", sql.Bit, showInPortal)
+      .input("expected", sql.Bit, expected).query(`
+        UPDATE q SET ShowInPortal=@visible
+        OUTPUT inserted.Id
+        FROM uqp.QueryDefinition q
+        WHERE q.Id=@id AND q.IsArchived=0 AND q.ShowInPortal=@expected
+          AND EXISTS (SELECT 1 FROM uqp.AppUser u WITH(HOLDLOCK)
+            JOIN uqp.UserRole ur WITH(HOLDLOCK) ON ur.UserId=u.Id
+            JOIN uqp.Role r WITH(HOLDLOCK) ON r.Id=ur.RoleId
+            WHERE u.Id=@actor AND u.IsActive=1 AND r.IsActive=1 AND r.Code=N'SYSTEM_ADMIN')
+      `);
+    if (result.recordset.length !== 1) throw new Error("QUERY_PORTAL_VISIBILITY_CONFLICT");
+    const audit = await writeAuditEvent({eventType:"QUERY_PORTAL_VISIBILITY_CHANGED",userId:actorId,queryDefinitionId:id,parameters:{showInPortal}},tx);
+    if (!Number.isSafeInteger(audit) || audit<=0) throw new Error("QUERY_PORTAL_AUDIT_REQUIRED");
+    await tx.commit();
+  } catch(error) {
+    try { await tx.rollback(); } catch { /* preserve original rejection */ }
+    throw error;
+  }
 }
