@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto";
+import {logger} from "../../config/logger.js";
 import {Router} from "express";
 import {z} from "zod";
 import {authenticateJwt} from "../auth/auth.middleware.js";
@@ -38,6 +39,7 @@ export function createQueryHierarchyRouter(deps=hierarchyRouteDependencies){
    const body=kind==="PAGE"?hierarchyPageSchema.parse(req.body):z.object({}).strict().parse(req.body??{});
    res.json(await deps.service.act(root,context,owner,identity,{kind,...(kind==="PAGE"?{controls:body as z.infer<typeof hierarchyPageSchema>}:{})},meta));
   }catch(e){const code=e instanceof QueryDeliveryError?e.code:e instanceof z.ZodError?"VALIDATION_ERROR":e instanceof Error&&/^HIERARCHY_[A-Z_]+$/.test(e.message)?e.message:"HIERARCHY_DELIVERY_REJECTED";
+   logger.warn({requestId:req.id,kind,code},"Hierarchy request rejected");
    res.status(e instanceof QueryDeliveryError?e.status:e instanceof z.ZodError?400:503).json({error:{code,message:"多層查詢未交付資料，請確認發布、欄位政策、映射及目前權限，重新回主層。",requestId:(req as any).id}});}
  };
  router.get("/:id/hierarchy/capabilities",handle("CAPABILITY"));
