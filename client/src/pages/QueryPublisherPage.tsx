@@ -37,6 +37,7 @@ type QueryDefinition = {
   datasetName?: string;
   sortOrder: number;
   allowExcelExport: boolean;
+  showInPortal?: boolean;
   isPublished: boolean;
   isActive: boolean;
   isArchived: boolean;
@@ -56,6 +57,7 @@ type FormState = {
   datasetId: number | "";
   sortOrder: number;
   allowExcelExport: boolean;
+  showInPortal?: boolean;
   isActive: boolean;
   isPublished: boolean;
   isArchived: boolean;
@@ -96,6 +98,7 @@ export function QueryPublisherPage() {
   const [datasets, setDatasets] = useState<Dataset[]>([]);
   const [categories, setCategories] = useState<QueryCategory[]>([]);
   const [form, setForm] = useState<FormState>(emptyForm);
+  const [portalSaving, setPortalSaving] = useState(false);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [categoryDraft, setCategoryDraft] = useState<QueryCategory | null>(null);
   const [newCategory, setNewCategory] = useState({ code: "", name: "", sortOrder: 0, isActive: true });
@@ -160,6 +163,7 @@ export function QueryPublisherPage() {
       datasetId: query.datasetId,
       sortOrder: query.sortOrder,
       allowExcelExport: query.allowExcelExport,
+      showInPortal: query.showInPortal,
       isActive: query.isActive,
       isPublished: query.isPublished,
       isArchived: query.isArchived,
@@ -231,6 +235,22 @@ export function QueryPublisherPage() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "儲存 Query Definition 失敗。");
     }
+  }
+
+  async function setPortalVisibility(showInPortal: boolean) {
+    const id = form.id, expected = form.showInPortal;
+    if (!id || !canPublish || form.isArchived || expected === undefined || portalSaving) return;
+    setPortalSaving(true); setError(""); setNotice("");
+    try {
+      const result = await apiRequest<{status:string;showInPortal:boolean}>(`/query-definitions/${id}/portal-visibility`, {
+        method:"PUT",body:JSON.stringify({showInPortal,expected}),
+      },accessToken);
+      setForm(current=>current.id===id?{...current,showInPortal:result.showInPortal}:current);
+      setNotice(result.showInPortal?"已顯示於資料查詢首頁。":"已隱藏首頁入口，發佈狀態及查詢權限不變。");
+      await load();
+    } catch(e) {
+      setError(e instanceof Error?e.message:"首頁顯示設定儲存失敗，請重新載入。");
+    } finally { setPortalSaving(false); }
   }
 
   async function setPublished(published: boolean) {
@@ -564,6 +584,7 @@ export function QueryPublisherPage() {
               <small>{query.code}</small>
               <span>
                 {query.category || "未分類"} · {query.isArchived ? "已封存" : query.isPublished ? "已發佈" : "草稿"}
+                {query.showInPortal === false ? " · 首頁隱藏" : ""}
                 {query.auditCount > 0 ? ` · Audit ${query.auditCount}` : ""}
               </span>
             </button>
@@ -646,6 +667,7 @@ export function QueryPublisherPage() {
 
             <div className="query-home-preview">
               <span className="field-label">首頁預覽</span>
+              {form.id && form.showInPortal === false && <p className="field-hint">目前已隱藏首頁入口，仍可作為多層查詢明細。</p>}
               <div className="query-home-preview-card">
                 <div className="query-home-preview-icon"><SelectedIcon size={26} /></div>
                 <strong>{form.name.trim() || "查詢名稱"}</strong>
@@ -683,6 +705,12 @@ export function QueryPublisherPage() {
                 onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />啟用 Query</label>
             </div>
 
+            {form.id && !form.isArchived && <div className="query-portal-visibility">
+              <label className="category-active-check"><input type="checkbox" checked={form.showInPortal !== false}
+                disabled={!canPublish || portalSaving || form.showInPortal === undefined}
+                onChange={e=>void setPortalVisibility(e.target.checked)} />顯示於資料查詢首頁</label>
+              <small className="field-hint">{form.showInPortal === undefined?"尚未取得首頁顯示欄位（需安裝 930）。":"此設定即時儲存，適用首頁、分類、最近使用及我的最愛，不影響發佈與原有查詢權限。"}</small>
+            </div>}
             <div className="form-actions">
               {!form.isArchived && <button className="primary-button" type="submit">儲存</button>}
               {form.id && !form.isArchived && !canPublish && <span role="status">Query 發佈與取消發佈由管理者授權。</span>}
