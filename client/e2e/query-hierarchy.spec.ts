@@ -110,3 +110,21 @@ test("hierarchy TTL clears current patient view and cannot silently renew the st
  await expect(page.getByText("主層頁1",{exact:true})).toHaveCount(0);await expect(page.getByText(/查詢階層已到期/)).toBeVisible();
  expect(s.calls.filter(c=>c.path.endsWith("/contexts"))).toHaveLength(1);
 });
+
+test("hierarchy styling uses shared UQP controls and remains usable on a narrow screen",async({page})=>{
+ await page.setViewportSize({width:390,height:844});
+ await setup(page,"COLUMN","PANEL");await open(page);
+ const region=page.getByRole("region",{name:"多層資料查詢"});
+ await expect(region.getByRole("button",{name:"伺服器搜尋"})).toHaveClass(/primary-button/);
+ await expect(region.getByRole("button",{name:"返回上一層"})).toHaveClass(/secondary-button/);
+ await expect(region.locator(".runtime-table-wrap")).toBeVisible();
+ await expect(region.locator(".runtime-pagination")).toBeVisible();
+ const fits=await region.evaluate(element=>element.scrollWidth<=element.clientWidth+2);
+ expect(fits).toBe(true);
+ await region.getByRole("button",{name:"11",exact:true}).click();
+ const panel=page.getByRole("dialog",{name:"多層資料查詢"});
+ await expect(panel.locator(".hierarchy-cards article")).toBeVisible();
+ expect(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth+2)).toBe(true);
+ await panel.getByRole("button",{name:"返回上一層"}).click();
+ await expect(region.getByText("主層頁1",{exact:true})).toBeVisible();
+});
