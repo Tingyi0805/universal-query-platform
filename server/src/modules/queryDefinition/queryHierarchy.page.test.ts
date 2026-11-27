@@ -5,7 +5,7 @@ const plan={page:2,pageSize:10,orderBy:["ID"],search:null,sort:null};
 function fixture(){
  let audited=0,validations=0;const context={query:{id:1,datasetId:2},actor:{userId:8},dataset:{dataSourceId:9},snapshot:{patientAudit:{enabled:true},policy:{state:"CONFIRMED",version:"1",patientAuditOnlyColumns:["MRN"],rules:[{columnName:"ID",mode:"NONE"},{columnName:"NAME",mode:"CUSTOM",customMask:{prefix:1,suffix:0,symbol:"○"}},{columnName:"MRN",mode:"OMIT"}]}},
   reports:["ID","NAME","MRN"].map((columnName,i)=>({columnName,displayLabel:columnName,displayOrder:i,isVisible:true,groupOrder:null,aggregateType:"NONE"})),revalidate:async()=>{validations++;}} as any;
- const deps={execute:async()=>({result:{columns:[{name:"ID"},{name:"NAME"},{name:"MRN"}],rows:[{ID:11,NAME:"王小明",MRN:"SYNTHETIC_RAW_KEY"}],rowCount:1,truncated:false,elapsedMs:1},pagination:{page:2,pageSize:10,totalRows:20,totalPages:2,capped:false}}),
+ const deps={execute:async()=>({sourceWitness:"20:"+"a".repeat(64),result:{columns:[{name:"ID"},{name:"NAME"},{name:"MRN"}],rows:[{ID:11,NAME:"王小明",MRN:"SYNTHETIC_RAW_KEY"}],rowCount:1,truncated:false,elapsedMs:1},pagination:{page:2,pageSize:10,totalRows:20,totalPages:2,capped:false}}),
   auditPatient:async(input:any)=>{audited++;assert.equal(input.deliveryType,"PAGE");assert.equal(input.pageNumber,2);assert.equal(input.rows.length,1);assert.equal(input.rows[0].MRN,"SYNTHETIC_RAW_KEY");return 70;}};
  return {context,deps,counts:()=>({audited,validations})};
 }
@@ -44,7 +44,7 @@ test("manager-approved page validates the exact manifest before returning synthe
  const {snapshot,...base}=f.context;
  const context={...base,action:"EXECUTE",receipt:{approval:{scope:"INTERNAL_SOURCE_MINIMIZED",datasetId:2,dataSourceId:9,
   definitionVersion:version,sourceConfigurationVersion:version,approvedBy:8,auditLogId:1,columns:["ID","TOTAL"]},publicationStamp:"synthetic",datasetDecisionId:"2"}};
- const deps={...f.deps,execute:async()=>({result:{columns:[{name:"ID"},{name:"TOTAL"}],rows:[{ID:11,TOTAL:3}],
+ const deps={...f.deps,execute:async()=>({sourceWitness:"20:"+"a".repeat(64),result:{columns:[{name:"ID"},{name:"TOTAL"}],rows:[{ID:11,TOTAL:3}],
   rowCount:1,truncated:false,elapsedMs:1},pagination:{page:2,pageSize:10,totalRows:20,totalPages:2,capped:false}}),
   auditPatient:async()=>{throw Error("unexpected legacy audit");}};
  const page=createHierarchyPageDelivery(deps);
