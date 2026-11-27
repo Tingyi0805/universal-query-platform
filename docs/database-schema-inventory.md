@@ -1973,3 +1973,9 @@ SQL Server 的 `sys.sp_describe_first_result_set`、`sys.sp_describe_undeclared_
 | SOURCE | database/migrations/927_workstation_pin_runtime.sql | ed321356d52469a9b578ed3b340d6d4c5bbee583b13a6172ae479806dc6b1743 |
 
 PIN Runtime 新增正式來源 927（尚未執行），Migration 來源共 50，原 49 份 SHA 不變。草稿與正式檔共享相同 additive 結構，物件分類及數量不重複計算。SQL Server 重跑／鎖定／回滾實測待驗證；scanner／來源清冊同步不代表部署核准。
+
+## PR101 測試資料庫唯讀盤點補註
+
+新增 `database/tools/uqp-test-reset-inventory.sql` 為人工唯讀盤點來源，只讀取目標身分、Ledger、目錄估計筆數及 FK 依賴；不新增或變更資料庫物件、不刪除資料、不授權重建，也不變更既有 50 份 Migration。物件分類及計數不變。
+
+| SOURCE | database/tools/uqp-test-reset-inventory.sql | a868918f89675863565256ae80a54eabcb98320e5655e795c60a2808a1197155 |
