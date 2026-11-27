@@ -15,6 +15,7 @@ import {
   restoreQueryDefinition,
   unpublishQueryDefinition,
   updateQueryDefinition,
+  setQueryPortalVisibility,
 } from "./queryDefinition.repository.js";
 import {
   getQueryAccessConfiguration,
@@ -172,6 +173,25 @@ queryDefinitionRouter.put("/:id", requirePermission("DESIGN_QUERY"), async (req,
           message: "指定的 Dataset 已封存或不存在，請選擇可使用的 Dataset。",
         },
       });
+      return;
+    }
+    next(error);
+  }
+});
+
+queryDefinitionRouter.put("/:id/portal-visibility", requirePermission("DESIGN_QUERY"), requirePermission("MANAGE_USERS"), requirePermission("PUBLISH_QUERY"), async (req, res, next) => {
+  const id = idSchema.safeParse(req.params.id);
+  const body = z.object({showInPortal:z.boolean(),expected:z.boolean()}).strict().safeParse(req.body);
+  if (!id.success || !body.success || !req.authUser) {
+    res.status(400).json({error:{code:"VALIDATION_ERROR",message:"首頁顯示設定不正確。"}});
+    return;
+  }
+  try {
+    await setQueryPortalVisibility(id.data,body.data.showInPortal,body.data.expected,req.authUser.id);
+    res.json({status:"OK",showInPortal:body.data.showInPortal});
+  } catch(error) {
+    if (error instanceof Error && ["QUERY_PORTAL_SCHEMA_REQUIRED","QUERY_PORTAL_VISIBILITY_CONFLICT"].includes(error.message)) {
+      res.status(409).json({error:{code:error.message,message:error.message==="QUERY_PORTAL_SCHEMA_REQUIRED"?"尚未安裝首頁顯示設定欄位。":"設定已異動、Query 已封存或管理權限不符，請重新載入。"}});
       return;
     }
     next(error);
